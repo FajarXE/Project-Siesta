@@ -1,6 +1,6 @@
-pyrogram
+pyrofork
+TgCrypto-pyrofork
 requests
-tgcrypto
 aiohttp
 mutagen
 python-dotenv
@@ -10,3 +10,6 @@ pathvalidate
 pycryptodomex
 psutil
 aiolimiter
+gunicorn
+gevent
+flask
