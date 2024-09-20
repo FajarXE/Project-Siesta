@@ -1,4 +1,5 @@
 pyrofork
+TgCrypto
 requests
 aiohttp
 mutagen
