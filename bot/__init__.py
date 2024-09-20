@@ -15,7 +15,7 @@ class CMD(object):
     START = ["start", f"start@{bot}"]
     HELP = ["help", f"help@{bot}"]
     SETTINGS = ["settings", f"settings@{bot}"]
-    DOWNLOAD = ["download", f"download@{bot}"]
+    DOWNLOAD = ["dl", f"dl@{bot}"]
     BAN = ["ban", f"ban@{bot}"]
     AUTH = ["auth", f"auth@{bot}"]
 
