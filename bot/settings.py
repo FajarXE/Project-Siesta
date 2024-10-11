@@ -57,7 +57,7 @@ class BotSettings:
         self.album_sep_zip = False #For artists download
         self.album_zip = False
         self.playlist_zip = False
-        self.artist_zip = True
+        self.artist_zip = False
 
 
         self.clients = []
