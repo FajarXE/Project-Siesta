@@ -54,10 +54,10 @@ class BotSettings:
         self.link_options = link_option if self.rclone and link_option else 'False'
 
         #TODO
-        self.album_sep_zip = False #For artists download
-        self.album_zip = False
-        self.playlist_zip = False
-        self.artist_zip = False
+        self.album_sep_zip = True #For artists download
+        self.album_zip = True
+        self.playlist_zip = True
+        self.artist_zip = True
 
 
         self.clients = []
