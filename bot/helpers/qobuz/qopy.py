@@ -18,7 +18,7 @@ class QoClient:
         self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
         self.base = "https://www.qobuz.com/api.json/0.2/"
         self.sec = None
-        self.quality = 6
+        self.quality = 27
         
 
     async def api_call(self, epoint, **kwargs):
@@ -123,11 +123,11 @@ class QoClient:
                 j = await self.api_call(epoint, id=id, offset=offset, type=type)
             if offset == 0:
                 yield j
-                total = j[key] - 500
+                total = j[key] - 10000
             else:
                 yield j
-                total -= 500
-            offset += 500
+                total -= 10000
+            offset += 10000
 
 
     async def auth(self):
