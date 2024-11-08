@@ -43,21 +43,21 @@ class QoClient:
             params = {
                 "extra": "tracks",
                 "playlist_id": kwargs["id"],
-                "limit": 500,
+                "limit": 10000,
                 "offset": kwargs["offset"],
             }
         elif epoint == "artist/get":
             params = {
                 "app_id": self.id,
                 "artist_id": kwargs["id"],
-                "limit": 500,
+                "limit": 10000,
                 "offset": kwargs["offset"],
                 "extra": "albums",
             }
         elif epoint == "label/get":
             params = {
                 "label_id": kwargs["id"],
-                "limit": 500,
+                "limit": 10000,
                 "offset": kwargs["offset"],
                 "extra": "albums",
             }
