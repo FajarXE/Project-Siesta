@@ -1,4 +1,4 @@
-pyrogram
+pyrofork
 requests
 tgcrypto
 aiohttp
