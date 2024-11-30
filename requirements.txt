@@ -1,6 +1,6 @@
 pyrofork
 requests
-TgCrypto
+TgCrypto-pyrofork
 aiohttp
 mutagen
 python-dotenv
