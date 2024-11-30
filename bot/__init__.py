@@ -1,4 +1,5 @@
 from config import Config
+from uvloop import install
 import subprocess, os
 
 bot = Config.BOT_USERNAME
