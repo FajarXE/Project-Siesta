@@ -15,7 +15,7 @@ class QoClient:
         self.id = None
         self.secrets = None
         self.session = None
-        self.ratelimit = aiolimiter.AsyncLimiter(10, 60)
+        self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
         self.base = "https://www.qobuz.com/api.json/0.2/"
         self.sec = None
         self.quality = 27
