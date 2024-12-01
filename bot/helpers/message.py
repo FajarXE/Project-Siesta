@@ -1,11 +1,17 @@
 import os
 
 from pyrogram.types import Message
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import MessageNotModified, FloodWait
 
 from bot.tgclient import aio
 from bot.settings import bot_set
 
+try:
+    import asyncio
+except ModuleNotFoundError:
+    os.system("pip3 install --no-cache-dir asyncio")
+else:
+    import asyncio
 
 current_user = []
 
@@ -120,44 +126,50 @@ async def send_message(user, item, itype='text', caption=None, markup=None, chat
         user = await fetch_user_details(user)
     chat_id = chat_id if chat_id else user['chat_id']
 
-    if itype == 'text':
-        msg = await aio.send_message(
-            chat_id=chat_id,
-            text=item,
-            reply_to_message_id=user['r_id'],
-            reply_markup=markup,
-            disable_web_page_preview=True
+    try:
+        if itype == 'text':
+            msg = await aio.send_message(
+                chat_id=chat_id,
+                text=item,
+                reply_to_message_id=user['r_id'],
+                reply_markup=markup,
+                disable_web_page_preview=True
+            )
+            
+        elif itype == 'doc':
+            msg = await aio.send_document(
+                chat_id=chat_id,
+                document=item,
+                caption=caption,
+                reply_to_message_id=user['r_id']
+            )
+    
+        elif itype == 'audio':
+            msg = await aio.send_audio(
+                chat_id=chat_id,
+                audio=item,
+                caption=caption,
+                duration=int(meta['duration']),
+                performer=meta['artist'],
+                title=meta['title'],
+                thumb=thumb,
+                reply_to_message_id=user['r_id']
+            )
+            os.remove(thumb)
+    
+        elif itype == 'pic':
+            msg = await aio.send_photo(
+                chat_id=chat_id,
+                photo=item,
+                caption=caption,
+                reply_to_message_id=user['r_id']
+            )
+    except FloodWait as f:
+        await asyncio.sleep(f.value)
+        return await send_message(
+            user, item, itype, caption, markup, chat_id,
+            thumb, meta
         )
-        
-    elif itype == 'doc':
-        msg = await aio.send_document(
-            chat_id=chat_id,
-            document=item,
-            caption=caption,
-            reply_to_message_id=user['r_id']
-        )
-
-    elif itype == 'audio':
-        msg = await aio.send_audio(
-            chat_id=chat_id,
-            audio=item,
-            caption=caption,
-            duration=int(meta['duration']),
-            performer=meta['artist'],
-            title=meta['title'],
-            thumb=thumb,
-            reply_to_message_id=user['r_id']
-        )
-        os.remove(thumb)
-
-    elif itype == 'pic':
-        msg = await aio.send_photo(
-            chat_id=chat_id,
-            photo=item,
-            caption=caption,
-            reply_to_message_id=user['r_id']
-        )
-
     return msg
 
 
