@@ -1,7 +1,7 @@
 from config import Config
 from uvloop import install
 import subprocess, os
-
+install()
 bot = Config.BOT_USERNAME
 
 plugins = dict(
