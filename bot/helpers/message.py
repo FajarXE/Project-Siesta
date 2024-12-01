@@ -183,5 +183,5 @@ async def edit_message(msg:Message, text, markup=None):
     except MessageNotModified:
         return None
     except FloodWait as f:
-        await aayncio.sleep(f.value)
+        await asyncio.sleep(f.value)
         return await edit_message(msg, text, markup)
