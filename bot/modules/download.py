@@ -31,7 +31,8 @@ async def download_track(c, msg: Message):
         except Exception as e:
             LOGGER.error(e)
         finally:
-            await c.delete_messages(msg.chat.id, user['bot_msg'].id)
+            if user.get('bot_msg') and isinstance(user['bot_msg'], Message):
+                await c.delete_messages(msg.chat.id, user['bot_msg'].id)
             await cleanup(user)  # deletes uploaded files
             await antiSpam(msg.from_user.id, msg.chat.id, True)
 
