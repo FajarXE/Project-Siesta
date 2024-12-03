@@ -43,21 +43,21 @@ class QoClient:
             params = {
                 "extra": "tracks",
                 "playlist_id": kwargs["id"],
-                "limit": 1000,
+                "limit": 9999,
                 "offset": kwargs["offset"],
             }
         elif epoint == "artist/get":
             params = {
                 "app_id": self.id,
                 "artist_id": kwargs["id"],
-                "limit": 1000,
+                "limit": 9999,
                 "offset": kwargs["offset"],
                 "extra": "albums",
             }
         elif epoint == "label/get":
             params = {
                 "label_id": kwargs["id"],
-                "limit": 1000,
+                "limit": 9999,
                 "offset": kwargs["offset"],
                 "extra": "albums",
             }
@@ -123,11 +123,11 @@ class QoClient:
                 j = await self.api_call(epoint, id=id, offset=offset, type=type)
             if offset == 0:
                 yield j
-                total = j[key] - 1000
+                total = j[key] - 9999
             else:
                 yield j
-                total -= 1000
-            offset += 1000
+                total -= 9999
+            offset += 9999
 
 
     async def auth(self):
