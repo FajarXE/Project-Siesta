@@ -85,4 +85,4 @@ class Config(object):
 # CONCURRENT
 
 #--------------------
-    MAX_WORKERS = int(getenv("MAX_WORKERS", 30))
+    MAX_WORKERS = int(getenv("MAX_WORKERS", 10))
