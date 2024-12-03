@@ -1,7 +1,6 @@
-asyncio
 pyrofork
 requests
-TgCrypto-pyrofork
+TgCrypto
 uvloop
 aiohttp
 mutagen
