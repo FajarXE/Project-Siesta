@@ -1,7 +1,7 @@
 FROM ubuntu:latest
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=America/Los_Angeles
+    TZ=Asia/Jakarta
 
 WORKDIR /usr/src/app
 RUN chmod 777 /usr/src/app
