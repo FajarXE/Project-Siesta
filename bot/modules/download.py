@@ -1,11 +1,10 @@
 from pyrogram.types import Message
 from pyrogram import Client, filters
+from mutagen import ContentLengthError  # Import the specific error
 
 from bot import CMD
 from bot.logger import LOGGER
-
 import bot.helpers.translations as lang
-
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.message import send_message, antiSpam, check_user, fetch_user_details
