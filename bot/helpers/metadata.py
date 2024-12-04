@@ -1,5 +1,6 @@
 import os
 
+from mutagen import ContentLengthError
 from mutagen import File
 from config import Config
 from mutagen.mp4 import MP4
