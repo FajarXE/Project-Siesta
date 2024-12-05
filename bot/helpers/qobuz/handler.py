@@ -1,31 +1,41 @@
 import shutil
 from .utils import *
 from config import Config
-
 from pathvalidate import sanitize_filepath
-
 from ..utils import *
 from ..metadata import set_metadata
-
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
+from bot.logger import LOGGER  # Ensure you have a logger
 
+async def start_qobuz(url: str, user: dict):
+    """
+    Start processing a Qobuz link based on its type (artist, album, playlist, track).
+    
+    Args:
+        url (str): The URL to be processed.
+        user (dict): The user data dictionary containing user-related info.
+    """
+    try:
+        items, item_id, type_dict, content = await check_type(url)
 
-async def start_qobuz(url:str, user:dict):
-    items, item_id, type_dict, content = await check_type(url)
-    if items:
-        # FOR ARTIST
-        if type_dict['iterable_key'] == 'albums':
+        if items:
+            # FOR ARTIST
+            if type_dict['iterable_key'] == 'albums':
                 await start_artist(items, user, content)
+            # FOR PLAYLIST 
+            else:
+                await start_playlist(items, content, user)
         else:
-        # FOR PLAYLIST 
-            await start_playlist(items, content, user)
-    else:
-        # FOR ALBUM
-        if type_dict["album"]:
-            await start_album(item_id, user)
-        else:
-        # FOR TRACK
-            await start_track(item_id, user, None)
+            # FOR ALBUM
+            if type_dict["album"]:
+                await start_album(item_id, user)
+            # FOR TRACK
+            else:
+                await start_track(item_id, user, None)
+
+    except Exception as e:
+        LOGGER.error(f"Error processing Qobuz URL {url}: {e}")
+        await send_message(user, lang.s.ERR_PROCESSING_QOBUZ)
 
 
 async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
