@@ -1,3 +1,4 @@
+import asyncio
 from pyrogram.types import Message
 from pyrogram import Client, filters
 
@@ -41,19 +42,35 @@ async def download_track(c, msg:Message):
             await cleanup(user) # deletes uploaded files
             await antiSpam(msg.from_user.id, msg.chat.id, True)
 
-async def start_link(link:str, user:dict):
+async def start_link(link: str, user: dict, retries: int = 3):
     tidal = ["https://tidal.com", "https://listen.tidal.com", "tidal.com", "listen.tidal.com"]
     deezer = ["https://deezer.page.link", "https://deezer.com", "deezer.com", "https://www.deezer.com"]
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
-    if link.startswith(tuple(tidal)):
-        return "tidal"
-    elif link.startswith(tuple(deezer)):
-        return "deezer"
-    elif link.startswith(tuple(qobuz)):
-        user['provider'] = 'Qobuz'
-        await start_qobuz(link, user)
-    elif link.startswith(tuple(spotify)):
-        return 'spotify'
-    else:
+
+    try:
+        if link.startswith(tuple(tidal)):
+            return "tidal"
+        elif link.startswith(tuple(deezer)):
+            return "deezer"
+        elif link.startswith(tuple(qobuz)):
+            user['provider'] = 'Qobuz'
+            await start_qobuz(link, user)
+        elif link.startswith(tuple(spotify)):
+            return 'spotify'
+        else:
+            return None
+    except ContentLengthError as e:
+        LOGGER.error(f"ContentLengthError: {e}")
+        if retries > 0:
+            LOGGER.info("Retrying...")
+            await asyncio.sleep(2)  # Wait before retrying
+            return await start_link(link, user, retries - 1)
+        else:
+            LOGGER.error("Max retries reached. Unable to download.")
+            await send_message(user, lang.s.ERR_DOWNLOAD_FAILED)
+            return None
+    except Exception as e:
+        LOGGER.error(f"Unexpected error: {e}")
+        await send_message(user, lang.s.ERR_PROCESSING_LINK)
         return None
