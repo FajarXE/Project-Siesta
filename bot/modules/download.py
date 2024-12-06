@@ -1,4 +1,3 @@
-import asyncio
 from pyrogram.types import Message
 from pyrogram import Client, filters
 
