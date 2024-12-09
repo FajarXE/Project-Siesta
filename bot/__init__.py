@@ -19,5 +19,6 @@ class CMD(object):
     DOWNLOAD = ["dl", f"dl@{bot}"]
     BAN = ["ban", f"ban@{bot}"]
     AUTH = ["auth", f"auth@{bot}"]
+    LOG = ["log", f"log@{bot}"]
 
 cmd = CMD()
