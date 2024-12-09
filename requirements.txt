@@ -9,8 +9,8 @@ Pillow
 psutil
 psycopg2-binary
 pycryptodomex
-pyrofork
+pyrogram
 python-dotenv
 requests
-TgCrypto-pyrofork
+tgcrypto
 uvloop
