@@ -24,7 +24,7 @@ from .message import send_message, edit_message
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024  # 2GB
 # download folder structure : BASE_DOWNLOAD_DIR + message_r_id
 
-async def download_file(url, path, retries=100, timeout=600):
+async def download_file(url, path, retries=50, timeout=600):
     """
     Args:
         url (str): URL to download.
