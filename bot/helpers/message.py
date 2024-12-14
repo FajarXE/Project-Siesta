@@ -177,7 +177,8 @@ async def edit_message(msg:Message, text, markup=None):
     try:
         edited = await msg.edit_text(
             text=text,
-            reply_markup=markup
+            reply_markup=markup,
+            disable_web_page_preview=True
         )
         return edited
     except MessageNotModified:
