@@ -5,8 +5,6 @@ import asyncio
 import shutil
 import zipfile
 
-import bot.helpers.translations as lang
-
 from pathlib import Path
 from urllib.parse import quote
 from aiohttp import ClientTimeout
@@ -14,6 +12,7 @@ from pyrogram.errors import MessageNotModified
 from concurrent.futures import ThreadPoolExecutor
 
 from config import Config
+import bot.helpers.translations as lang
 
 from ..logger import LOGGER
 from ..settings import bot_set
@@ -24,7 +23,7 @@ from .message import send_message, edit_message
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024  # 2GB
 # download folder structure : BASE_DOWNLOAD_DIR + message_r_id
 
-async def download_file(url, path, retries=50, timeout=600):
+async def download_file(url, path, retries=3, timeout=30):
     """
     Args:
         url (str): URL to download.
@@ -338,6 +337,7 @@ async def progress_message(done, total, details):
             details['type'].title()
         )
     )
+    # await asyncio.sleep(5)
 
 
 
