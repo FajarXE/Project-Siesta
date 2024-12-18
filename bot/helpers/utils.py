@@ -323,8 +323,8 @@ async def progress_message(done, total, details):
         details: Message, text (dict)
     """
     progress_bar = "{0}{1}".format(
-        ''.join(["▰" for i in range(math.floor((done/total) * 10))]),
-        ''.join(["▱" for i in range(10 - math.floor((done/total) * 10))])
+        ''.join(["◆" for i in range(math.floor((done/total) * 10))]),
+        ''.join(["◇" for i in range(10 - math.floor((done/total) * 10))])
     )
 
     await edit_message(
@@ -337,7 +337,7 @@ async def progress_message(done, total, details):
             details['type'].title()
         )
     )
-    # await asyncio.sleep(10)
+    # await asyncio.sleep(5)
 
 
 
