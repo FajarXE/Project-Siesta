@@ -337,7 +337,7 @@ async def progress_message(done, total, details):
             details['type'].title()
         )
     )
-    # await asyncio.sleep(5)
+    # await asyncio.sleep(10)
 
 
 
