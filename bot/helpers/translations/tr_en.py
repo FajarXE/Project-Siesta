@@ -5,22 +5,22 @@ class EN(object):
 # BASICS
 #
 #----------------
-    WELCOME_MSG = "Hello {}"
-    DOWNLOADING = 'Downloading........'
+    WELCOME_MSG = "ʜᴇʟʟᴏ {}"
+    DOWNLOADING = 'ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ........'
     DOWNLOAD_PROGRESS = """
-<b>╭─ Progress
+<b>╭─ ᴘʀᴏɢʀᴇss
 │
 ├ {0}
 │
-├ Done : <code>{1} / {2}</code>
+├ ᴅᴏɴᴇ : <code>{1} / {2}</code>
 │
-├ Title : <code>{3}</code>
+├ ᴛɪᴛʟᴇ : <code>{3}</code>
 │
-╰─ Type : <code>{4}</code></b>
+╰─ ᴛʏᴘᴇ : <code>{4}</code></b>
 """
-    UPLOADING = 'Uploading........'
-    ZIPPING = 'Zipping........'
-    TASK_COMPLETED = "Download Finished"
+    UPLOADING = 'ᴜᴘʟᴏᴀᴅɪɴɢ........'
+    ZIPPING = 'ᴢɪᴘᴘɪɴɢ........'
+    TASK_COMPLETED = "ᴅᴏᴡɴʟᴏᴀᴅ ғɪɴɪsʜᴇᴅ"
 
 
 
@@ -126,31 +126,31 @@ Auth Chats : {4}
 #
 #----------------
     ALBUM_TEMPLATE = """
-🎶 <b>Title :</b> {title}
-👤 <b>Artist :</b> {artist}
-📅 <b>Release Date :</b> {date}
-🔢 <b>Total Tracks :</b> {totaltracks}
-📀 <b>Total Volumes :</b> {totalvolume}
-💫 <b>Quality :</b> {quality}
-📡 <b>Provider :</b> {provider}
-🔞 <b>Explicit :</b> {explicit}
+<b>ᴛɪᴛʟᴇ :</b> {title}
+<b>ᴀʀᴛɪsᴛ :</b> {artist}
+<b>ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :</b> {date}
+<b>ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :</b> {totaltracks}
+<b>ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :</b> {totalvolume}
+<b>ǫᴜᴀʟɪᴛʏ :</b> {quality}
+<b>ᴘʀᴏᴠɪᴅᴇʀ :</b> {provider}
+<b>ᴇxᴘʟɪᴄɪᴛ :</b> {explicit}
 """
 
     PLAYLIST_TEMPLATE = """
-🎶 <b>Title :</b> {title}
-🔢 <b>Total Tracks :</b> {totaltracks}
-💫 <b>Quality :</b> {quality}
-📡 <b>Provider :</b> {provider}
+<b>ᴛɪᴛʟᴇ :</b> {title}
+<b>ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :</b> {totaltracks}
+<b>ǫᴜᴀʟɪᴛʏ :</b> {quality}
+<b>ᴘʀᴏᴠɪᴅᴇʀ :</b> {provider}
 """
 
     SIMPLE_TITLE = """
-Name : {0}
-Type : {1}
-Provider : {2}
+ɴᴀᴍᴇ : {0}
+ᴛʏᴘᴇ : {1}
+ᴘʀᴏᴠɪᴅᴇʀ : {2}
 """
 
 ARTIST_TEMPLATE = """
-👤 <b>Artist :</b> {artist}
-💫 <b>Quality :</b> {quality}
-📡 <b>Provider :</b> {provider}
+<b>ᴀʀᴛɪsᴛ :</b> {artist}
+<b>ǫᴜᴀʟɪᴛʏ :</b> {quality}
+<b>ᴘʀᴏᴠɪᴅᴇʀ :</b> {provider}
 """
