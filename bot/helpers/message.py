@@ -1,17 +1,13 @@
 import os
+import asyncio
 
 from pyrogram.types import Message
 from pyrogram.errors import MessageNotModified, FloodWait
 
 from bot.tgclient import aio
 from bot.settings import bot_set
+from bot.logger import LOGGER
 
-try:
-    import asyncio
-except ModuleNotFoundError:
-    os.system("pip3 install --no-cache-dir asyncio")
-else:
-    import asyncio
 
 current_user = []
 
@@ -111,7 +107,7 @@ async def antiSpam(uid=None, cid=None, revoke=False) -> bool:
 
 
 async def send_message(user, item, itype='text', caption=None, markup=None, chat_id=None, \
-        thumb=None, meta=None):
+        meta=None):
     """
     user: user details (dict)
     item: to send
@@ -143,7 +139,7 @@ async def send_message(user, item, itype='text', caption=None, markup=None, chat
                 caption=caption,
                 reply_to_message_id=user['r_id']
             )
-    
+
         elif itype == 'audio':
             msg = await aio.send_audio(
                 chat_id=chat_id,
@@ -152,11 +148,10 @@ async def send_message(user, item, itype='text', caption=None, markup=None, chat
                 duration=int(meta['duration']),
                 performer=meta['artist'],
                 title=meta['title'],
-                thumb=thumb,
+                thumb=meta['thumbnail'],
                 reply_to_message_id=user['r_id']
             )
-            os.remove(thumb)
-    
+
         elif itype == 'pic':
             msg = await aio.send_photo(
                 chat_id=chat_id,
@@ -164,16 +159,15 @@ async def send_message(user, item, itype='text', caption=None, markup=None, chat
                 caption=caption,
                 reply_to_message_id=user['r_id']
             )
-    except FloodWait as f:
-        await asyncio.sleep(f.value)
-        return await send_message(
-            user, item, itype, caption, markup, chat_id,
-            thumb, meta
-        )
+
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        return await send_message(user, item, itype, caption, markup, chat_id, meta)
+
     return msg
 
 
-async def edit_message(msg:Message, text, markup=None):
+async def edit_message(msg:Message, text, markup=None, antiflood=True):
     try:
         edited = await msg.edit_text(
             text=text,
@@ -183,6 +177,9 @@ async def edit_message(msg:Message, text, markup=None):
         return edited
     except MessageNotModified:
         return None
-    except FloodWait as f:
-        await asyncio.sleep(f.value)
-        return await edit_message(msg, text, markup)
+    except FloodWait as e:
+        if antiflood:
+            await asyncio.sleep(e.value)
+            return await edit_message(msg, text, markup, antiflood)
+        else:
+            return None
