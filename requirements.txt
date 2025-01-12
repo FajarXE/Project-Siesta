@@ -14,4 +14,3 @@ pyrogram
 python-dotenv
 requests
 tgcrypto
-uvloop
