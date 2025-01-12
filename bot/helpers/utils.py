@@ -10,6 +10,7 @@ from urllib.parse import quote
 from aiohttp import ClientTimeout
 from pyrogram.errors import MessageNotModified
 from concurrent.futures import ThreadPoolExecutor
+from pyrogram.errors import FloodWait
 
 from config import Config
 import bot.helpers.translations as lang
@@ -23,7 +24,7 @@ from .message import send_message, edit_message
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024  # 2GB
 # download folder structure : BASE_DOWNLOAD_DIR + message_r_id
 
-async def download_file(url, path, retries=50, timeout=600):
+async def download_file(url, path, retries=3, timeout=30):
     """
     Args:
         url (str): URL to download.
@@ -260,12 +261,11 @@ async def post_art_poster(user:dict, meta:dict):
     Returns:
         Message
     """
+    photo = meta['cover']
     if meta['type'] == 'album':
         caption = await format_string(lang.s.ALBUM_TEMPLATE, meta, user)
-        photo = meta['cover']
     else:
         caption = await format_string(lang.s.PLAYLIST_TEMPLATE, meta, user)
-        photo = "./project-siesta.png"
     
     if bot_set.art_poster:
         msg = await send_message(user, photo, 'pic', caption)
@@ -323,27 +323,32 @@ async def progress_message(done, total, details):
         details: Message, text (dict)
     """
     progress_bar = "{0}{1}".format(
-        ''.join(["◆" for i in range(math.floor((done/total) * 10))]),
-        ''.join(["◇" for i in range(10 - math.floor((done/total) * 10))])
+        ''.join(["▰" for i in range(math.floor((done/total) * 10))]),
+        ''.join(["▱" for i in range(10 - math.floor((done/total) * 10))])
     )
 
-    await edit_message(
-        details['msg'],
-        details['text'].format(
-            progress_bar, 
-            done, 
-            total, 
-            details['title'],
-            details['type'].title()
+    try:
+        await edit_message(
+            details['msg'],
+            details['text'].format(
+                progress_bar, 
+                done, 
+                total, 
+                details['title'],
+                details['type'].title()
+            ),
+            None,
+            False
         )
-    )
-    # await asyncio.sleep(5)
-
+    except FloodWait as e:
+        pass # dont update the message if flooded
 
 
 async def cleanup(user=None, metadata=None, ):
     """
-    Clean up after task completed / Clean up after upload
+    Clean up after task completed - For concurrent downloads
+    Clean up after upload - For single download
+    
     if metadata
         Artist/Album/Playlist files are deleted
     if user
@@ -371,5 +376,9 @@ async def cleanup(user=None, metadata=None, ):
     if user:
         try:
             shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
+        except Exception as e:
+            LOGGER.info(e)
+        try:
+            shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/")
         except Exception as e:
             LOGGER.info(e)
