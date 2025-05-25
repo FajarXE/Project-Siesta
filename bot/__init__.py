@@ -6,7 +6,7 @@ plugins = dict(
     root="bot/modules"
 )
 
-PORT = int(os.getenv("PORT"))
+PORT = int(os.getenv("PORT", "0"))
 
 subprocess.Popen([f"gunicorn server:app --bind 0.0.0.0:{PORT} --worker-class gevent"], shell=True)
 
