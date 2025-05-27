@@ -98,7 +98,7 @@ class BotSettings:
         elif db_upload == 'Telegram' or db_upload == 'Local':
             self.upload_mode = db_upload
         else:
-            self.upload_mode = 'Local'
+            self.upload_mode = 'Telegram'
     
 
     async def login_qobuz(self):
