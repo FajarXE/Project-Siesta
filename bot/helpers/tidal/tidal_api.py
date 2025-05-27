@@ -22,7 +22,7 @@ class TidalApi:
         self.mobile_hires = None
         self.mobile_atmos = None
 
-        self.quality = 'LOW'
+        self.quality = 'MAX'
         self.spatial = 'OFF'
         
 
