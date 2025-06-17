@@ -167,7 +167,7 @@ async def send_message(user, item, itype='text', caption=None, markup=None, chat
     return msg
 
 
-async def edit_message(msg:Message, text, markup=None, antiflood=True):
+async def edit_message(msg: Message, text, markup=None, antiflood=True):
     try:
         edited = await msg.edit_text(
             text=text,
@@ -176,7 +176,7 @@ async def edit_message(msg:Message, text, markup=None, antiflood=True):
         )
         return edited
     except MessageNotModified:
-        return None
+        pass
     except FloodWait as e:
         if antiflood:
             await asyncio.sleep(e.value)

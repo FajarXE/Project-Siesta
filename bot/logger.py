@@ -26,8 +26,9 @@ class Logger:
         logging.getLogger("Librespot:ApiClient").setLevel(logging.WARNING)
         logging.getLogger("pydub").setLevel(logging.WARNING)
         logging.getLogger("spotipy").setLevel(logging.WARNING)
+        logging.getLogger("pymongo").setLevel(logging.ERROR)
 
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]')
 
         # Create file handler
         file_handler = logging.FileHandler(log_file_path, 'a', 'utf-8')

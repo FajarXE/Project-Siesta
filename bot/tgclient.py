@@ -20,7 +20,7 @@ class Bot(Client):
             plugins=plugins,
             workdir=Config.WORK_DIR,
             workers=100,
-            mongodb=dict(AsyncClient(Config.DATABASE_URL), True)
+            mongodb=dict(connection=AsyncClient(Config.DATABASE_URL), remove_peers=True)
         )
 
     async def start(self):
@@ -30,8 +30,8 @@ class Bot(Client):
         await bot_set.login_tidal()
         LOGGER.info("BOT : Started Successfully")
 
-    async def stop(self, *args):
-        await super().stop(*args)
+    async def stop(self, block=False):
+        await super().stop(block)
         for client in bot_set.clients:
             await client.session.close()
         LOGGER.info('BOT : Exited Successfully ! Bye..........')

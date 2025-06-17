@@ -2,7 +2,6 @@ aiofiles
 aiohttp
 aiolimiter
 async_pymongo
-attrify
 gevent
 gunicorn
 flask

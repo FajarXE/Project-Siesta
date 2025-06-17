@@ -22,7 +22,7 @@ async def download_track(c, msg:Message):
             else:
                 link = msg.text.split(" ", maxsplit=1)[1]
                 reply = False
-        except:
+        except IndexError:
             return await send_message(msg, lang.s.ERR_NO_LINK)
 
         if not link:
@@ -42,19 +42,15 @@ async def download_track(c, msg:Message):
             await cleanup(user) # deletes uploaded files
             await antiSpam(msg.from_user.id, msg.chat.id, True)
 
-async def start_link(link:str, user:dict):
+async def start_link(link: str, user: dict) -> None:
     tidal = ["https://tidal.com", "https://listen.tidal.com", "tidal.com", "listen.tidal.com"]
     deezer = ["https://deezer.page.link", "https://deezer.com", "deezer.com", "https://www.deezer.com"]
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
+    
+    # No Need to return because not called Any 
     if link.startswith(tuple(tidal)):
         await start_tidal(link, user)
-    elif link.startswith(tuple(deezer)):
-        return "deezer"
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
         await start_qobuz(link, user)
-    elif link.startswith(tuple(spotify)):
-        return 'spotify'
-    else:
-        return None

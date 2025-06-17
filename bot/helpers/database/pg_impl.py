@@ -37,6 +37,7 @@ class BotSettings(DataBaseHandle):
 
     def __init__(self, dburl=None):
         if dburl is None:
+            return
             dburl = Config.DATABASE_URL
         super().__init__(dburl)
 

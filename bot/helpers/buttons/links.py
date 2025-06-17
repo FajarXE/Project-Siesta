@@ -1,4 +1,3 @@
-from config import Config
 import bot.helpers.translations as lang
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 

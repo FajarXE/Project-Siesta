@@ -37,9 +37,9 @@ class BotSettings:
         self.tidal = None
         self.admins = Config.ADMINS
         self.loop = asyncio.new_event_loop()
+        self.set_db = self.loop.run_until_complete(database.get_variable())
 
         self.set_language()
-        self.set_db = self.loop.run_until_complete(database.get_variable())
         self.auth_users = self.set_db.get('AUTH_USERS', [])
         self.auth_chats = self.set_db.get('AUTH_CHATS', [])
 
