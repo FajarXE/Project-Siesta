@@ -1,6 +1,8 @@
 aiofiles
 aiohttp
 aiolimiter
+async_pymongo
+attrify
 gevent
 gunicorn
 flask
@@ -10,7 +12,7 @@ Pillow
 psutil
 psycopg2-binary
 pycryptodomex
-pyrogram
+pyrofork
 python-dotenv
 requests
-tgcrypto
+tgcrypto-pyrofork

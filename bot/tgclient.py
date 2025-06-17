@@ -1,6 +1,7 @@
 from config import Config
 
 from pyrogram import Client
+from async_pymongo import AsyncClient
 
 from .logger import LOGGER
 from .settings import bot_set
@@ -12,13 +13,14 @@ plugins = dict(
 class Bot(Client):
     def __init__(self):
         super().__init__(
-            "Project-Siesta",
+            name=Config.BOT_USERNAME,
             api_id=Config.APP_ID,
             api_hash=Config.API_HASH,
             bot_token=Config.TG_BOT_TOKEN,
             plugins=plugins,
             workdir=Config.WORK_DIR,
-            workers=100
+            workers=100,
+            mongodb=dict(AsyncClient(Config.DATABASE_URL), True)
         )
 
     async def start(self):
@@ -29,7 +31,7 @@ class Bot(Client):
         LOGGER.info("BOT : Started Successfully")
 
     async def stop(self, *args):
-        await super().stop()
+        await super().stop(*args)
         for client in bot_set.clients:
             await client.session.close()
         LOGGER.info('BOT : Exited Successfully ! Bye..........')

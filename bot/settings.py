@@ -2,23 +2,19 @@ import os
 import json
 import base64
 import requests
+import asyncio
 
 import bot.helpers.translations as lang
 
 from config import Config
 from bot.logger import LOGGER
 
-from .helpers.database.pg_impl import set_db
+from .helpers.database.mongo_async import database
 from .helpers.qobuz.qopy import qobuz_api
 from .helpers.deezer.dzapi import deezerapi
 from .helpers.tidal.tidal_api import tidalapi
 from .helpers.translations import lang_available
 
-
-# For simple boolean values
-def __getvalue__(var):
-    value, _ = set_db.get_variable(var)
-    return value if value else False
 
 def __encrypt_string__(string):
     s = bytes(string, 'utf-8')
@@ -34,46 +30,43 @@ def __decrypt_string__(string):
         return string
 
 
-
 class BotSettings:
     def __init__(self):
         self.deezer = False
         self.qobuz = False
         self.tidal = None
         self.admins = Config.ADMINS
+        self.loop = asyncio.new_event_loop()
 
         self.set_language()
-
-        db_users, _ = set_db.get_variable('AUTH_USERS')
-        self.auth_users = json.loads(db_users) if db_users else []
-        db_chats, _ = set_db.get_variable('AUTH_CHATS')
-        self.auth_chats = json.loads(db_chats) if db_chats else []
+        self.set_db = self.loop.run_until_complete(database.get_variable())
+        self.auth_users = self.set_db.get('AUTH_USERS', [])
+        self.auth_chats = self.set_db.get('AUTH_CHATS', [])
 
         self.rclone = False
         self.check_upload_mode()
 
-        spam, _ = set_db.get_variable('ANTI_SPAM') #string
-        self.anti_spam = spam if spam else 'OFF'
+        self.anti_spam = self.set_db.get('ANTI_SPAM', "OFF")
 
-        self.bot_public = __getvalue__('BOT_PUBLIC')
+        self.bot_public = self.set_db.get('BOT_PUBLIC')
 
         # post photo of album/artist
-        self.art_poster = __getvalue__('ART_POSTER')
+        self.art_poster = self.set_db.get('ART_POSTER')
 
-        self.playlist_sort = __getvalue__('PLAYLIST_SORT')
+        self.playlist_sort = self.set_db.get('PLAYLIST_SORT')
         # disable returning links for sorted playlist for cleaner chat
-        self.disable_sort_link = __getvalue__('PLAYLIST_LINK_DISABLE')
+        self.disable_sort_link = self.set_db.get('PLAYLIST_LINK_DISABLE')
 
         # Multithreaded downloads
-        self.artist_batch = __getvalue__('ARTIST_BATCH_UPLOAD')
-        self.playlist_conc = __getvalue__('PLAYLIST_CONCURRENT')
+        self.artist_batch = self.set_db.get('ARTIST_BATCH_UPLOAD')
+        self.playlist_conc = self.set_db.get('PLAYLIST_CONCURRENT')
         
-        link_option, _ = set_db.get_variable('RCLONE_LINK_OPTIONS') #str
+        link_option = self.set_db.get('RCLONE_LINK_OPTIONS') #str
         self.link_options = link_option if self.rclone and link_option else 'False'
 
-        self.album_zip = __getvalue__('ALBUM_ZIP')
-        self.playlist_zip = __getvalue__('PLAYLIST_ZIP')
-        self.artist_zip = __getvalue__('ARTIST_ZIP')
+        self.album_zip = self.set_db.get('ALBUM_ZIP')
+        self.playlist_zip = self.set_db.get('PLAYLIST_ZIP')
+        self.artist_zip = self.set_db.get('ARTIST_ZIP')
 
         self.clients = []
 
@@ -92,7 +85,7 @@ class BotSettings:
                         f.write(rclone.content)
                     self.rclone = True
             
-        db_upload, _ = set_db.get_variable('UPLOAD_MODE')
+        db_upload = self.set_db.get('UPLOAD_MODE')
         if self.rclone and db_upload == 'RCLONE':
             self.upload_mode = 'RCLONE'
         elif db_upload == 'Telegram' or db_upload == 'Local':
@@ -107,7 +100,7 @@ class BotSettings:
                 await qobuz_api.login()
                 self.qobuz = qobuz_api
                 self.clients.append(qobuz_api)
-                quality, _ = set_db.get_variable("QOBUZ_QUALITY")
+                quality = self.set_db.get("QOBUZ_QUALITY")
                 if quality:
                     bot_set.qobuz.quality = int(quality)
             except Exception as e:
@@ -125,7 +118,8 @@ class BotSettings:
                 else:
                     try:
                         await deezerapi.session.close()
-                    except:pass
+                    except:
+                        pass
             else:
                 LOGGER.error('DEEZER : Check BF_SECRET and TRACK_URL_KEY')
 
@@ -147,7 +141,7 @@ class BotSettings:
             LOGGER.debug("TIDAL: Using refresh token from environment")
         else:
             # Try to get saved authentication data
-            _, saved_info = set_db.get_variable("TIDAL_AUTH_DATA")
+            saved_info = self.set_db.get("TIDAL_AUTH_DATA")
             if saved_info:
                 try:
                     data = json.loads(__decrypt_string__(saved_info))
@@ -165,12 +159,12 @@ class BotSettings:
             LOGGER.info(f"TIDAL: Successfully loaded account - {sub}")
         
         # Set audio quality
-        quality, _ = set_db.get_variable('TIDAL_QUALITY')
+        quality = self.set_db.get('TIDAL_QUALITY')
         if quality:
             tidalapi.quality = quality
         
         # Set spatial audio
-        spatial, _ = set_db.get_variable('TIDAL_SPATIAL')
+        spatial = self.set_db.get('TIDAL_SPATIAL')
         if spatial:
             tidalapi.spatial = spatial
         
@@ -187,13 +181,13 @@ class BotSettings:
         }
 
         txt = json.dumps(data)
-        set_db.set_variable("TIDAL_AUTH_DATA", 0, True, __encrypt_string__(txt))
+        await database.set_variable("TIDAL_AUTH_DATA", __encrypt_string__(txt))
         
 
 
 
     def set_language(self):
-        db_lang, _ = set_db.get_variable('BOT_LANGUAGE') #str
+        db_lang = self.set_db.get('BOT_LANGUAGE')
         self.bot_lang = db_lang if db_lang else 'en'
 
         for item in lang_available:

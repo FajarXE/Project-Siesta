@@ -1,18 +1,19 @@
 import os
 import logging
+import sys
 from os import getenv
 from dotenv import load_dotenv
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]'
     )
 LOGGER = logging.getLogger(__name__)
 
 if not os.environ.get("ENV"):
     load_dotenv('.env', override=True)
 
-class Config(object):
+class Config:
 #--------------------
 
 # MAIN BOT VARIABLES
@@ -23,14 +24,14 @@ class Config(object):
         APP_ID = int(getenv("APP_ID"))
         API_HASH = getenv("API_HASH")
         DATABASE_URL = getenv("DATABASE_URL")
-        BOT_USERNAME = getenv("BOT_USERNAME")
+        BOT_USERNAME = getenv("BOT_USERNAME").lstrip("@")
         ADMINS = set(int(x) for x in getenv("ADMINS").split())
         PORT = getenv("PORT", "0")
         if PORT.isdigit():
             PORT = int(PORT)
-    except KeyError as e:
-        LOGGER.warning("BOT : Essential Configs are missing")
-        exit(1)
+    except Exception as e:
+        LOGGER.warning(f"BOT : Essential Configs are missing -> {e}")
+        sys.exit(1)
 
 
 #--------------------
@@ -99,4 +100,4 @@ class Config(object):
 # CONCURRENT
 
 #--------------------
-    MAX_WORKERS = int(getenv("MAX_WORKERS", 15))
+    MAX_WORKERS = int(getenv("MAX_WORKERS", "15"))
