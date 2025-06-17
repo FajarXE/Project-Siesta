@@ -28,7 +28,7 @@ class MongoDB:
         return bool(ret)
     
     async def set_variable(self, key: str, value: str|bool|int|None) -> bool:
-        ret = await self.client.music.update_one({"_id": Config.BOT_USERNAME}, {"$set": {key: value}})
+        ret = await self.client.music.update_one({"_id": Config.BOT_USERNAME}, {"$set": {key: value}}, upsert=True)
         #
         return bool(ret)
     

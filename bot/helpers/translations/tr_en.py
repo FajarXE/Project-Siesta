@@ -32,7 +32,7 @@ class EN(object):
 #----------------
     INIT_SETTINGS_PANEL = '<b>Welcome to Bot Settings</b>'
     LANGUAGE_PANEL = 'Select bot language here'
-    CORE_PANEL = 'Edit main settings here'
+    CORE_PANEL = 'Edit main settings here\n\nP-Batch: Playlist Batch\nA-Batch: Artist Batch'
     PROVIDERS_PANEL = 'Configure each platform seperartelty'
 
     TIDAL_PANEL = "Configure Tidal settings here"
@@ -90,9 +90,9 @@ Auth Chats : {4}
     POST_ART_BUT = "Art Poster : {}"
     SORT_PLAYLIST = 'Sort Playlist : {}'
     DISABLE_SORT_LINK = 'Disable Sort Link : {}'
-    PLAYLIST_CONC_BUT = "Playlist Batch Download : {}"
+    PLAYLIST_CONC_BUT = "P-Batch DL : {}"
     PLAYLIST_ZIP = 'Zip Playlist : {}'
-    ARTIST_BATCH_BUT = 'Artist Batch Upload : {}'
+    ARTIST_BATCH_BUT = 'A-Batch Upload : {}'
     ARTIST_ZIP = 'Zip Artist : {}'
     ALBUM_ZIP = 'Zip Album : {}'
 
