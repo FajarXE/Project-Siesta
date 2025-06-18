@@ -18,12 +18,15 @@ Choose Menu option bellow:
 """
 
 @Client.on_message(filters.command(cmd.USETTING))
-async def start_user_setting(client: Client, m: Message):
+async def start_user_setting(client: Client, m: Message, edit=False):
     if not await check_user(msg=m):
         return
     
     user = await fetch_user_details(m)
-    await send_message(user, USETTING_TEXT.format(m.from_user.mention), markup=usetting_button())
+    if not edit:
+        await send_message(user, USETTING_TEXT.format(m.from_user.mention), markup=usetting_button())
+        return
+    await edit_message(m, USETTING_TEXT.format(m.from_user.mention), markup=usetting_button())
 
 
 @Client.on_callback_query(filters.regex("^uset_(tidal|back)"))
@@ -31,7 +34,10 @@ async def uset_cb_tidal(client, query):
     if not await check_user(msg=query.message):
         return
     data = query.data.split("_")
-    logging.info(data)
+    #logging.info(data)
+    if data[1] == "back":
+        await start_user_setting(client, query.message, True)
+        return
     user_id = query.from_user.id
     #if options == "tidal":
     text = f"Choose Tidal Audio Quality bellow:"
