@@ -4,12 +4,6 @@ import sys
 from os import getenv
 from dotenv import load_dotenv
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]'
-    )
-LOGGER = logging.getLogger(__name__)
-
 if not os.environ.get("ENV"):
     load_dotenv('.env', override=True)
 
@@ -30,7 +24,7 @@ class Config:
         if PORT.isdigit():
             PORT = int(PORT)
     except Exception as e:
-        LOGGER.warning(f"BOT : Essential Configs are missing -> {e}")
+        logging.warning(f"BOT : Essential Configs are missing -> {e}")
         sys.exit(1)
 
 
