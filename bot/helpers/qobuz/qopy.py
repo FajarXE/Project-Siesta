@@ -19,7 +19,7 @@ class QoClient:
         self.base = "https://www.qobuz.com/api.json/0.2/"
         self.sec = None
         self.quality = 27
-        
+        self.user_data = {}
 
     async def api_call(self, epoint, **kwargs):
         if epoint == "user/login":
@@ -188,13 +188,11 @@ class QoClient:
         if self.sec is None:
             raise Exception("QOBUZ : Can't find any valid app secret")
 
-
-
-
-
-    async def get_track_url(self, id):
-            fmt_id = self.quality
-            return await self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
+    async def get_track_url(self, id, user=None):
+        user_dict = self.user_data.get(user["user_id"], {})
+        quality = user_dict.get("format", self.quality)
+        fmt_id = quality
+        return await self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
 
     async def get_album_meta(self, id):
         return await self.api_call("album/get", id=id)
@@ -217,5 +215,12 @@ class QoClient:
 
     async def get_label_meta(self, id):
         return await self.multi_meta("label/get", "albums_count", id, None)
+    
+    async def setup_quality(self, user_id: int=0, qual: int=0) -> None:
+        data = {}
+        self.user_data.setdefault(user_id, {})
+        if qual:
+            data["format"] = qual
+        self.user_data[user_id].update(data)
 
 qobuz_api = QoClient()

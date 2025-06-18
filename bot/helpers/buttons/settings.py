@@ -234,21 +234,31 @@ def tidal_auth_buttons():
 
 
 # qobuz qualities
-def qb_button(qualities:dict):
+def qb_button(qualities: dict, user_id: int = 0):
     inline_keyboard = []
+    usetting = user_id != 0
     for quality in qualities.values():
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
                     text=quality,
-                    callback_data=f"qbQ_{quality.replace('✅', '')}"
+                    callback_data=f"qbQ_{quality.replace('✅', '')}" if not usetting else f"uqbs_{quality.replace('✅', '')}"
                 )
             ]
         )
+    if usetting:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+    if usetting:
+        return InlineKeyboardMarkup(inline_keyboard)
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
+# tidal qualities
 def tidal_quality_button(qualities: dict, user_id: int = 0):
     inline_keyboard = []
     user_dict = bot_set.tidal.user_data.get(user_id, {})
