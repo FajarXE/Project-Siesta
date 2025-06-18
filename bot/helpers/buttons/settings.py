@@ -3,8 +3,10 @@ import bot.helpers.translations as lang
 from bot.settings import bot_set
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-main_button = [[InlineKeyboardButton(text=lang.s.MAIN_MENU_BUTTON, callback_data="main_menu")]]
-close_button = [[InlineKeyboardButton(text=lang.s.CLOSE_BUTTON, callback_data="close")]]
+def fetch_base_buttons():
+    main_button = [[InlineKeyboardButton(text=lang.s.MAIN_MENU_BUTTON, callback_data="main_menu")]]
+    close_button = [[InlineKeyboardButton(text=lang.s.CLOSE_BUTTON, callback_data="close")]]
+    return main_button, close_button
 
 def main_menu():
     inline_keyboard = [
@@ -27,6 +29,7 @@ def main_menu():
             )
         ]
     ]
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
@@ -59,6 +62,7 @@ def providers_button():
                 )
             ]
         )
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
@@ -84,7 +88,7 @@ def tg_button():
             )
         ]
     ]
-
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
@@ -150,6 +154,7 @@ def core_buttons():
             )
         ]
     ]
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
@@ -167,6 +172,7 @@ def language_buttons(languages, selected):
                 )
             ]
         )
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button+ close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
@@ -191,7 +197,7 @@ def tidal_buttons():
                 )
             ]
         )
-
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
@@ -221,6 +227,7 @@ def tidal_auth_buttons():
                 )
             ]
         )
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
     
@@ -238,6 +245,7 @@ def qb_button(qualities:dict):
                 )
             ]
         )
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
@@ -261,5 +269,6 @@ def tidal_quality_button(qualities:dict):
                 )
         ]
     )
+    main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)

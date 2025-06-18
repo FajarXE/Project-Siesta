@@ -42,7 +42,6 @@ class BotSettings:
         self.set_db = set_db
 
         self.bot_lang = None
-        self.set_language()
         self.auth_users = self.set_db.get('AUTH_USERS', [])
         self.auth_chats = self.set_db.get('AUTH_CHATS', [])
 
@@ -190,10 +189,10 @@ class BotSettings:
 
 
 
-    def set_language(self):
-        db_lang = self.set_db.get('BOT_LANGUAGE')
-        logging.info(db_lang)
-        self.bot_lang = db_lang if db_lang else 'en'
+    async def set_language(self):
+        bot_lang = await database.get_variable()
+        self.bot_lang = bot_lang.get("BOT_LANGUAGE")
+        logging.info(self.bot_lang)
 
         for item in lang_available:
             logging.info(item.__language__ == self.bot_lang)

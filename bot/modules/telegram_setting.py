@@ -7,7 +7,7 @@ from pyrogram.types import CallbackQuery, Message
 
 from ..settings import bot_set
 from ..helpers.translations import lang_available
-from ..helpers.buttons.settings import *
+from ..helpers.buttons.settings import tg_button, language_buttons
 from ..helpers.database.mongo_async import database
 from ..helpers.message import edit_message, check_user
 
@@ -58,7 +58,7 @@ async def language_panel_cb(client, cb: CallbackQuery):
         await edit_message(
             cb.message,
             lang.s.LANGUAGE_PANEL,
-            language_buttons(lang_available, current)
+            markup=language_buttons(lang_available, current)
         )
 
 
@@ -67,7 +67,8 @@ async def language_panel_cb(client, cb: CallbackQuery):
 async def set_language_cb(client, cb: CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         to_set = cb.data.split('_')[1]
+        logging.info(to_set)
         bot_set.bot_lang = to_set
         await database.set_variable('BOT_LANGUAGE', to_set)
-        await asyncio.to_thread(bot_set.set_language)
+        await bot_set.set_language()
         await language_panel_cb(client, cb)

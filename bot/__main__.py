@@ -5,6 +5,7 @@ import asyncio, sys, logging, traceback
 from bot import Config
 
 from .tgclient import aio
+from .settings import bot_set
 
 def signal_handler(s, f):
     try:
@@ -15,6 +16,7 @@ def signal_handler(s, f):
 
 
 async def main():
+    await bot_set.set_language()
     await aio.start()
     signal.signal(signal.SIGINT, signal_handler)
 
