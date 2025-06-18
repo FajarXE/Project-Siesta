@@ -191,15 +191,15 @@ class BotSettings:
 
     async def set_language(self):
         bot_lang = await database.get_variable()
-        self.bot_lang = bot_lang.get("BOT_LANGUAGE")
-        logging.info(self.bot_lang)
+        self.bot_lang = bot_lang.get("BOT_LANGUAGE", "en")
+        #logging.info(self.bot_lang)
 
         for item in lang_available:
             logging.info(item.__language__ == self.bot_lang)
             if item.__language__ == self.bot_lang:
                 lang.s = item
                 break
-        logging.info(lang.s)
+        #logging.info(lang.s)
 
 
 bot_set = BotSettings()

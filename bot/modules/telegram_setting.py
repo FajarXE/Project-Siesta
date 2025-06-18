@@ -54,7 +54,7 @@ async def anti_spam_cb(client, cb: CallbackQuery):
 async def language_panel_cb(client, cb: CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         current = bot_set.bot_lang
-        logging.info((current, bot_set.bot_lang))
+        #logging.info((current, bot_set.bot_lang))
         await edit_message(
             cb.message,
             lang.s.LANGUAGE_PANEL,
