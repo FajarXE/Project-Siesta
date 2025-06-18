@@ -10,8 +10,14 @@ try:
 except:
     pass
 
+logging.basicConfig(
+    format="[%(levelname)s] - [%(asctime)s] [%(filename)s:%(lineno)d] %(message)s",
+    handlers=[logging.FileHandler("log.txt"), logging.StreamHandler()],
+    level=logging.INFO,
+)
+
+
 LOGGER = logging.getLogger(__name__)
-LOGGER.setLevel(logging.DEBUG)
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -25,17 +31,3 @@ logging.getLogger("Librespot:ApiClient").setLevel(logging.WARNING)
 logging.getLogger("pydub").setLevel(logging.WARNING)
 logging.getLogger("spotipy").setLevel(logging.WARNING)
 logging.getLogger("pymongo").setLevel(logging.ERROR)
-
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]')
-
-# Create file handler
-file_handler = logging.FileHandler(log_file_path, 'a', 'utf-8')
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(formatter)
-LOGGER.addHandler(file_handler)
-
-# Create console handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
-console_handler.setFormatter(formatter)
-LOGGER.addHandler(console_handler)

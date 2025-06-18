@@ -249,14 +249,17 @@ def qb_button(qualities:dict):
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
-def tidal_quality_button(qualities:dict):
+def tidal_quality_button(qualities: dict, user_id: int = 0):
     inline_keyboard = []
+    user_dict = bot_set.tidal.user_data.get(user_id, {})
+    spatial = user_dict.get("spatial", bot_set.tidal.spatial)
+    usetting = user_id != 0
     for quality in qualities.values():
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
                     text=quality,
-                    callback_data=f"tdSQ_{quality.replace('✅', '')}"
+                    callback_data=f"tdSQ_{quality.replace('✅', '')}" if not user_id else f"utdqs_{quality.replace('✅', '')}" 
                 )
             ]
         )
@@ -264,11 +267,42 @@ def tidal_quality_button(qualities:dict):
     inline_keyboard.append(
         [
             InlineKeyboardButton(
-                    text=F'SPATIAL : {bot_set.tidal.spatial}',
-                    callback_data=f"tdSQ_spatial"
+                    text=F'SPATIAL : {spatial}',
+                    callback_data=f"tdSQ_spatial" if not user_id else "utdqs_spatial"
                 )
         ]
     )
+    if usetting:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+    if usetting:
+        return InlineKeyboardMarkup(inline_keyboard)
+    
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
+
+def usetting_button() -> InlineKeyboardMarkup:
+    buttons = []
+    
+    if bot_set.tidal:
+        but = [
+            InlineKeyboardButton(
+                text=f"Tidal Quality",
+                callback_data=f"uset_tidal"
+            )
+        ]
+        buttons.append(but)
+    if bot_set.qobuz:
+        but = [
+            InlineKeyboardButton(
+                text=f"Qobuz Quality",
+                callback_data=f"uset_qobuz"
+            )
+        ]
+        buttons.append(but)
+    
+    return InlineKeyboardMarkup(buttons)

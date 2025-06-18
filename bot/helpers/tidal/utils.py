@@ -39,7 +39,7 @@ async def parse_url(url):
     return None, None
 
 
-async def get_stream_session(track_data: dict):
+async def get_stream_session(track_data: dict, user: dict=None):
     """
     Session needed for the quality chosen
     Args:
@@ -49,18 +49,21 @@ async def get_stream_session(track_data: dict):
         quality: LOW | HIGH | LOSSLESS | HI_RES | HI_RES_LOSSLESS
     """
     media_tags = track_data['mediaMetadata']['tags']
+    formats = ""
 
-    format = None
+    user_dict = tidalapi.user_data.get(user["user_id"], {})
+    qual = user_dict.get("formats", tidalapi.quality)
+    spatial = user_dict.get("spatial", tidalapi.spatial)
 
-    if 'SONY_360RA' in media_tags and tidalapi.spatial == 'Sony 360RA':
-        format = '360ra'
-    elif 'DOLBY_ATMOS' in media_tags and tidalapi.spatial == 'ATMOS AC3 JOC':
-        format = 'ac3'
-    elif 'DOLBY_ATMOS' in media_tags and tidalapi.spatial == 'ATMOS AC4':
-        format = 'ac4'
+    if 'SONY_360RA' in media_tags and spatial == 'Sony 360RA':
+        formats = '360ra'
+    elif 'DOLBY_ATMOS' in media_tags and spatial == 'ATMOS AC3 JOC':
+        formats = 'ac3'
+    elif 'DOLBY_ATMOS' in media_tags and spatial == 'ATMOS AC4':
+        formats = 'ac4'
     # let spatial audio have priority
-    elif 'HIRES_LOSSLESS' in media_tags and tidalapi.quality == 'HI_RES':
-        format = 'flac_hires'
+    elif 'HIRES_LOSSLESS' in media_tags and qual == 'HI_RES':
+        formats = 'flac_hires'
 
     session = {
             'flac_hires': tidalapi.mobile_hires,
@@ -68,14 +71,14 @@ async def get_stream_session(track_data: dict):
             'ac4': tidalapi.mobile_atmos,
             'ac3': tidalapi.tv_session,
             None: tidalapi.tv_session,
-    }[format]
+    }[formats]
 
     # tv sesion gets atmos always so try mobi1e session if exists
-    if not format and 'DOLBY_ATMOS' in media_tags:
+    if not formats and 'DOLBY_ATMOS' in media_tags:
         if tidalapi.mobile_hires:
             session = tidalapi.mobile_hires
 
-    quality = tidalapi.quality if format != 'flac_hires' else 'HI_RES_LOSSLESS'
+    quality = qual if formats != 'flac_hires' else 'HI_RES_LOSSLESS'
     
     return session, quality
     

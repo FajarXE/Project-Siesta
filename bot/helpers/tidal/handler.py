@@ -34,8 +34,10 @@ async def start_tidal(url:str, user:dict):
         await send_message(user, "Invalid Tidal URL")
         
 
-async def start_track(track_id:int, user:dict, track_meta:dict | None, \
-    upload=True, basefolder=None, session=None, quality=None, disable_link=False, disable_msg=False):
+async def start_track(track_id:int, user:dict, track_meta:dict | None,
+    upload=True, basefolder=None, session=None, 
+    quality=None, disable_link=False, disable_msg=False
+  ):
     if not track_meta:
         try:
             track_data = await tidalapi.get_track(track_id)
@@ -45,7 +47,7 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None, \
         track_meta = await get_track_metadata(track_id, track_data, user['r_id'])
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
         # mostly session and quality will not be present
-        session, quality = await get_stream_session(track_data)
+        session, quality = await get_stream_session(track_data, user)
     else:
         filepath = basefolder
 

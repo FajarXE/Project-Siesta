@@ -106,8 +106,10 @@ async def antiSpam(uid=None, cid=None, revoke=False) -> bool:
 
 
 
-async def send_message(user, item, itype='text', caption=None, markup=None, chat_id=None, \
-        meta=None):
+async def send_message(user, item, itype='text',
+    caption=None, markup=None, chat_id=None,
+    meta=None
+  ):
     """
     user: user details (dict)
     item: to send

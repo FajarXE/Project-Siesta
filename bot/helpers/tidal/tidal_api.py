@@ -24,13 +24,12 @@ class TidalApi:
 
         self.quality = 'LOW'
         self.spatial = 'OFF'
+        self.user_data = {}
         
 
         self.saved = [] # just for storing opened client session
 
         self.sub_type = None
-
-
 
     async def _get(self, url, params=None, session=None, refresh=False):
         if params is None:
@@ -81,8 +80,6 @@ class TidalApi:
                 return resp_json
 
 
-
-
     async def get_track(self, track_id):
         return await self._get(f'tracks/{track_id}')
 
@@ -97,6 +94,7 @@ class TidalApi:
 
     async def get_artist(self, artist_id):
         return await self._get('artists/' + str(artist_id))
+
 
     async def get_artist_albums(self, artist_id):
         return await self._get('artists/' + str(artist_id) + '/albums')
@@ -114,7 +112,6 @@ class TidalApi:
             'prefetch': 'false'
         },
         session)
-
 
 
     # call this from bot settings panel only
@@ -242,6 +239,16 @@ class TidalApi:
                 if r.status != 200:
                     raise Exception(f"TIDAL : {json_resp['userMessage']}")
                 return json_resp['subscription']['type']
+        
+    
+    async def setup_quality(self, user_id: int=0, qual: str="", spatial: str="") -> None:
+        data = {}
+        self.user_data.setdefault(user_id, {})
+        if qual:
+            data["formats"] = qual
+        if spatial:
+            data["spatial"] = spatial
+        self.user_data[user_id].update(data)
         
 
 class MobileSession():

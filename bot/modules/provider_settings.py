@@ -102,7 +102,7 @@ async def tidal_set_quality_cb(c, cb:CallbackQuery):
                 
             nexti = (current + 1) % 4
             tidalapi.spatial = options[nexti]
-            LOGGER.info((options, nexti)) # Debugging
+            #LOGGER.info((options, nexti)) # Debugging
             await database.set_variable('TIDAL_SPATIAL', options[nexti])
         else:
             qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}

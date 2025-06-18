@@ -19,5 +19,6 @@ class CMD(object):
     BAN = ["ban"]
     AUTH = ["auth"]
     LOG = ["log"]
+    USETTING = ["usetting", "uset"]
 
 cmd = CMD()
