@@ -1,4 +1,4 @@
-import logging
+import logging, asyncio
 
 import bot.helpers.translations as lang
 
@@ -69,5 +69,5 @@ async def set_language_cb(client, cb: CallbackQuery):
         to_set = cb.data.split('_')[1]
         bot_set.bot_lang = to_set
         await database.set_variable('BOT_LANGUAGE', to_set)
-        bot_set.set_language()
+        await asyncio.to_thread(bot_set.set_language)
         await language_panel_cb(client, cb)
