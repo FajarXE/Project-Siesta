@@ -3,6 +3,7 @@ import json
 import base64
 import requests
 import asyncio
+import logging
 
 import bot.helpers.translations as lang
 
@@ -29,6 +30,8 @@ def __decrypt_string__(string):
     except:
         return string
 
+loop = asyncio.new_event_loop()
+set_db = loop.run_until_complete(database.get_variable())
 
 class BotSettings:
     def __init__(self):
@@ -36,9 +39,9 @@ class BotSettings:
         self.qobuz = False
         self.tidal = None
         self.admins = Config.ADMINS
-        self.loop = asyncio.new_event_loop()
-        self.set_db = self.loop.run_until_complete(database.get_variable())
+        self.set_db = set_db
 
+        self.bot_lang = None
         self.set_language()
         self.auth_users = self.set_db.get('AUTH_USERS', [])
         self.auth_chats = self.set_db.get('AUTH_CHATS', [])
@@ -69,6 +72,7 @@ class BotSettings:
         self.artist_zip = self.set_db.get('ARTIST_ZIP')
 
         self.clients = []
+        
 
 
     def check_upload_mode(self):
@@ -188,12 +192,15 @@ class BotSettings:
 
     def set_language(self):
         db_lang = self.set_db.get('BOT_LANGUAGE')
+        logging.info(db_lang)
         self.bot_lang = db_lang if db_lang else 'en'
 
         for item in lang_available:
+            logging.info(item.__language__ == self.bot_lang)
             if item.__language__ == self.bot_lang:
                 lang.s = item
                 break
+        logging.info(lang.s)
 
 
 bot_set = BotSettings()
