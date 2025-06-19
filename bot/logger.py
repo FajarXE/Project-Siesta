@@ -18,7 +18,7 @@ logging.basicConfig(
 
 
 LOGGER = logging.getLogger(__name__)
-logging.getLogger("pyrogram").setLevel(logging.WARNING)
+logging.getLogger("pyrogram").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("aiohttp").setLevel(logging.WARNING)

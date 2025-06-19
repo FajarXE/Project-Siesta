@@ -2,6 +2,7 @@
 import re
 import copy
 import bot.helpers.translations as lang
+import logging
 
 from .qopy import qobuz_api
 from ..message import send_message, edit_message
@@ -14,15 +15,18 @@ from config import Config
 
 
 
-async def get_track_metadata(item_id, r_id, q_meta=None):
+async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     """
     Args:
         item_id : track id
         r_id: reply to message id
         q_meta : raw metadata from qobuz (pre-fetched)
+        user: Users Dictionary (Contains object pyrogram.Message)
     """
+    if user is None:
+        logging.info("User dict None!")
     if q_meta is None:
-        raw_meta = await qobuz_api.get_track_url(item_id)
+        raw_meta = await qobuz_api.get_track_url(item_id, user)
         if "sample" not in raw_meta and raw_meta.get('sampling_rate'):
             q_meta = await qobuz_api.get_track_meta(item_id)
             if not q_meta.get('streamable'):

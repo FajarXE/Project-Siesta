@@ -62,8 +62,10 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         'type': album_meta['type']
     }
     await run_concurrent_tasks(tasks, update_details)
-
-    if bot_set.album_zip:
+    
+    _, __, album_zip = fetch_zip_settings(user)
+    
+    if album_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
 
@@ -88,7 +90,7 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
     """
     
     if not track_meta:
-        track_meta, err = await get_track_metadata(item_id, user['r_id'])
+        track_meta, err = await get_track_metadata(item_id, user['r_id'], None, user)
         if err:
             return await send_message(user, err)
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
@@ -133,10 +135,13 @@ async def start_artist(albums, user, artist):
     artist_meta['folderpath'] = sanitize_filepath(artist_meta['folderpath'])
 
     upload_album = True
+    
+    _, artist_zip, __ = fetch_zip_settings(user)
+    
     if bot_set.artist_batch:
         # for telegram, batch upload is not needed
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
-    if bot_set.artist_zip:
+    if artist_zip:
         upload_album = False # final decision
 
     # no concurrent download
@@ -145,7 +150,7 @@ async def start_artist(albums, user, artist):
 
     # now upload artist folder as a whole
     if not upload_album:
-        if bot_set.artist_zip:
+        if artist_zip:
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
             artist_meta['folderpath'] = await zip_handler(artist_meta['folderpath'])
         
@@ -181,6 +186,8 @@ async def start_playlist(tracks, playlist, user):
     play_meta['poster_msg'] = await post_art_poster(user, play_meta)
 
     upload = True
+    playlist_zip, _, __ = fetch_zip_settings(user)
+    
     if bot_set.playlist_conc:
         upload = False
         tasks = []
@@ -189,13 +196,14 @@ async def start_playlist(tracks, playlist, user):
         await run_concurrent_tasks(tasks, update_details)
     else:
         i = 0
-        if bot_set.playlist_zip: upload = False
+        if playlist_zip:
+            upload = False
         for track in play_meta['tracks']:
             await progress_message(i, len(play_meta['tracks']), update_details)
             await start_track(track['itemid'], user, track, upload, playlist_folder, bot_set.disable_sort_link, True)
             i+=1
 
-    if bot_set.playlist_zip:
+    if playlist_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
         if playlist_sort:
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)

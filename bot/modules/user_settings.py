@@ -1,5 +1,5 @@
 import bot.helpers.translations as lang
-import logging
+import logging, asyncio
 from traceback import format_exc
 
 from pyrogram import Client, filters
@@ -12,23 +12,42 @@ from ..helpers.buttons.settings import usetting_button, tidal_quality_button, qb
 from ..helpers.database.mongo_async import database
 from ..helpers.tidal.tidal_api import tidalapi
 from ..helpers.qobuz.qopy import qobuz_api
+from ..helpers.utils import fetch_zip_settings
 from ..settings import bot_set
 from ..helpers.message import send_message, edit_message, check_user, fetch_user_details
 
-USETTING_TEXT = """
-Choose Menu option bellow:
-"""
 
 @Client.on_message(filters.command(cmd.USETTING))
-async def start_user_setting(client: Client, m: Message, edit=False):
+async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
     if not await check_user(msg=m):
         return
-    
+    USETTING_TEXT = """
+<blockquote>
+PLAYLIST_ZIP  : {playlist}
+ARTIST_ZIP    : {artist}
+ALBUM_ZIP     : {album}
+</blockquote>
+{date}
+Choose Menu option bellow:
+"""
     user = await fetch_user_details(m)
+    user_data = users_
+    if not users_:
+        user_data = user
+    logging.info(user_data["user_id"])
+    PLAYLIST_ZIP, ARTIST_ZIP, ALBUM_ZIP = await asyncio.to_thread(fetch_zip_settings, user_data)
+    
+    text = USETTING_TEXT.format_map({
+        "album".lower(): ALBUM_ZIP,
+        "playlist".lower(): PLAYLIST_ZIP,
+        "artist".lower(): ARTIST_ZIP,
+        "date": m.date,
+    })
+    
     if not edit:
-        await send_message(user, USETTING_TEXT.format(m.from_user.mention), markup=usetting_button())
+        await send_message(user, text, markup=usetting_button())
         return
-    await edit_message(m, USETTING_TEXT.format(m.from_user.mention), markup=usetting_button())
+    await edit_message(m, text, markup=usetting_button())
 
 
 @Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz)"))
@@ -124,9 +143,53 @@ async def uset_qobuz(client, query):
     #await database.set_variable('QOBUZ_QUALITY', bot_set.qobuz.quality)
     await uset_cb(client, query, "qobuz")
 
+@Client.on_callback_query(filters.regex("^zip"))
+async def uset_zip(self, query):
+    if not await check_user(msg=query.message):
+        return
+    data = query.data.split("_")[1].lower()
+    user_id = query.from_user.id
+    users_ = {"user_id": user_id}
+    if data == "playlist":
+        user_dict = bot_set.user_data.get(user_id, {})
+        playlist_zip = user_dict.get("playlist_zip", False)
+        data_saved = {"PLAYLIST_ZIP".lower(): not playlist_zip}
+        if user_id not in bot_set.user_data:
+            bot_set.user_data.setdefault(user_id, {})
+        bot_set.user_data[user_id].update(data_saved)
+        await database.save_user_settings(user_id, data_saved)
+        await query.answer(f"Playlist zip: {data_saved['playlist_zip']}")
+        #logging.info("playlist")
+        return await start_user_setting(self, query.message, True, users_)
+    if data == "album":
+        user_dict = bot_set.user_data.get(user_id, {})
+        album_zip = user_dict.get("album_zip", False)
+        data_saved = {"ALBUM_ZIP".lower(): not album_zip}
+        if user_id not in bot_set.user_data:
+            bot_set.user_data.setdefault(user_id, {})
+        bot_set.user_data[user_id].update(data_saved)
+        await database.save_user_settings(user_id, data_saved)
+        await query.answer(f"Album zip: {data_saved['album_zip']}")
+        return await start_user_setting(self, query.message, True, users_)
+        #logging.info("album")
+    if data == "artist":
+        user_dict = bot_set.user_data.get(user_id, {})
+        artist_zip = user_dict.get("artist_zip", False)
+        data_saved = {"ARTIST_ZIP".lower(): not artist_zip}
+        if user_id not in bot_set.user_data:
+            bot_set.user_data.setdefault(user_id, {})
+        bot_set.user_data[user_id].update(data_saved)
+        await database.save_user_settings(user_id, data_saved)
+        await query.answer(f"Artist zip: {data_saved['artist_zip']}")
+        #logging.info("artist")
+        return await start_user_setting(self, query.message, True, users_)
+
+
 @Client.on_message(filters.command("debug") & filters.user(list(Config.ADMINS)))
 async def debug(c, m): # debugger
-    dt_qb = f"QOBUZ:\n{bot_set.qobuz.user_data}\n{bot_set.qobuz.quality}"
-    dt_td = f"\n\nTIDAL:\n{bot_set.tidal.user_data}\n{bot_set.tidal.quality}\n{bot_set.tidal.spatial}"
-    zips = f"{bot_set.album_zip}"
+    dt_qb = f"QOBUZ:\n{bot_set.qobuz}\n{bot_set.qobuz.quality}"
+    dt_td = f"\n\nTIDAL:\n{bot_set.tidal}\n{bot_set.tidal}\n{bot_set.tidal}"
+    zips = f"\n\n{bot_set.album_zip}"
+    user_dict = bot_set.user_data
+    zips += f"\n\n{user_dict}"
     await m.reply(dt_qb+dt_td+zips, True)

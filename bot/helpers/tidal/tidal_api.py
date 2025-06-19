@@ -1,8 +1,10 @@
 import aiohttp
 import asyncio
 import aiolimiter
+import logging
 
 from datetime import datetime, timedelta
+from traceback import format_exc
 
 from config import Config
 
@@ -137,6 +139,7 @@ class TidalApi:
             auth_url = await self.tv_session.get_device()
             return auth_url, None
         except Exception as e:
+            logging.error(format_exc())
             return False, e
 
 
@@ -157,7 +160,8 @@ class TidalApi:
             await self.refresh_mobile()
 
             return self.sub_type, None
-        except Exception as e: 
+        except Exception as e:
+            logging.error(format_exc())
             await self.session.close()
             return False, e
 
@@ -179,7 +183,8 @@ class TidalApi:
             await self.tv_session.refresh()
             self.saved.append(self.tv_session)
             tv_session = True
-        except Exception as e: 
+        except Exception as e:
+            logging.error(format_exc())
             tv_session = False
             LOGGER.error("TIDAL : Coudn't load TV/Auto - " + str(e))
 
@@ -209,6 +214,7 @@ class TidalApi:
                     await self.mobile_hires.refresh()
                     self.saved.append(self.mobile_hires)
                 except Exception as e: 
+                    logging.error(format_exc())
                     self.mobile_hires = None
                     LOGGER.error("TIDAL : Coudn't load Mobile Hires - " + str(e))
 
@@ -220,7 +226,8 @@ class TidalApi:
                 try:
                     await self.mobile_atmos.refresh()
                     self.saved.append(self.mobile_atmos)
-                except Exception as e: 
+                except Exception as e:
+                    logging.error(format_exc())
                     self.mobile_atmos = None
                     LOGGER.error("TIDAL : Coudn't load Mobile Atmos - " + str(e))
 

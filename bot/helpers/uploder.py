@@ -28,10 +28,11 @@ async def track_upload(metadata, user, disable_link=False):
 
 
 async def album_upload(metadata, user):
+    __, _, album_zip = fetch_zip_settings(user)
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if bot_set.album_zip:
+        if album_zip:
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user)
@@ -52,10 +53,11 @@ async def album_upload(metadata, user):
 
 
 async def artist_upload(metadata, user):
+    _, artist_zip, __ = fetch_zip_settings(user)
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if bot_set.artist_zip:
+        if artist_zip:
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user)
@@ -77,10 +79,12 @@ async def artist_upload(metadata, user):
 
 
 async def playlist_upload(metadata, user):
+    playlist_zip, _, __ = fetch_zip_settings(user)
+    is_owner = playlist_zip == bot_set.playlist_zip
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if bot_set.playlist_zip:
+        if playlist_zip:
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user)
@@ -88,7 +92,7 @@ async def playlist_upload(metadata, user):
         else:
             await batch_telegram_upload(metadata, user)
     else:
-        if bot_set.playlist_sort and not bot_set.playlist_zip:
+        if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
                 await rclone_upload(user, f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
             else:

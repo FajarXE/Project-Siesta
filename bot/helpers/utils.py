@@ -4,6 +4,7 @@ import aiohttp
 import asyncio
 import shutil
 import zipfile
+import typing
 
 from pathlib import Path
 from urllib.parse import quote
@@ -384,3 +385,20 @@ async def cleanup(user=None, metadata=None, ):
             shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/")
         except Exception as e:
             LOGGER.info(e)
+
+def fetch_zip_settings(users: typing.Dict) -> typing.Union[bool, bool, bool]:
+    """
+    Args: Users (typing.Dict)
+    
+    Returns:
+      bool (playlist_zip, artist_zip, album_zip)
+    """
+    #import logging
+    playlist_zip, artist_zip, album_zip = [False] * 3
+    
+    user_dict = bot_set.user_data.get(users["user_id"], {})
+    playlist_zip = user_dict.get("playlist_zip", bot_set.playlist_zip)
+    artist_zip = user_dict.get("artist_zip", bot_set.artist_zip)
+    album_zip = user_dict.get("album_zip", bot_set.album_zip)
+    #logging.info((user_dict))
+    return playlist_zip, artist_zip, album_zip

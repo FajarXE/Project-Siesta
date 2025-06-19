@@ -72,6 +72,7 @@ class BotSettings:
 
         self.clients = []
         
+        self.user_data = {}
 
 
     def check_upload_mode(self):
@@ -207,5 +208,6 @@ class BotSettings:
             self.qobuz.user_data = user_data
         if self.tidal:
             self.tidal.user_data = user_data
+        self.user_data = user_data
 
 bot_set = BotSettings()

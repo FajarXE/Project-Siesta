@@ -188,9 +188,9 @@ class QoClient:
         if self.sec is None:
             raise Exception("QOBUZ : Can't find any valid app secret")
 
-    async def get_track_url(self, id, user=None):
+    async def get_track_url(self, id, user: dict):
         user_dict = self.user_data.get(user["user_id"], {})
-        quality = user_dict.get("format", self.quality)
+        quality = user_dict.get("qobuz_qual", self.quality)
         fmt_id = quality
         return await self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
 

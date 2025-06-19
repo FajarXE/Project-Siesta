@@ -159,8 +159,9 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
         'type': album_meta['type']
     }
     await run_concurrent_tasks(tasks, update_details)
-
-    if bot_set.album_zip:
+    
+    _, __, album_zip = fetch_zip_settings(user)
+    if album_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
 
@@ -189,17 +190,19 @@ async def start_artist(artist_id:int, user:dict):
     albums.extend(ep_singles)
 
     upload_album = True
+    
+    _, artist_zip, ___ = fetch_zip_settings(user)
     if bot_set.artist_batch:
         # for telegram, batch upload is not needed
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
-    if bot_set.artist_zip:
+    if artist_zip:
         upload_album = False # final decision
 
     for album in albums:
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        if bot_set.artist_zip:
+        if artist_zip:
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
             artist_meta['folderpath'] = await zip_handler(artist_meta['folderpath'])
         
