@@ -13,10 +13,10 @@ class MongoDB:
         self.client = self.db[Config.BOT_USERNAME]
     
     async def initialize_users(self) -> dict:
-        exists = await self.db.users[Config.BOT_USERNAME].find_one({})
+        exists = await self.db[Config.BOT_USERNAME].users.find_one({})
         if exists:
             user_data = {} 
-            rows = self.db.users[Config.BOT_USERNAME].find({})
+            rows = self.db[Config.BOT_USERNAME].users.find({})
             # Return User data
             async for row in rows:
                 uid = row["_id"]
@@ -55,8 +55,6 @@ class MongoDB:
         
         for data in data_list:
             data_dict = data
-        
-        
         if "_id" in data_dict:
             data_dict.pop("_id")
         return data_dict

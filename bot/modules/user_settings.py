@@ -34,7 +34,7 @@ Choose Menu option bellow:
     user_data = users_
     if not users_:
         user_data = user
-    logging.info(user_data["user_id"])
+    #logging.info(user_data["user_id"])
     PLAYLIST_ZIP, ARTIST_ZIP, ALBUM_ZIP = await asyncio.to_thread(fetch_zip_settings, user_data)
     
     text = USETTING_TEXT.format_map({
@@ -58,7 +58,8 @@ async def uset_cb(client, query, datatype=""):
     user_id = query.from_user.id
     #logging.info(data)
     if data[1] == "back":
-        return await start_user_setting(client, query.message, True)
+        users_ = {"user_id": user_id}
+        return await start_user_setting(client, query.message, True, users_)
     if data[1] == "tidal" or datatype == "tidal": #(datatype == "tidal" and data[0] == "utdqs"):
         text = f"Choose Tidal Audio Quality bellow:"
         qualities = {

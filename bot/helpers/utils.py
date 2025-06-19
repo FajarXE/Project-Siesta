@@ -347,7 +347,7 @@ async def progress_message(done, total, details):
         pass # dont update the message if flooded
 
 
-async def cleanup(user=None, metadata=None, ):
+async def cleanup(user=None, metadata=None):
     """
     Clean up after task completed - For concurrent downloads
     Clean up after upload - For single download
@@ -359,13 +359,14 @@ async def cleanup(user=None, metadata=None, ):
     
     """
     if metadata:
+        playlist_zip, artist_zip, album_zip = fetch_zip_settings(user)
         try:
             if metadata['type'] == 'album':
-                is_zip = True if bot_set.album_zip else False
+                is_zip = True if album_zip else False
             elif metadata['type'] == 'artist':
-                is_zip = True if bot_set.artist_zip else False
+                is_zip = True if artist_zip else False
             else:
-                is_zip = True if bot_set.playlist_zip else False
+                is_zip = True if playlist_zip else False
             if is_zip:
                 if type(metadata['folderpath']) == list:
                     for i in metadata['folderpath']:
