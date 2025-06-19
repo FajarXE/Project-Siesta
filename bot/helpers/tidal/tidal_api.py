@@ -245,9 +245,9 @@ class TidalApi:
         data = {}
         self.user_data.setdefault(user_id, {})
         if qual:
-            data["formats"] = qual
+            data["tidal_qual"] = qual
         if spatial:
-            data["spatial"] = spatial
+            data["tidal_spatial"] = spatial
         self.user_data[user_id].update(data)
         
 

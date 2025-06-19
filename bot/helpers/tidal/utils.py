@@ -49,11 +49,12 @@ async def get_stream_session(track_data: dict, user: dict=None):
         quality: LOW | HIGH | LOSSLESS | HI_RES | HI_RES_LOSSLESS
     """
     media_tags = track_data['mediaMetadata']['tags']
-    formats = ""
+    formats = None
 
+    import logging
     user_dict = tidalapi.user_data.get(user["user_id"], {})
-    qual = user_dict.get("formats", tidalapi.quality)
-    spatial = user_dict.get("spatial", tidalapi.spatial)
+    qual = user_dict.get("tidal_qual", tidalapi.quality)
+    spatial = user_dict.get("tidal_spatial", tidalapi.spatial)
 
     if 'SONY_360RA' in media_tags and spatial == 'Sony 360RA':
         formats = '360ra'
@@ -79,7 +80,7 @@ async def get_stream_session(track_data: dict, user: dict=None):
             session = tidalapi.mobile_hires
 
     quality = qual if formats != 'flac_hires' else 'HI_RES_LOSSLESS'
-    
+    logging.info((session, quality))
     return session, quality
     
 

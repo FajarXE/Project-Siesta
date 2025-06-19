@@ -187,8 +187,6 @@ class BotSettings:
         await database.set_variable("TIDAL_AUTH_DATA", __encrypt_string__(txt))
         
 
-
-
     async def set_language(self):
         bot_lang = await database.get_variable()
         self.bot_lang = bot_lang.get("BOT_LANGUAGE", "en")
@@ -201,5 +199,13 @@ class BotSettings:
                 break
         #logging.info(lang.s)
 
+    async def initialize_users(self) -> dict:
+        user_data = await database.initialize_users()
+        if self.deezer:
+            self.deezer.user_data = user_data
+        if self.qobuz:
+            self.qobuz.user_data = user_data
+        if self.tidal:
+            self.tidal.user_data = user_data
 
 bot_set = BotSettings()

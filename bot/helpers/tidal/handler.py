@@ -117,7 +117,6 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
 
     return True
 
-        
 
 async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     try:
@@ -140,7 +139,7 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     # get a track to get quality
     track_id = tracks_data['items'][0]['id']
     track_data = await tidalapi.get_track(track_id)
-    session, quality = await get_stream_session(track_data)
+    session, quality = await get_stream_session(track_data, user)
     stream_data = await tidalapi.get_stream_url(track_id, quality, session)
 
     album_meta['quality'] = await get_quality(stream_data)

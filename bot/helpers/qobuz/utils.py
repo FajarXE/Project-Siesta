@@ -290,14 +290,16 @@ def smart_discography_filter(
     return items
 
     
-async def get_quality(meta:dict):
+async def get_quality(meta: dict, user: dict):
     """
     Args
         meta : track url metadata dict
     Returns
         extention, quality
     """
-    if qobuz_api.quality == 5:
+    user_dict = qobuz_api.user_data.get(user["user_id"], {})
+    quality = user_dict.get("qobuz_qual", qobuz_api.quality)
+    if quality == 5:
         return 'mp3', '320K'
     else:
         return 'flac', f'{meta["bit_depth"]}B - {meta["sampling_rate"]}k'

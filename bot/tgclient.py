@@ -28,6 +28,7 @@ class Bot(Client):
         await bot_set.login_qobuz()
         await bot_set.login_deezer()
         await bot_set.login_tidal()
+        await bot_set.initialize_users()
         LOGGER.info("BOT : Started Successfully")
 
     async def stop(self, block=False):

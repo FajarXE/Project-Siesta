@@ -5,6 +5,7 @@ from bot import CMD
 from bot.logger import LOGGER
 
 import bot.helpers.translations as lang
+import traceback
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -36,8 +37,8 @@ async def download_track(c, msg:Message):
             try:
                 await start_link(link, user)
                 await send_message(user, lang.s.TASK_COMPLETED)
-            except Exception as e:
-                LOGGER.error(e)
+            except Exception:
+                LOGGER.error(traceback.format_exc())
             await c.delete_messages(msg.chat.id, user['bot_msg'].id)
             await cleanup(user) # deletes uploaded files
             await antiSpam(msg.from_user.id, msg.chat.id, True)

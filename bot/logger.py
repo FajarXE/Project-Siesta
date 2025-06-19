@@ -12,7 +12,7 @@ except:
 
 logging.basicConfig(
     format="[%(levelname)s] - [%(asctime)s] [%(filename)s:%(lineno)d] %(message)s",
-    handlers=[logging.FileHandler("log.txt"), logging.StreamHandler()],
+    handlers=[logging.FileHandler(log_file_path), logging.StreamHandler()],
     level=logging.INFO,
 )
 

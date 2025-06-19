@@ -220,7 +220,7 @@ class QoClient:
         data = {}
         self.user_data.setdefault(user_id, {})
         if qual:
-            data["format"] = qual
+            data["qobuz_qual"] = qual
         self.user_data[user_id].update(data)
 
 qobuz_api = QoClient()

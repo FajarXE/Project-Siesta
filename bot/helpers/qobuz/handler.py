@@ -36,7 +36,7 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     # Get user quality by doing a track request
     track_meta = await qobuz_api.get_track_url(album_meta['tracks'][0]['itemid'], user)
 
-    _, album_meta['quality'] = await get_quality(track_meta)
+    _, album_meta['quality'] = await get_quality(track_meta, user)
     
     # for convenience, do not post album poster if artist
     if upload:
@@ -105,7 +105,7 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
     except KeyError:
         return await send_message(user, lang.s.ERR_QOBUZ_NOT_AVAILABLE)
         
-    track_meta['extension'], track_meta['quality'] = await get_quality(raw_data)
+    track_meta['extension'], track_meta['quality'] = await get_quality(raw_data, user)
 
     # add filename to filepath
     filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
@@ -169,7 +169,7 @@ async def start_playlist(tracks, playlist, user):
     
     # Get user quality by doing a track request
     track_meta = await qobuz_api.get_track_url(tracks[0]['id'], user)
-    _, play_meta['quality'] = await get_quality(track_meta)
+    _, play_meta['quality'] = await get_quality(track_meta, user)
 
     update_details = {
         'text': lang.s.DOWNLOAD_PROGRESS,

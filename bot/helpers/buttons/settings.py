@@ -262,7 +262,7 @@ def qb_button(qualities: dict, user_id: int = 0):
 def tidal_quality_button(qualities: dict, user_id: int = 0):
     inline_keyboard = []
     user_dict = bot_set.tidal.user_data.get(user_id, {})
-    spatial = user_dict.get("spatial", bot_set.tidal.spatial)
+    spatial = user_dict.get("tidal_spatial", bot_set.tidal.spatial)
     usetting = user_id != 0
     for quality in qualities.values():
         inline_keyboard.append(
