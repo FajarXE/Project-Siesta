@@ -380,14 +380,10 @@ async def cleanup(user=None, metadata=None):
     if user:
         try:
             shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
-        except FileNotFoundError:
-            pass
         except Exception as e:
             LOGGER.info(e)
         try:
             shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/")
-        except FileNotFoundError:
-            pass
         except Exception as e:
             LOGGER.info(e)
 
