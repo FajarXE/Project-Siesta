@@ -24,7 +24,6 @@ async def start_user_setting(client: Client, m: Message, edit=False, users_: dic
     USETTING_TEXT = """
 <blockquote>
 PLAYLIST_ZIP  : {playlist}
-ARTIST_ZIP    : {artist}
 ALBUM_ZIP     : {album}
 </blockquote>
 {date}
@@ -40,7 +39,6 @@ Choose Menu option bellow:
     text = USETTING_TEXT.format_map({
         "album".lower(): ALBUM_ZIP,
         "playlist".lower(): PLAYLIST_ZIP,
-        "artist".lower(): ARTIST_ZIP,
         "date": m.date,
     })
     
