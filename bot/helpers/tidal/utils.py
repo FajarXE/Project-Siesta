@@ -2,6 +2,7 @@ import re
 import os
 import aiofiles
 import asyncio
+import logging
 
 from shutil import copyfileobj
 from xml.etree import ElementTree
@@ -51,7 +52,6 @@ async def get_stream_session(track_data: dict, user: dict=None):
     media_tags = track_data['mediaMetadata']['tags']
     formats = None
 
-    import logging
     user_dict = tidalapi.user_data.get(user["user_id"], {})
     qual = user_dict.get("tidal_qual", tidalapi.quality)
     spatial = user_dict.get("tidal_spatial", tidalapi.spatial)
@@ -199,7 +199,9 @@ async def sort_album_from_artist(album_data: dict):
     return filtered_tracks
 
 
-async def ffmpeg_convert(input_file):
-    cmd = f'ffmpeg -i "{input_file}" -c:a copy -loglevel error -y "{input_file}.flac"'
-    task = await asyncio.create_subprocess_shell(cmd)
-    await task.wait()
+async def ffmpeg_convert(input_file) -> tuple:
+    logging.info(input_file)
+    cmd = f'ffmpeg -i "{input_file}" -c:a flac -loglevel error -y "{input_file}.flac"'
+    task = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, stderr = await task.communicate()
+    return stdout.decode().strip(), stderr.decode().strip(), task.returncode
