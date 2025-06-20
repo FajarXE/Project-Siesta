@@ -28,7 +28,8 @@ async def track_upload(metadata, user, disable_link=False):
 
 
 async def album_upload(metadata, user):
-    __, _, album_zip = fetch_zip_settings(user)
+    user_dict = user.copy()
+    __, _, album_zip = fetch_zip_settings(user_dict)
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -49,11 +50,12 @@ async def album_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
-    await cleanup(None, metadata)
+    await cleanup(None, metadata, user_dict)
 
 
 async def artist_upload(metadata, user):
-    _, artist_zip, __ = fetch_zip_settings(user)
+    user_dict = user.copy()
+    _, artist_zip, __ = fetch_zip_settings(user_dict)
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -74,7 +76,7 @@ async def artist_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
-    await cleanup(None, metadata)
+    await cleanup(None, metadata, user_dict)
 
 
 

@@ -347,7 +347,7 @@ async def progress_message(done, total, details):
         pass # dont update the message if flooded
 
 
-async def cleanup(user=None, metadata=None):
+async def cleanup(user=None, metadata=None, user_dict: dict=None):
     """
     Clean up after task completed - For concurrent downloads
     Clean up after upload - For single download
@@ -359,7 +359,7 @@ async def cleanup(user=None, metadata=None):
     
     """
     if metadata:
-        playlist_zip, artist_zip, album_zip = fetch_zip_settings(user)
+        playlist_zip, artist_zip, album_zip = fetch_zip_settings(user_dict)
         try:
             if metadata['type'] == 'album':
                 is_zip = True if album_zip else False
@@ -380,10 +380,14 @@ async def cleanup(user=None, metadata=None):
     if user:
         try:
             shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
+        except FileNotFoundError:
+            pass
         except Exception as e:
             LOGGER.info(e)
         try:
             shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/")
+        except FileNotFoundError:
+            pass
         except Exception as e:
             LOGGER.info(e)
 
