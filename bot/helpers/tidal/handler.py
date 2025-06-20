@@ -1,6 +1,5 @@
 import json
 import base64
-import os
 
 from pathvalidate import sanitize_filepath
 
@@ -101,13 +100,9 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
                 return await send_message(user, err)
 
         track_meta['extension'] = await get_audio_extension(filepath)
-        LOGGER.info((quality, Config.TIDAL_CONVERT_M4A, filepath, track_meta['filepath'], track_meta['extension']))
+        
         if quality == 'HI_RES_LOSSLESS' and Config.TIDAL_CONVERT_M4A:
-            dirpath = f"{filepath}.{track_meta['extension']}"
-            LOGGER.info(f"File exists: {os.path.exists(dirpath)}")
-            stdout, stderr, retcode = await ffmpeg_convert(f"{filepath}.{track_meta['extension']}")
-            if retcode not in [0, -9]:
-                LOGGER.warn(stderr)
+            await ffmpeg_convert(filepath)
             track_meta['filepath'] = track_meta['filepath'] + '.flac'
             os.remove(filepath)
         else:
