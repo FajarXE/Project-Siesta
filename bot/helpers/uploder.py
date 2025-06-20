@@ -49,7 +49,7 @@ async def album_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
-    await cleanup(None, metadata)
+    await cleanup(user, metadata)
 
 
 async def artist_upload(metadata, user):
@@ -74,7 +74,7 @@ async def artist_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
-    await cleanup(None, metadata)
+    await cleanup(user, metadata)
 
 
 
