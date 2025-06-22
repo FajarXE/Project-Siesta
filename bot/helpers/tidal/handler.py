@@ -191,18 +191,17 @@ async def start_artist(artist_id:int, user:dict):
 
     upload_album = True
     
-    _, artist_zip, ___ = fetch_zip_settings(user)
     if bot_set.artist_batch:
         # for telegram, batch upload is not needed
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
-    if artist_zip:
+    if bot_set.artist_zip:
         upload_album = False # final decision
 
     for album in albums:
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        if artist_zip:
+        if bot_set.artist_zip:
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
             artist_meta['folderpath'] = await zip_handler(artist_meta['folderpath'])
         

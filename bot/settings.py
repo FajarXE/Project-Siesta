@@ -202,7 +202,7 @@ class BotSettings:
 
     async def initialize_users(self) -> dict:
         user_data = await database.initialize_users()
-        logging.info(user_data)
+        #logging.info(user_data)
         if self.deezer:
             self.deezer.user_data = user_data
         if self.qobuz:

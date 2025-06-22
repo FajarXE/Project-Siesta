@@ -318,10 +318,13 @@ def usetting_button() -> InlineKeyboardMarkup:
     PLAYLIST_ZIP_BUTTON = [InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")]
     buttons.append(PLAYLIST_ZIP_BUTTON)
     
-    #ARTIST_ZIP_BUTTON = [InlineKeyboardButton(text="ARTIST_ZIP", callback_data="zip_artist")]
-    #buttons.append(ARTIST_ZIP_BUTTON)
-    
     ALBUM_ZIP_BUTTON = [InlineKeyboardButton(text="ALBUM_ZIP", callback_data="zip_album")]
     buttons.append(ALBUM_ZIP_BUTTON)
+    
+    ART_POSTER_BUTTON = [InlineKeyboardButton(text="ART_POSTER", callback_data="zip_poster")]
+    buttons.append(ART_POSTER_BUTTON)
+    
+    CLOSE_BUTTON = [InlineKeyboardButton(text="Close", callback_data="uset_close")]
+    buttons.append(CLOSE_BUTTON)
     
     return InlineKeyboardMarkup(buttons)

@@ -24,6 +24,7 @@ async def start_user_setting(client: Client, m: Message, edit=False, users_: dic
     USETTING_TEXT = """
 <blockquote>
 PLAYLIST_ZIP  : {playlist}
+ART_POSTER    : {poster}
 ALBUM_ZIP     : {album}
 </blockquote>
 {date}
@@ -34,12 +35,13 @@ Choose Menu option bellow:
     if not users_:
         user_data = user
     #logging.info(user_data["user_id"])
-    PLAYLIST_ZIP, ARTIST_ZIP, ALBUM_ZIP = await asyncio.to_thread(fetch_zip_settings, user_data)
+    PLAYLIST_ZIP, ART_POSTER, ALBUM_ZIP = await asyncio.to_thread(fetch_zip_settings, user_data)
     
     text = USETTING_TEXT.format_map({
         "album".lower(): ALBUM_ZIP,
+        "poster": ART_POSTER,
         "playlist".lower(): PLAYLIST_ZIP,
-        "date": m.date,
+        "date": m.date.now().strftime("%d/%m/%Y %H:%M:%S"),
     })
     
     if not edit:
@@ -48,7 +50,7 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz)"))
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -58,6 +60,8 @@ async def uset_cb(client, query, datatype=""):
     if data[1] == "back":
         users_ = {"user_id": user_id}
         return await start_user_setting(client, query.message, True, users_)
+    if data[1] == "close":
+        await query.message.delete()
     if data[1] == "tidal" or datatype == "tidal": #(datatype == "tidal" and data[0] == "utdqs"):
         text = f"Choose Tidal Audio Quality bellow:"
         qualities = {
@@ -181,6 +185,16 @@ async def uset_zip(self, query):
         await database.save_user_settings(user_id, data_saved)
         await query.answer(f"Artist zip: {data_saved['artist_zip']}")
         #logging.info("artist")
+        return await start_user_setting(self, query.message, True, users_)
+    if data == "poster":
+        user_dict = bot_set.user_data.get(user_id, {})
+        art_poster = user_dict.get("art_poster", False)
+        data_saved = {"art_poster": not art_poster}
+        if user_id not in bot_set.user_data:
+            bot_set.user_data.setdefault(user_id, {})
+        bot_set.user_data[user_id].update(data_saved)
+        await database.save_user_settings(user_id, data_saved)
+        await query.answer(f"Art poster: {data_saved['art_poster']}")
         return await start_user_setting(self, query.message, True, users_)
 
 

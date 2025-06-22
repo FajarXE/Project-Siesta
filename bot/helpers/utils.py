@@ -270,7 +270,8 @@ async def post_art_poster(user:dict, meta:dict):
     else:
         caption = await format_string(lang.s.PLAYLIST_TEMPLATE, meta, user)
     
-    if bot_set.art_poster:
+    _, art_poster, __ = fetch_zip_settings(user)
+    if art_poster:
         msg = await send_message(user, photo, 'pic', caption)
         return msg
 
@@ -359,12 +360,12 @@ async def cleanup(user=None, metadata=None, user_dict: dict=None):
     
     """
     if metadata:
-        playlist_zip, artist_zip, album_zip = fetch_zip_settings(user_dict)
+        playlist_zip, _, album_zip = fetch_zip_settings(user_dict)
         try:
             if metadata['type'] == 'album':
                 is_zip = True if album_zip else False
             elif metadata['type'] == 'artist':
-                is_zip = True if artist_zip else False
+                is_zip = True if bot_set.artist_zip else False
             else:
                 is_zip = True if playlist_zip else False
             if is_zip:
@@ -396,14 +397,14 @@ def fetch_zip_settings(users: typing.Dict) -> typing.Union[bool, bool, bool]:
     Args: Users (typing.Dict)
     
     Returns:
-      bool (playlist_zip, artist_zip, album_zip)
+      bool (playlist_zip, art_poster, album_zip)
     """
     #import logging
-    playlist_zip, artist_zip, album_zip = [False] * 3
+    playlist_zip, art_poster, album_zip = [False] * 3
     
     user_dict = bot_set.user_data.get(users["user_id"], {})
     playlist_zip = user_dict.get("playlist_zip", bot_set.playlist_zip)
-    artist_zip = user_dict.get("artist_zip", bot_set.artist_zip)
+    art_poster = user_dict.get("art_poster", bot_set.art_poster)
     album_zip = user_dict.get("album_zip", bot_set.album_zip)
     #logging.info((user_dict))
-    return playlist_zip, artist_zip, album_zip
+    return playlist_zip, art_poster, album_zip

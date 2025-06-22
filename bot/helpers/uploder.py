@@ -55,11 +55,10 @@ async def album_upload(metadata, user):
 
 async def artist_upload(metadata, user):
     user_dict = user.copy()
-    _, artist_zip, __ = fetch_zip_settings(user_dict)
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if artist_zip:
+        if bot_set.artist_zip:
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user)
