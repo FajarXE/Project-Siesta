@@ -20,5 +20,6 @@ class CMD(object):
     AUTH = ["auth"]
     LOG = ["log"]
     USETTING = ["usetting", "uset"]
+    SETVAR = ['setvar', f'setvar@{bot}']
 
 cmd = CMD()
