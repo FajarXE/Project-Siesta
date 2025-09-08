@@ -9,13 +9,10 @@ from time import time
 from math import ceil
 from urllib.parse import urlparse
 from Cryptodome.Hash import MD5
-from Cryptodome.Cipher import Blowfish, AES
-from requests.models import HTTPError
+from Cryptodome.Cipher import Blowfish
 
 from config import Config
 from bot.logger import LOGGER
-
-CHUNK_SIZE = 2048
 
 class APIError(Exception):
     def __init__(self, type, msg, payload):
@@ -52,6 +49,14 @@ class DeezerAPI:
         if resp['error']:
             type = list(resp['error'].keys())[0]
             msg = list(resp['error'].values())[0]
+            if type=='VALID_TOKEN_REQUIRED':
+                LOGGER.debug("Deezer: Refreshing User data")
+                try:
+                    await self._api_call('deezer.getUserData')
+                    await self._api_call(method, payload)
+                    return
+                except:
+                    LOGGER.error("Deezer: Refreshing User data failed")
             raise APIError(type, msg, resp['payload'])
 
         if method == 'deezer.getUserData':
@@ -170,10 +175,12 @@ class DeezerAPI:
     async def get_track_url(self, id, track_token, track_token_expiry, format):
         # renews license token
         if time() - self.renew_timestamp >= 3600:
+            LOGGER.debug("Deezer: License token expired - trying to refresh User data")
             await self._api_call('deezer.getUserData')
 
         # renews track token
         if time() - track_token_expiry >= 0:
+            LOGGER.debug("Deezer: Track token expired - trying to refresh token")
             track_token = await self._api_call('song.getData', {'sng_id': id, 'array_default': ['TRACK_TOKEN']})['TRACK_TOKEN']
 
         json = {
