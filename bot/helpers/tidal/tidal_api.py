@@ -323,7 +323,7 @@ class TvSession(BaseSession):
         while status_code == 400:
             """if datetime.now() > expiry:
                 raise Exception('TIDAL : Authorization Timedout')"""
-            r = await self.session.post(self.TIDAL_AUTH_BASE + 'oauth2/token', data=self.temp_data)
+            r = await self.session.post(self.AUTH_BASE + 'oauth2/token', data=self.temp_data)
             status_code = r.status
             await asyncio.sleep(i)
             i+=1
