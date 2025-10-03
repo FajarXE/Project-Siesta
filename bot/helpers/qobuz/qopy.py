@@ -18,7 +18,7 @@ class QoClient:
         self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
         self.base = "https://www.qobuz.com/api.json/0.2/"
         self.sec = None
-        self.quality = 27
+        self.quality = 5
         self.user_data = {}
 
     async def api_call(self, epoint, **kwargs):
