@@ -165,7 +165,7 @@ async def get_quality(stream_data: dict):
     }
 
     if stream_data['audioMode'] == 'DOLBY_ATMOS':
-        return 'Dolby ATMOS'
+        return 'DOLBY ATMOS'
     return quality_dict[stream_data['audioQuality']]
 
 
