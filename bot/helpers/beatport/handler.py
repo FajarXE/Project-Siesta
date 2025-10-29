@@ -29,7 +29,7 @@ async def start_beatport(link: str, user: Dict) -> None:
     """
 
     # locate OrpheusDL package (assumed sibling of this `beatport` folder)
-    base = Path(__file__).parent.parent / "OrpheusDL"
+    base = Path(__file__).parent.parent / "orpheusdl"
     orpheus_py = base / "orpheus.py"
     config_src = base / "config" / "settings.json"
 
