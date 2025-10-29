@@ -15,3 +15,10 @@ pyrofork
 python-dotenv
 requests
 tgcrypto-pyrofork
+defusedxml
+protobuf
+pycryptodomex
+Pillow
+tqdm
+ffmpeg-python
+m3u8

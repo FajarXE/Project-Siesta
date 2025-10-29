@@ -89,6 +89,13 @@ class Config:
     TIDAL_CONVERT_M4A = getenv("TIDAL_CONVERT_M4A", False)
     TIDAL_REFRESH_TOKEN = getenv("TIDAL_REFRESH_TOKEN", None)
     TIDAL_COUNTRY_CODE = getenv("TIDAL_COUNTRY_CODE", None) # example CA for Canada
+
+    # Add Beatport configuration
+    BEATPORT_EMAIL = getenv("BEATPORT_EMAIL", None)
+    BEATPORT_PASSWORD = getenv("BEATPORT_PASSWORD", None)
+
+    # OrpheusDL settings
+    ORPHEUSDL_TIMEOUT = int(getenv("ORPHEUSDL_TIMEOUT", "3600"))  # 1 hour default
 #--------------------    
     
 # CONCURRENT

@@ -12,7 +12,7 @@ from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
 from ..helpers.message import send_message, antiSpam, check_user, fetch_user_details
-
+from ..helpers.beatport.handler import start_beatport
 
 @Client.on_message(filters.command(CMD.DOWNLOAD))
 async def download_track(c, msg:Message):
@@ -49,7 +49,8 @@ async def start_link(link: str, user: dict) -> None:
     deezer = ["https://link.deezer.com", "https://deezer.com", "deezer.com", "https://www.deezer.com", "link.deezer.com"]
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
-    
+    beatport = ["https://www.beatport.com", "https://beatport.com"]
+
     # No Need to return because not called Any 
     if link.startswith(tuple(tidal)):
         await start_tidal(link, user)
@@ -58,3 +59,9 @@ async def start_link(link: str, user: dict) -> None:
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
         await start_qobuz(link, user)
+    elif link.startswith(tuple(spotify)):
+        await send_message(user, lang.s.ERR_SPOTIFY_UNSUPPORTED)
+        user['provider'] = 'Spotify'
+    elif link.startswith(tuple(beatport)):
+        await start_beatport(link, user)
+        user['provider'] = 'Beatport'
