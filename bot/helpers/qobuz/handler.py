@@ -11,7 +11,7 @@ from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
 
 
 async def start_qobuz(url:str, user:dict):
-    items, item_id, type_dict, content = await check_type(url)
+    items, item_id, type_dict, content = await check_type(url, user)
     if items:
         # FOR ARTIST
         if type_dict['iterable_key'] == 'albums':
@@ -29,7 +29,7 @@ async def start_qobuz(url:str, user:dict):
 
 
 async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
-    album_meta, err = await get_album_metadata(item_id, user['r_id'])
+    album_meta, err = await get_album_metadata(item_id, user['r_id'], user)
     if err:
         return await send_message(user, err)
     
@@ -160,7 +160,7 @@ async def start_artist(albums, user, artist):
 
 
 async def start_playlist(tracks, playlist, user):
-    play_meta = await get_playlist_meta(playlist[0], tracks, user['r_id'])
+    play_meta = await get_playlist_meta(playlist[0], tracks, user['r_id'], user)
     
     playlist_folder = None
 
