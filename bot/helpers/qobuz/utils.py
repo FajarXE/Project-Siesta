@@ -4,7 +4,8 @@ import copy
 import bot.helpers.translations as lang
 import logging
 
-from .qopy import qobuz_api
+# MODIFIED: Menghapus impor global 'qobuz_api'
+# from .qopy import qobuz_api 
 from ..message import send_message, edit_message
 from ..utils import format_string
 from ..metadata import metadata as base_meta
@@ -14,21 +15,25 @@ from bot.settings import bot_set
 from config import Config
 
 
-
+# MODIFIED: Fungsi ini sudah menerima 'user', jadi kita gunakan itu
 async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     """
     Args:
         item_id : track id
         r_id: reply to message id
         q_meta : raw metadata from qobuz (pre-fetched)
-        user: Users Dictionary (Contains object pyrogram.Message)
+        user: Users Dictionary (Harus berisi 'qobuz_api' client)
     """
     if user is None:
-        logging.info("User dict None!")
+        logging.error("User dict None in get_track_metadata! Multi-login will fail.")
+        return None, "Error: User data tidak ditemukan."
+    
+    client = user['qobuz_api'] # Mendapatkan klien spesifik pengguna
+
     if q_meta is None:
-        raw_meta = await qobuz_api.get_track_url(item_id, user)
+        raw_meta = await client.get_track_url(item_id, user) # MODIFIED
         if "sample" not in raw_meta and raw_meta.get('sampling_rate'):
-            q_meta = await qobuz_api.get_track_meta(item_id)
+            q_meta = await client.get_track_meta(item_id) # MODIFIED
             if not q_meta.get('streamable'):
                 return None, lang.s.ERR_QOBUZ_NOT_STREAMABLE
         else:
@@ -63,8 +68,11 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
 
     return metadata, None  
         
-async def get_album_metadata(item_id, r_id):
-    q_meta = await qobuz_api.get_album_meta(item_id)
+# MODIFIED: Menambahkan 'user: dict' ke signature fungsi
+async def get_album_metadata(item_id, r_id, user: dict):
+    client = user['qobuz_api'] # Mendapatkan klien spesifik pengguna
+    q_meta = await client.get_album_meta(item_id) # MODIFIED
+    
     if not q_meta.get('streamable'):
         return None, lang.s.ERR_QOBUZ_NOT_STREAMABLE
     
@@ -90,7 +98,8 @@ async def get_album_metadata(item_id, r_id):
     metadata['cover'] = await create_cover_file(q_meta['image']['large'], metadata)
     metadata['thumbnail'] = await create_cover_file(q_meta['image']['thumbnail'], metadata, True)
 
-    metadata['tracks'] = await get_track_meta_from_alb(q_meta, metadata)
+    # MODIFIED: Meneruskan 'user' ke fungsi helper jika diperlukan
+    metadata['tracks'] = await get_track_meta_from_alb(q_meta, metadata) 
 
     return metadata, None
 
@@ -118,12 +127,14 @@ async def get_track_meta_from_alb(q_meta:dict, alb_meta):
     return tracks
 
 
-async def get_playlist_meta(raw_meta, tracks, r_id):
+# MODIFIED: Menambahkan 'user: dict' ke signature fungsi
+async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
     """
     Args:
         raw_meta : raw metadata of playlist from qobuz
         tracks : list of tracks (raw metadata)
         r_id: reply to message id
+        user: Users Dictionary (Harus berisi 'qobuz_api' client)
     """
     metadata = copy.deepcopy(base_meta)
 
@@ -139,7 +150,8 @@ async def get_playlist_meta(raw_meta, tracks, r_id):
     metadata['thumbnail'] = './project-siesta.png'
     
     for track in tracks:
-        track_meta, _ = await get_track_metadata(track['id'], r_id, track)
+        # MODIFIED: Meneruskan 'user' ke get_track_metadata
+        track_meta, _ = await get_track_metadata(track['id'], r_id, track, user=user)
         metadata['tracks'].append(track_meta)
     return metadata
 
@@ -164,22 +176,26 @@ async def get_artists_name(meta):
     return ', '.join([str(artist) for artist in artists])
 
 
-async def check_type(url):
+# MODIFIED: Menambahkan 'user: dict' ke signature fungsi
+async def check_type(url, user: dict):
+    client = user['qobuz_api'] # Mendapatkan klien spesifik pengguna
+
     possibles = {
             "playlist": {
-                "func": qobuz_api.get_plist_meta,
+                # MODIFIED: Gunakan string nama metode
+                "func": "get_plist_meta", 
                 "iterable_key": "tracks",
             },
             "artist": {
-                "func": qobuz_api.get_artist_meta,
+                "func": "get_artist_meta", # MODIFIED
                 "iterable_key": "albums",
             },
             "interpreter": {
-                "func": qobuz_api.get_artist_meta,
+                "func": "get_artist_meta", # MODIFIED
                 "iterable_key": "albums",
             },
             "label": {
-                "func": qobuz_api.get_label_meta,
+                "func": "get_label_meta", # MODIFIED
                 "iterable_key": "albums",
             },
             "album": {"album": True, "func": None, "iterable_key": None},
@@ -193,7 +209,10 @@ async def check_type(url):
 
     content = None
     if type_dict["func"]:
-        res = await type_dict["func"](item_id)
+        # MODIFIED: Panggil metode dari instansi 'client' menggunakan getattr
+        method_to_call = getattr(client, type_dict["func"])
+        res = await method_to_call(item_id)
+        
         content = [item for item in res]
 
         smart_discography = True
@@ -301,8 +320,10 @@ async def get_quality(meta: dict, user: dict):
     Returns
         extention, quality
     """
-    user_dict = qobuz_api.user_data.get(user["user_id"], {})
-    quality = user_dict.get("qobuz_qual", qobuz_api.quality)
+    client = user['qobuz_api'] # Mendapatkan klien spesifik pengguna
+    # MODIFIED: Mengakses user_data dan quality dari instansi 'client'
+    user_dict = client.user_data.get(user["user_id"], {})
+    quality = user_dict.get("qobuz_qual", client.quality)
     if quality == 5:
         return 'mp3', '320K'
     else:
