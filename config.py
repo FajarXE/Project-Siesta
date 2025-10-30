@@ -65,6 +65,8 @@ class Config:
     QOBUZ_PASSWORD = getenv("QOBUZ_PASSWORD", None)
     QOBUZ_USER = getenv("QOBUZ_USER", None)
     QOBUZ_TOKEN = getenv("QOBUZ_TOKEN", None)
+    QOBUZ_USER_1 = getenv("QOBUZ_USER_1", None)
+    QOBUZ_TOKEN_1 = getenv("QOBUZ_TOKEN_1", None)
 #--------------------
 
 # DEEZER
