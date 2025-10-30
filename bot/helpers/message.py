@@ -1,5 +1,7 @@
 import os
 import asyncio
+import time  # <-- MODIFIKASI: Ditambahkan
+import math  # <-- MODIFIKASI: Ditambahkan
 
 from pyrogram.types import Message
 from pyrogram.errors import MessageNotModified, FloodWait
@@ -143,6 +145,43 @@ async def send_message(user, item, itype='text',
             )
 
         elif itype == 'audio':
+            
+            # --- MODIFIKASI DIMULAI (Menambahkan Progress Callback) ---
+            last_update_time = [0] # Gunakan list agar mutable di dalam callback
+
+            async def progress_callback(current, total):
+                # Update setiap 5 detik untuk menghindari FloodWait
+                current_time = time.time()
+                if current_time - last_update_time[0] < 5:
+                    return
+                last_update_time[0] = current_time
+
+                percentage = int((current / total) * 100)
+                progress_bar = "{0}{1}".format(
+                    ''.join(["▰" for i in range(math.floor(percentage / 10))]),
+                    ''.join(["▱" for i in range(10 - math.floor(percentage / 10))])
+                )
+                
+                try:
+                    # Buat pesan status yang informatif
+                    track_num = meta.get('tracknumber', '?')
+                    total_tracks = meta.get('totaltracks', '?')
+                    title = meta.get('title', 'Unknown Track')
+                    
+                    text = (
+                        f"**Mengunggah...**\n"
+                        f"Lagu {track_num} dari {total_tracks}\n"
+                        f"`{title}`\n\n"
+                        f"{progress_bar} {percentage}%"
+                    )
+                    
+                    # Edit pesan status utama bot
+                    await edit_message(user['bot_msg'], text, antiflood=False)
+                except Exception:
+                    # Jangan gagalkan unggahan jika pesan status gagal
+                    pass
+            # --- MODIFIKASI SELESAI ---
+
             msg = await aio.send_audio(
                 chat_id=chat_id,
                 audio=item,
@@ -151,7 +190,8 @@ async def send_message(user, item, itype='text',
                 performer=meta['artist'],
                 title=meta['title'],
                 thumb=meta['thumbnail'],
-                reply_to_message_id=user['r_id']
+                reply_to_message_id=user['r_id'],
+                progress=progress_callback  # <-- MODIFIKASI: Melewatkan callback
             )
 
         elif itype == 'pic':
