@@ -1,3 +1,8 @@
+# --- PERBAIKAN DI SINI ---
+# Mendefinisikan dictionary global agar bisa diimpor oleh file lain
+BOT_QOBUZ_CLIENTS = {}
+# --- BATAS PERBAIKAN ---
+
 from config import Config
 import subprocess, os
 
