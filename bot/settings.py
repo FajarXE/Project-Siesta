@@ -11,7 +11,8 @@ from config import Config
 from bot.logger import LOGGER
 
 from .helpers.database.mongo_async import database
-from .helpers.qobuz.qopy import qobuz_api
+# MODIFIKASI: Impor qobuz_api Dihapus
+# from .helpers.qobuz.qopy import qobuz_api 
 from .helpers.deezer.dzapi import deezerapi
 from .helpers.tidal.tidal_api import tidalapi
 from .helpers.translations import lang_available
@@ -36,7 +37,8 @@ set_db = loop.run_until_complete(database.get_variable())
 class BotSettings:
     def __init__(self):
         self.deezer = False
-        self.qobuz = False
+        # MODIFIKASI: Atribut self.qobuz Dihapus
+        # self.qobuz = False 
         self.tidal = None
         self.admins = Config.ADMINS
         self.set_db = set_db
@@ -98,18 +100,9 @@ class BotSettings:
             self.upload_mode = 'Telegram'
     
 
-    async def login_qobuz(self):
-        if Config.QOBUZ_EMAIL or Config.QOBUZ_USER:
-            try:
-                await qobuz_api.login()
-                self.qobuz = qobuz_api
-                self.clients.append(qobuz_api)
-                quality = self.set_db.get("QOBUZ_QUALITY")
-                if quality:
-                    bot_set.qobuz.quality = int(quality)
-            except Exception as e:
-                LOGGER.error(e)
-    
+    # MODIFIKASI: Seluruh fungsi login_qobuz(self) Dihapus
+    # (Ini sekarang ditangani di __main__.py)
+
 
     async def login_deezer(self):
         if Config.DEEZER_ARL or Config.DEEZER_EMAIL:
@@ -203,8 +196,7 @@ class BotSettings:
         #logging.info(user_data)
         if self.deezer:
             self.deezer.user_data = user_data
-        if self.qobuz:
-            self.qobuz.user_data = user_data
+        # MODIFIKASI: Blok if self.qobuz Dihapus
         if self.tidal:
             self.tidal.user_data = user_data
         self.user_data = user_data
