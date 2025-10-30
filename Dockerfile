@@ -1,47 +1,52 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Asia/Hong_Kong
+    TZ=Asia/Jakarta
 
 WORKDIR /usr/src/app
 
-# Install all dependencies
 RUN apt-get update -qq && \
-    apt-get install -qq -y \
-    ffmpeg \
-    gcc \
-    libffi-dev \
-    git \
-    wget \
-    curl \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -qq -y ffmpeg gcc libffi-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install rclone
+# Install build dependencies and rclone in a separate stage
+FROM base AS builder
+RUN apt-get update -qq && \
+    apt-get install -qq -y git wget curl unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Download and install rclone
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; \
-    elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; \
-    elif [ "$ARCH" = "armv7l" ]; then ARCH="arm-v7"; fi && \
-    curl -s -O https://downloads.rclone.org/rclone-current-linux-${ARCH}.zip && \
-    unzip -q rclone-current-linux-${ARCH}.zip && \
-    cd rclone-*-linux-${ARCH} && \
-    install -m 755 rclone /usr/bin/rclone && \
-    cd .. && \
-    rm -rf rclone-*-linux-${ARCH}*
+    elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi && \
+    curl -O https://downloads.rclone.org/v1.70.2/rclone-v1.70.2-linux-${ARCH}.zip && \
+    unzip rclone-v1.70.2-linux-${ARCH}.zip && \
+    install -m 755 rclone-v1.70.2-linux-${ARCH}/rclone /usr/bin/rclone && \
+    rm -rf rclone-v1.70.2-linux-${ARCH}*
 
-# Clone the repository with submodules
-ARG GIT_REPO
-ARG GIT_BRANCH=main
+# Final stage with only necessary files
+FROM base AS final
 
-RUN if [ -n "$GIT_REPO" ]; then \
-        git clone --branch $GIT_BRANCH --recursive $GIT_REPO . ; \
-    else \
-        echo "Warning: GIT_REPO not provided, you need to copy code manually" ; \
-    fi
+COPY --from=builder /usr/bin/rclone /usr/bin/rclone
 
-# Install Python dependencies
-RUN if [ -f "requirements.txt" ]; then \
-        pip install --no-cache-dir -r requirements.txt; \
-    fi
+COPY .gitmodules .gitignore ./
+
+RUN apt-get update -qq && \
+    apt-get install -qq -y git && \
+    git init && \
+    git config --global --add safe.directory /usr/src/app
+
+RUN git submodule update --init --recursive
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+RUN git submodule update --init --recursive && \
+    # Clean up git to reduce image size
+    apt-get remove -y git && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["python", "-m", "bot"]
