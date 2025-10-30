@@ -2,6 +2,7 @@ import shutil
 from .utils import *
 from config import Config
 
+# Pastikan impor ini ada di baris atas
 from pathvalidate import sanitize_filepath
 
 from ..utils import *
@@ -88,6 +89,8 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         album_folder = basefolder + f"/{album_meta['title']}"
     else:
         album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
+    
+    # Direktori album harus disanitasi
     album_folder = sanitize_filepath(album_folder)
     album_meta['folderpath'] = album_folder
     
@@ -124,12 +127,12 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
             if err == "UNAVAILABLE":
                 raise QobuzContentUnavailableError(f"Track {item_id} tidak streamable.")
             return await send_message(user, err)
+        # Jika basefolder tidak ada, buat path dasar
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
+        # Pastikan path dasar ini juga disanitasi
+        filepath = sanitize_filepath(filepath)
     else:
-        if track_meta['filepath'] == '' and basefolder is None:
-            filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
-        else:
-            filepath = basefolder
+        filepath = basefolder
     
     try:
         raw_data = await client.get_track_url(item_id, user)
@@ -139,23 +142,22 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         
     track_meta['extension'], track_meta['quality'] = await get_quality(raw_data, user)
 
-    # --- MODIFIKASI DIMULAI (Perbaikan Nama File) ---
+    # --- INI ADALAH PERBAIKAN PENTING ---
     # 1. Dapatkan nama file mentah
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    # 2. Bersihkan (sanitize) nama file DAHULU
+    # 2. Bersihkan (sanitize) nama file DAHULU (menghapus '/')
     safe_filename = sanitize_filepath(raw_filename)
-    # 3. Gabungkan path yang aman
-    filepath += f"/{safe_filename}.{track_meta['extension']}"
-    # 4. Hapus 'sanitize_filepath' dari sini karena sudah dilakukan
-    # filepath = sanitize_filepath(filepath) 
-    track_meta['filepath'] = filepath
-    # --- MODIFIKASI SELESAI ---
+    # 3. Gabungkan path yang aman (filepath sudah disanitasi dari start_album)
+    full_path = f"{filepath}/{safe_filename}.{track_meta['extension']}"
+    # --- BATAS PERBAIKAN ---
 
-    err = await download_file(url, filepath)
+    track_meta['filepath'] = full_path
+
+    err = await download_file(url, full_path)
     if err:
         # Jika 'download_file' secara eksplisit mengembalikan error
-        LOGGER.error(f"Download_file gagal untuk {filepath}: {err}")
-        return False  # Mengembalikan False untuk memberi sinyal kegagalan ke run_concurrent_tasks
+        LOGGER.error(f"Download_file gagal untuk {full_path}: {err}")
+        return False
     
     try:
         await set_metadata(track_meta)
@@ -166,11 +168,11 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         return True  # Sukses
 
     except FileNotFoundError:
-        LOGGER.error(f"[Errno 2] File not found setelah download (download_file gagal diam-diam?): {filepath}")
+        LOGGER.error(f"[Errno 2] File not found setelah download (download_file gagal diam-diam?): {full_path}")
         return False
 
     except Exception as e:
-        LOGGER.error(f"Gagal memproses (metadata/upload) untuk {filepath}: {e}\n{traceback.format_exc()}")
+        LOGGER.error(f"Gagal memproses (metadata/upload) untuk {full_path}: {e}\n{traceback.format_exc()}")
         return False
 
 
