@@ -33,5 +33,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+RUN apt install git && \
+    git submodule init && \
+    git submodule update
 
-ENTRYPOINT ["python", "-m", "bot"]
+    ENTRYPOINT ["python", "-m", "bot"]
