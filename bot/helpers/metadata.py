@@ -88,10 +88,7 @@ async def set_mp3(data, handle):
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
     handle.tags.add(TRCK(encoding=3, text=str(data['tracknumber'])))
-    # --- MODIFIKASI DIMULAI ---
-    # Menambahkan ')' yang hilang di akhir baris ini
     handle.tags.add(TPOS(encoding=3, text=str(data['volume'])))
-    # --- MODIFIKASI SELESAI ---
     handle.tags.add(TXXX(encoding=3, text=str(data['totaltracks'])))
     handle.tags.add(TCON(encoding=3, text=data['genre']))
     handle.tags.add(TDRC(encoding=3, text=data['date']))
@@ -127,6 +124,13 @@ async def set_m4a(data, handle):
 
 async def savePic(handle, metadata):
     album_art = metadata['cover']
+
+    # --- MODIFIKASI DIMULAI (Penanganan Error Cover) ---
+    # Jika path cover adalah placeholder, jangan coba membukanya
+    if album_art == './project-siesta.png' or not os.path.exists(album_art):
+        LOGGER.warning(f"Cover art tidak ditemukan di {album_art}, tidak menambahkan gambar.")
+        return
+    # --- MODIFIKASI SELESAI ---
 
     try:
         with open(album_art, "rb") as f:
@@ -165,12 +169,24 @@ async def get_audio_extension(path):
         return 'mp3'
 
 
+# --- MODIFIKASI DIMULAI (Fungsi ini dibuat lebih kuat) ---
 async def create_cover_file(url:dict, meta:dict, thumbnail=False):
     filename = f"{meta['itemid']}-thumb.jpg" if thumbnail else f"{meta['itemid']}.jpg"
     cover = meta['tempfolder'] + filename
     
+    # Coba unduh hanya jika belum ada
     if not os.path.exists(cover):
-        err = await download_file(url, cover, 1, 5)
+        err = await download_file(url, cover, retries=1, timeout=5)
+        
+        # Jika 'download_file' mengembalikan error, kembalikan placeholder
         if err:
+            LOGGER.error(f"Gagal mengunduh cover art: {err}")
             return './project-siesta.png'
-    return cover
+            
+    # Periksa lagi jika file ada (setelah 'download_file' mungkin mengembalikan None)
+    if os.path.exists(cover) and os.path.getsize(cover) > 0:
+        return cover
+    else:
+        # Jika file masih tidak ada, kembalikan placeholder
+        return './project-siesta.png'
+# --- MODIFIKASI SELESAI ---
