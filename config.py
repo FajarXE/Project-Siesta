@@ -59,14 +59,43 @@ class Config:
 #--------------------
 
 # QOBUZ
-
 #--------------------
-    QOBUZ_EMAIL = getenv("QOBUZ_EMAIL", None)
-    QOBUZ_PASSWORD = getenv("QOBUZ_PASSWORD", None)
-    QOBUZ_USER = getenv("QOBUZ_USER", None)
-    QOBUZ_TOKEN = getenv("QOBUZ_TOKEN", None)
-    QOBUZ_USER_1 = getenv("QOBUZ_USER_1", None)
-    QOBUZ_TOKEN_1 = getenv("QOBUZ_TOKEN_1", None)
+    
+    # MODIFIKASI: Semua variabel Qobuz lama dihapus
+    # dan diganti dengan loop pintar di bawah ini.
+
+    QOBUZ_ACCOUNTS = []
+    i = 1
+    while True:
+        # 1. Mencari akun berdasarkan User/Token
+        user_id = getenv(f"QOBUZ_USER_{i}")
+        user_token = getenv(f"QOBUZ_TOKEN_{i}")
+        
+        # 2. ATAU mencari akun berdasarkan Email/Password
+        email = getenv(f"QOBUZ_EMAIL_{i}")
+        password = getenv(f"QOBUZ_PASSWORD_{i}")
+
+        account_data = {}
+        if user_id and user_token:
+            logging.info(f"Ditemukan Qobuz Akun #{i} (User/Token)")
+            account_data = {"user_id": user_id, "user_token": user_token}
+        elif email and password:
+            logging.info(f"Ditemukan Qobuz Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password}
+        else:
+            # 3. Jika tidak ada lagi akun (misal QOBUZ_USER_3 tidak ada),
+            #    loop akan berhenti.
+            if i > 1: # Hanya tampilkan log jika setidaknya satu akun ditemukan
+                 logging.info(f"Selesai memuat {i-1} akun Qobuz.")
+            break
+        
+        account_data["id"] = i # Simpan ID unik (1, 2, 3...)
+        QOBUZ_ACCOUNTS.append(account_data)
+        i += 1
+    
+    if not QOBUZ_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Qobuz (QOBUZ_USER_1, dll.) ditemukan di .env")
+
 #--------------------
 
 # DEEZER
