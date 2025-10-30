@@ -50,9 +50,12 @@ async def start_qobuz(url:str, user:dict):
             return 
 
         except QobuzContentUnavailableError as e:
+            # --- MODIFIKASI DIMULAI (Log diubah ke INFO) ---
             last_error = f"Akun {client_label}: Konten tidak tersedia. ({e})"
-            LOGGER.warning(last_error)
+            # Diubah dari .warning() ke .info() agar tidak terlalu mengganggu
+            LOGGER.info(last_error) 
             continue 
+            # --- MODIFIKASI SELESAI ---
 
         except Exception as e:
             last_error = f"Error fatal di Akun {client_label}: {e}"
@@ -65,7 +68,6 @@ async def start_qobuz(url:str, user:dict):
         LOGGER.error(f"FATAL: Gagal mengirim pesan 'Semua akun gagal' ke pengguna. Error: {e}")
 
 
-# --- MODIFIKASI DIMULAI (Fungsi ini sekarang menyaring hasil) ---
 async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     client = user['qobuz_api']
     
@@ -105,10 +107,8 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         'type': album_meta['type']
     }
     
-    # 1. Tangkap hasil (daftar [True, True, False, ...])
     task_results = await run_concurrent_tasks(tasks, update_details)
     
-    # 2. Saring daftar lagu asli
     original_tracks = album_meta['tracks']
     successful_tracks = []
     
@@ -118,15 +118,11 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         else:
             LOGGER.warning(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} karena gagal diunduh.")
 
-    # 3. Perbarui album_meta dengan *hanya* lagu yang berhasil
     album_meta['tracks'] = successful_tracks
-    album_meta['totaltracks'] = len(successful_tracks) # Perbarui jumlah lagu
-    # --- MODIFIKASI SELESAI ---
+    album_meta['totaltracks'] = len(successful_tracks)
 
-    # Jika tidak ada lagu yang berhasil diunduh, jangan lanjutkan
     if not successful_tracks:
         LOGGER.error(f"Tidak ada lagu yang berhasil diunduh untuk album {album_meta['title']}.")
-        # (Kita bisa mengirim pesan error di sini, tapi untuk sekarang kita biarkan)
         return
 
     _, __, album_zip = fetch_zip_settings(user)
@@ -136,7 +132,6 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
 
     if upload:
-        # Ini sekarang HANYA akan meng-upload lagu yang berhasil
         await album_upload(album_meta, user)
 
 
@@ -251,7 +246,6 @@ async def start_playlist(tracks, playlist, user):
         for track in play_meta['tracks']:
             tasks.append(start_track(track['itemid'], user, track, upload, playlist_folder))
         
-        # --- MODIFIKASI (Menyaring hasil untuk Playlist) ---
         task_results = await run_concurrent_tasks(tasks, update_details)
         original_tracks = play_meta['tracks']
         successful_tracks = []
@@ -259,7 +253,6 @@ async def start_playlist(tracks, playlist, user):
             if i < len(task_results) and task_results[i]:
                 successful_tracks.append(original_tracks[i])
         play_meta['tracks'] = successful_tracks
-        # --- MODIFIKASI SELESAI ---
 
     else:
         i = 0
@@ -268,12 +261,11 @@ async def start_playlist(tracks, playlist, user):
         successful_tracks_non_conc = []
         for track in play_meta['tracks']:
             await progress_message(i, len(play_meta['tracks']), update_details)
-            # 'start_track' mengembalikan True/False
             success = await start_track(track['itemid'], user, track, upload, playlist_folder, bot_set.disable_sort_link, True)
             if success:
                 successful_tracks_non_conc.append(track)
             i+=1
-        play_meta['tracks'] = successful_tracks_non_conc # Saring untuk mode non-concurrent juga
+        play_meta['tracks'] = successful_tracks_non_conc
 
     if playlist_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
