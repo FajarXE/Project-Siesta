@@ -17,9 +17,10 @@ except ImportError:
     logging.critical("Gagal mengimpor QoClient! Pastikan path 'from .helpers.qobuz.qopy import QoClient' benar.")
     sys.exit(1)
 
-# 2. Buat dictionary global untuk menyimpan klien yang sudah login
-# Handler/modul lain akan mengimpor ini
-BOT_QOBUZ_CLIENTS = {}
+# --- PERBAIKAN DI SINI ---
+# 2. Mengimpor dictionary global dari bot/__init__.py
+from bot import BOT_QOBUZ_CLIENTS
+# --- BATAS PERBAIKAN ---
 
 # PERBAIKAN: Fungsi ini diganti seluruhnya
 async def login_single_client(creds: dict):
