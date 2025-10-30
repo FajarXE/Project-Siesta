@@ -115,7 +115,6 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         await album_upload(album_meta, user)
 
 
-# --- MODIFIKASI DIMULAI DI FUNGSI INI ---
 async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=True, basefolder=None, disable_link=False, disable_msg=False):
     client = user['qobuz_api']
 
@@ -140,10 +139,17 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         
     track_meta['extension'], track_meta['quality'] = await get_quality(raw_data, user)
 
-    filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    filepath += f"/{filename}.{track_meta['extension']}"
-    filepath = sanitize_filepath(filepath)
+    # --- MODIFIKASI DIMULAI (Perbaikan Nama File) ---
+    # 1. Dapatkan nama file mentah
+    raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
+    # 2. Bersihkan (sanitize) nama file DAHULU
+    safe_filename = sanitize_filepath(raw_filename)
+    # 3. Gabungkan path yang aman
+    filepath += f"/{safe_filename}.{track_meta['extension']}"
+    # 4. Hapus 'sanitize_filepath' dari sini karena sudah dilakukan
+    # filepath = sanitize_filepath(filepath) 
     track_meta['filepath'] = filepath
+    # --- MODIFIKASI SELESAI ---
 
     err = await download_file(url, filepath)
     if err:
@@ -151,7 +157,6 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         LOGGER.error(f"Download_file gagal untuk {filepath}: {err}")
         return False  # Mengembalikan False untuk memberi sinyal kegagalan ke run_concurrent_tasks
     
-    # --- BLOK PERBAIKAN DIMULAI ---
     try:
         await set_metadata(track_meta)
 
@@ -161,15 +166,12 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         return True  # Sukses
 
     except FileNotFoundError:
-        # Ini menangkap [Errno 2] jika 'download_file' gagal secara diam-diam
         LOGGER.error(f"[Errno 2] File not found setelah download (download_file gagal diam-diam?): {filepath}")
-        return False  # Mengembalikan False untuk memberi sinyal kegagalan
+        return False
 
     except Exception as e:
-        # Menangkap error lain dari set_metadata atau track_upload
         LOGGER.error(f"Gagal memproses (metadata/upload) untuk {filepath}: {e}\n{traceback.format_exc()}")
-        return False  # Mengembalikan False untuk memberi sinyal kegagalan
-    # --- BLOK PERBAIKAN SELESAI ---
+        return False
 
 
 async def start_artist(albums, user, artist):
