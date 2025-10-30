@@ -34,7 +34,8 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         return await send_message(user, err)
     
     # Get user quality by doing a track request
-    track_meta = await qobuz_api.get_track_url(album_meta['tracks'][0]['itemid'], user)
+    # MODIFIED: Use user-specific client
+    track_meta = await user['qobuz_api'].get_track_url(album_meta['tracks'][0]['itemid'], user)
 
     _, album_meta['quality'] = await get_quality(track_meta, user)
     
@@ -100,8 +101,9 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
         else:
             filepath = basefolder
-        
-    raw_data = await qobuz_api.get_track_url(item_id, user)
+    
+    # MODIFIED: Use user-specific client
+    raw_data = await user['qobuz_api'].get_track_url(item_id, user)
     try:
         url = raw_data['url']
     except KeyError:
@@ -171,7 +173,8 @@ async def start_playlist(tracks, playlist, user):
     play_meta['folderpath'] = playlist_folder
     
     # Get user quality by doing a track request
-    track_meta = await qobuz_api.get_track_url(tracks[0]['id'], user)
+    # MODIFIED: Use user-specific client
+    track_meta = await user['qobuz_api'].get_track_url(tracks[0]['id'], user)
     _, play_meta['quality'] = await get_quality(track_meta, user)
 
     update_details = {
