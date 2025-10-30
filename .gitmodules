@@ -3,4 +3,4 @@
 	url = https://github.com/OrfiTeam/OrpheusDL
 [submodule "bot/helpers/OrpheusDL"]
 	path = bot/helpers/OrpheusDL
-	url = https://github.com/OrfiTeam/OrpheusDL
+	url = https://github.com/utopian-society/OrpheusDL
