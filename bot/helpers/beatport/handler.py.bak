@@ -1,0 +1,38 @@
+# 
+
+# ...existing code...
+import subprocess
+import traceback
+import shutil
+import os
+import json
+import contextlib
+from pathlib import Path
+
+from bot.settings import bot_set
+
+from bot import Config
+from bot.logger import LOGGER
+from bot.tgclient import aio
+from bot.helpers.message import send_message, edit_message
+from ..uploder import track_upload
+
+current_dir = Path(__file__).resolve().parent
+orpheusdl_dir = current_dir.parent / "OrpheusDL"
+orpheusdl_dldir = orpheusdl_dir.parent.parent.parent / Config.DOWNLOADS_FOLDER
+orpheusdl_json = orpheus_dir / "config" / "settings.json"
+
+async def start_orpheusdl_beatport(url:str, user:dict):
+    try:
+        os.chdir(orpheusdl_dir)
+        with open (orpheusdl_json, "r") as i:
+            config_data = json.load(i)
+            config_data["global"]["general"]["download_path"] = str(orpheusdl_dldir)
+            config_data["modules"]["beatport"]["username"] = Config.BEATPORT_USERNAME
+            config_data["modules"]["beatport"]["password"] = Config.BEATPORT_PASSWORD
+            with open (orpheusdl_json, "w") as o:
+                json.dump(config_data, o, indent=4)
+        
+        subprocess.run(
+            ["python3", "orpheus.py", url]
+        

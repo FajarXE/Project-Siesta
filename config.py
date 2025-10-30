@@ -91,7 +91,7 @@ class Config:
     TIDAL_COUNTRY_CODE = getenv("TIDAL_COUNTRY_CODE", None) # example CA for Canada
 
     # Add Beatport configuration
-    BEATPORT_EMAIL = getenv("BEATPORT_EMAIL", None)
+    BEATPORT_USERNAME = getenv("BEATPORT_USERNAME", None)
     BEATPORT_PASSWORD = getenv("BEATPORT_PASSWORD", None)
 
     # OrpheusDL settings
