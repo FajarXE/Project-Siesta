@@ -6,22 +6,19 @@ from pathvalidate import sanitize_filepath
 
 from ..utils import *
 from ..metadata import set_metadata
-from ..message import edit_message  # Pastikan edit_message diimpor
-from bot.logger import LOGGER      # Impor LOGGER
-import traceback                  # Impor traceback
+from ..message import edit_message
+from bot.logger import LOGGER
+import traceback
 
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
 
-# --- MODIFIKASI DIMULAI (LOGIKA FALLBACK) ---
-# 1. Definisikan Exception kustom
+# Exception kustom
 class QobuzContentUnavailableError(Exception):
     """Exception khusus yang dilempar saat konten tidak streamable/tersedia."""
     pass
-# --- MODIFIKASI SELESAI ---
 
 
 async def start_qobuz(url:str, user:dict):
-    # --- MODIFIKASI DIMULAI (LOGIKA FALLBACK) ---
     
     clients_list = user.get('qobuz_clients_list', [])
     if not clients_list:
@@ -29,16 +26,13 @@ async def start_qobuz(url:str, user:dict):
 
     last_error = "Tidak ada error"
     
-    # 2. Loop melalui setiap klien yang tersedia
     for i, client in enumerate(clients_list):
-        # 3. Tetapkan klien saat ini untuk digunakan oleh fungsi downstream
         user['qobuz_api'] = client
-        client_label = client.label or client.user_id # Gunakan label atau ID
+        client_label = client.label or client.user_id 
         
         try:
             await edit_message(user['bot_msg'], f"Mencoba Akun #{i+1}/{len(clients_list)} ({client_label})...")
 
-            # 4. Jalankan seluruh proses di dalam try...except
             items, item_id, type_dict, content = await check_type(url, user)
             
             if items:
@@ -52,43 +46,38 @@ async def start_qobuz(url:str, user:dict):
                 else:
                     await start_track(item_id, user, None)
             
-            # 5. Jika berhasil, kirim pesan sukses dan keluar dari loop
             await edit_message(user['bot_msg'], f"Sukses mengunduh dengan Akun {client_label}!")
-            return # Sukses!
+            return 
 
         except QobuzContentUnavailableError as e:
-            # 6. Konten tidak tersedia di klien ini, coba klien berikutnya
             last_error = f"Akun {client_label}: Konten tidak tersedia. ({e})"
             LOGGER.warning(last_error)
-            continue # Lanjut ke iterasi loop berikutnya
+            continue 
 
         except Exception as e:
-            # 7. Error fatal (misal disk penuh, error login, dll.), hentikan loop
             last_error = f"Error fatal di Akun {client_label}: {e}"
             LOGGER.error(f"{last_error}\n{traceback.format_exc()}")
-            break # Keluar dari loop
+            break 
 
-    # 8. Jika loop selesai tanpa 'return', berarti semua klien gagal
-    await edit_message(user['bot_msg'], f"Semua {len(clients_list)} akun Qobuz gagal.\nKesalahan terakhir: {last_error}")
-    # --- MODIFIKASI SELESAI ---
+    try:
+        await edit_message(user['bot_msg'], f"Semua {len(clients_list)} akun Qobuz gagal.\nKesalahan terakhir: {last_error}")
+    except Exception as e:
+        LOGGER.error(f"FATAL: Gagal mengirim pesan 'Semua akun gagal' ke pengguna. Error: {e}")
 
 
 async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
-    # Dapatkan klien saat ini dari kamus 'user'
     client = user['qobuz_api']
     
     album_meta, err = await get_album_metadata(item_id, user['r_id'], user)
     if err:
-        # --- MODIFIKASI (LOGIKA FALLBACK) ---
-        # Jika 'err' adalah 'UNAVAILABLE', lempar exception
         if err == "UNAVAILABLE":
             raise QobuzContentUnavailableError("Album tidak streamable.")
-        # Jika tidak, kirim pesan error biasa
         return await send_message(user, err)
-        # --- MODIFIKASI SELESAI ---
     
-    # Get user quality by doing a track request
-    track_meta = await client.get_track_url(album_meta['tracks'][0]['itemid'], user)
+    try:
+        track_meta = await client.get_track_url(album_meta['tracks'][0]['itemid'], user)
+    except KeyError:
+         raise QobuzContentUnavailableError(f"Track pertama album {item_id} tidak memiliki URL.")
 
     _, album_meta['quality'] = await get_quality(track_meta, user)
     
@@ -126,18 +115,16 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         await album_upload(album_meta, user)
 
 
+# --- MODIFIKASI DIMULAI DI FUNGSI INI ---
 async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=True, basefolder=None, disable_link=False, disable_msg=False):
-    # Dapatkan klien saat ini dari kamus 'user'
     client = user['qobuz_api']
 
     if not track_meta:
         track_meta, err = await get_track_metadata(item_id, user['r_id'], None, user)
         if err:
-            # --- MODIFIKASI (LOGIKA FALLBACK) ---
             if err == "UNAVAILABLE":
                 raise QobuzContentUnavailableError(f"Track {item_id} tidak streamable.")
             return await send_message(user, err)
-            # --- MODIFIKASI SELESAI ---
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
     else:
         if track_meta['filepath'] == '' and basefolder is None:
@@ -145,14 +132,11 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         else:
             filepath = basefolder
     
-    # --- MODIFIKASI (LOGIKA FALLBACK) ---
     try:
         raw_data = await client.get_track_url(item_id, user)
         url = raw_data['url']
     except KeyError:
-        # Lempar exception agar loop 'start_qobuz' bisa menangkapnya
         raise QobuzContentUnavailableError(f"Track {item_id} tidak memiliki URL (KeyError).")
-    # --- MODIFIKASI SELESAI ---
         
     track_meta['extension'], track_meta['quality'] = await get_quality(raw_data, user)
 
@@ -163,14 +147,29 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
 
     err = await download_file(url, filepath)
     if err:
-        return await send_message(user, err) # Error download (misal koneksi putus) adalah fatal
+        # Jika 'download_file' secara eksplisit mengembalikan error
+        LOGGER.error(f"Download_file gagal untuk {filepath}: {err}")
+        return False  # Mengembalikan False untuk memberi sinyal kegagalan ke run_concurrent_tasks
     
-    await set_metadata(track_meta)
+    # --- BLOK PERBAIKAN DIMULAI ---
+    try:
+        await set_metadata(track_meta)
 
-    if upload:
-        await track_upload(track_meta, user, disable_link)
+        if upload:
+            await track_upload(track_meta, user, disable_link)
             
-    return True
+        return True  # Sukses
+
+    except FileNotFoundError:
+        # Ini menangkap [Errno 2] jika 'download_file' gagal secara diam-diam
+        LOGGER.error(f"[Errno 2] File not found setelah download (download_file gagal diam-diam?): {filepath}")
+        return False  # Mengembalikan False untuk memberi sinyal kegagalan
+
+    except Exception as e:
+        # Menangkap error lain dari set_metadata atau track_upload
+        LOGGER.error(f"Gagal memproses (metadata/upload) untuk {filepath}: {e}\n{traceback.format_exc()}")
+        return False  # Mengembalikan False untuk memberi sinyal kegagalan
+    # --- BLOK PERBAIKAN SELESAI ---
 
 
 async def start_artist(albums, user, artist):
@@ -198,7 +197,6 @@ async def start_artist(albums, user, artist):
 
 
 async def start_playlist(tracks, playlist, user):
-    # Dapatkan klien saat ini dari kamus 'user'
     client = user['qobuz_api']
     
     play_meta = await get_playlist_meta(playlist[0], tracks, user['r_id'], user)
@@ -211,13 +209,11 @@ async def start_playlist(tracks, playlist, user):
         playlist_folder = sanitize_filepath(playlist_folder)
     play_meta['folderpath'] = playlist_folder
     
-    # --- MODIFIKASI (LOGIKA FALLBACK) ---
     try:
         track_meta = await client.get_track_url(tracks[0]['id'], user)
         _, play_meta['quality'] = await get_quality(track_meta, user)
     except KeyError:
         raise QobuzContentUnavailableError(f"Track pertama playlist {tracks[0]['id']} tidak memiliki URL.")
-    # --- MODIFIKASI SELESAI ---
 
     update_details = {
         'text': lang.s.DOWNLOAD_PROGRESS,
