@@ -2,7 +2,6 @@ import shutil
 from .utils import *
 from config import Config
 
-# Pastikan impor ini ada di baris atas
 from pathvalidate import sanitize_filepath
 
 from ..utils import *
@@ -66,6 +65,7 @@ async def start_qobuz(url:str, user:dict):
         LOGGER.error(f"FATAL: Gagal mengirim pesan 'Semua akun gagal' ke pengguna. Error: {e}")
 
 
+# --- MODIFIKASI DIMULAI (Fungsi ini sekarang menyaring hasil) ---
 async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     client = user['qobuz_api']
     
@@ -90,7 +90,6 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     else:
         album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
     
-    # Direktori album harus disanitasi
     album_folder = sanitize_filepath(album_folder)
     album_meta['folderpath'] = album_folder
     
@@ -105,8 +104,31 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         'title': album_meta['title'],
         'type': album_meta['type']
     }
-    await run_concurrent_tasks(tasks, update_details)
     
+    # 1. Tangkap hasil (daftar [True, True, False, ...])
+    task_results = await run_concurrent_tasks(tasks, update_details)
+    
+    # 2. Saring daftar lagu asli
+    original_tracks = album_meta['tracks']
+    successful_tracks = []
+    
+    for i in range(len(original_tracks)):
+        if i < len(task_results) and task_results[i]: # Jika task berhasil (True)
+            successful_tracks.append(original_tracks[i])
+        else:
+            LOGGER.warning(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} karena gagal diunduh.")
+
+    # 3. Perbarui album_meta dengan *hanya* lagu yang berhasil
+    album_meta['tracks'] = successful_tracks
+    album_meta['totaltracks'] = len(successful_tracks) # Perbarui jumlah lagu
+    # --- MODIFIKASI SELESAI ---
+
+    # Jika tidak ada lagu yang berhasil diunduh, jangan lanjutkan
+    if not successful_tracks:
+        LOGGER.error(f"Tidak ada lagu yang berhasil diunduh untuk album {album_meta['title']}.")
+        # (Kita bisa mengirim pesan error di sini, tapi untuk sekarang kita biarkan)
+        return
+
     _, __, album_zip = fetch_zip_settings(user)
     
     if album_zip:
@@ -114,7 +136,7 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
 
     if upload:
-        await edit_message(user['bot_msg'], lang.s.UPLOADING)
+        # Ini sekarang HANYA akan meng-upload lagu yang berhasil
         await album_upload(album_meta, user)
 
 
@@ -127,9 +149,7 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
             if err == "UNAVAILABLE":
                 raise QobuzContentUnavailableError(f"Track {item_id} tidak streamable.")
             return await send_message(user, err)
-        # Jika basefolder tidak ada, buat path dasar
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
-        # Pastikan path dasar ini juga disanitasi
         filepath = sanitize_filepath(filepath)
     else:
         filepath = basefolder
@@ -142,20 +162,14 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         
     track_meta['extension'], track_meta['quality'] = await get_quality(raw_data, user)
 
-    # --- INI ADALAH PERBAIKAN PENTING ---
-    # 1. Dapatkan nama file mentah
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    # 2. Bersihkan (sanitize) nama file DAHULU (menghapus '/')
     safe_filename = sanitize_filepath(raw_filename)
-    # 3. Gabungkan path yang aman (filepath sudah disanitasi dari start_album)
     full_path = f"{filepath}/{safe_filename}.{track_meta['extension']}"
-    # --- BATAS PERBAIKAN ---
 
     track_meta['filepath'] = full_path
 
     err = await download_file(url, full_path)
     if err:
-        # Jika 'download_file' secara eksplisit mengembalikan error
         LOGGER.error(f"Download_file gagal untuk {full_path}: {err}")
         return False
     
@@ -236,15 +250,30 @@ async def start_playlist(tracks, playlist, user):
         tasks = []
         for track in play_meta['tracks']:
             tasks.append(start_track(track['itemid'], user, track, upload, playlist_folder))
-        await run_concurrent_tasks(tasks, update_details)
+        
+        # --- MODIFIKASI (Menyaring hasil untuk Playlist) ---
+        task_results = await run_concurrent_tasks(tasks, update_details)
+        original_tracks = play_meta['tracks']
+        successful_tracks = []
+        for i in range(len(original_tracks)):
+            if i < len(task_results) and task_results[i]:
+                successful_tracks.append(original_tracks[i])
+        play_meta['tracks'] = successful_tracks
+        # --- MODIFIKASI SELESAI ---
+
     else:
         i = 0
         if playlist_zip:
             upload = False
+        successful_tracks_non_conc = []
         for track in play_meta['tracks']:
             await progress_message(i, len(play_meta['tracks']), update_details)
-            await start_track(track['itemid'], user, track, upload, playlist_folder, bot_set.disable_sort_link, True)
+            # 'start_track' mengembalikan True/False
+            success = await start_track(track['itemid'], user, track, upload, playlist_folder, bot_set.disable_sort_link, True)
+            if success:
+                successful_tracks_non_conc.append(track)
             i+=1
+        play_meta['tracks'] = successful_tracks_non_conc # Saring untuk mode non-concurrent juga
 
     if playlist_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
