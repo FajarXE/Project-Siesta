@@ -25,7 +25,9 @@ class Bot(Client):
 
     async def start(self):
         await super().start()
-        await bot_set.login_qobuz()
+        # --- MODIFIKASI: Baris ini dihapus karena login Qobuz sudah pindah ke __main__.py ---
+        # await bot_set.login_qobuz() 
+        # --- BATAS MODIFIKASI ---
         await bot_set.login_deezer()
         await bot_set.login_tidal()
         await bot_set.initialize_users()
