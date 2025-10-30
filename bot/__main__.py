@@ -10,10 +10,11 @@ from .settings import bot_set
 # --- MODIFIKASI DIMULAI ---
 # 1. Impor QoClient (Sesuaikan path ini jika perlu!)
 try:
-    # Asumsi path 'bot/qobuz/qopy.py'
-    from .qobuz.qopy import QoClient
+    # MODIFIKASI: Path impor diperbaiki
+    from .helpers.qobuz.qopy import QoClient
 except ImportError:
-    logging.critical("Gagal mengimpor QoClient! Pastikan path 'from .qobuz.qopy import QoClient' benar.")
+    # MODIFIKASI: Pesan error disesuaikan ke path yang benar
+    logging.critical("Gagal mengimpor QoClient! Pastikan path 'from .helpers.qobuz.qopy import QoClient' benar.")
     sys.exit(1)
 
 # 2. Buat dictionary global untuk menyimpan klien yang sudah login
