@@ -12,6 +12,10 @@ from ..helpers.database.mongo_async import database
 from ..helpers.tidal.tidal_api import tidalapi
 from ..helpers.message import edit_message, check_user
 
+# --- MODIFIKASI DIMULAI ---
+# Impor dictionary klien Qobuz yang aktif
+from bot import BOT_QOBUZ_CLIENTS
+# --- MODIFIKASI SELESAI ---
 
 
 @Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
@@ -31,7 +35,16 @@ async def provider_cb(c, cb:CallbackQuery):
 async def qobuz_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
-        current = bot_set.qobuz.quality
+        
+        # --- MODIFIKASI DIMULAI ---
+        if not BOT_QOBUZ_CLIENTS:
+            return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+        
+        # Ambil klien pertama yang tersedia untuk *membaca* pengaturan default
+        client_to_check = list(BOT_QOBUZ_CLIENTS.values())[0]
+        current = client_to_check.quality
+        # --- MODIFIKASI SELESAI ---
+        
         quality[current] = quality[current] + '✅'
         await edit_message(
             cb.message,
@@ -44,8 +57,21 @@ async def qobuz_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
         to_set = cb.data.split('_')[1]
-        bot_set.qobuz.quality = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
-        await database.set_variable('QOBUZ_QUALITY', bot_set.qobuz.quality)
+
+        # --- MODIFIKASI DIMULAI ---
+        qobuz_qual = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
+
+        if not BOT_QOBUZ_CLIENTS:
+            return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+        
+        # Set kualitas baru untuk SEMUA klien bot yang sedang berjalan
+        for client in BOT_QOBUZ_CLIENTS.values():
+            client.quality = qobuz_qual
+
+        # Simpan ke database sebagai default baru
+        await database.set_variable('QOBUZ_QUALITY', qobuz_qual)
+        # --- MODIFIKASI SELESAI ---
+        
         await qobuz_cb(c, cb)
 
 
