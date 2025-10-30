@@ -111,12 +111,14 @@ async def format_string(text:str, data:dict, user=None):
     return text
 
 
-# --- MODIFIKASI DIMULAI (Fungsi ini dibuat lebih 'Tahan Banting') ---
+# --- MODIFIKASI DIMULAI (Fungsi ini sekarang mengembalikan hasil) ---
 async def run_concurrent_tasks(tasks, progress_details=None):
     """
     Args:
         tasks: (list) async functions to be run
         progress_details: details for progress message (dict)    
+    Returns:
+        List[bool]: Daftar hasil (True/False) dari setiap task.
     """
     semaphore = asyncio.Semaphore(Config.MAX_WORKERS)
 
@@ -137,13 +139,15 @@ async def run_concurrent_tasks(tasks, progress_details=None):
                 i[0]+=1 # currently done
                 await progress_message(i[0], l, progress_details)
             
-            # Kembalikan hasil (meskipun False) agar gather tidak error
+            # Kembalikan hasil (meskipun False) agar gather bisa menangkapnya
             return result 
 
     # 'await asyncio.gather' akan menjalankan semua 'sem_task'
     # 'sem_task' internal try/except akan mencegah satu kegagalan
     # menghentikan yang lain.
-    await asyncio.gather(*(sem_task(task) for task in tasks))
+    
+    # MODIFIKASI: Kembalikan daftar hasil [True, False, True, ...]
+    return await asyncio.gather(*(sem_task(task) for task in tasks))
 # --- MODIFIKASI SELESAI ---
 
 
