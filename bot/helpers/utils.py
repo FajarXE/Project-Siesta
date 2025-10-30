@@ -25,6 +25,7 @@ from .message import send_message, edit_message
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024  # 2GB
 # download folder structure : BASE_DOWNLOAD_DIR + message_r_id
 
+# --- MODIFIKASI DIMULAI (Fungsi download_file dibuat lebih kuat) ---
 async def download_file(url, path, retries=3, timeout=30):
     """
     Args:
@@ -48,20 +49,34 @@ async def download_file(url, path, retries=3, timeout=30):
                                 if not chunk:
                                     break
                                 f.write(chunk)
-                        return None
+                        
+                        # VERIFIKASI SETELAH DOWNLOAD
+                        if os.path.exists(path) and os.path.getsize(path) > 0:
+                            return None  # Sukses
+                        else:
+                            if attempt == retries:
+                                return f"Download finished but file is missing or empty: {path}"
+                            await asyncio.sleep(2 ** attempt)
+                            continue # Coba lagi jika file kosong/hilang
+
+                    # Tangani URL unduhan yang gagal (misal 403/404 dari URL sementara)
                     else:
-                        return f"HTTP Status: {response.status}"
+                        if attempt == retries:
+                            return f"HTTP Status: {response.status} (URL: {url})"
+                        await asyncio.sleep(2 ** attempt)
+
         except aiohttp.ClientError as e:
             if attempt == retries:
                 return f"Connection failed after {retries} attempts: {str(e)}"
-            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            await asyncio.sleep(2 ** attempt)
         except asyncio.TimeoutError:
             if attempt == retries:
                 return "Download failed due to timeout."
             await asyncio.sleep(2 ** attempt)
         except Exception as e:
-            return e
-
+            # Selalu kembalikan string untuk error
+            return str(e)
+# --- MODIFIKASI SELESAI ---
 
 
 async def format_string(text:str, data:dict, user=None):
@@ -111,7 +126,7 @@ async def run_concurrent_tasks(tasks, progress_details=None):
     async def sem_task(task):
         async with semaphore:
             result = await task
-            if progress_details and result:
+            if progress_details and result: # Hanya update progress jika 'start_track' mengembalikan True
                 i[0]+=1 # currently done
                 await progress_message(i[0], l, progress_details)
 
@@ -195,18 +210,15 @@ def split_zip_folder(folderpath) -> list:
             file_size = os.path.getsize(file_path)
             arcname = os.path.relpath(file_path, folderpath)
 
-            # If adding this file would exceed the max size, create a zip for the current files
             if current_size + file_size > MAX_SIZE:
                 zip_paths.append(add_to_zip(folderpath, current_files))
                 part_num += 1
-                current_files = []  # Reset for the next zip part
+                current_files = []
                 current_size = 0
 
-            # Add the file to the current group
             current_files.append((file_path, arcname))
             current_size += file_size
 
-    # Create the final zip with any remaining files
     if current_files:
         zip_paths.append(add_to_zip(folderpath, current_files))
 
@@ -227,7 +239,6 @@ def zip_folder(folderpath) -> str:
             for file in files:
                 file_path = os.path.join(root, file)
                 zipf.write(file_path, os.path.relpath(file_path, folderpath))
-                # Remove file after adding to the zip
                 os.remove(file_path)
     
     return zip_path
@@ -246,7 +257,6 @@ async def move_sorted_playlist(metadata, user) -> str:
 
     os.makedirs(destination_folder, exist_ok=True)
 
-    # get list of folders inside the source
     folders = [
         os.path.join(source_folder, name) for name in os.listdir(source_folder) if os.path.isdir(os.path.join(source_folder, name))
     ]
@@ -345,7 +355,7 @@ async def progress_message(done, total, details):
             False
         )
     except FloodWait as e:
-        pass # dont update the message if flooded
+        pass
 
 
 async def cleanup(user=None, metadata=None, user_dict: dict=None):
@@ -402,7 +412,7 @@ def fetch_zip_settings(users: typing.Dict) -> typing.Union[bool, bool, bool]:
     #import logging
     playlist_zip, art_poster, album_zip = [False] * 3
     
-    user_dict = bot_set.user_data.get(users["user_id"], {})
+    user_dict = bot_set.user_data.get(users.get("user_id", 0), {})
     playlist_zip = user_dict.get("playlist_zip", bot_set.playlist_zip)
     art_poster = user_dict.get("art_poster", bot_set.art_poster)
     album_zip = user_dict.get("album_zip", bot_set.album_zip)
