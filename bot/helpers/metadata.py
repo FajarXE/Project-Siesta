@@ -88,7 +88,7 @@ async def set_mp3(data, handle):
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
     handle.tags.add(TRCK(encoding=3, text=str(data['tracknumber'])))
-    handle.tags.add(TPOS(encoding=3, text=str(data['volume'])))
+    handle.tags.add(TPOS(encoding=3, text=str(data['volume']))
     handle.tags.add(TXXX(encoding=3, text=str(data['totaltracks'])))
     handle.tags.add(TCON(encoding=3, text=data['genre']))
     handle.tags.add(TDRC(encoding=3, text=data['date']))
@@ -129,7 +129,10 @@ async def savePic(handle, metadata):
         with open(album_art, "rb") as f:
             data = f.read()
     except Exception as e:
-        await LOGGER.error(e)
+        # --- MODIFIKASI DIMULAI ---
+        # Menghapus 'await' yang menyebabkan TypeError
+        LOGGER.error(e)
+        # --- MODIFIKASI SELESAI ---
         return
 
     if 'audio/x-flac' in handle.mime:
