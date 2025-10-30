@@ -33,7 +33,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN apt install git && \
+RUN apt update && apt upgrade && \
+    apt install git && \
     git submodule init && \
     git submodule update
 
