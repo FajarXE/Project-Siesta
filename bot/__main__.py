@@ -10,10 +10,10 @@ from .settings import bot_set
 # --- MODIFIKASI DIMULAI ---
 # 1. Impor QoClient (Sesuaikan path ini jika perlu!)
 try:
-    # MODIFIKASI: Path impor diperbaiki
+    # PERBAIKAN: Path impor disesuaikan berdasarkan struktur Anda
     from .helpers.qobuz.qopy import QoClient
 except ImportError:
-    # MODIFIKASI: Pesan error disesuaikan ke path yang benar
+    # PERBAIKAN: Pesan error disesuaikan
     logging.critical("Gagal mengimpor QoClient! Pastikan path 'from .helpers.qobuz.qopy import QoClient' benar.")
     sys.exit(1)
 
@@ -21,24 +21,26 @@ except ImportError:
 # Handler/modul lain akan mengimpor ini
 BOT_QOBUZ_CLIENTS = {}
 
+# PERBAIKAN: Fungsi ini diganti seluruhnya
 async def login_single_client(creds: dict):
     """Helper untuk meloginkan satu klien dan menyimpannya."""
-    # Buat salinan agar .pop() tidak merusak list asli
     creds_copy = creds.copy()
-    account_id = creds_copy.pop("id") # Ambil ID unik (1, 2, 3...)
+    account_id = creds_copy.pop("id")
+    
+    # Buat klien di luar try/except agar kita bisa menutupnya
+    client = QoClient(**creds_copy) 
     
     try:
-        # **creds_copy akan meneruskan 'email'/'password' atau 'user_id'/'user_token'
-        client = QoClient(**creds_copy) 
-        
         await client.login()
         
-        # 3. Simpan klien yang SUDAH LOGIN ke dictionary global
+        # Simpan klien yang SUDAH LOGIN ke dictionary global
         BOT_QOBUZ_CLIENTS[account_id] = client
         logging.info(f"Berhasil login akun Qobuz #{account_id} (Label: {client.label})")
         
     except Exception as e:
         logging.error(f"Gagal login akun Qobuz #{account_id}: {e}")
+        # Memanggil fungsi close_session baru saat gagal
+        await client.close_session()
 
 async def load_all_bot_qobuz_clients():
     """
