@@ -121,6 +121,12 @@ class QoClient:
                     and r.status == 400
                 ):
                     raise Exception("QOBUZ : Invalid App Secret. Please recheck your credentials.... Disabling QOBUZ")
+                
+                # Tambahkan pemeriksaan status 403 di sini untuk memberikan error yang lebih baik
+                if r.status == 403:
+                    # Qobuz mengirim HTML saat 403, bukan JSON
+                    raise Exception(f"{r.status}, message='Akses ditolak (Forbidden). Kemungkinan IP server diblokir.', url='{r.url}'")
+                
                 return await r.json()
 
 
@@ -246,6 +252,14 @@ class QoClient:
         if qual:
             data["qobuz_qual"] = qual
         self.user_data[user_id].update(data)
+
+    # --- PERBAIKAN DITAMBAHKAN DI SINI ---
+    async def close_session(self):
+        """Menutup sesi aiohttp jika ada."""
+        if self.session and not self.session.closed:
+            await self.session.close()
+            # LOGGER.info(f"Sesi aiohttp untuk {self.email or self.user_id} ditutup.")
+    # --- BATAS PERBAIKAN ---
 
 # DELETED: Instansi global dihapus untuk mendukung multi-login
 # qobuz_api = QoClient()
