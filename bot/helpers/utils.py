@@ -25,7 +25,6 @@ from .message import send_message, edit_message
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024  # 2GB
 # download folder structure : BASE_DOWNLOAD_DIR + message_r_id
 
-# --- MODIFIKASI DIMULAI (Fungsi download_file dibuat lebih kuat) ---
 async def download_file(url, path, retries=3, timeout=30):
     """
     Args:
@@ -76,7 +75,7 @@ async def download_file(url, path, retries=3, timeout=30):
         except Exception as e:
             # Selalu kembalikan string untuk error
             return str(e)
-# --- MODIFIKASI SELESAI ---
+
 
 
 async def format_string(text:str, data:dict, user=None):
@@ -112,7 +111,7 @@ async def format_string(text:str, data:dict, user=None):
     return text
 
 
-
+# --- MODIFIKASI DIMULAI (Fungsi ini dibuat lebih 'Tahan Banting') ---
 async def run_concurrent_tasks(tasks, progress_details=None):
     """
     Args:
@@ -125,12 +124,27 @@ async def run_concurrent_tasks(tasks, progress_details=None):
     l = len(tasks)
     async def sem_task(task):
         async with semaphore:
-            result = await task
-            if progress_details and result: # Hanya update progress jika 'start_track' mengembalikan True
+            try:
+                # Jalankan task (misal: start_track)
+                result = await task 
+            except Exception as e:
+                # Jika task gagal (misal FileNotFoundError dari start_track),
+                # catat di log dan kembalikan False
+                LOGGER.error(f"Satu task di run_concurrent_tasks gagal: {e}")
+                result = False # Memberi sinyal kegagalan
+            
+            if progress_details and result: # Hanya update progress jika 'start_track' mengembalikan True (sukses)
                 i[0]+=1 # currently done
                 await progress_message(i[0], l, progress_details)
+            
+            # Kembalikan hasil (meskipun False) agar gather tidak error
+            return result 
 
+    # 'await asyncio.gather' akan menjalankan semua 'sem_task'
+    # 'sem_task' internal try/except akan mencegah satu kegagalan
+    # menghentikan yang lain.
     await asyncio.gather(*(sem_task(task) for task in tasks))
+# --- MODIFIKASI SELESAI ---
 
 
 async def create_link(path, basepath):
