@@ -6,6 +6,12 @@ from bot.logger import LOGGER
 
 import bot.helpers.translations as lang
 import traceback
+import random  # <-- MODIFIKASI: Ditambahkan
+
+# --- MODIFIKASI DIMULAI ---
+# Impor dictionary klien Qobuz yang aktif
+from bot import BOT_QOBUZ_CLIENTS
+# --- MODIFIKASI SELESAI ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -57,4 +63,19 @@ async def start_link(link: str, user: dict) -> None:
         await start_deezer(link, user)
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
+
+        # --- MODIFIKASI DIMULAI ---
+        # Kita harus memasukkan klien Qobuz ke dalam kamus 'user'
+        if not BOT_QOBUZ_CLIENTS:
+            # Kirim pesan error jika tidak ada klien bot yang login
+            await send_message(user, "Maaf, tidak ada akun Qobuz bot yang aktif saat ini.")
+            return # Hentikan proses
+        
+        # Pilih satu klien dari daftar (menggunakan 'random' bagus untuk pembagian beban)
+        chosen_client = random.choice(list(BOT_QOBUZ_CLIENTS.values()))
+        
+        # Masukkan klien ke dalam kamus user
+        user['qobuz_api'] = chosen_client
+        # --- MODIFIKASI SELESAI ---
+
         await start_qobuz(link, user)
