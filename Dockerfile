@@ -1,11 +1,11 @@
-FROM python:3.12-slim AS base
+FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Asia/Jakarta
+    TZ=Asia/Hong_Kong
 
 WORKDIR /usr/src/app
 
-# Install all dependencies in one layer to reduce image size
+# Install all dependencies
 RUN apt-get update -qq && \
     apt-get install -qq -y \
     ffmpeg \
@@ -17,7 +17,7 @@ RUN apt-get update -qq && \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install rclone
+# Install rclone
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; \
     elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; \
@@ -29,14 +29,19 @@ RUN ARCH=$(uname -m) && \
     cd .. && \
     rm -rf rclone-*-linux-${ARCH}*
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Clone the repository with submodules
+ARG GIT_REPO
+ARG GIT_BRANCH=main
 
-# Copy application code
-COPY . .
+RUN if [ -n "$GIT_REPO" ]; then \
+        git clone --branch $GIT_BRANCH --recursive $GIT_REPO . ; \
+    else \
+        echo "Warning: GIT_REPO not provided, you need to copy code manually" ; \
+    fi
 
-# Initialize and update git submodules
-RUN git submodule update --init --recursive
+# Install Python dependencies
+RUN if [ -f "requirements.txt" ]; then \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 ENTRYPOINT ["python", "-m", "bot"]
