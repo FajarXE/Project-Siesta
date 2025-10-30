@@ -7,11 +7,18 @@ from pyrogram.types import CallbackQuery, Message
 
 from config import Config
 from bot import cmd
+# --- MODIFIKASI DIMULAI ---
+# Impor daftar klien yang sudah login dari __main__.py
+from bot import BOT_QOBUZ_CLIENTS 
+# --- MODIFIKASI SELESAI ---
 
 from ..helpers.buttons.settings import usetting_button, tidal_quality_button, qb_button
 from ..helpers.database.mongo_async import database
 from ..helpers.tidal.tidal_api import tidalapi
-from ..helpers.qobuz.qopy import qobuz_api
+# --- MODIFIKASI DIMULAI ---
+# Menghapus impor qobuz_api yang menyebabkan crash
+# from ..helpers.qobuz.qopy import qobuz_api 
+# --- MODIFIKASI SELESAI ---
 from ..helpers.utils import fetch_zip_settings
 from ..settings import bot_set
 from ..helpers.message import send_message, edit_message, check_user, fetch_user_details
@@ -75,17 +82,30 @@ async def uset_cb(client, query, datatype=""):
             qualities['HI_RES'] = 'MAX'
         qualities[qual] += '✅'
         return await edit_message(query.message, text, tidal_quality_button(qualities, user_id))
+    
+    # --- MODIFIKASI DIMULAI: Memperbaiki logika Qobuz ---
     if data[1] == "qobuz" or datatype == "qobuz":
         text = f"Choose Qobuz Audio Quality bellow:"
         quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
-        user_dict = qobuz_api.user_data.get(user_id, {})
-        current = user_dict.get("qobuz_qual", bot_set.qobuz.quality)
+
+        # Periksa apakah ada klien Qobuz yang aktif
+        if not BOT_QOBUZ_CLIENTS:
+            return await edit_message(query.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+        
+        # Ambil klien Qobuz pertama yang tersedia untuk *membaca* pengaturan
+        # (Kita asumsikan pengaturan pengguna konsisten di semua klien)
+        client_to_check = BOT_QOBUZ_CLIENTS.get(1) or list(BOT_QOBUZ_CLIENTS.values())[0]
+
+        user_dict = client_to_check.user_data.get(user_id, {})
+        current = user_dict.get("qobuz_qual", client_to_check.quality) # Baca kualitas default dari instansi
         quality[current] = quality[current] + '✅'
+        
         return await edit_message(
             query.message,
             text,
             markup=qb_button(quality, user_id)
         )
+    # --- MODIFIKASI SELESAI ---
 
 @Client.on_callback_query(filters.regex("^utdqs"))
 async def uset_tidal(client, query):
@@ -140,10 +160,25 @@ async def uset_qobuz(client, query):
     qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
     to_set = query.data.split('_')[1]
     qobuz_qual = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
-    await bot_set.qobuz.setup_quality(query.from_user.id, qobuz_qual)
-    await database.save_user_settings(query.from_user.id, bot_set.qobuz.user_data[query.from_user.id])
-    #bot_set.qobuz.quality = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
-    #await database.set_variable('QOBUZ_QUALITY', bot_set.qobuz.quality)
+
+    # --- MODIFIKASI DIMULAI: Menyimpan pengaturan ke SEMUA klien aktif ---
+    if not BOT_QOBUZ_CLIENTS:
+        await query.answer("Layanan Qobuz tidak aktif!", show_alert=True)
+        return
+
+    user_data_to_save = {}
+    
+    # Loop ke semua klien bot yang aktif dan terapkan pengaturan
+    for client_instance in BOT_QOBUZ_CLIENTS.values():
+        await client_instance.setup_quality(query.from_user.id, qobuz_qual)
+        # Ambil data pengguna yang baru disimpan dari klien
+        user_data_to_save = client_instance.user_data.get(query.from_user.id, {})
+
+    # Simpan pengaturan pengguna ke database
+    if user_data_to_save:
+        await database.save_user_settings(query.from_user.id, user_data_to_save)
+    # --- MODIFIKASI SELESAI ---
+
     await uset_cb(client, query, "qobuz")
 
 @Client.on_callback_query(filters.regex("^zip"))
@@ -200,7 +235,18 @@ async def uset_zip(self, query):
 
 @Client.on_message(filters.command("debug") & filters.user(list(Config.ADMINS)))
 async def debug(c, m): # debugger
-    dt_qb = f"QOBUZ:\n{bot_set.qobuz}\n{bot_set.qobuz.quality}"
+    # --- MODIFIKASI DIMULAI: Memperbaiki debug Qobuz ---
+    dt_qb = "QOBUZ:\n"
+    if BOT_QOBUZ_CLIENTS:
+        # Ambil klien pertama untuk ditampilkan
+        first_client = BOT_QOBUZ_CLIENTS.get(1) or list(BOT_QOBUZ_CLIENTS.values())[0]
+        dt_qb += f"{len(BOT_QOBUZ_CLIENTS)} klien Qobuz aktif.\n"
+        dt_qb += f"Label Klien #1: {first_client.label}\n"
+        dt_qb += f"Kualitas Default Klien #1: {first_client.quality}"
+    else:
+        dt_qb += "Tidak ada klien Qobuz yang aktif."
+    # --- MODIFIKASI SELESAI ---
+
     dt_td = f"\n\nTIDAL:\n{bot_set.tidal}\n{bot_set.tidal}\n{bot_set.tidal}"
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
