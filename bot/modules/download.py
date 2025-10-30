@@ -6,12 +6,10 @@ from bot.logger import LOGGER
 
 import bot.helpers.translations as lang
 import traceback
-import random  # <-- MODIFIKASI: Ditambahkan
+import random  # Diperlukan untuk mengacak daftar klien
 
-# --- MODIFIKASI DIMULAI ---
 # Impor dictionary klien Qobuz yang aktif
 from bot import BOT_QOBUZ_CLIENTS
-# --- MODIFIKASI SELESAI ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -43,10 +41,13 @@ async def download_track(c, msg:Message):
             user['bot_msg'] = await send_message(msg, 'Downloading.......')
             try:
                 await start_link(link, user)
-                await send_message(user, lang.s.TASK_COMPLETED)
+                # Pesan sukses sekarang akan dikirim dari dalam 'handler.py'
+                # await send_message(user, lang.s.TASK_COMPLETED)
             except Exception:
                 LOGGER.error(traceback.format_exc())
-            await c.delete_messages(msg.chat.id, user['bot_msg'].id)
+            
+            # Jangan hapus pesan 'bot_msg' di sini, biarkan handler yang mengaturnya
+            # await c.delete_messages(msg.chat.id, user['bot_msg'].id)
             await cleanup(user) # deletes uploaded files
             await antiSpam(msg.from_user.id, msg.chat.id, True)
 
@@ -56,7 +57,6 @@ async def start_link(link: str, user: dict) -> None:
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
     
-    # No Need to return because not called Any 
     if link.startswith(tuple(tidal)):
         await start_tidal(link, user)
     elif link.startswith(tuple(deezer)):
@@ -64,18 +64,19 @@ async def start_link(link: str, user: dict) -> None:
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
 
-        # --- MODIFIKASI DIMULAI ---
-        # Kita harus memasukkan klien Qobuz ke dalam kamus 'user'
+        # --- MODIFIKASI DIMULAI (LOGIKA FALLBACK) ---
         if not BOT_QOBUZ_CLIENTS:
-            # Kirim pesan error jika tidak ada klien bot yang login
             await send_message(user, "Maaf, tidak ada akun Qobuz bot yang aktif saat ini.")
-            return # Hentikan proses
+            return
+
+        # 1. Ambil SEMUA klien yang aktif
+        clients_list = list(BOT_QOBUZ_CLIENTS.values())
         
-        # Pilih satu klien dari daftar (menggunakan 'random' bagus untuk pembagian beban)
-        chosen_client = random.choice(list(BOT_QOBUZ_CLIENTS.values()))
+        # 2. Acak daftarnya agar tidak selalu mencoba Akun #1 terlebih dahulu
+        random.shuffle(clients_list)
         
-        # Masukkan klien ke dalam kamus user
-        user['qobuz_api'] = chosen_client
+        # 3. Masukkan SELURUH DAFTAR klien ke kamus 'user'
+        user['qobuz_clients_list'] = clients_list
         # --- MODIFIKASI SELESAI ---
 
         await start_qobuz(link, user)
