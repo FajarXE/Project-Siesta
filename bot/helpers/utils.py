@@ -111,7 +111,6 @@ async def format_string(text:str, data:dict, user=None):
     return text
 
 
-# --- MODIFIKASI DIMULAI (Fungsi ini sekarang mengembalikan hasil) ---
 async def run_concurrent_tasks(tasks, progress_details=None):
     """
     Args:
@@ -130,10 +129,11 @@ async def run_concurrent_tasks(tasks, progress_details=None):
                 # Jalankan task (misal: start_track)
                 result = await task 
             except Exception as e:
-                # Jika task gagal (misal FileNotFoundError dari start_track),
-                # catat di log dan kembalikan False
-                LOGGER.error(f"Satu task di run_concurrent_tasks gagal: {e}")
+                # --- MODIFIKASI DIMULAI (Mengubah level log) ---
+                # Mengubah dari .error() menjadi .warning() agar tidak terlalu mengkhawatirkan
+                LOGGER.warning(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
                 result = False # Memberi sinyal kegagalan
+                # --- MODIFIKASI SELESAI ---
             
             if progress_details and result: # Hanya update progress jika 'start_track' mengembalikan True (sukses)
                 i[0]+=1 # currently done
@@ -146,9 +146,7 @@ async def run_concurrent_tasks(tasks, progress_details=None):
     # 'sem_task' internal try/except akan mencegah satu kegagalan
     # menghentikan yang lain.
     
-    # MODIFIKASI: Kembalikan daftar hasil [True, False, True, ...]
     return await asyncio.gather(*(sem_task(task) for task in tasks))
-# --- MODIFIKASI SELESAI ---
 
 
 async def create_link(path, basepath):
