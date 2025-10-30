@@ -11,13 +11,24 @@ from .bundle import Bundle
 from bot.logger import LOGGER
 
 class QoClient:
-    def __init__(self):
+    def __init__(self, email=None, password=None, user_id=None, user_token=None):
+        # MODIFIED: Terima kredensial saat inisialisasi
+        self.email = email
+        self.password = password
+        self.user_id = user_id
+        self.user_token = user_token
+
+        # Atribut state-spesifik pengguna
+        self.uat = None
+        self.label = None
+        self.sec = None
+        
+        # Atribut instansi yang sudah ada
         self.id = None
         self.secrets = None
         self.session = None
         self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
         self.base = "https://www.qobuz.com/api.json/0.2/"
-        self.sec = None
         self.quality = 6
         self.user_data = {}
 
@@ -131,24 +142,33 @@ class QoClient:
 
 
     async def auth(self):
-        if Config.QOBUZ_EMAIL:
+        # MODIFIED: Gunakan kredensial dari 'self' (instansi) alih-alih 'Config' (global)
+        if self.email:
             usr_info = await self.api_call(
                 "user/login", 
-                email=Config.QOBUZ_EMAIL, 
-                pwd=Config.QOBUZ_PASSWORD)
+                email=self.email, 
+                pwd=self.password)
+        elif self.user_id:
+            usr_info = await self.api_call(
+                "user/login", 
+                userid=self.user_id,
+                usertoken=self.user_token)
         else:
-            usr_info = await self.api_call(
-                "user/login", 
-                userid=Config.QOBUZ_USER,
-                usertoken=Config.QOBUZ_TOKEN)
+            # Jika tidak ada kredensial yang diberikan saat membuat instansi
+            raise Exception("QOBUZ : No credentials (email/password or user_id/token) provided for this client instance.")
+        
         if not usr_info:
             return
         if not usr_info["user"]["credential"]["parameters"]:
             raise Exception("QOBUZ : Free accounts are not eligible to download tracks from QOBUZ. Disabling QOBUZ for now")
+        
         self.uat = usr_info["user_auth_token"]
         self.session.headers.update({"X-User-Auth-Token": self.uat})
         self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
-        LOGGER.info(f"QOBUZ : Membership Status: {self.label}")
+        
+        # MODIFIED: Tambahkan identifikasi pengguna ke log
+        user_identifier = self.email or self.user_id
+        LOGGER.info(f"QOBUZ : Logged in as {user_identifier}. Membership Status: {self.label}")
 
     async def test_secret(self, sec):
         try:
@@ -165,6 +185,10 @@ class QoClient:
         ]  # avoid empty fields
 
     async def login(self):
+        """
+        Melakukan proses login lengkap untuk instansi klien ini.
+        Harus dipanggil setelah inisialisasi.
+        """
         self.get_tokens()
         self.session = aiohttp.ClientSession()
         #self.rate_limiter = self.get_rate_limiter(30)
@@ -223,4 +247,5 @@ class QoClient:
             data["qobuz_qual"] = qual
         self.user_data[user_id].update(data)
 
-qobuz_api = QoClient()
+# DELETED: Instansi global dihapus untuk mendukung multi-login
+# qobuz_api = QoClient()
