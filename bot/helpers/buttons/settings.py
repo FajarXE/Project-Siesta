@@ -1,6 +1,7 @@
 import bot.helpers.translations as lang
 
 from bot.settings import bot_set
+from bot import BOT_QOBUZ_CLIENTS  # <-- MODIFIKASI: Ditambahkan
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def fetch_base_buttons():
@@ -35,7 +36,11 @@ def main_menu():
 
 def providers_button():
     inline_keyboard = []
-    if bot_set.qobuz:
+    
+    # --- MODIFIKASI DIMULAI ---
+    # Memeriksa dictionary klien, bukan atribut bot_set
+    if BOT_QOBUZ_CLIENTS: 
+    # --- MODIFIKASI SELESAI ---
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
@@ -306,7 +311,11 @@ def usetting_button() -> InlineKeyboardMarkup:
             )
         ]
         buttons.append(but)
-    if bot_set.qobuz:
+        
+    # --- MODIFIKASI DIMULAI ---
+    # Memeriksa dictionary klien, bukan atribut bot_set
+    if BOT_QOBUZ_CLIENTS:
+    # --- MODIFIKASI SELESAI ---
         but = [
             InlineKeyboardButton(
                 text=f"Qobuz Quality",
