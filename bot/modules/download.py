@@ -1,21 +1,60 @@
 from pyrogram.types import Message
 from pyrogram import Client, filters
+import asyncio  # <-- MODIFIKASI: Ditambahkan
 
 from bot import CMD
 from bot.logger import LOGGER
 
 import bot.helpers.translations as lang
 import traceback
-import random  # Diperlukan untuk mengacak daftar klien
+import random
 
-# Impor dictionary klien Qobuz yang aktif
 from bot import BOT_QOBUZ_CLIENTS
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
-from ..helpers.message import send_message, antiSpam, check_user, fetch_user_details
+from ..helpers.message import send_message, antiSpam, check_user, fetch_user_details, edit_message
+
+
+# --- MODIFIKASI DIMULAI (Membuat fungsi 'Wrapper' Latar Belakang) ---
+async def run_download_task(link: str, user: dict):
+    """
+    Fungsi ini berjalan di latar belakang.
+    Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup, dan anti-spam.
+    """
+    try:
+        # 1. Buat pesan status yang akan kita update
+        user['bot_msg'] = await send_message(user, 'Memulai tugas...')
+        
+        # 2. Jalankan tugas utama (ini bagian yang lama)
+        await start_link(link, user)
+        
+        # 3. Pesan "Selesai" sekarang ditangani oleh Qobuz/Deezer handler,
+        #    tetapi jika mereka gagal, kita perlu membersihkannya.
+        #    Kita bisa tambahkan jeda singkat agar pesan "Selesai" terlihat.
+        await asyncio.sleep(5) 
+        
+    except Exception as e:
+        # Jika terjadi error fatal yang tidak tertangani, laporkan ke pengguna
+        LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
+        try:
+            await edit_message(user['bot_msg'], f"Tugas Gagal: Terjadi error fatal.\n{e}")
+        except:
+            pass # Gagal mengedit pesan
+            
+    finally:
+        # 4. (PENTING) Cleanup dan buka kunci pengguna, bahkan jika error
+        await cleanup(user) # deletes uploaded files
+        await antiSpam(user['user_id'], user['chat_id'], True)
+        
+        # 5. Hapus pesan status terakhir (misal: "Selesai" atau "Error")
+        try:
+            await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
+        except:
+            pass
+# --- MODIFIKASI SELESAI ---
 
 
 @Client.on_message(filters.command(CMD.DOWNLOAD))
@@ -34,22 +73,24 @@ async def download_track(c, msg:Message):
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
         
+        # --- MODIFIKASI DIMULAI (Logika Anti-Spam Disederhanakan) ---
         spam = await antiSpam(msg.from_user.id, msg.chat.id)
-        if not spam:
-            user = await fetch_user_details(msg, reply)
-            user['link'] = link
-            user['bot_msg'] = await send_message(msg, 'Downloading.......')
-            try:
-                await start_link(link, user)
-                # Pesan sukses sekarang akan dikirim dari dalam 'handler.py'
-                # await send_message(user, lang.s.TASK_COMPLETED)
-            except Exception:
-                LOGGER.error(traceback.format_exc())
-            
-            # Jangan hapus pesan 'bot_msg' di sini, biarkan handler yang mengaturnya
-            # await c.delete_messages(msg.chat.id, user['bot_msg'].id)
-            await cleanup(user) # deletes uploaded files
-            await antiSpam(msg.from_user.id, msg.chat.id, True)
+        if spam:
+            # Jika pengguna sudah menjalankan tugas, beri tahu mereka
+            await send_message(msg, "Anda sudah memiliki unduhan yang sedang berjalan. Harap tunggu hingga selesai.")
+            return
+        
+        # Jika tidak spam, buat kamus 'user'
+        user = await fetch_user_details(msg, reply)
+        user['link'] = link
+        
+        # 1. Jalankan 'run_download_task' di latar belakang
+        asyncio.create_task(run_download_task(link, user))
+        
+        # 2. Segera balas pengguna agar bot tidak "macet"
+        await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.")
+        # --- MODIFIKASI SELESAI ---
+
 
 async def start_link(link: str, user: dict) -> None:
     tidal = ["https://tidal.com", "https://listen.tidal.com", "tidal.com", "listen.tidal.com"]
@@ -60,23 +101,17 @@ async def start_link(link: str, user: dict) -> None:
     if link.startswith(tuple(tidal)):
         await start_tidal(link, user)
     elif link.startswith(tuple(deezer)):
+        user['provider'] = 'Deezer' # <-- Menambahkan ini untuk konsistensi
         await start_deezer(link, user)
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
 
-        # --- MODIFIKASI DIMULAI (LOGIKA FALLBACK) ---
         if not BOT_QOBUZ_CLIENTS:
-            await send_message(user, "Maaf, tidak ada akun Qobuz bot yang aktif saat ini.")
-            return
-
-        # 1. Ambil SEMUA klien yang aktif
+            # Kita harus melempar (raise) error agar 'run_download_task' bisa menangkapnya
+            raise Exception("Maaf, tidak ada akun Qobuz bot yang aktif saat ini.")
+        
         clients_list = list(BOT_QOBUZ_CLIENTS.values())
-        
-        # 2. Acak daftarnya agar tidak selalu mencoba Akun #1 terlebih dahulu
         random.shuffle(clients_list)
-        
-        # 3. Masukkan SELURUH DAFTAR klien ke kamus 'user'
         user['qobuz_clients_list'] = clients_list
-        # --- MODIFIKASI SELESAI ---
 
         await start_qobuz(link, user)
