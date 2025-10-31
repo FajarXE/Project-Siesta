@@ -193,17 +193,17 @@ async def send_message(user, item, itype='text',
                 
                 try:
                     track_num = meta.get('tracknumber', '?')
-                    total_tracks = meta.get('totaltracks', '?')
+                    total_tracks = meta.get('totaltracks', '?') # Sekarang akan mendapatkan nilai dari Deezer
                     title = meta.get('title', 'Unknown Track')
                     
-                    # --- MODIFIKASI DIMULAI (Memperbaiki format string) ---
+                    # --- Ini adalah f-string yang 100% benar ---
                     text = (
                         f"**Mengunggah...**\n"
-                        f"Lagu {track_num} dari {total_tracks}\n" # <- PERBAIKAN: Menggunakan total_tracks
+                        f"Lagu {track_num} dari {total_tracks}\n" 
                         f"`{title}`\n\n"
                         f"{progress_bar} {percentage}%"
                     )
-                    # --- MODIFIKASI SELESAI ---
+                    # --- BATAS PERBAIKAN ---
                     
                     asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
                 except Exception:
