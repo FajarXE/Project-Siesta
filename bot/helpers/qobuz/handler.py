@@ -12,10 +12,12 @@ import traceback
 
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
 
-# Exception kustom
-class QobuzContentUnavailableError(Exception):
-    """Exception khusus yang dilempar saat konten tidak streamable/tersedia."""
-    pass
+# Exception kustom (pastikan diimpor dari utils.py atau didefinisikan)
+try:
+    from .utils import QobuzContentUnavailableError
+except ImportError:
+    class QobuzContentUnavailableError(Exception):
+        pass
 
 
 async def start_qobuz(url:str, user:dict):
@@ -33,14 +35,21 @@ async def start_qobuz(url:str, user:dict):
         try:
             await edit_message(user['bot_msg'], f"Mencoba Akun #{i+1}/{len(clients_list)} ({client_label})...")
 
+            # Panggilan check_type: Ini yang bisa memicu QobuzContentUnavailableError
             items, item_id, type_dict, content = await check_type(url, user)
             
+            # --- PERBAIKAN: Tambahkan cek keamanan setelah check_type ---
+            if items is None and item_id is None:
+                 raise QobuzContentUnavailableError("Gagal mendapatkan item atau ID yang valid dari tautan.")
+            # --- BATAS PERBAIKAN ---
+
             if items:
                 if type_dict['iterable_key'] == 'albums':
                     await start_artist(items, user, content)
                 else:
                     await start_playlist(items, content, user)
             else:
+                # Jika items None, berarti itu adalah Album atau Track tunggal
                 if type_dict["album"]:
                     await start_album(item_id, user)
                 else:
@@ -51,10 +60,11 @@ async def start_qobuz(url:str, user:dict):
 
         except QobuzContentUnavailableError as e:
             last_error = f"Akun {client_label}: Konten tidak tersedia. ({e})"
-            LOGGER.info(last_error) # Ini sudah INFO (Bagus)
+            LOGGER.info(last_error) 
             continue 
 
         except Exception as e:
+            # Ini menangkap KeyError atau error fatal lain
             last_error = f"Error fatal di Akun {client_label}: {e}"
             LOGGER.error(f"{last_error}\n{traceback.format_exc()}")
             break 
@@ -110,13 +120,10 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     successful_tracks = []
     
     for i in range(len(original_tracks)):
-        if i < len(task_results) and task_results[i]: # Jika task berhasil (True)
+        if i < len(task_results) and task_results[i]:
             successful_tracks.append(original_tracks[i])
         else:
-            # --- MODIFIKASI DIMULAI (Mengubah level log) ---
-            # Diubah ke .info() agar tidak mengganggu log
-            LOGGER.info(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} karena gagal diunduh (ditangani).")
-            # --- MODIFIKASI SELESAI ---
+            LOGGER.warning(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} karena gagal diunduh.")
 
     album_meta['tracks'] = successful_tracks
     album_meta['totaltracks'] = len(successful_tracks)
@@ -174,7 +181,7 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         if upload:
             await track_upload(track_meta, user, disable_link)
             
-        return True  # Sukses
+        return True
 
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download (download_file gagal diam-diam?): {full_path}")
@@ -253,12 +260,10 @@ async def start_playlist(tracks, playlist, user):
             if i < len(task_results) and task_results[i]:
                 successful_tracks.append(original_tracks[i])
             else:
-                # --- MODIFIKASI DIMULAI (Mengubah level log) ---
                 LOGGER.info(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} di playlist karena gagal diunduh (ditangani).")
-                # --- MODIFIKASI SELESAI ---
                 
         play_meta['tracks'] = successful_tracks
-        play_meta['totaltracks'] = len(successful_tracks) # Perbarui jumlah
+        play_meta['totaltracks'] = len(successful_tracks)
 
     else:
         i = 0
@@ -272,7 +277,7 @@ async def start_playlist(tracks, playlist, user):
                 successful_tracks_non_conc.append(track)
             i+=1
         play_meta['tracks'] = successful_tracks_non_conc
-        play_meta['totaltracks'] = len(successful_tracks_non_conc) # Perbarui jumlah
+        play_meta['totaltracks'] = len(successful_tracks_non_conc)
 
     if playlist_zip:
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
