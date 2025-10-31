@@ -198,7 +198,7 @@ async def check_type(url, user: dict):
         
         content = []
         
-        # --- PERBAIKAN: Perbaiki logika pengumpulan hasil dari generator ---
+        # --- MODIFIKASI: Perbaiki logika pengumpulan hasil dari generator ---
         if type_dict["multi_type"]:
             
             if url_type == "playlist":
@@ -210,13 +210,14 @@ async def check_type(url, user: dict):
             else:
                 raise Exception("Tipe multi-meta tidak terdefinisi.")
 
+            # Multi-meta sekarang mengakhiri generator jika gagal
             res_iterator = client.multi_meta(epoint, key, item_id, type_dict["multi_type"])
             
             async for data in res_iterator:
                 content.append(data)
                 
+            # Jika content kosong, multi_meta gagal, lempar exception untuk fallback
             if not content:
-                # Ini akan tertangkap di handler.py sebagai QobuzContentUnavailableError
                 raise QobuzContentUnavailableError(f"API Qobuz gagal mengembalikan data untuk {url_type}/{item_id}. Coba akun lain.")
 
 
@@ -229,13 +230,18 @@ async def check_type(url, user: dict):
                     skip_extras=True,
                 )
             else:
-                if isinstance(content[0], dict) and "items" in content[0]:
-                    items = content[0]["items"] 
+                if url_type == 'playlist':
+                    # Playlist hanya memiliki satu item di content[0] (objek 'tracks')
+                    if 'items' in content[0]:
+                        items = content[0]['items']
+                    else:
+                        raise QobuzContentUnavailableError(f"Playlist ID:{item_id} kosong atau tidak memiliki track.")
+                
                 elif len(content) > 0 and type_dict["iterable_key"] in content[0]:
                     items = [item[type_dict["iterable_key"]]["items"] for item in content][0]
                 else:
                     raise Exception("Gagal memparsing struktur respons Qobuz.")
-        # --- BATAS PERBAIKAN ---
+        # --- BATAS MODIFIKASI ---
             
         return items, item_id, type_dict, content
     else:
