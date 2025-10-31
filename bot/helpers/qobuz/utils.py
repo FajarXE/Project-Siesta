@@ -12,6 +12,14 @@ from ..metadata import create_cover_file
 from bot.settings import bot_set
 from config import Config
 
+# --- MODIFIKASI: Impor QobuzContentUnavailableError dari handler ---
+try:
+    from .handler import QobuzContentUnavailableError
+except ImportError:
+    class QobuzContentUnavailableError(Exception):
+        pass
+# --- BATAS MODIFIKASI ---
+
 
 async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     if user is None:
@@ -117,8 +125,7 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
     metadata['title'] = raw_meta['name']
     metadata['duration'] = raw_meta['duration']
-    # MODIFIKASI: Asumsi raw_meta datang dari multi_meta, yang merupakan objek 'tracks'
-    metadata['totaltracks'] = raw_meta['tracks_count'] 
+    metadata['totaltracks'] = raw_meta['tracks_count']
     metadata['itemid'] = raw_meta['id']
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Qobuz'
@@ -157,22 +164,22 @@ async def check_type(url, user: dict):
             "playlist": {
                 "func": "get_plist_meta", 
                 "iterable_key": "tracks",
-                "multi_type": "tracks" # MODIFIED
+                "multi_type": "tracks" 
             },
             "artist": {
                 "func": "get_artist_meta", 
                 "iterable_key": "albums",
-                "multi_type": "albums" # MODIFIED
+                "multi_type": "albums" 
             },
             "interpreter": {
                 "func": "get_artist_meta", 
                 "iterable_key": "albums",
-                "multi_type": "albums" # MODIFIED
+                "multi_type": "albums" 
             },
             "label": {
                 "func": "get_label_meta", 
                 "iterable_key": "albums",
-                "multi_type": "albums" # MODIFIED
+                "multi_type": "albums" 
             },
             "album": {"album": True, "func": None, "iterable_key": None},
             "track": {"album": False, "func": None, "iterable_key": None},
@@ -184,43 +191,53 @@ async def check_type(url, user: dict):
         raise Exception(f"URL tidak dapat dikenali: {url}")
 
     content = None
+    items = None
+    
     if type_dict["func"]:
         method_to_call = getattr(client, type_dict["func"])
         
-        # --- MODIFIKASI: Menyesuaikan panggilan multi-meta ---
-        # Untuk Artist/Label/Playlist, kita panggil multi_meta di qopy.py 
-        # yang sekarang mengembalikan iterator (res) yang berisi semua data
-        if type_dict["multi_type"] == "tracks": # Playlist
-            # Playlist tidak menggunakan 'content' untuk mendapatkan tracks, 
-            # ia mengumpulkan semua hasil dari multi_meta ke dalam 'res'
-            res = []
-            async for data in client.multi_meta(type_dict["func"].replace("get", "page"), "tracks_count", item_id, "tracks"):
-                res.append(data)
-        else: # Artist/Label
-            # Artist/Label menggunakan struktur untuk smart_discography
-            res = []
-            async for data in client.multi_meta(type_dict["func"].replace("get", "page"), "albums_count", item_id, "albums"):
-                res.append(data)
-                
-        content = [item for item in res]
-
-        smart_discography = True
-        if smart_discography and url_type == "artist":
-            items = smart_discography_filter(
-                content,
-                save_space=True,
-                skip_extras=True,
-            )
-        else:
-            items = []
-            # Jika itu Playlist, content[0] adalah objek 'tracks' yang berisi 'items'
-            if url_type == 'playlist' and len(content) > 0 and 'items' in content[0]:
-                 items = content[0]['items']
-            elif len(content) > 0 and type_dict["iterable_key"] in content[0]:
-                items = [item[type_dict["iterable_key"]]["items"] for item in content][0]
-        # --- BATAS MODIFIKASI ---
+        content = []
+        
+        # --- PERBAIKAN: Perbaiki logika pengumpulan hasil dari generator ---
+        if type_dict["multi_type"]:
             
-        return items, None, type_dict, content
+            if url_type == "playlist":
+                epoint = "playlist/get"
+                key = "tracks_count"
+            elif url_type in ["artist", "label", "interpreter"]:
+                epoint = f"{url_type}/get"
+                key = "albums_count"
+            else:
+                raise Exception("Tipe multi-meta tidak terdefinisi.")
+
+            res_iterator = client.multi_meta(epoint, key, item_id, type_dict["multi_type"])
+            
+            async for data in res_iterator:
+                content.append(data)
+                
+            if not content:
+                # Ini akan tertangkap di handler.py sebagai QobuzContentUnavailableError
+                raise QobuzContentUnavailableError(f"API Qobuz gagal mengembalikan data untuk {url_type}/{item_id}. Coba akun lain.")
+
+
+        if content:
+            smart_discography = True
+            if smart_discography and url_type == "artist":
+                items = smart_discography_filter(
+                    content,
+                    save_space=True,
+                    skip_extras=True,
+                )
+            else:
+                if isinstance(content[0], dict) and "items" in content[0]:
+                    items = content[0]["items"] 
+                elif len(content) > 0 and type_dict["iterable_key"] in content[0]:
+                    items = [item[type_dict["iterable_key"]]["items"] for item in content][0]
+                else:
+                    raise Exception("Gagal memparsing struktur respons Qobuz.")
+        # --- BATAS PERBAIKAN ---
+            
+        return items, item_id, type_dict, content
     else:
         return None, item_id, type_dict, content
 
