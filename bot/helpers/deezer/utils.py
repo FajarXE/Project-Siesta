@@ -1,4 +1,5 @@
 import aiohttp
+from aiohttp import ClientTimeout # <-- MODIFIKASI: Impor ClientTimeout
 from bot.logger import LOGGER
 
 # URL API untuk lirik. Anda bisa mengganti ini jika punya yang lebih baik.
@@ -20,13 +21,17 @@ async def get_lrc(track_data: dict):
     title = track_data.get('title')
     
     lyrics = "" # Default lirik kosong
+    
+    # --- MODIFIKASI: Tetapkan timeout 5 detik ---
+    timeout = ClientTimeout(total=5)
 
     # --- Metode 1: Coba dengan ISRC (jika API mendukungnya) ---
     # --- MODIFIKASI: Blok ini dinonaktifkan karena menyebabkan error DNS ---
     """
     if isrc:
         try:
-            async with aiohttp.ClientSession() as session:
+            # Terapkan timeout
+            async with aiohttp.ClientSession(timeout=timeout) as session: 
                 async with session.get(f"{LYRICS_LRT_API_URL}{isrc}") as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -45,7 +50,8 @@ async def get_lrc(track_data: dict):
             artist_url = artist.replace(" ", "%20")
             title_url = title.replace(" ", "%20")
             
-            async with aiohttp.ClientSession() as session:
+            # --- MODIFIKASI: Terapkan timeout ---
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(f"{LYRICS_API_URL}{artist_url}/{title_url}") as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -53,7 +59,8 @@ async def get_lrc(track_data: dict):
                             LOGGER.info(f"Mendapatkan lirik untuk {artist} - {title} via Lyrics.ovh")
                             return data['lyrics'].replace("\r\n\r\n", "\n").strip()
         except Exception as e:
-            LOGGER.warning(f"Gagal mengambil lirik Artis/Judul dari Lyrics.ovh: {e}")
+            # Ini sekarang akan error setelah 5 detik, bukan 60+ detik
+            LOGGER.warning(f"Gagal mengambil lirik Artis/Judul dari Lyrics.ovh (timeout/gagal): {e}")
 
     LOGGER.info(f"Tidak ditemukan lirik untuk {artist} - {title}")
     return lyrics # Kembalikan lirik kosong jika semua gagal
