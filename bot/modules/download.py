@@ -1,13 +1,12 @@
 from pyrogram.types import Message
 from pyrogram import Client, filters
 import asyncio 
+import traceback
+import random
 
 from bot import CMD
 from bot.logger import LOGGER
-
 import bot.helpers.translations as lang
-import traceback
-import random
 
 from bot import BOT_QOBUZ_CLIENTS
 from bot.tgclient import aio 
@@ -16,6 +15,7 @@ from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
+# --- MODIFIKASI: Menghapus impor antiSpam ---
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
 
@@ -29,6 +29,7 @@ async def run_download_task(link: str, user: dict):
         
         await start_link(link, user)
         
+        # Jeda singkat agar pesan "Selesai" bisa terbaca
         await asyncio.sleep(5) 
         
     except Exception as e:
@@ -39,9 +40,12 @@ async def run_download_task(link: str, user: dict):
             pass 
             
     finally:
-        await cleanup(user) # deletes uploaded files
+        # --- MODIFIKASI: Menghapus antiSpam revoke ---
+        await cleanup(user) # Hapus file
+        # await antiSpam(user['user_id'], user['chat_id'], True) # <-- Dihapus
         
         try:
+            # Hapus pesan status terakhir
             await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
         except:
             pass
@@ -63,15 +67,20 @@ async def download_track(c, msg:Message):
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
         
+        # --- MODIFIKASI DIMULAI (Blok antiSpam Dihapus Total) ---
+        # spam = await antiSpam(msg.from_user.id, msg.chat.id)
+        # if spam:
+        #    ...
+        #    return
+        
         user = await fetch_user_details(msg, reply)
         user['link'] = link
         
-        # --- MODIFIKASI DIMULAI ---
-        # 1. Menjalankan tugas di latar belakang
+        # Jalankan tugas di latar belakang
         asyncio.create_task(run_download_task(link, user))
         
-        # 2. Menghapus pesan konfirmasi "antrian"
-        # await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.") # <-- BARIS INI DIHAPUS
+        # Hapus pesan "antrian"
+        # await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.") 
         # --- MODIFIKASI SELESAI ---
 
 
