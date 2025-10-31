@@ -12,9 +12,9 @@ from ..metadata import set_metadata, get_audio_extension
 from ...settings import bot_set
 import bot.helpers.translations as lang
 
+# --- MODIFIKASI DIMULAI (Impor yang Diperlukan) ---
 from bot.logger import LOGGER
 from ..utils import fetch_zip_settings 
-# --- MODIFIKASI DIMULAI (Kita butuh edit_message di start_deezer) ---
 from ..message import edit_message
 # --- MODIFIKASI SELESAI ---
 
@@ -140,6 +140,7 @@ async def start_album(album_id:int, user:dict, upload=True):
         'type': album_meta['type']
     }
     
+    # --- MODIFIKASI DIMULAI (Menyaring lagu gagal) ---
     task_results = await run_concurrent_tasks(tasks, update_details)
 
     original_tracks = album_meta['tracks']
@@ -164,6 +165,7 @@ async def start_album(album_id:int, user:dict, upload=True):
     if album_zip: # Gunakan variabel dari fetch_zip_settings
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+    # --- MODIFIKASI SELESAI ---
 
     # Upload
     if upload:
@@ -177,7 +179,7 @@ async def start_artist(artist_id, user):
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
     
     # Ambil pengaturan zip artis dari pengguna, jika tidak ada, gunakan default
-    artist_zip = user.get("artist_zip", bot_set.artist_zip) 
+    artist_zip = bot_set.user_data.get(user.get("user_id", 0), {}).get("artist_zip", bot_set.artist_zip)
 
     upload_album = True
     if bot_set.artist_batch:
@@ -218,6 +220,7 @@ async def start_playlist(playlist_id, user):
 
     upload = True
     
+    # --- MODIFIKASI DIMULAI (Menyaring lagu gagal) ---
     if bot_set.playlist_conc:
         upload = False
         tasks = []
@@ -245,6 +248,7 @@ async def start_playlist(playlist_id, user):
             i+=1
         play_meta['tracks'] = successful_tracks_non_conc
         play_meta['totaltracks'] = len(successful_tracks_non_conc) # Perbarui jumlah
+    # --- MODIFIKASI SELESAI ---
     
     if not play_meta['tracks']:
          raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh untuk playlist {play_meta['title']}.")
