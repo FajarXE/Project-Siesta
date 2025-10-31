@@ -35,11 +35,12 @@ async def start_qobuz(url:str, user:dict):
         try:
             await edit_message(user['bot_msg'], f"Mencoba Akun #{i+1}/{len(clients_list)} ({client_label})...")
 
-            # Panggilan check_type: Ini yang bisa memicu QobuzContentUnavailableError
             items, item_id, type_dict, content = await check_type(url, user)
             
             # --- PERBAIKAN: Tambahkan cek keamanan setelah check_type ---
             if items is None and item_id is None:
+                 # Jika check_type gagal, itu akan melempar QobuzContentUnavailableError
+                 # Tetapi kita tambahkan cek keamanan ini untuk kegagalan tak terduga
                  raise QobuzContentUnavailableError("Gagal mendapatkan item atau ID yang valid dari tautan.")
             # --- BATAS PERBAIKAN ---
 
