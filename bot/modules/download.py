@@ -10,49 +10,43 @@ import traceback
 import random
 
 from bot import BOT_QOBUZ_CLIENTS
-# --- MODIFIKASI DIMULAI (Impor aio) ---
 from bot.tgclient import aio 
-# --- MODIFIKASI SELESAI ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
-from ..helpers.message import send_message, antiSpam, check_user, fetch_user_details, edit_message
+# --- MODIFIKASI DIMULAI (Impor antiSpam Dihapus) ---
+from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
+# --- MODIFIKASI SELESAI ---
 
 
 async def run_download_task(link: str, user: dict):
     """
     Fungsi ini berjalan di latar belakang.
-    Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup, dan anti-spam.
+    Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup.
     """
     try:
-        # 1. Buat pesan status yang akan kita update
         user['bot_msg'] = await send_message(user, 'Memulai tugas...')
         
-        # 2. Jalankan tugas utama (ini bagian yang lama)
         await start_link(link, user)
         
-        # 3. Pesan "Selesai" sekarang ditangani oleh Qobuz/Deezer handler.
-        #    Kita beri jeda agar pengguna bisa membacanya sebelum dihapus.
         await asyncio.sleep(5) 
         
     except Exception as e:
-        # Jika terjadi error fatal yang tidak tertangani, laporkan ke pengguna
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
         try:
             await edit_message(user['bot_msg'], f"Tugas Gagal: Terjadi error fatal.\n{e}")
         except:
-            pass # Gagal mengedit pesan
+            pass 
             
     finally:
-        # 4. (PENTING) Cleanup dan buka kunci pengguna, bahkan jika error
+        # --- MODIFIKASI DIMULAI (Menghapus antiSpam revoke) ---
         await cleanup(user) # deletes uploaded files
-        await antiSpam(user['user_id'], user['chat_id'], True)
+        # await antiSpam(user['user_id'], user['chat_id'], True) # <-- Dihapus
+        # --- MODIFIKASI SELESAI ---
         
-        # 5. Hapus pesan status terakhir (misal: "Selesai" atau "Error")
         try:
-            # Perbaikan 'aio' yang diimpor sekarang akan berfungsi
             await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
         except:
             pass
@@ -74,10 +68,11 @@ async def download_track(c, msg:Message):
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
         
-        spam = await antiSpam(msg.from_user.id, msg.chat.id)
-        if spam:
-            await send_message(msg, "Anda sudah memiliki unduhan yang sedang berjalan. Harap tunggu hingga selesai.")
-            return
+        # --- MODIFIKASI DIMULAI (Blok antiSpam Dihapus Total) ---
+        # spam = await antiSpam(msg.from_user.id, msg.chat.id)
+        # if spam:
+        #    await send_message(msg, "Anda sudah memiliki unduhan yang sedang berjalan. Harap tunggu hingga selesai.")
+        #    return
         
         user = await fetch_user_details(msg, reply)
         user['link'] = link
@@ -85,6 +80,7 @@ async def download_track(c, msg:Message):
         asyncio.create_task(run_download_task(link, user))
         
         await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.")
+        # --- MODIFIKASI SELESAI ---
 
 
 async def start_link(link: str, user: dict) -> None:
@@ -94,7 +90,7 @@ async def start_link(link: str, user: dict) -> None:
     spotify = ["https://open.spotify.com"]
     
     if link.startswith(tuple(tidal)):
-        user['provider'] = 'Tidal' # Menambahkan ini
+        user['provider'] = 'Tidal'
         await start_tidal(link, user)
     elif link.startswith(tuple(deezer)):
         user['provider'] = 'Deezer'
