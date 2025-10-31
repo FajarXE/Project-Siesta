@@ -1,15 +1,14 @@
 import copy
-
 from datetime import datetime
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .dzapi import deezerapi
+from bot.logger import LOGGER # <-- MODIFIKASI: Ditambahkan
 
 
-
-async def process_track_metadata(track_id, r_id, cover=None, \
-    thumbnail=False):
+async def process_track_metadata(track_id, r_id, cover=None, 
+    thumbnail=None, total_tracks=None): # <-- MODIFIKASI: Menambahkan total_tracks
     metadata = copy.deepcopy(base_meta)
 
     raw_meta = await deezerapi.get_track(track_id)
@@ -29,19 +28,21 @@ async def process_track_metadata(track_id, r_id, cover=None, \
     if t_meta.get('VERSION'):
         metadata['title'] += f' ({t_meta["VERSION"]})'
 
-    # title might have '/' in it
     metadata['title'] = metadata['title'].replace('/', ' ')
 
     metadata['duration'] = t_meta['DURATION']
-    #metadata['explicit'] = t_meta['EXPLICIT_TRACK_CONTENT']['EXPLICIT_LYRICS_STATUS']
     metadata['tracknumber'] = t_meta['TRACK_NUMBER']
+    
+    # --- MODIFIKASI: Menambahkan totaltracks ke metadata track ---
+    if total_tracks:
+        metadata['totaltracks'] = total_tracks
+    # --- MODIFIKASI SELESAI ---
 
     metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', '')
 
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'track'
 
-    # reuse albumart if possible
     metadata['cover'] = cover if cover else await get_cover(t_meta['ALB_PICTURE'], metadata)
     metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta['ALB_PICTURE'], metadata, True)
 
@@ -68,27 +69,26 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['album'] = a_meta['ALB_TITLE']
     metadata['artist'] = get_artists_name(a_meta)
     metadata['date'] = a_meta['DIGITAL_RELEASE_DATE']
-    metadata['totaltracks'] = a_meta['NUMBER_TRACK']
+    metadata['totaltracks'] = a_meta['NUMBER_TRACK'] # <-- Kualitas total (misal: 12)
     metadata['duration'] = a_meta['DURATION']
     metadata['copyright'] = a_meta['COPYRIGHT']
-    #metadata['explicit'] = a_meta['explicit']
-    #metadata['totalvolume'] = a_meta['numberOfVolumes']
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
 
     metadata['cover'] = await get_cover(a_meta['ALB_PICTURE'], metadata)
     metadata['thumbnail'] = await get_cover(a_meta['ALB_PICTURE'], metadata, True)
         
-    #metadata['quality'] = await get_quality(t_meta['data'][0])
-
     metadata['tracks'] = []
     for track in t_meta['data']:
+        # --- MODIFIKASI: Meneruskan totaltracks ke track individu ---
         track_meta = await process_track_metadata(
             track['SNG_ID'], 
             r_id,
             metadata['cover'], 
-            metadata['thumbnail']
+            metadata['thumbnail'],
+            metadata['totaltracks'] # <-- Diteruskan ke track
         )
+        # --- MODIFIKASI SELESAI ---
         metadata['tracks'].append(track_meta)
 
     metadata['quality'] = metadata['tracks'][0]['quality']
@@ -104,7 +104,7 @@ async def process_playlist_meta(raw_meta, r_id):
 
     metadata['title'] = raw_meta['DATA']['TITLE']
     metadata['duration'] = raw_meta['DATA']['DURATION']
-    metadata['totaltracks'] = raw_meta['DATA']['NB_SONG']
+    metadata['totaltracks'] = raw_meta['DATA']['NB_SONG'] # <-- Kualitas total (misal: 50)
     metadata['itemid'] = raw_meta['DATA']['PLAYLIST_ID']
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Deezer'
@@ -113,7 +113,13 @@ async def process_playlist_meta(raw_meta, r_id):
     
     for track in raw_meta['SONGS']['data']:
         try:
-            track_meta = await process_track_metadata(track['SNG_ID'], r_id)
+            # --- MODIFIKASI: Meneruskan totaltracks ke track individu ---
+            track_meta = await process_track_metadata(
+                track['SNG_ID'], 
+                r_id,
+                total_tracks=metadata['totaltracks'] # <-- Diteruskan ke track
+            )
+            # --- MODIFIKASI SELESAI ---
         except:
             continue
         metadata['tracks'].append(track_meta)
@@ -121,13 +127,6 @@ async def process_playlist_meta(raw_meta, r_id):
     metadata['quality'] = metadata['tracks'][0]['quality']
 
     return metadata
-
-
-
-
-
-
-
 
 def get_artists_name(meta:dict):
     artists = []
