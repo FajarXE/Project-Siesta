@@ -149,10 +149,11 @@ Auth Chats : {4}
 ᴘʀᴏᴠɪᴅᴇʀ : {2}
 """
 
-ARTIST_TEMPLATE = """
+    ARTIST_TEMPLATE = """
 <b>ᴀʀᴛɪsᴛ :</b> {artist}
 <b>ǫᴜᴀʟɪᴛʏ :</b> {quality}
 <b>ᴘʀᴏᴠɪᴅᴇʀ :</b> {provider}
 """
 
+# Kurung '}' ini menutup 'class EN(object):'
 }
