@@ -135,7 +135,7 @@ class QoClient:
             
             j = await self.api_call(epoint, id=id, offset=offset, type=type)
             
-            # --- PERBAIKAN: Tentukan objek mana yang berisi hitungan total ---
+            # --- MODIFIKASI: Tentukan objek mana yang berisi hitungan total ---
             if type in ["tracks", "albums"]:
                 if type not in j:
                     LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'.")
@@ -143,7 +143,7 @@ class QoClient:
                 j_iterable = j[type]
             else:
                 j_iterable = j
-            # --- BATAS PERBAIKAN ---
+            # --- BATAS MODIFIKASI ---
 
             if offset == 0:
                 if key not in j_iterable:
@@ -240,19 +240,19 @@ class QoClient:
 
     async def get_artist_meta(self, id):
         res = []
-        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): 
+        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): # MODIFIED type="albums"
             res.append(data)
         return res
 
     async def get_plist_meta(self, id):
         res = []
-        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): 
+        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): # MODIFIED type="tracks"
             res.append(data)
         return res
 
     async def get_label_meta(self, id):
         res = []
-        async for data in self.multi_meta("label/get", "albums_count", id, "albums"):
+        async for data in self.multi_meta("label/get", "albums_count", id, "albums"): # MODIFIED type="albums"
             res.append(data)
         return res
 
