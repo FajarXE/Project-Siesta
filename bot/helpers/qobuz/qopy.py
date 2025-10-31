@@ -135,20 +135,20 @@ class QoClient:
             
             j = await self.api_call(epoint, id=id, offset=offset, type=type)
             
-            # --- MODIFIKASI: Tentukan objek mana yang berisi hitungan total ---
+            # --- PERBAIKAN: Tentukan objek mana yang berisi hitungan total ---
             if type in ["tracks", "albums"]:
                 if type not in j:
                     LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'.")
-                    break
+                    return # Mengakhiri generator jika gagal
                 j_iterable = j[type]
             else:
                 j_iterable = j
-            # --- BATAS MODIFIKASI ---
+            # --- BATAS PERBAIKAN ---
 
             if offset == 0:
                 if key not in j_iterable:
                     LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
-                    break
+                    return # Mengakhiri generator jika gagal
                     
                 yield j_iterable
                 total = j_iterable[key] - 99999
@@ -189,7 +189,7 @@ class QoClient:
 
     async def test_secret(self, sec):
         try:
-            # MODIFIKASI: Timeout diubah untuk memberi waktu pada server
+            # MODIFIKASI: Timeout diubah menjadi 60 detik
             await self.api_call("track/getFileUrl", id=5966783, fmt_id=5, sec=sec) 
             return True
         except:
@@ -240,19 +240,19 @@ class QoClient:
 
     async def get_artist_meta(self, id):
         res = []
-        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): # MODIFIED type="albums"
+        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): 
             res.append(data)
         return res
 
     async def get_plist_meta(self, id):
         res = []
-        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): # MODIFIED type="tracks"
+        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): 
             res.append(data)
         return res
 
     async def get_label_meta(self, id):
         res = []
-        async for data in self.multi_meta("label/get", "albums_count", id, "albums"): # MODIFIED type="albums"
+        async for data in self.multi_meta("label/get", "albums_count", id, "albums"):
             res.append(data)
         return res
 
@@ -267,5 +267,3 @@ class QoClient:
         """Menutup sesi aiohttp jika ada."""
         if self.session and not self.session.closed:
             await self.session.close()
-
-# qobuz_api dihapus
