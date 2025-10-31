@@ -11,9 +11,8 @@ from ..metadata import set_metadata, get_audio_extension
 from ...settings import bot_set
 import bot.helpers.translations as lang
 
-# --- MODIFIKASI DIMULAI ---
-# Impor LOGGER dan fetch_zip_settings
-from ..logger import LOGGER
+# --- MODIFIKASI DIMULAI (Perbaikan Path Impor) ---
+from bot.logger import LOGGER
 from ..utils import fetch_zip_settings 
 # --- MODIFIKASI SELESAI ---
 
@@ -44,11 +43,8 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         try:
             track_meta = await process_track_metadata(item_id, user['r_id'])
         except Exception as e:
-            # --- MODIFIKASI (LOGIKA FALLBACK) ---
-            # Jika track tidak tersedia, laporkan sebagai error yang ditangani
             LOGGER.warning(f"Deezer track {item_id} tidak tersedia: {e}")
-            return False # Memberi sinyal kegagalan
-            # --- MODIFIKASI SELESAI ---
+            return False
             
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
         filepath = sanitize_filepath(filepath) # Sanitasi path dasar
@@ -61,22 +57,20 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
             track_meta['quality'])
     except Exception as e:
         LOGGER.warning(f"Gagal mendapatkan URL unduhan Deezer untuk track {item_id}: {e}")
-        return False # Memberi sinyal kegagalan
+        return False
 
     track_meta['folderpath'] = filepath
     
-    # --- MODIFIKASI (Perbaikan Nama File) ---
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    safe_filename = sanitize_filepath(raw_filename) # Bersihkan nama file dari karakter ilegal
-    # --- MODIFIKASI SELESAI ---
+    safe_filename = sanitize_filepath(raw_filename)
 
     track_meta['extension'] = 'flac' if track_meta['quality'] == 'FLAC' else 'mp3'
 
     filepath += f"/{safe_filename}.{track_meta['extension']}"
-    track_meta['filepath'] = filepath # 'filepath' sekarang sudah bersih
+    track_meta['filepath'] = filepath
 
     err = await deezerapi.dl_track(item_id, url, track_meta['filepath'])
-    if err: # Jika dl_track mengembalikan error
+    if err:
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
         return False
 
@@ -123,7 +117,6 @@ async def start_album(album_id:int, user:dict, upload=True):
         'type': album_meta['type']
     }
     
-    # --- MODIFIKASI DIMULAI (Menyaring lagu gagal) ---
     task_results = await run_concurrent_tasks(tasks, update_details)
 
     original_tracks = album_meta['tracks']
@@ -148,7 +141,6 @@ async def start_album(album_id:int, user:dict, upload=True):
     if album_zip: # Gunakan variabel dari fetch_zip_settings
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
-    # --- MODIFIKASI SELESAI ---
 
     # Upload
     if upload:
@@ -160,19 +152,17 @@ async def start_album(album_id:int, user:dict, upload=True):
 async def start_artist(artist_id, user):
     album_ids = await deezerapi.get_artist_album_ids(artist_id, 0, -1, False)
 
-    # --- MODIFIKASI DIMULAI (Cek pengaturan zip pengguna) ---
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
     
-    artist_zip = user.get("artist_zip", bot_set.artist_zip) # Asumsi dari user_settings jika ada
-    # --- MODIFIKASI SELESAI ---
+    # Ambil pengaturan zip artis dari pengguna, jika tidak ada, gunakan default
+    artist_zip = user.get("artist_zip", bot_set.artist_zip) 
 
     upload_album = True
     if bot_set.artist_batch:
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
     
-    # Gunakan pengaturan zip pengguna
     if artist_zip: 
-        upload_album = False # final decision
+        upload_album = False 
 
     for album in album_ids:
         await start_album(album, user, upload_album)
@@ -185,9 +175,7 @@ async def start_playlist(playlist_id, user):
 
     playlist_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{play_meta['provider']}/"
 
-    # --- MODIFIKASI DIMULAI (Cek pengaturan zip pengguna) ---
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
-    # --- MODIFIKASI SELESAI ---
     
     playlist_sort = False if bot_set.upload_mode == 'Telegram' else bot_set.playlist_sort
     
@@ -208,7 +196,6 @@ async def start_playlist(playlist_id, user):
 
     upload = True
     
-    # --- MODIFIKASI DIMULAI (Menyaring lagu gagal) ---
     if bot_set.playlist_conc:
         upload = False
         tasks = []
@@ -226,7 +213,7 @@ async def start_playlist(playlist_id, user):
 
     else:
         i = 0
-        if playlist_zip: upload = False # Gunakan pengaturan zip pengguna
+        if playlist_zip: upload = False 
         successful_tracks_non_conc = []
         for track in play_meta['tracks']:
             await progress_message(i, len(play_meta['tracks']), update_details)
@@ -236,9 +223,8 @@ async def start_playlist(playlist_id, user):
             i+=1
         play_meta['tracks'] = successful_tracks_non_conc
         play_meta['totaltracks'] = len(successful_tracks_non_conc) # Perbarui jumlah
-    # --- MODIFIKASI SELESAI ---
 
-    if playlist_zip: # Gunakan pengaturan zip pengguna
+    if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
         if playlist_sort:
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
