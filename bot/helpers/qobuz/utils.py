@@ -198,7 +198,7 @@ async def check_type(url, user: dict):
         
         content = []
         
-        # --- MODIFIKASI: Perbaiki logika pengumpulan hasil dari generator ---
+        # --- PERBAIKAN: Perbaiki logika pengumpulan hasil dari generator ---
         if type_dict["multi_type"]:
             
             if url_type == "playlist":
@@ -210,14 +210,13 @@ async def check_type(url, user: dict):
             else:
                 raise Exception("Tipe multi-meta tidak terdefinisi.")
 
-            # Multi-meta sekarang mengakhiri generator jika gagal
             res_iterator = client.multi_meta(epoint, key, item_id, type_dict["multi_type"])
             
             async for data in res_iterator:
                 content.append(data)
                 
-            # Jika content kosong, multi_meta gagal, lempar exception untuk fallback
             if not content:
+                # Jika content kosong, multi_meta gagal, lempar exception untuk fallback
                 raise QobuzContentUnavailableError(f"API Qobuz gagal mengembalikan data untuk {url_type}/{item_id}. Coba akun lain.")
 
 
@@ -231,7 +230,6 @@ async def check_type(url, user: dict):
                 )
             else:
                 if url_type == 'playlist':
-                    # Playlist hanya memiliki satu item di content[0] (objek 'tracks')
                     if 'items' in content[0]:
                         items = content[0]['items']
                     else:
@@ -241,7 +239,7 @@ async def check_type(url, user: dict):
                     items = [item[type_dict["iterable_key"]]["items"] for item in content][0]
                 else:
                     raise Exception("Gagal memparsing struktur respons Qobuz.")
-        # --- BATAS MODIFIKASI ---
+        # --- BATAS PERBAIKAN ---
             
         return items, item_id, type_dict, content
     else:
