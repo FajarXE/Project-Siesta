@@ -8,23 +8,23 @@ from bot import CMD
 from bot.logger import LOGGER
 import bot.helpers.translations as lang
 
-# --- MODIFIKASI: Impor dictionary task ---
-from bot import BOT_QOBUZ_CLIENTS, ACTIVE_DOWNLOAD_TASKS
+# --- MODIFIKASI: Hapus impor ACTIVE_DOWNLOAD_TASKS ---
+from bot import BOT_QOBUZ_CLIENTS
 from bot.tgclient import aio 
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
-# --- MODIFIKASI: Menghapus impor antiSpam ---
+# --- MODIFIKASI: Hapus impor antiSpam ---
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
 
 async def run_download_task(link: str, user: dict):
     """
-    Fungsi ini berjalan di latar belakang dan menangani seluruh siklus tugas.
+    Fungsi ini berjalan di latar belakang.
+    Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup.
     """
-    task_id = user['user_id'] # Dapatkan ID untuk cleanup
     try:
         user['bot_msg'] = await send_message(user, 'Memulai tugas...')
         
@@ -32,13 +32,12 @@ async def run_download_task(link: str, user: dict):
         
         await asyncio.sleep(5) 
         
-    # --- MODIFIKASI: Menangkap pembatalan (Cancellation) ---
     except asyncio.CancelledError:
-        LOGGER.info(f"Tugas untuk {task_id} dibatalkan oleh pengguna.")
-        # Kita perlu pesan baru karena 'user['bot_msg']' mungkin sudah dihapus
-        await send_message(user, "Tugas telah dibatalkan.")
-        await asyncio.sleep(5) # Beri waktu pengguna untuk membaca
-    # --- BATAS MODIFIKASI ---
+        # Meskipun kita menghapus /cancel, kita tetap biarkan ini
+        # untuk penanganan error yang aman jika server dimatikan
+        LOGGER.info(f"Tugas untuk {user['user_id']} dibatalkan (mungkin shutdown).")
+        await send_message(user, "Tugas dibatalkan.")
+        await asyncio.sleep(5) 
             
     except Exception as e:
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
@@ -50,8 +49,9 @@ async def run_download_task(link: str, user: dict):
     finally:
         await cleanup(user) # Hapus file
         
-        # --- MODIFIKASI: Hapus task dari dictionary saat selesai/gagal/dibatalkan ---
-        ACTIVE_DOWNLOAD_TASKS.pop(task_id, None)
+        # --- MODIFIKASI: Hapus task dari dictionary (jika ada) ---
+        # (Baris ini tidak diperlukan lagi karena kita tidak menambahkannya)
+        # ACTIVE_DOWNLOAD_TASKS.pop(task_id, None) 
         # --- BATAS MODIFIKASI ---
         
         try:
@@ -80,17 +80,17 @@ async def download_track(c, msg:Message):
         user['link'] = link
         task_id = user['user_id']
 
-        # --- MODIFIKASI: Mengganti antiSpam dengan cek task aktif ---
-        if task_id in ACTIVE_DOWNLOAD_TASKS:
-            await send_message(msg, "Anda sudah memiliki unduhan yang sedang berjalan. Kirim /cancel terlebih dahulu untuk membatalkan.")
-            return
+        # --- MODIFIKASI: MENGHAPUS SEMUA PENGECEKAN BLOKIR ---
+        # if task_id in ACTIVE_DOWNLOAD_TASKS:
+        #    await send_message(msg, "Anda sudah memiliki...")
+        #    return
         # --- BATAS MODIFIKASI ---
         
-        # Buat task dan simpan referensinya
-        task = asyncio.create_task(run_download_task(link, user))
-        ACTIVE_DOWNLOAD_TASKS[task_id] = task
+        # Buat task dan langsung jalankan di latar belakang
+        asyncio.create_task(run_download_task(link, user))
         
-        # Kita tidak mengirim balasan "antrian" lagi
+        # Hapus pesan "antrian"
+        # await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.") 
 
 
 async def start_link(link: str, user: dict) -> None:
