@@ -1,9 +1,9 @@
 import re
 import time
 
-from config import Config # <-- MODIFIKASI: Diperlukan untuk Config.DOWNLOAD_BASE_DIR
-from .dzapi import deezerapi # <-- MODIFIKASI: Impor dari dzapi.py
-from ..utils import get_lrc # <-- MODIFIKASI: Diperbaiki (naik satu level ke helpers/)
+from config import Config
+from .dzapi import deezerapi
+from .utils import get_lrc # <-- MODIFIKASI: Kembali ke '.' (satu titik)
 from bot.logger import LOGGER
 from bot.helpers.metadata import create_cover_file
 
@@ -87,7 +87,7 @@ async def process_track_metadata(t_id, r_id):
     elif 'MP3_320' in deezerapi.available_formats: metadata['quality'] = 'MP3_320'
     else: metadata['quality'] = 'MP3_128'
     
-    metadata['lyrics'] = await get_lrc(metadata['isrc'])
+    metadata['lyrics'] = await get_lrc(metadata) # <-- MODIFIKASI: Mengirim seluruh dict metadata
     return metadata
 
 
@@ -180,7 +180,7 @@ async def process_album_metadata(a_id, a_meta, t_meta, r_id):
         track_meta['token_expiry'] = t_meta_full['TRACK_TOKEN_EXPIRE']
         track_meta['quality'] = quality
     
-        track_meta['lyrics'] = await get_lrc(track_meta['isrc'])
+        track_meta['lyrics'] = await get_lrc(track_meta) # <-- MODIFIKASI: Mengirim seluruh dict metadata
         metadata['tracks'].append(track_meta)
 
     # Perbarui total tracks HANYA untuk lagu yang berhasil diambil
@@ -252,7 +252,7 @@ async def process_playlist_meta(raw_data, r_id):
         track_meta['genre'] = album_genre_name
         
         track_meta['disk'] = str(track.get('DISK_NUMBER', '1'))
-        track_meta['totaldiscs'] = str(a_meta.get('DISK_COUNT', '1'))
+        track_meta['totaldiscs'] = str(a_m.get('DISK_COUNT', '1'))
 
         if t_meta_full.get('CONTRIBUTORS'):
             composers, songwriters = [], []
@@ -269,7 +269,7 @@ async def process_playlist_meta(raw_data, r_id):
         track_meta['token_expiry'] = t_meta_full['TRACK_TOKEN_EXPIRE']
         track_meta['quality'] = quality
     
-        track_meta['lyrics'] = await get_lrc(track_meta['isrc'])
+        track_meta['lyrics'] = await get_lrc(track_meta) # <-- MODIFIKASI: Mengirim seluruh dict metadata
         metadata['tracks'].append(track_meta)
     
     # Perbarui total tracks HANYA untuk lagu yang berhasil diambil
