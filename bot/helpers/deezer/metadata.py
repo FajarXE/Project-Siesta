@@ -1,314 +1,227 @@
-import re
-import time
+import copy
+from datetime import datetime
 
-from config import Config
+from ..metadata import metadata as base_meta
+from ..metadata import create_cover_file
 from .dzapi import deezerapi
-from .utils import get_lrc
 from bot.logger import LOGGER
-from bot.helpers.metadata import create_cover_file
 
-# --- FUNGSI INI SEKARANG SANGAT BERBEDA ---
-# Dipanggil oleh handler.py saat mengunduh TRACK TUNGGAL
-async def process_track_metadata(t_id, r_id):
-    metadata = {}
+
+async def process_track_metadata(track_id, r_id, cover=None, 
+    thumbnail=None, total_tracks=None, album_genre=None, total_disks=None): # <-- MODIFIKASI: Menambahkan genre/disk
+    metadata = copy.deepcopy(base_meta)
+
+    raw_meta = await deezerapi.get_track(track_id)
+    raw_meta=raw_meta['DATA']
+    t_meta = raw_meta.get('FALLBACK', raw_meta)
+    
+    metadata['tempfolder'] += f"{r_id}-temp/"
+
+    metadata['itemid'] = track_id
+    metadata['copyright'] = t_meta.get('COPYRIGHT', '')
+    metadata['albumartist'] = t_meta['ART_NAME']
+    metadata['artist'] = get_artists_name(t_meta)
+    metadata['album'] = t_meta['ALB_TITLE']
+    metadata['isrc'] = t_meta['ISRC']
+
+    metadata['title'] = t_meta['SNG_TITLE']
+    if t_meta.get('VERSION'):
+        metadata['title'] += f' ({t_meta["VERSION"]})'
+
+    metadata['title'] = metadata['title'].replace('/', ' ')
+
+    metadata['duration'] = t_meta['DURATION']
+    
     try:
-        # 1. Ambil data track utama
-        t_meta_raw = await deezerapi.get_track(t_id)
-        t_meta = t_meta_raw.get('FALLBACK') if 'FALLBACK' in t_meta_raw else t_meta_raw.get('DATA')
-        if not t_meta:
-            raise Exception("Tidak dapat mengambil data track (mungkin tidak tersedia).")
-        
-        # 2. Ambil data album (untuk genre, total disk, cover, dll)
-        a_meta_raw = await deezerapi.get_album(t_meta['ALB_ID'])
-        a_meta = a_meta_raw['DATA']
-        t_meta_tracks = a_meta_raw['SONGS'] # List lagu di album
-
-        # 3. Cari data track yang lebih lengkap dari daftar lagu album
-        full_track_data = t_meta # Fallback
-        for track in t_meta_tracks['data']:
-            if str(track['SNG_ID']) == str(t_id):
-                full_track_data = track
-                break
-    except Exception as e:
-        LOGGER.error(f"Gagal mengambil metadata gabungan untuk track {t_id}: {e}")
-        raise e # Lempar error agar handler bisa menangkapnya
-
-    metadata['itemid'] = full_track_data['SNG_ID']
-    metadata['copyright'] = a_meta.get('COPYRIGHT', t_meta.get('COPYRIGHT', ''))
-    metadata['albumartist'] = a_meta['ART_NAME']
+        explicit_status = t_meta.get('EXPLICIT_TRACK_CONTENT', {}).get('EXPLICIT_LYRICS_STATUS', 0)
+        metadata['explicit'] = True if explicit_status == 1 else False
+    except Exception:
+        metadata['explicit'] = False 
     
-    # Buat path cover
-    temp_meta_for_cover = {'itemid': metadata['itemid'], 'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{r_id}/"}
-    metadata['cover'] = await get_cover(a_meta['ALB_PICTURE'], temp_meta_for_cover)
-    metadata['thumbnail'] = await get_cover(a_meta['ALB_PICTURE'], temp_meta_for_cover, True)
+    metadata['tracknumber'] = t_meta['TRACK_NUMBER']
+
+    if total_tracks:
+        metadata['totaltracks'] = total_tracks
+
+    metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', '')
+
+    metadata['provider'] = 'Deezer'
+    metadata['type'] = 'track'
     
-    metadata['artist'] = full_track_data['ART_NAME']
-    metadata['upc'] = a_meta.get('UPC', '')
-    metadata['album'] = a_meta['ALB_TITLE']
-    metadata['isrc'] = full_track_data['ISRC']
-    metadata['title'] = full_track_data['SNG_TITLE']
-    metadata['duration'] = full_track_data['DURATION']
-    metadata['explicit'] = 'Yes' if full_track_data.get('EXPLICIT_LYRICS') else 'No'
-    metadata['tracknumber'] = str(full_track_data.get('TRACK_NUMBER', '1'))
-    metadata['date'] = a_meta.get('PHYSICAL_RELEASE_DATE', '')
-    metadata['totaltracks'] = str(a_meta.get('NUMBER_TRACK', '1'))
-
-    # --- PERBAIKAN METADATA (Genre, Disk, Composer) ---
+    # --- MODIFIKASI DIMULAI (Menambahkan Genre, Disk, Composer) ---
+    if album_genre:
+        metadata['genre'] = album_genre
+    elif t_meta.get('GENRE_NAME'):
+         metadata['genre'] = t_meta['GENRE_NAME']
+         
+    metadata['volume'] = str(t_meta.get('DISK_NUMBER', '1')) # Nomor Disk
     
-    # 1. Genre (Ini sudah benar, jika kosong berarti data API-nya kosong)
-    album_genre_name = ''
-    if a_meta.get('genres') and a_meta['genres'].get('data'):
-        if a_meta['genres']['data']:
-            album_genre_name = a_meta['genres']['data'][0].get('NAME', '')
-    metadata['genre'] = album_genre_name
-
-    # 2. Disk (Ini sudah benar)
-    metadata['disk'] = str(full_track_data.get('DISK_NUMBER', '1'))
-    metadata['totaldiscs'] = str(a_meta.get('DISK_COUNT', '1'))
-
-    # 3. MODIFIKASI: Menggabungkan Composer ke Songwriter
+    if total_disks:
+        metadata['totalvolume'] = str(total_disks) # Total Disk dari Album
+    
+    # Menambahkan Pengarang Lagu (Composer/Writer)
     if t_meta.get('CONTRIBUTORS'):
         composers = []
-        songwriters_real = [] # Penulis lagu asli (Role 4/5)
-        for c in t_meta['CONTRIBUTORS']:
-            role_id = str(c.get('ROLE_ID'))
-            art_name = c.get('ART_NAME')
-            if role_id == '1':
-                composers.append(art_name)
-            elif role_id in ['4', '5']:
-                songwriters_real.append(art_name)
-        
+        # Cari Composer (1), Writer (4), atau Lyricist (5)
+        for contributor in t_meta['CONTRIBUTORS']:
+            # Beberapa role ID mungkin integer, kita pastikan keduanya string
+            role_id = str(contributor.get('ROLE_ID'))
+            if role_id in ['1', '4', '5']: 
+                composers.append(contributor.get('ART_NAME'))
         if composers:
+            # Hapus duplikat sambil menjaga urutan
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
-        
-        # GABUNGKAN: Ambil penulis lagu asli + komposer
-        all_writers = songwriters_real + composers 
-        if all_writers:
-            # Ini akan diisi oleh aplikasi Anda sebagai "Pengarang Lagu"
-            metadata['songwriter'] = ', '.join(list(dict.fromkeys(all_writers)))
+    # --- MODIFIKASI SELESAI ---
 
-    # --- AKHIR PERBAIKAN ---
-    
-    # Tambahkan info token (dibutuhkan oleh handler.py)
+    metadata['cover'] = cover if cover else await get_cover(t_meta['ALB_PICTURE'], metadata)
+    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta['ALB_PICTURE'], metadata, True)
+
     metadata['token'] = t_meta['TRACK_TOKEN']
     metadata['token_expiry'] = t_meta['TRACK_TOKEN_EXPIRE']
-    # Tentukan Kualitas (handler.py bergantung pada ini)
-    if 'FLAC' in deezerapi.available_formats: metadata['quality'] = 'FLAC'
-    elif 'MP3_320' in deezerapi.available_formats: metadata['quality'] = 'MP3_320'
-    else: metadata['quality'] = 'MP3_128'
-    
-    metadata['lyrics'] = await get_lrc(metadata) 
+
+    metadata['quality'] = await get_quality(t_meta)
+
     return metadata
+            
 
+async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
+    metadata = copy.deepcopy(base_meta)
 
-# --- FUNGSI INI SEKARANG SANGAT BERBEDA ---
-# Dipanggil oleh handler.py saat mengunduh ALBUM
-async def process_album_metadata(a_id, a_meta, t_meta, r_id):
-    metadata = {}
-    
-    metadata['itemid'] = a_meta['ALB_ID']
-    metadata['copyright'] = a_meta.get('COPYRIGHT', '')
+    metadata['tempfolder'] += f"{r_id}-temp/"
+
+    metadata['itemid'] = album_id
+
     metadata['albumartist'] = a_meta['ART_NAME']
-    metadata['artist'] = a_meta['ART_NAME']
-    metadata['upc'] = a_meta.get('UPC', '')
-    metadata['album'] = a_meta['ALB_TITLE']
+    metadata['upc'] = a_meta['UPC']
     metadata['title'] = a_meta['ALB_TITLE']
-    metadata['duration'] = a_meta.get('DURATION', '')
-    metadata['explicit'] = 'Yes' if a_meta.get('EXPLICIT_ALBUM') else 'No'
-    metadata['date'] = a_meta.get('PHYSICAL_RELEASE_DATE', '')
-    metadata['totaltracks'] = str(a_meta.get('NUMBER_TRACK', '1'))
+    if a_meta.get('VERSION'):
+        metadata['title'] += f' ({a_meta['VERSION']})'
+    metadata['album'] = a_meta['ALB_TITLE']
+    metadata['artist'] = get_artists_name(a_meta)
+    metadata['date'] = a_meta['DIGITAL_RELEASE_DATE']
+    metadata['totaltracks'] = a_meta['NUMBER_TRACK'] 
+    metadata['duration'] = a_meta['DURATION']
+    metadata['copyright'] = a_meta['COPYRIGHT']
+    metadata['explicit'] = a_meta.get('explicit_lyrics', False)
     
-    # --- PERBAIKAN METADATA (Genre, Disk) ---
+    # --- MODIFIKASI DIMULAI (Menambahkan Genre dan Total Disk) ---
     album_genre_name = ''
     if a_meta.get('genres') and a_meta['genres'].get('data'):
+        # Pastikan data tidak kosong
         if a_meta['genres']['data']:
             album_genre_name = a_meta['genres']['data'][0].get('NAME', '')
-    metadata['genre'] = album_genre_name
-    metadata['totaldiscs'] = str(a_meta.get('DISK_COUNT', '1'))
-    # --- AKHIR PERBAIKAN ---
-
+            metadata['genre'] = album_genre_name
+    
+    metadata['totalvolume'] = str(a_meta.get('DISK_COUNT', '1')) # Total Disk
+    # --- MODIFIKASI SELESAI ---
+    
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
 
-    # Buat path cover
-    temp_meta_for_cover = {'itemid': metadata['itemid'], 'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{r_id}/"}
-    metadata['cover'] = await get_cover(a_meta['ALB_PICTURE'], temp_meta_for_cover)
-    metadata['thumbnail'] = await get_cover(a_meta['ALB_PICTURE'], temp_meta_for_cover, True)
-    
+    metadata['cover'] = await get_cover(a_meta['ALB_PICTURE'], metadata)
+    metadata['thumbnail'] = await get_cover(a_meta['ALB_PICTURE'], metadata, True)
+        
     metadata['tracks'] = []
-    
-    # Tentukan Kualitas (untuk semua lagu)
-    quality = 'FLAC' if 'FLAC' in deezerapi.available_formats else 'MP3_320' if 'MP3_320' in deezerapi.available_formats else 'MP3_128'
-            
-    # Loop ini sekarang melakukan N+1 request (1 untuk album, N untuk setiap track)
-    # Ini diperlukan untuk mendapatkan token & composer
     for track in t_meta['data']:
-        track_meta = {}
-        
-        # Ambil data track lengkap (untuk token, composer, dll)
-        try:
-            t_meta_full_raw = await deezerapi.get_track(track['SNG_ID'])
-            t_meta_full = t_meta_full_raw['DATA']
-        except Exception as e:
-            LOGGER.warning(f"Gagal mengambil metadata (token/composer) untuk track album {track['SNG_ID']}: {e}. Melewatkan.")
-            continue # Lewati lagu ini
-        
-        track_meta['itemid'] = track['SNG_ID']
-        track_meta['copyright'] = metadata['copyright']
-        track_meta['albumartist'] = metadata['albumartist']
-        track_meta['cover'] = metadata['cover']
-        track_meta['thumbnail'] = metadata['thumbnail']
-        track_meta['artist'] = track['ART_NAME']
-        track_meta['upc'] = metadata['upc']
-        track_meta['album'] = metadata['album']
-        track_meta['isrc'] = track['ISRC']
-        track_meta['title'] = track['SNG_TITLE']
-        track_meta['duration'] = track['DURATION']
-        track_meta['explicit'] = 'Yes' if track.get('EXPLICIT_LYRICS') else 'No'
-        track_meta['tracknumber'] = str(track.get('TRACK_NUMBER', '1'))
-        track_meta['date'] = metadata['date']
-        track_meta['totaltracks'] = metadata['totaltracks']
-        
-        # --- PERBAIKAN METADATA (per track) ---
-        track_meta['genre'] = metadata['genre']
-        track_meta['disk'] = str(track.get('DISK_NUMBER', '1'))
-        track_meta['totaldiscs'] = metadata['totaldiscs']
-
-        # 3. MODIFIKASI: Menggabungkan Composer ke Songwriter
-        if t_meta_full.get('CONTRIBUTORS'):
-            composers = []
-            songwriters_real = [] # Penulis lagu asli (Role 4/5)
-            for c in t_meta_full['CONTRIBUTORS']:
-                role_id = str(c.get('ROLE_ID'))
-                art_name = c.get('ART_NAME')
-                if role_id == '1':
-                    composers.append(art_name)
-                elif role_id in ['4', '5']:
-                    songwriters_real.append(art_name)
-            
-            if composers:
-                track_meta['composer'] = ', '.join(list(dict.fromkeys(composers)))
-            
-            # GABUNGKAN: Ambil penulis lagu asli + komposer
-            all_writers = songwriters_real + composers 
-            if all_writers:
-                # Ini akan diisi oleh aplikasi Anda sebagai "Pengarang Lagu"
-                track_meta['songwriter'] = ', '.join(list(dict.fromkeys(all_writers)))
-        # --- AKHIR PERBAIKAN ---
-
-        # Tambahkan info token & kualitas (dibutuhkan oleh handler.py)
-        track_meta['token'] = t_meta_full['TRACK_TOKEN']
-        track_meta['token_expiry'] = t_meta_full['TRACK_TOKEN_EXPIRE']
-        track_meta['quality'] = quality
-    
-        track_meta['lyrics'] = await get_lrc(track_meta) 
+        track_meta = await process_track_metadata(
+            track['SNG_ID'], 
+            r_id,
+            metadata['cover'], 
+            metadata['thumbnail'],
+            metadata['totaltracks'],
+            album_genre_name, # <-- Meneruskan Genre
+            metadata['totalvolume'] # <-- Meneruskan Total Disk
+        )
         metadata['tracks'].append(track_meta)
 
-    # Perbarui total tracks HANYA untuk lagu yang berhasil diambil
-    metadata['totaltracks'] = str(len(metadata['tracks']))
+    if metadata['tracks']:
+        metadata['quality'] = metadata['tracks'][0]['quality']
+    else:
+        metadata['quality'] = "N/A"
+    
     return metadata
 
 
-# --- FUNGSI INI JUGA DITULIS ULANG ---
-# Dipanggil oleh handler.py saat mengunduh PLAYLIST
-async def process_playlist_meta(raw_data, r_id):
-    p_meta = raw_data['DATA']
-    t_meta = raw_data['SONGS']
-    
-    metadata = {}
-    metadata['itemid'] = p_meta['PLAYLIST_ID']
-    metadata['title'] = p_meta['TITLE']
-    metadata['totaltracks'] = str(p_meta.get('NB_SONG', '1'))
-    metadata['provider'] = 'Deezer'
+
+async def process_playlist_meta(raw_meta, r_id):
+    metadata = copy.deepcopy(base_meta)
+
+    metadata['tempfolder'] += f"{r_id}-temp/"
+
+    metadata['title'] = raw_meta['DATA']['TITLE']
+    metadata['duration'] = raw_meta['DATA']['DURATION']
+    metadata['totaltracks'] = raw_meta['DATA']['NB_SONG'] 
+    metadata['itemid'] = raw_meta['DATA']['PLAYLIST_ID']
     metadata['type'] = 'playlist'
-
-    temp_meta_for_cover = {'itemid': metadata['itemid'], 'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{r_id}/"}
-    metadata['cover'] = await get_cover(p_meta['PICTURE'], temp_meta_for_cover)
-    metadata['thumbnail'] = await get_cover(p_meta['PICTURE'], temp_meta_for_cover, True)
+    metadata['provider'] = 'Deezer'
+    metadata['cover'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata)
+    metadata['thumbnail'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata, True)
     
-    metadata['tracks'] = []
-    
-    # Tentukan Kualitas (untuk semua lagu)
-    quality = 'FLAC' if 'FLAC' in deezerapi.available_formats else 'MP3_320' if 'MP3_320' in deezerapi.available_formats else 'MP3_128'
-            
-    for track in t_meta['data']:
-        track_meta = {}
-        
-        # Ambil data track lengkap (untuk token, composer, dll)
-        # DAN data album (untuk cover, genre, dll)
+    for track in raw_meta['SONGS']['data']:
         try:
-            t_meta_full_raw = await deezerapi.get_track(track['SNG_ID'])
-            t_meta_full = t_meta_full_raw['DATA']
-            
-            a_meta_raw = await deezerapi.get_album(track['ALB_ID'])
-            a_meta = a_meta_raw['DATA']
-        except Exception as e:
-            LOGGER.warning(f"Gagal mengambil metadata (token/album) untuk track playlist {track['SNG_ID']}: {e}. Melewatkan.")
-            continue # Lewati lagu ini
-
-        track_meta['itemid'] = track['SNG_ID']
-        track_meta['copyright'] = a_meta.get('COPYRIGHT', '')
-        track_meta['albumartist'] = a_meta['ART_NAME']
-        
-        # Gunakan cover album dari track individual
-        track_meta['cover'] = await get_cover(a_meta['ALB_PICTURE'], temp_meta_for_cover)
-        track_meta['thumbnail'] = await get_cover(a_meta['ALB_PICTURE'], temp_meta_for_cover, True)
-        
-        track_meta['artist'] = track['ART_NAME']
-        track_meta['upc'] = a_meta.get('UPC', '')
-        track_meta['album'] = track['ALB_TITLE']
-        track_meta['isrc'] = track['ISRC']
-        track_meta['title'] = track['SNG_TITLE']
-        track_meta['duration'] = track['DURATION']
-        track_meta['explicit'] = 'Yes' if track.get('EXPLICIT_LYRICS') else 'No'
-        track_meta['tracknumber'] = str(track.get('TRACK_NUMBER', '1'))
-        track_meta['date'] = a_meta.get('PHYSICAL_RELEASE_DATE', '')
-        track_meta['totaltracks'] = str(a_meta.get('NUMBER_TRACK', '1'))
-
-        # --- PERBAIKAN METADATA (per track) ---
-        album_genre_name = ''
-        if a_meta.get('genres') and a_meta['genres'].get('data'):
-            if a_meta['genres']['data']:
-                album_genre_name = a_meta['genres']['data'][0].get('NAME', '')
-        track_meta['genre'] = album_genre_name
-        
-        track_meta['disk'] = str(track.get('DISK_NUMBER', '1'))
-        track_meta['totaldiscs'] = str(a_meta.get('DISK_COUNT', '1'))
-
-        # 3. MODIFIKASI: Menggabungkan Composer ke Songwriter
-        if t_meta_full.get('CONTRIBUTORS'):
-            composers = []
-            songwriters_real = [] # Penulis lagu asli (Role 4/5)
-            for c in t_meta_full['CONTRIBUTORS']:
-                role_id = str(c.get('ROLE_ID'))
-                art_name = c.get('ART_NAME')
-                if role_id == '1':
-                    composers.append(art_name)
-                elif role_id in ['4', '5']:
-                    songwriters_real.append(art_name)
-            
-            if composers:
-                track_meta['composer'] = ', '.join(list(dict.fromkeys(composers)))
-            
-            # GABUNGKAN: Ambil penulis lagu asli + komposer
-            all_writers = songwriters_real + composers 
-            if all_writers:
-                # Ini akan diisi oleh aplikasi Anda sebagai "Pengarang Lagu"
-                track_meta['songwriter'] = ', '.join(list(dict.fromkeys(all_writers)))
-        # --- AKHIR PERBAIKAN ---
-        
-        track_meta['token'] = t_meta_full['TRACK_TOKEN']
-        track_meta['token_expiry'] = t_meta_full['TRACK_TOKEN_EXPIRE']
-        track_meta['quality'] = quality
-    
-        track_meta['lyrics'] = await get_lrc(track_meta) 
+            track_meta = await process_track_metadata(
+                track['SNG_ID'], 
+                r_id,
+                total_tracks=metadata['totaltracks'] 
+            )
+        except:
+            continue
         metadata['tracks'].append(track_meta)
-    
-    # Perbarui total tracks HANYA untuk lagu yang berhasil diambil
-    metadata['totaltracks'] = str(len(metadata['tracks']))
+
+    if metadata['tracks']:
+        metadata['quality'] = metadata['tracks'][0]['quality']
+    else:
+        metadata['quality'] = "N/A"
+
     return metadata
 
-# --- FUNGSI INI TIDAK BERUBAH ---
-async def get_cover(pic_id, meta, thumbnail=False):
-    url = f"https://e-cdn-images.dzcdn.net/images/cover/{pic_id}/1400x1400-000000-80-0-0.jpg"
+def get_artists_name(meta:dict):
+    artists = []
+    if meta.get('ARTISTS'):
+        for a in meta['ARTISTS']:
+            artists.append(a['ART_NAME'])
+    return ', '.join([str(artist) for artist in artists])
+
+
+async def get_cover(cover_id, meta:dict, thumbnail=False):
+    url = None
+    if cover_id:
+        url = (
+            f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
+            if not thumbnail
+            else f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/80x0-none-100-0-0.png'
+        )
     return await create_cover_file(url, meta, thumbnail)
+
+
+async def get_quality(meta:dict):
+    format = 'FLAC'
+    premium_formats = ['FLAC', 'MP3_320']
+    countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
+    
+    if not countries:
+        raise Exception("Deezer : Track not available")
+    elif deezerapi.country not in countries:
+        raise Exception("Deezer : Track not available in your country")
+    else:
+        formats_to_check = premium_formats
+        while len(formats_to_check) != 0:
+            if formats_to_check[0] != format:
+                formats_to_check.pop(0)
+            else:
+                break
+
+        temp_f = None
+        for f in formats_to_check:
+            # Pastikan kunci filesize ada sebelum mengaksesnya
+            if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
+                temp_f = f
+                break
+        if temp_f is None:
+            temp_f = 'MP3_128'
+        format = temp_f
+
+        if format not in deezerapi.available_formats:
+            raise Exception("Deezer : Format not available by your subscription")
+
+    return format
