@@ -25,13 +25,9 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
         if "sample" not in raw_meta and raw_meta.get('sampling_rate'):
             q_meta = await client.get_track_meta(item_id)
             if not q_meta.get('streamable'):
-                # --- MODIFIKASI (LOGIKA FALLBACK) ---
                 return None, "UNAVAILABLE" 
-                # --- MODIFIKASI SELESAI ---
         else:
-            # --- MODIFIKASI (LOGIKA FALLBACK) ---
             return None, "UNAVAILABLE"
-            # --- MODIFIKASI SELESAI ---
     
     metadata = copy.deepcopy(base_meta)
 
@@ -67,9 +63,7 @@ async def get_album_metadata(item_id, r_id, user: dict):
     q_meta = await client.get_album_meta(item_id)
     
     if not q_meta.get('streamable'):
-        # --- MODIFIKASI (LOGIKA FALLBACK) ---
         return None, "UNAVAILABLE"
-        # --- MODIFIKASI SELESAI ---
     
     metadata = copy.deepcopy(base_meta)
 
@@ -123,7 +117,8 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
     metadata['title'] = raw_meta['name']
     metadata['duration'] = raw_meta['duration']
-    metadata['totaltracks'] = raw_meta['tracks_count']
+    # MODIFIKASI: Asumsi raw_meta datang dari multi_meta, yang merupakan objek 'tracks'
+    metadata['totaltracks'] = raw_meta['tracks_count'] 
     metadata['itemid'] = raw_meta['id']
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Qobuz'
@@ -133,12 +128,8 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
     for track in tracks:
         track_meta, err = await get_track_metadata(track['id'], r_id, track, user=user)
         if err:
-            # --- MODIFIKASI (LOGIKA FALLBACK) ---
             if err == "UNAVAILABLE":
-                # Jika satu lagu di playlist tidak tersedia, lemparkan error untuk
-                # mencoba lagi seluruh playlist dengan akun lain
                 raise QobuzContentUnavailableError(f"Track {track['id']} di playlist tidak tersedia.")
-            # --- MODIFIKASI SELESAI ---
         metadata['tracks'].append(track_meta)
     return metadata
 
@@ -166,18 +157,22 @@ async def check_type(url, user: dict):
             "playlist": {
                 "func": "get_plist_meta", 
                 "iterable_key": "tracks",
+                "multi_type": "tracks" # MODIFIED
             },
             "artist": {
                 "func": "get_artist_meta", 
                 "iterable_key": "albums",
+                "multi_type": "albums" # MODIFIED
             },
             "interpreter": {
                 "func": "get_artist_meta", 
                 "iterable_key": "albums",
+                "multi_type": "albums" # MODIFIED
             },
             "label": {
                 "func": "get_label_meta", 
                 "iterable_key": "albums",
+                "multi_type": "albums" # MODIFIED
             },
             "album": {"album": True, "func": None, "iterable_key": None},
             "track": {"album": False, "func": None, "iterable_key": None},
@@ -186,14 +181,27 @@ async def check_type(url, user: dict):
         url_type, item_id = await get_url_info(url)
         type_dict = possibles[url_type]
     except (KeyError, IndexError):
-        # Jika link tidak dikenali, lempar error agar 'start_qobuz' bisa menanganinya
         raise Exception(f"URL tidak dapat dikenali: {url}")
 
     content = None
     if type_dict["func"]:
         method_to_call = getattr(client, type_dict["func"])
-        res = await method_to_call(item_id)
         
+        # --- MODIFIKASI: Menyesuaikan panggilan multi-meta ---
+        # Untuk Artist/Label/Playlist, kita panggil multi_meta di qopy.py 
+        # yang sekarang mengembalikan iterator (res) yang berisi semua data
+        if type_dict["multi_type"] == "tracks": # Playlist
+            # Playlist tidak menggunakan 'content' untuk mendapatkan tracks, 
+            # ia mengumpulkan semua hasil dari multi_meta ke dalam 'res'
+            res = []
+            async for data in client.multi_meta(type_dict["func"].replace("get", "page"), "tracks_count", item_id, "tracks"):
+                res.append(data)
+        else: # Artist/Label
+            # Artist/Label menggunakan struktur untuk smart_discography
+            res = []
+            async for data in client.multi_meta(type_dict["func"].replace("get", "page"), "albums_count", item_id, "albums"):
+                res.append(data)
+                
         content = [item for item in res]
 
         smart_discography = True
@@ -204,9 +212,13 @@ async def check_type(url, user: dict):
                 skip_extras=True,
             )
         else:
-            items = [item[type_dict["iterable_key"]]["items"] for item in content][
-                0
-            ]
+            items = []
+            # Jika itu Playlist, content[0] adalah objek 'tracks' yang berisi 'items'
+            if url_type == 'playlist' and len(content) > 0 and 'items' in content[0]:
+                 items = content[0]['items']
+            elif len(content) > 0 and type_dict["iterable_key"] in content[0]:
+                items = [item[type_dict["iterable_key"]]["items"] for item in content][0]
+        # --- BATAS MODIFIKASI ---
             
         return items, None, type_dict, content
     else:
