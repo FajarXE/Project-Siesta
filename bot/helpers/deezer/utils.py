@@ -22,6 +22,8 @@ async def get_lrc(track_data: dict):
     lyrics = "" # Default lirik kosong
 
     # --- Metode 1: Coba dengan ISRC (jika API mendukungnya) ---
+    # --- MODIFIKASI: Blok ini dinonaktifkan karena menyebabkan error DNS ---
+    """
     if isrc:
         try:
             async with aiohttp.ClientSession() as session:
@@ -33,6 +35,8 @@ async def get_lrc(track_data: dict):
                             return data['lyrics']
         except Exception as e:
             LOGGER.warning(f"Gagal mengambil lirik ISRC {isrc} dari LRT: {e}")
+    """
+    # --- AKHIR MODIFIKASI ---
 
     # --- Metode 2: Fallback ke Artis/Judul (jika ISRC gagal atau tidak ada) ---
     if artist and title:
@@ -53,4 +57,3 @@ async def get_lrc(track_data: dict):
 
     LOGGER.info(f"Tidak ditemukan lirik untuk {artist} - {title}")
     return lyrics # Kembalikan lirik kosong jika semua gagal
-
