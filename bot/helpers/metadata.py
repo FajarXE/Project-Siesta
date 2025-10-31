@@ -176,7 +176,9 @@ async def create_cover_file(url:dict, meta:dict, thumbnail=False):
     
     # Coba unduh hanya jika belum ada
     if not os.path.exists(cover):
-        err = await download_file(url, cover, retries=1, timeout=5)
+        # MODIFIKASI PENTING: Timeout diubah dari 5 detik menjadi 60 detik (1 menit)
+        # untuk memberi waktu pada server untuk mengunduh gambar besar.
+        err = await download_file(url, cover, retries=1, timeout=60) 
         
         # Jika 'download_file' mengembalikan error, kembalikan placeholder
         if err:
