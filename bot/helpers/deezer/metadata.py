@@ -4,11 +4,11 @@ from datetime import datetime
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .dzapi import deezerapi
-from bot.logger import LOGGER # <-- MODIFIKASI: Ditambahkan
+from bot.logger import LOGGER
 
 
 async def process_track_metadata(track_id, r_id, cover=None, 
-    thumbnail=None, total_tracks=None): # <-- MODIFIKASI: Menambahkan total_tracks
+    thumbnail=None, total_tracks=None): # Menambahkan total_tracks
     metadata = copy.deepcopy(base_meta)
 
     raw_meta = await deezerapi.get_track(track_id)
@@ -31,12 +31,20 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['title'] = metadata['title'].replace('/', ' ')
 
     metadata['duration'] = t_meta['DURATION']
-    metadata['tracknumber'] = t_meta['TRACK_NUMBER']
     
-    # --- MODIFIKASI: Menambahkan totaltracks ke metadata track ---
+    # --- MODIFIKASI DIMULAI (Mengaktifkan Status Eksplisit Track) ---
+    try:
+        # Status: 0 = Not Explicit, 1 = Explicit, 2 = Unknown
+        explicit_status = t_meta.get('EXPLICIT_TRACK_CONTENT', {}).get('EXPLICIT_LYRICS_STATUS', 0)
+        metadata['explicit'] = True if explicit_status == 1 else False
+    except Exception:
+        metadata['explicit'] = False # Default ke False jika ada error
+    # --- MODIFIKASI SELESAI ---
+    
+    metadata['tracknumber'] = t_meta['TRACK_NUMBER']
+
     if total_tracks:
         metadata['totaltracks'] = total_tracks
-    # --- MODIFIKASI SELESAI ---
 
     metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', '')
 
@@ -69,9 +77,15 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['album'] = a_meta['ALB_TITLE']
     metadata['artist'] = get_artists_name(a_meta)
     metadata['date'] = a_meta['DIGITAL_RELEASE_DATE']
-    metadata['totaltracks'] = a_meta['NUMBER_TRACK'] # <-- Kualitas total (misal: 12)
+    metadata['totaltracks'] = a_meta['NUMBER_TRACK'] # Kualitas total (misal: 12)
     metadata['duration'] = a_meta['DURATION']
     metadata['copyright'] = a_meta['COPYRIGHT']
+    
+    # --- MODIFIKASI DIMULAI (Mengaktifkan Status Eksplisit Album) ---
+    # API Deezer menggunakan 'explicit_lyrics' untuk album
+    metadata['explicit'] = a_meta.get('explicit_lyrics', False)
+    # --- MODIFIKASI SELESAI ---
+    
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
 
@@ -80,15 +94,13 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
         
     metadata['tracks'] = []
     for track in t_meta['data']:
-        # --- MODIFIKASI: Meneruskan totaltracks ke track individu ---
         track_meta = await process_track_metadata(
             track['SNG_ID'], 
             r_id,
             metadata['cover'], 
             metadata['thumbnail'],
-            metadata['totaltracks'] # <-- Diteruskan ke track
+            metadata['totaltracks'] # Diteruskan ke track
         )
-        # --- MODIFIKASI SELESAI ---
         metadata['tracks'].append(track_meta)
 
     metadata['quality'] = metadata['tracks'][0]['quality']
@@ -104,7 +116,7 @@ async def process_playlist_meta(raw_meta, r_id):
 
     metadata['title'] = raw_meta['DATA']['TITLE']
     metadata['duration'] = raw_meta['DATA']['DURATION']
-    metadata['totaltracks'] = raw_meta['DATA']['NB_SONG'] # <-- Kualitas total (misal: 50)
+    metadata['totaltracks'] = raw_meta['DATA']['NB_SONG'] # Kualitas total (misal: 50)
     metadata['itemid'] = raw_meta['DATA']['PLAYLIST_ID']
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Deezer'
@@ -113,13 +125,11 @@ async def process_playlist_meta(raw_meta, r_id):
     
     for track in raw_meta['SONGS']['data']:
         try:
-            # --- MODIFIKASI: Meneruskan totaltracks ke track individu ---
             track_meta = await process_track_metadata(
                 track['SNG_ID'], 
                 r_id,
-                total_tracks=metadata['totaltracks'] # <-- Diteruskan ke track
+                total_tracks=metadata['totaltracks'] # Diteruskan ke track
             )
-            # --- MODIFIKASI SELESAI ---
         except:
             continue
         metadata['tracks'].append(track_meta)
