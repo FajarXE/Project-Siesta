@@ -1,5 +1,5 @@
 import aiohttp
-from aiohttp import ClientTimeout # <-- MODIFIKASI: Impor ClientTimeout
+from aiohttp import ClientTimeout 
 from bot.logger import LOGGER
 
 # URL API untuk lirik. Anda bisa mengganti ini jika punya yang lebih baik.
@@ -22,11 +22,9 @@ async def get_lrc(track_data: dict):
     
     lyrics = "" # Default lirik kosong
     
-    # --- MODIFIKASI: Tetapkan timeout 5 detik ---
-    timeout = ClientTimeout(total=5)
-
-    # --- Metode 1: Coba dengan ISRC (jika API mendukungnya) ---
-    # --- MODIFIKASI: Blok ini dinonaktifkan karena menyebabkan error DNS ---
+    # --- MODIFIKASI: Semua pencarian lirik dinonaktifkan ---
+    
+    # --- Metode 1: Dinonaktifkan ---
     """
     if isrc:
         try:
@@ -41,9 +39,9 @@ async def get_lrc(track_data: dict):
         except Exception as e:
             LOGGER.warning(f"Gagal mengambil lirik ISRC {isrc} dari LRT: {e}")
     """
-    # --- AKHIR MODIFIKASI ---
 
-    # --- Metode 2: Fallback ke Artis/Judul (jika ISRC gagal atau tidak ada) ---
+    # --- Metode 2: Dinonaktifkan ---
+    """
     if artist and title:
         try:
             # Ganti spasi dengan %20 untuk URL
@@ -61,6 +59,8 @@ async def get_lrc(track_data: dict):
         except Exception as e:
             # Ini sekarang akan error setelah 5 detik, bukan 60+ detik
             LOGGER.warning(f"Gagal mengambil lirik Artis/Judul dari Lyrics.ovh (timeout/gagal): {e}")
+    """
+    # --- AKHIR MODIFIKASI ---
 
-    LOGGER.info(f"Tidak ditemukan lirik untuk {artist} - {title}")
-    return lyrics # Kembalikan lirik kosong jika semua gagal
+    # Selalu kembalikan lirik kosong
+    return lyrics 
