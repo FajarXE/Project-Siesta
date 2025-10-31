@@ -123,11 +123,14 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
     metadata['tempfolder'] += f"{r_id}-temp/"
 
+    # --- PERBAIKAN: Mengakses data dari objek Playlist (j) yang benar ---
     metadata['title'] = raw_meta['name']
     metadata['duration'] = raw_meta['duration']
-    # --- PERBAIKAN: Kunci yang benar adalah 'total', bukan 'tracks_count' ---
-    metadata['totaltracks'] = raw_meta['total'] 
+    # 'tracks' (sub-objek) berisi 'total'
+    metadata['totaltracks'] = raw_meta['tracks']['total'] 
     metadata['itemid'] = raw_meta['id']
+    # --- BATAS PERBAIKAN ---
+    
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Qobuz'
     metadata['cover'] = './project-siesta.png'
@@ -143,7 +146,9 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
 async def get_artist_meta(artist_raw):
     metadata = copy.deepcopy(base_meta)
+    # --- PERBAIKAN: Mengakses 'name' dari objek artist penuh ---
     metadata['title'] = artist_raw['name']
+    # --- BATAS PERBAIKAN ---
     metadata['type'] = 'artist'
     metadata['provider'] = 'Qobuz'
     return metadata
@@ -212,6 +217,7 @@ async def check_type(url, user: dict):
                 raise Exception("Tipe multi-meta tidak terdefinisi.")
             # --- BATAS PERBAIKAN ---
 
+            # multi_meta sekarang mengembalikan 'j' (objek penuh)
             res_iterator = client.multi_meta(epoint, key, item_id, type_dict["multi_type"])
             
             async for data in res_iterator:
@@ -230,16 +236,20 @@ async def check_type(url, user: dict):
                     skip_extras=True,
                 )
             else:
-                if url_type == 'playlist':
-                    if 'items' in content[0]:
-                        items = content[0]['items']
-                    else:
-                        raise QobuzContentUnavailableError(f"Playlist ID:{item_id} kosong atau tidak memiliki track.")
+                # --- PERBAIKAN: Ekstrak 'items' dari 'j' (objek penuh) ---
+                # content[0] adalah 'j' (objek penuh)
+                # type_dict["iterable_key"] adalah "tracks" atau "albums"
                 
-                elif len(content) > 0 and type_dict["iterable_key"] in content[0]:
-                    items = [item[type_dict["iterable_key"]]["items"] for item in content][0]
+                # Pastikan iterable_key ada di respons
+                if type_dict["iterable_key"] not in content[0]:
+                     raise QobuzContentUnavailableError(f"Respons Qobuz tidak memiliki '{type_dict['iterable_key']}'")
+                
+                # Akses items
+                if 'items' in content[0][type_dict["iterable_key"]]:
+                    items = content[0][type_dict["iterable_key"]]['items']
                 else:
-                    raise Exception("Gagal memparsing struktur respons Qobuz.")
+                    raise QobuzContentUnavailableError(f"Playlist ID:{item_id} kosong atau tidak memiliki track.")
+                # --- BATAS PERBAIKAN ---
             
         return items, item_id, type_dict, content
     else:
@@ -248,7 +258,7 @@ async def check_type(url, user: dict):
 
 async def get_url_info(url):
     r = re.search(
-        r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a_z]{2}-[a-z]{2})"
+        r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a-z]{2}-[a-z]{2})"
         r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)",
         url,
     )
@@ -276,8 +286,13 @@ def smart_discography_filter(
             return album.lower()
         return r.group(1).strip().lower()
 
-    requested_artist = contents[0]["name"]
-    items = [item["albums"]["items"] for item in contents][0]
+    # --- PERBAIKAN: Mengakses 'name' dari objek artist penuh ---
+    # contents[0] sekarang adalah objek 'j' penuh, 'albums' ada di dalamnya
+    requested_artist = contents[0]['name']
+    items = []
+    for item in contents:
+        items.extend(item['albums']['items'])
+    # --- BATAS PERBAIKAN ---
 
     title_grouped = dict()
     for item in items:
