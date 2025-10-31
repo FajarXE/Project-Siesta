@@ -1,0 +1,7 @@
+fatal: A git directory for 'bot/helpers/OrpheusDL' is found locally with remote(s):
+  origin	https://github.com/utopian-society/OrpheusDL.git
+  upstream	https://github.com/OrfiTeam/OrpheusDL.git
+If you want to reuse this local git directory instead of cloning again from
+  https://github.com/utopian-society/OrpheusDL.git
+use the '--force' option. If the local git directory is not the correct repo
+or you are unsure what this means choose another name with the '--name' option.
