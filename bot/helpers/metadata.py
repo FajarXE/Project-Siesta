@@ -6,10 +6,9 @@ from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
-    TCOM, TEXT # Impor sudah benar
+    TCOM # <-- MODIFIKASI: Menambahkan tag Composer
 
 from bot.logger import LOGGER
-# MODIFIKASI: Impor dari .utils di level 'helpers'
 from .utils import download_file
 
 
@@ -32,16 +31,15 @@ metadata = {
         'quality': '',
         'extension': '',
         'lyrics': '',
-        # --- MODIFIKASI: Menggunakan key yang benar ---
-        'disk': '',
-        'totaldiscs': '',
-        # --- MODIFIKASI SELESAI ---
+        'volume': '',
+        'totalvolume': '',
         'genre': '',
         'provider': '',
         'tracks': [],
         'albums': [],
-        'composer': '',
-        'songwriter': '',
+        # --- MODIFIKASI: Menambahkan Composer ---
+        'composer': '', 
+        # --- MODIFIKASI SELESAI ---
         'tempfolder': f'{Config.DOWNLOAD_BASE_DIR}/', # specific folder for each user
         'filepath': '',   # if track, full path to file
         'folderpath': '', # if album/playlist the full path to folder
@@ -56,11 +54,7 @@ async def set_metadata(metadata:dict):
     handle = File(audio_path)
 
     if metadata['duration'] == '':
-        try:
-            metadata['duration'] = handle.info.length
-        except Exception as e:
-            LOGGER.warning(f"Gagal mendapatkan durasi dari file: {e}")
-            metadata['duration'] = 0 # default
+        metadata['duration'] = handle.info.length
 
     if 'audio/x-flac' in handle.mime:
         await set_flac(metadata, handle)
@@ -73,23 +67,22 @@ async def set_metadata(metadata:dict):
 async def set_flac(data, handle):
     if handle.tags is None:
             handle.add_tags()
-    handle.tags['title'] = data.get('title', '')
-    handle.tags['album'] = data.get('album', '')
-    handle.tags['albumartist'] = data.get('albumartist', '')
-    handle.tags['artist'] = data.get('artist', '')
-    handle.tags['copyright'] = data.get('copyright', '')
-    handle.tags['tracknumber'] = str(data.get('tracknumber', '1'))
-    handle.tags['tracktotal'] = str(data.get('totaltracks', '1'))
-    handle.tags['genre'] = data.get('genre', '')
-    handle.tags['date'] = data.get('date', '')
-    handle.tags['isrc'] = data.get('isrc', '')
-    handle.tags['lyrics'] = data.get('lyrics', '')
+    handle.tags['title'] = data['title']
+    handle.tags['album'] = data['album']
+    handle.tags['albumartist'] = data['albumartist']
+    handle.tags['artist'] = data['artist']
+    handle.tags['copyright'] = data['copyright']
+    handle.tags['tracknumber'] = str(data['tracknumber'])
+    handle.tags['tracktotal'] = str(data['totaltracks'])
+    handle.tags['genre'] = data['genre']
+    handle.tags['date'] = data['date']
+    handle.tags['isrc'] = data['isrc']
+    handle.tags['lyrics'] = data['lyrics']
     
-    # --- MODIFIKASI DIMULAI (Menggunakan .get() dan key yang benar) ---
-    handle.tags['discnumber'] = str(data.get('disk', '1'))
-    handle.tags['disctotal'] = str(data.get('totaldiscs', '1'))
+    # --- MODIFIKASI DIMULAI (Menambahkan Tag FLAC yang Hilang) ---
+    handle.tags['discnumber'] = str(data['volume'])
+    handle.tags['disctotal'] = str(data['totalvolume'])
     handle.tags['composer'] = data.get('composer', '')
-    handle.tags['songwriter'] = data.get('songwriter', '')
     # --- MODIFIKASI SELESAI ---
     
     await savePic(handle, data)
@@ -100,31 +93,23 @@ async def set_mp3(data, handle):
     # ID3
     if handle.tags is None:
             handle.add_tags()
-    handle.tags.add(TIT2(encoding=3, text=data.get('title', '')))
-    handle.tags.add(TALB(encoding=3, text=data.get('album', '')))
-    handle.tags.add(TOPE(encoding=3, text=data.get('albumartist', '')))
-    handle.tags.add(TPE1(encoding=3, text=data.get('artist', '')))
-    handle.tags.add(TCOP(encoding=3, text=data.get('copyright', '')))
+    handle.tags.add(TIT2(encoding=3, text=data['title']))
+    handle.tags.add(TALB(encoding=3, text=data['album']))
+    handle.tags.add(TOPE(encoding=3, text=data['albumartist']))
+    handle.tags.add(TPE1(encoding=3, text=data['artist']))
+    handle.tags.add(TCOP(encoding=3, text=data['copyright']))
+    handle.tags.add(TRCK(encoding=3, text=str(data['tracknumber'])))
+    handle.tags.add(TPOS(encoding=3, text=str(data['volume'])))
+    handle.tags.add(TXXX(encoding=3, text=str(data['totaltracks'])))
+    handle.tags.add(TCON(encoding=3, text=data['genre']))
+    handle.tags.add(TDRC(encoding=3, text=data['date']))
+    handle.tags.add(TSRC(encoding=3, text=data['isrc']))
+    handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
     
-    # --- MODIFIKASI DIMULAI (Perbaikan Tag Track & Disk dengan key yang benar) ---
-    track_text = str(data.get('tracknumber', '1'))
-    if data.get('totaltracks') and str(data.get('totaltracks')) not in ['0', '1']:
-        track_text = f"{data.get('tracknumber', '1')}/{data.get('totaltracks')}"
-    handle.tags.add(TRCK(encoding=3, text=track_text))
-    
-    disk_text = str(data.get('disk', '1'))
-    if data.get('totaldiscs') and str(data.get('totaldiscs')) not in ['0', '1']:
-        disk_text = f"{data.get('disk', '1')}/{data.get('totaldiscs')}"
-    handle.tags.add(TPOS(encoding=3, text=disk_text))
+    # --- MODIFIKASI DIMULAI (Menambahkan Tag MP3 yang Hilang) ---
+    handle.tags.add(TCOM(encoding=3, text=data.get('composer', ''))) # Composer
+    # (Total disk/TPOS sudah ada)
     # --- MODIFIKASI SELESAI ---
-    
-    handle.tags.add(TCON(encoding=3, text=data.get('genre', '')))
-    handle.tags.add(TDRC(encoding=3, text=data.get('date', '')))
-    handle.tags.add(TSRC(encoding=3, text=data.get('isrc', '')))
-    handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data.get('lyrics', '')))
-    
-    handle.tags.add(TCOM(encoding=3, text=data.get('composer', ''))) 
-    handle.tags.add(TEXT(encoding=3, text=data.get('songwriter', '')))
     
     await savePic(handle, data)
     handle.save()
@@ -133,25 +118,23 @@ async def set_mp3(data, handle):
 async def set_m4a(data, handle):
     if handle.tags is None:
         handle.add_tags()
-    handle.tags['\u00a9nam'] = data.get('title', '')
-    handle.tags['\u00a9alb'] = data.get('album', '')
-    handle.tags['\u00a9ART'] = data.get('artist', '')
-    handle.tags['aART'] = data.get('albumartist', '')
-    handle.tags['\u00a9day'] = data.get('date', '')
-    handle.tags['\u00a9gen'] = data.get('genre', '')
-    handle.tags['\u00a9cpr'] = data.get('copyright', '')
+    handle.tags['\u00a9nam'] = data['title']
+    handle.tags['\u00a9alb'] = data['album']
+    handle.tags['\u00a9ART'] = data['artist']
+    handle.tags['aART'] = data['albumartist']
+    handle.tags['\u00a9day'] = data['date']
+    handle.tags['\u00a9gen'] = data['genre']
+    handle.tags['\u00a9cpr'] = data['copyright']
 
-    # --- MODIFIKASI DIMULAI (Menggunakan .get() dan key yang benar) ---
-    track_number = int(data.get('tracknumber', '1'))
-    totaltracks = int(data.get('totaltracks', '1'))
+    track_number = int(data['tracknumber']) if data['tracknumber'] != '' else 0
+    totaltracks = int(data['totaltracks']) if data['totaltracks'] != '' else 0
     handle.tags['trkn'] = [(track_number, totaltracks)]
-    
-    volume = int(data.get('disk', '1'))
-    totalvolume = int(data.get('totaldiscs', '1'))
+    volume = int(data['volume']) if data['volume'] != '' else 0
+    totalvolume = int(data['totalvolume']) if data['totalvolume'] != '' else 0
     handle.tags['disk'] = [(volume, totalvolume)]
     
-    handle.tags['\u00a9wrt'] = data.get('composer', '') 
-    handle.tags['\u00a9lyr'] = data.get('lyrics', '')   
+    # --- MODIFIKASI DIMULAI (Menambahkan Tag M4A yang Hilang) ---
+    handle.tags['\u00a9wrt'] = data.get('composer', '') # ©wrt adalah Composer
     # --- MODIFIKASI SELESAI ---
 
     await savePic(handle, data)
