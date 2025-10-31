@@ -92,7 +92,7 @@ class QoClient:
             r_sig = "trackgetFileUrlformat_id{}intentstreamtrack_id{}{}{}".format(
                 fmt_id, track_id, unix, kwargs.get("sec", self.sec)
             )
-            r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
+            r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).headigest()
             params = {
                 "request_ts": unix,
                 "request_sig": r_sig_hashed,
@@ -135,27 +135,34 @@ class QoClient:
             
             j = await self.api_call(epoint, id=id, offset=offset, type=type)
             
-            # --- MODIFIKASI: Tentukan objek mana yang berisi hitungan total ---
-            if type in ["tracks", "albums"]:
-                if type not in j:
-                    LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'.")
-                    return # Mengakhiri generator jika gagal
-                j_iterable = j[type]
-            else:
-                j_iterable = j
-            # --- BATAS MODIFIKASI ---
+            # --- PERBAIKAN: Menggunakan try...except untuk menangani respons yang rusak ---
+            try:
+                if type in ["tracks", "albums"]:
+                    if type not in j:
+                        LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'.")
+                        return # Mengakhiri generator jika gagal
+                    j_iterable = j[type]
+                else:
+                    j_iterable = j
 
-            if offset == 0:
-                if key not in j_iterable:
-                    LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
-                    return # Mengakhiri generator jika gagal
-                    
-                yield j_iterable
-                total = j_iterable[key] - 99999
-            else:
-                yield j_iterable
-                total -= 99999
-            offset += 99999
+                if offset == 0:
+                    if key not in j_iterable:
+                        # Ini adalah baris yang menyebabkan error di log Anda
+                        LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
+                        return # Mengakhiri generator jika gagal
+                        
+                    yield j_iterable
+                    total = j_iterable[key] - 99999
+                else:
+                    yield j_iterable
+                    total -= 99999
+                offset += 99999
+            
+            except Exception as e:
+                # Jika terjadi error parsing JSON (misalnya data rusak), kita catat dan keluar
+                LOGGER.error(f"QOBUZ Multi-Meta Parsing Gagal untuk {epoint}: {e}")
+                return # Mengakhiri generator
+            # --- BATAS PERBAIKAN ---
 
 
     async def auth(self):
@@ -240,19 +247,19 @@ class QoClient:
 
     async def get_artist_meta(self, id):
         res = []
-        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): # MODIFIED type="albums"
+        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): 
             res.append(data)
         return res
 
     async def get_plist_meta(self, id):
         res = []
-        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): # MODIFIED type="tracks"
+        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): 
             res.append(data)
         return res
 
     async def get_label_meta(self, id):
         res = []
-        async for data in self.multi_meta("label/get", "albums_count", id, "albums"): # MODIFIED type="albums"
+        async for data in self.multi_meta("label/get", "albums_count", id, "albums"):
             res.append(data)
         return res
 
