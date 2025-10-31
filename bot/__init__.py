@@ -1,6 +1,8 @@
 # --- PERBAIKAN DI SINI ---
 # Mendefinisikan dictionary global agar bisa diimpor oleh file lain
 BOT_QOBUZ_CLIENTS = {}
+# Wadah untuk menyimpan tugas unduhan yang aktif, diindeks berdasarkan user_id
+ACTIVE_DOWNLOAD_TASKS = {}
 # --- BATAS PERBAIKAN ---
 
 from config import Config
@@ -25,5 +27,6 @@ class CMD(object):
     AUTH = ["auth"]
     LOG = ["log"]
     USETTING = ["usetting", "uset"]
+    CANCEL = ["cancel"]
 
 cmd = CMD()
