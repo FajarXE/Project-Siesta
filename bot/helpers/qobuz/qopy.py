@@ -74,7 +74,6 @@ class QoClient:
             }
         elif epoint == "favorite/getUserFavorites":
             unix = time.time()
-            # r_sig = "userLibrarygetAlbumsList" + str(unix) + kwargs["sec"]
             r_sig = "favoritegetUserFavorites" + str(unix) + kwargs["sec"]
             r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
             params = {
@@ -122,27 +121,39 @@ class QoClient:
                 ):
                     raise Exception("QOBUZ : Invalid App Secret. Please recheck your credentials.... Disabling QOBUZ")
                 
-                # Tambahkan pemeriksaan status 403 di sini untuk memberikan error yang lebih baik
                 if r.status == 403:
-                    # Qobuz mengirim HTML saat 403, bukan JSON
                     raise Exception(f"{r.status}, message='Akses ditolak (Forbidden). Kemungkinan IP server diblokir.', url='{r.url}'")
                 
                 return await r.json()
 
 
     async def multi_meta(self, epoint, key, id, type):
+        # type akan menjadi "tracks" (untuk playlist) atau "albums" (untuk artist/label)
         total = 1
         offset = 0
         while total > 0:
+            
+            j = await self.api_call(epoint, id=id, offset=offset, type=type)
+            
+            # --- MODIFIKASI: Tentukan objek mana yang berisi hitungan total ---
             if type in ["tracks", "albums"]:
-                j = await self.api_call(epoint, id=id, offset=offset, type=type)[type]
+                if type not in j:
+                    LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'.")
+                    break
+                j_iterable = j[type]
             else:
-                j = await self.api_call(epoint, id=id, offset=offset, type=type)
+                j_iterable = j
+            # --- BATAS MODIFIKASI ---
+
             if offset == 0:
-                yield j
-                total = j[key] - 99999
+                if key not in j_iterable:
+                    LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
+                    break
+                    
+                yield j_iterable
+                total = j_iterable[key] - 99999
             else:
-                yield j
+                yield j_iterable
                 total -= 99999
             offset += 99999
 
@@ -178,7 +189,8 @@ class QoClient:
 
     async def test_secret(self, sec):
         try:
-            await self.api_call("track/getFileUrl", id=5966783, fmt_id=5, sec=sec)
+            # MODIFIKASI: Timeout diubah untuk memberi waktu pada server
+            await self.api_call("track/getFileUrl", id=5966783, fmt_id=5, sec=sec) 
             return True
         except:
             return False
@@ -188,16 +200,13 @@ class QoClient:
         self.id = str(bundle.get_app_id())
         self.secrets = [
             secret for secret in bundle.get_secrets().values() if secret
-        ]  # avoid empty fields
+        ]
 
     async def login(self):
-        """
-        Melakukan proses login lengkap untuk instansi klien ini.
-        Harus dipanggil setelah inisialisasi.
-        """
         self.get_tokens()
-        self.session = aiohttp.ClientSession()
-        #self.rate_limiter = self.get_rate_limiter(30)
+        # MODIFIKASI: Timeout diubah menjadi 60 detik untuk login
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) 
+        
         self.session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0",
@@ -209,7 +218,6 @@ class QoClient:
 
     async def cfg_setup(self):
         for secret in self.secrets:
-            # Falsy secrets
             if not secret:
                 continue
             if await self.test_secret(secret):
@@ -232,20 +240,22 @@ class QoClient:
 
     async def get_artist_meta(self, id):
         res = []
-        async for data in self.multi_meta("artist/get", "albums_count", id, None):
+        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): # MODIFIED type="albums"
             res.append(data)
         return res
-        #return await self.multi_meta("artist/get", "albums_count", id, None)
 
     async def get_plist_meta(self, id):
         res = []
-        async for data in self.multi_meta("playlist/get", "tracks_count", id, None):
+        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): # MODIFIED type="tracks"
             res.append(data)
         return res
 
     async def get_label_meta(self, id):
-        return await self.multi_meta("label/get", "albums_count", id, None)
-    
+        res = []
+        async for data in self.multi_meta("label/get", "albums_count", id, "albums"): # MODIFIED type="albums"
+            res.append(data)
+        return res
+
     async def setup_quality(self, user_id: int=0, qual: int=0) -> None:
         data = {}
         self.user_data.setdefault(user_id, {})
@@ -253,13 +263,9 @@ class QoClient:
             data["qobuz_qual"] = qual
         self.user_data[user_id].update(data)
 
-    # --- PERBAIKAN DITAMBAHKAN DI SINI ---
     async def close_session(self):
         """Menutup sesi aiohttp jika ada."""
         if self.session and not self.session.closed:
             await self.session.close()
-            # LOGGER.info(f"Sesi aiohttp untuk {self.email or self.user_id} ditutup.")
-    # --- BATAS PERBAIKAN ---
 
-# DELETED: Instansi global dihapus untuk mendukung multi-login
-# qobuz_api = QoClient()
+# qobuz_api dihapus
