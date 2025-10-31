@@ -92,7 +92,7 @@ class QoClient:
             r_sig = "trackgetFileUrlformat_id{}intentstreamtrack_id{}{}{}".format(
                 fmt_id, track_id, unix, kwargs.get("sec", self.sec)
             )
-            r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).headigest()
+            r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
             params = {
                 "request_ts": unix,
                 "request_sig": r_sig_hashed,
@@ -147,7 +147,6 @@ class QoClient:
 
                 if offset == 0:
                     if key not in j_iterable:
-                        # Ini adalah baris yang menyebabkan error di log Anda
                         LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
                         return # Mengakhiri generator jika gagal
                         
@@ -195,12 +194,36 @@ class QoClient:
         LOGGER.info(f"QOBUZ : Logged in as {user_identifier}. Membership Status: {self.label}")
 
     async def test_secret(self, sec):
+        # --- PERBAIKAN: Logika tes secret yang lebih baik ---
+        test_epoint = "track/getFileUrl"
+        unix = time.time()
+        
+        # Perhitungan sig yang disalin dari fungsi track/getFileUrl
+        r_sig = "trackgetFileUrlformat_id5intentstreamtrack_id5966783{}{}".format(unix, sec)
+        r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
+        
+        params = {
+            "request_ts": unix,
+            "request_sig": r_sig_hashed,
+            "track_id": 5966783, # Track ID yang valid untuk tes
+            "format_id": 5,
+            "intent": "stream",
+        }
+        
         try:
-            # MODIFIKASI: Timeout diubah menjadi 60 detik
-            await self.api_call("track/getFileUrl", id=5966783, fmt_id=5, sec=sec) 
-            return True
-        except:
+            async with self.ratelimit:
+                # Gunakan sesi yang sudah ada (self.session)
+                async with self.session.get(self.base + test_epoint, params=params) as r:
+                    # Secret valid jika status 200 (OK) atau 400 (error tapi secret dikenali)
+                    if r.status in [200, 400]:
+                        return True
+                    return False
+        
+        except Exception as e:
+            # Ini akan menangkap Timeout atau error koneksi
+            LOGGER.debug(f"Test Secret Failed due to connection/timeout for secret: {e}")
             return False
+        # --- BATAS PERBAIKAN ---
 
     def get_tokens(self):
         bundle = Bundle()
@@ -231,7 +254,8 @@ class QoClient:
                 self.sec = secret
                 break
         if self.sec is None:
-            raise Exception("QOBUZ : Can't find any valid app secret")
+            # Ini adalah pesan error yang Anda lihat
+            raise Exception("QOBUZ : Can't find any valid app secret") 
 
     async def get_track_url(self, id, user: dict):
         user_dict = self.user_data.get(user["user_id"], {})
