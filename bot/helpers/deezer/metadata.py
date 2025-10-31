@@ -2,8 +2,8 @@ import re
 import time
 
 from config import Config # <-- MODIFIKASI: Diperlukan untuk Config.DOWNLOAD_BASE_DIR
-from .dzapi import deezerapi # <-- MODIFIKASI: Impor dari dzapi.py (bukan api.py) dan gunakan instance deezerapi
-from .utils import get_lrc
+from .dzapi import deezerapi # <-- MODIFIKASI: Impor dari dzapi.py
+from ..utils import get_lrc # <-- MODIFIKASI: Diperbaiki (naik satu level ke helpers/)
 from bot.logger import LOGGER
 from bot.helpers.metadata import create_cover_file
 
