@@ -36,7 +36,8 @@ async def album_upload(metadata, user):
         if album_zip:
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
-                    caption=await create_simple_text(metadata, user)
+                    caption=await create_simple_text(metadata, user),
+                    meta=metadata  # <-- MODIFIKASI DITAMBAHKAN
                 )
         else:
             await batch_telegram_upload(metadata, user)
@@ -61,7 +62,8 @@ async def artist_upload(metadata, user):
         if bot_set.artist_zip:
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
-                    caption=await create_simple_text(metadata, user)
+                    caption=await create_simple_text(metadata, user),
+                    meta=metadata  # <-- MODIFIKASI DITAMBAHKAN
                 )
         else:
             pass # artist telegram uploads are handled by album fucntion
@@ -88,7 +90,8 @@ async def playlist_upload(metadata, user):
         if playlist_zip:
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
-                    caption=await create_simple_text(metadata, user)
+                    caption=await create_simple_text(metadata, user),
+                    meta=metadata  # <-- MODIFIKASI DITAMBAHKAN
                 )
         else:
             await batch_telegram_upload(metadata, user)
@@ -124,7 +127,7 @@ async def rclone_upload(user, realpath):
     """
     Args:
         user: user details
-        realpath: full path to (not used for uploading)
+        realpath: full real path to (not used for uploading)
     Returns:
         rclone_link, index_link
     """
@@ -146,13 +149,11 @@ async def local_upload(metadata, user):
     to_move = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}"
     destination = os.path.join(Config.LOCAL_STORAGE, os.path.basename(to_move))
 
-    # If the destination directory exists, merge contents
     if os.path.exists(destination):
         for item in os.listdir(to_move):
             src_item = os.path.join(to_move, item)
             dest_item = os.path.join(destination, item)
 
-            # If it's a file, copy it; if it's a directory, use copytree
             if os.path.isdir(src_item):
                 if not os.path.exists(dest_item):
                     shutil.copytree(src_item, dest_item)
