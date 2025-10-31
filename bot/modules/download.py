@@ -8,7 +8,8 @@ from bot import CMD
 from bot.logger import LOGGER
 import bot.helpers.translations as lang
 
-from bot import BOT_QOBUZ_CLIENTS
+# --- MODIFIKASI: Impor dictionary task ---
+from bot import BOT_QOBUZ_CLIENTS, ACTIVE_DOWNLOAD_TASKS
 from bot.tgclient import aio 
 
 from ..helpers.utils import cleanup
@@ -21,17 +22,24 @@ from ..helpers.message import send_message, check_user, fetch_user_details, edit
 
 async def run_download_task(link: str, user: dict):
     """
-    Fungsi ini berjalan di latar belakang.
-    Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup.
+    Fungsi ini berjalan di latar belakang dan menangani seluruh siklus tugas.
     """
+    task_id = user['user_id'] # Dapatkan ID untuk cleanup
     try:
         user['bot_msg'] = await send_message(user, 'Memulai tugas...')
         
         await start_link(link, user)
         
-        # Jeda singkat agar pesan "Selesai" bisa terbaca
         await asyncio.sleep(5) 
         
+    # --- MODIFIKASI: Menangkap pembatalan (Cancellation) ---
+    except asyncio.CancelledError:
+        LOGGER.info(f"Tugas untuk {task_id} dibatalkan oleh pengguna.")
+        # Kita perlu pesan baru karena 'user['bot_msg']' mungkin sudah dihapus
+        await send_message(user, "Tugas telah dibatalkan.")
+        await asyncio.sleep(5) # Beri waktu pengguna untuk membaca
+    # --- BATAS MODIFIKASI ---
+            
     except Exception as e:
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
         try:
@@ -40,12 +48,13 @@ async def run_download_task(link: str, user: dict):
             pass 
             
     finally:
-        # --- MODIFIKASI: Menghapus antiSpam revoke ---
         await cleanup(user) # Hapus file
-        # await antiSpam(user['user_id'], user['chat_id'], True) # <-- Dihapus
+        
+        # --- MODIFIKASI: Hapus task dari dictionary saat selesai/gagal/dibatalkan ---
+        ACTIVE_DOWNLOAD_TASKS.pop(task_id, None)
+        # --- BATAS MODIFIKASI ---
         
         try:
-            # Hapus pesan status terakhir
             await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
         except:
             pass
@@ -67,21 +76,21 @@ async def download_track(c, msg:Message):
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
         
-        # --- MODIFIKASI DIMULAI (Blok antiSpam Dihapus Total) ---
-        # spam = await antiSpam(msg.from_user.id, msg.chat.id)
-        # if spam:
-        #    ...
-        #    return
-        
         user = await fetch_user_details(msg, reply)
         user['link'] = link
+        task_id = user['user_id']
+
+        # --- MODIFIKASI: Mengganti antiSpam dengan cek task aktif ---
+        if task_id in ACTIVE_DOWNLOAD_TASKS:
+            await send_message(msg, "Anda sudah memiliki unduhan yang sedang berjalan. Kirim /cancel terlebih dahulu untuk membatalkan.")
+            return
+        # --- BATAS MODIFIKASI ---
         
-        # Jalankan tugas di latar belakang
-        asyncio.create_task(run_download_task(link, user))
+        # Buat task dan simpan referensinya
+        task = asyncio.create_task(run_download_task(link, user))
+        ACTIVE_DOWNLOAD_TASKS[task_id] = task
         
-        # Hapus pesan "antrian"
-        # await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.") 
-        # --- MODIFIKASI SELESAI ---
+        # Kita tidak mengirim balasan "antrian" lagi
 
 
 async def start_link(link: str, user: dict) -> None:
