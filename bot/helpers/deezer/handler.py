@@ -1,5 +1,6 @@
 from pathvalidate import sanitize_filepath
 from config import Config
+import traceback  # <-- MODIFIKASI: Ditambahkan
 
 from .metadata import *
 from .dzapi import deezerapi
@@ -11,23 +12,33 @@ from ..metadata import set_metadata, get_audio_extension
 from ...settings import bot_set
 import bot.helpers.translations as lang
 
-# --- MODIFIKASI DIMULAI (Perbaikan Path Impor) ---
+# Impor yang sudah diperbaiki dari sebelumnya
 from bot.logger import LOGGER
 from ..utils import fetch_zip_settings 
-# --- MODIFIKASI SELESAI ---
 
 
 async def start_deezer(url:str, user: dict):
-    media_type, item_id = await deezerapi.custom_url_parse(url)
+    # --- MODIFIKASI DIMULAI (Menambahkan pesan "Selesai") ---
+    try:
+        media_type, item_id = await deezerapi.custom_url_parse(url)
 
-    if media_type == 'artist':
-        await start_artist(item_id, user)
-    elif media_type == 'track':
-        await start_track(item_id, user, None)
-    elif media_type == 'album':
-        await start_album(item_id, user)
-    elif media_type == 'playlist':
-        await start_playlist(item_id, user)
+        if media_type == 'artist':
+            await start_artist(item_id, user)
+        elif media_type == 'track':
+            await start_track(item_id, user, None)
+        elif media_type == 'album':
+            await start_album(item_id, user)
+        elif media_type == 'playlist':
+            await start_playlist(item_id, user)
+        
+        # Kirim pesan "Selesai" HANYA jika fungsi di atas tidak gagal
+        await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
+        
+    except Exception as e:
+        # Jika terjadi error fatal, laporkan ke pengguna
+        LOGGER.error(f"Error fatal di Deezer handler: {e}\n{traceback.format_exc()}")
+        await edit_message(user['bot_msg'], f"Error: {e}")
+    # --- MODIFIKASI SELESAI ---
 
 
 async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=True, \
@@ -44,7 +55,7 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
             track_meta = await process_track_metadata(item_id, user['r_id'])
         except Exception as e:
             LOGGER.warning(f"Deezer track {item_id} tidak tersedia: {e}")
-            return False
+            return False # Memberi sinyal kegagalan
             
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
         filepath = sanitize_filepath(filepath) # Sanitasi path dasar
@@ -62,15 +73,15 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     track_meta['folderpath'] = filepath
     
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    safe_filename = sanitize_filepath(raw_filename)
+    safe_filename = sanitize_filepath(raw_filename) # Bersihkan nama file
 
     track_meta['extension'] = 'flac' if track_meta['quality'] == 'FLAC' else 'mp3'
 
     filepath += f"/{safe_filename}.{track_meta['extension']}"
-    track_meta['filepath'] = filepath
+    track_meta['filepath'] = filepath # 'filepath' sekarang sudah bersih
 
     err = await deezerapi.dl_track(item_id, url, track_meta['filepath'])
-    if err:
+    if err: # Jika dl_track mengembalikan error
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
         return False
 
@@ -85,6 +96,8 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
 
     if upload:
         await track_upload(track_meta, user, disable_link)
+        # Hapus pesan "Selesai" dari sini, biarkan start_deezer yang menangani
+        # await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
 
     return True
 
@@ -93,7 +106,8 @@ async def start_album(album_id:int, user:dict, upload=True):
     try:
         raw_data = await deezerapi.get_album(album_id)
     except Exception as e:
-        return await send_message(user, e)
+        # Angkat error agar start_deezer bisa menangkapnya
+        raise Exception(f"Gagal mendapatkan metadata album Deezer: {e}")
 
     album_meta = await process_album_metadata(album_id, raw_data['DATA'], raw_data['SONGS'], user['r_id'])
     
@@ -117,6 +131,7 @@ async def start_album(album_id:int, user:dict, upload=True):
         'type': album_meta['type']
     }
     
+    # --- MODIFIKASI DIMULAI (Menyaring lagu gagal) ---
     task_results = await run_concurrent_tasks(tasks, update_details)
 
     original_tracks = album_meta['tracks']
@@ -132,8 +147,8 @@ async def start_album(album_id:int, user:dict, upload=True):
     album_meta['totaltracks'] = len(successful_tracks)
 
     if not successful_tracks:
-        LOGGER.error(f"Tidak ada lagu Deezer yang berhasil diunduh untuk album {album_meta['title']}.")
-        return
+        # Jangan kirim pesan error, cukup angkat error agar start_deezer tahu
+        raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh untuk album {album_meta['title']}.")
 
     # Periksa pengaturan zip PENGGUNA
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
@@ -141,12 +156,14 @@ async def start_album(album_id:int, user:dict, upload=True):
     if album_zip: # Gunakan variabel dari fetch_zip_settings
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+    # --- MODIFIKASI SELESAI ---
 
     # Upload
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await album_upload(album_meta, user)
-
+    
+    # Hapus pesan "Selesai" dari sini, biarkan start_deezer yang menangani
 
 
 async def start_artist(artist_id, user):
@@ -166,6 +183,8 @@ async def start_artist(artist_id, user):
 
     for album in album_ids:
         await start_album(album, user, upload_album)
+    
+    # Hapus pesan "Selesai" dari sini, biarkan start_deezer yang menangani
 
 
 async def start_playlist(playlist_id, user):
@@ -196,6 +215,7 @@ async def start_playlist(playlist_id, user):
 
     upload = True
     
+    # --- MODIFIKASI DIMULAI (Menyaring lagu gagal) ---
     if bot_set.playlist_conc:
         upload = False
         tasks = []
@@ -223,6 +243,10 @@ async def start_playlist(playlist_id, user):
             i+=1
         play_meta['tracks'] = successful_tracks_non_conc
         play_meta['totaltracks'] = len(successful_tracks_non_conc) # Perbarui jumlah
+    # --- MODIFIKASI SELESAI ---
+    
+    if not play_meta['tracks']:
+         raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh untuk playlist {play_meta['title']}.")
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
@@ -233,3 +257,5 @@ async def start_playlist(playlist_id, user):
     if not upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await playlist_upload(play_meta, user)
+
+    # Hapus pesan "Selesai" dari sini, biarkan start_deezer yang menangani
