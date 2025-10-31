@@ -16,9 +16,7 @@ from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
-# --- MODIFIKASI DIMULAI (Impor antiSpam Dihapus) ---
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
-# --- MODIFIKASI SELESAI ---
 
 
 async def run_download_task(link: str, user: dict):
@@ -41,10 +39,7 @@ async def run_download_task(link: str, user: dict):
             pass 
             
     finally:
-        # --- MODIFIKASI DIMULAI (Menghapus antiSpam revoke) ---
         await cleanup(user) # deletes uploaded files
-        # await antiSpam(user['user_id'], user['chat_id'], True) # <-- Dihapus
-        # --- MODIFIKASI SELESAI ---
         
         try:
             await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
@@ -68,18 +63,15 @@ async def download_track(c, msg:Message):
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
         
-        # --- MODIFIKASI DIMULAI (Blok antiSpam Dihapus Total) ---
-        # spam = await antiSpam(msg.from_user.id, msg.chat.id)
-        # if spam:
-        #    await send_message(msg, "Anda sudah memiliki unduhan yang sedang berjalan. Harap tunggu hingga selesai.")
-        #    return
-        
         user = await fetch_user_details(msg, reply)
         user['link'] = link
         
+        # --- MODIFIKASI DIMULAI ---
+        # 1. Menjalankan tugas di latar belakang
         asyncio.create_task(run_download_task(link, user))
         
-        await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.")
+        # 2. Menghapus pesan konfirmasi "antrian"
+        # await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.") # <-- BARIS INI DIHAPUS
         # --- MODIFIKASI SELESAI ---
 
 
