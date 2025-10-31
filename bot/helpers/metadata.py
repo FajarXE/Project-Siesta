@@ -6,7 +6,7 @@ from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
-    TCOM # <-- MODIFIKASI: Menambahkan tag Composer
+    TCOM, TEXT # <-- MODIFIKASI: Menambahkan TCOM (Composer) & TEXT (Lyricist/Songwriter)
 
 from bot.logger import LOGGER
 from .utils import download_file
@@ -37,8 +37,9 @@ metadata = {
         'provider': '',
         'tracks': [],
         'albums': [],
-        # --- MODIFIKASI: Menambahkan Composer ---
-        'composer': '', 
+        # --- MODIFIKASI: Menambahkan Composer & Songwriter ---
+        'composer': '',
+        'songwriter': '',
         # --- MODIFIKASI SELESAI ---
         'tempfolder': f'{Config.DOWNLOAD_BASE_DIR}/', # specific folder for each user
         'filepath': '',   # if track, full path to file
@@ -83,6 +84,7 @@ async def set_flac(data, handle):
     handle.tags['discnumber'] = str(data['volume'])
     handle.tags['disctotal'] = str(data['totalvolume'])
     handle.tags['composer'] = data.get('composer', '')
+    handle.tags['songwriter'] = data.get('songwriter', '') # Tag untuk Pengarang Lagu
     # --- MODIFIKASI SELESAI ---
     
     await savePic(handle, data)
@@ -98,9 +100,20 @@ async def set_mp3(data, handle):
     handle.tags.add(TOPE(encoding=3, text=data['albumartist']))
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
-    handle.tags.add(TRCK(encoding=3, text=str(data['tracknumber'])))
-    handle.tags.add(TPOS(encoding=3, text=str(data['volume'])))
-    handle.tags.add(TXXX(encoding=3, text=str(data['totaltracks'])))
+    
+    # --- MODIFIKASI DIMULAI (Perbaikan Tag Track & Disk) ---
+    # Format yang benar adalah "nomor/total"
+    track_text = str(data['tracknumber'])
+    if data.get('totaltracks') and str(data['totaltracks']) != '0':
+        track_text = f"{data['tracknumber']}/{data['totaltracks']}"
+    handle.tags.add(TRCK(encoding=3, text=track_text))
+    
+    disk_text = str(data['volume'])
+    if data.get('totalvolume') and str(data['totalvolume']) != '0':
+        disk_text = f"{data['volume']}/{data['totalvolume']}"
+    handle.tags.add(TPOS(encoding=3, text=disk_text))
+    # --- MODIFIKASI SELESAI ---
+    
     handle.tags.add(TCON(encoding=3, text=data['genre']))
     handle.tags.add(TDRC(encoding=3, text=data['date']))
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
@@ -108,7 +121,7 @@ async def set_mp3(data, handle):
     
     # --- MODIFIKASI DIMULAI (Menambahkan Tag MP3 yang Hilang) ---
     handle.tags.add(TCOM(encoding=3, text=data.get('composer', ''))) # Composer
-    # (Total disk/TPOS sudah ada)
+    handle.tags.add(TEXT(encoding=3, text=data.get('songwriter', ''))) # Lyricist/Songwriter (Pengarang Lagu)
     # --- MODIFIKASI SELESAI ---
     
     await savePic(handle, data)
@@ -135,6 +148,7 @@ async def set_m4a(data, handle):
     
     # --- MODIFIKASI DIMULAI (Menambahkan Tag M4A yang Hilang) ---
     handle.tags['\u00a9wrt'] = data.get('composer', '') # ©wrt adalah Composer
+    handle.tags['\u00a9lyr'] = data.get('lyrics', '')   # ©lyr adalah Lirik (juga bisa untuk Songwriter, tapi Lirik lebih penting)
     # --- MODIFIKASI SELESAI ---
 
     await savePic(handle, data)
@@ -201,3 +215,4 @@ async def create_cover_file(url:dict, meta:dict, thumbnail=False):
         return cover
     else:
         return './project-siesta.png'
+
