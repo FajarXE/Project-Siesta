@@ -177,37 +177,43 @@ async def send_message(user, item, itype='text',
 
         elif itype == 'audio':
             
-            last_update_time = [0]
+            # --- MODIFIKASI DIMULAI (Nonaktifkan progres untuk batch) ---
+            progress_callback = None # Default ke None
+            
+            # Hanya buat callback jika BUKAN mode batch DAN 'bot_msg' ada
+            if meta and not meta.get('batch_mode', False) and user.get('bot_msg'):
+                last_update_time = [0]
 
-            async def progress_callback(current, total):
-                current_time = time.time()
-                if current_time - last_update_time[0] < 5:
-                    return
-                last_update_time[0] = current_time
+                async def internal_progress_callback(current, total):
+                    current_time = time.time()
+                    if current_time - last_update_time[0] < 5:
+                        return
+                    last_update_time[0] = current_time
 
-                percentage = int((current / total) * 100)
-                progress_bar = "{0}{1}".format(
-                    ''.join(["▰" for i in range(math.floor(percentage / 10))]),
-                    ''.join(["▱" for i in range(10 - math.floor(percentage / 10))])
-                )
-                
-                try:
-                    track_num = meta.get('tracknumber', '?')
-                    total_tracks = meta.get('totaltracks', '?') # Sekarang akan mendapatkan nilai dari Deezer
-                    title = meta.get('title', 'Unknown Track')
-                    
-                    # --- Ini adalah f-string yang 100% benar ---
-                    text = (
-                        f"**Mengunggah...**\n"
-                        f"Lagu {track_num} dari {total_tracks}\n" 
-                        f"`{title}`\n\n"
-                        f"{progress_bar} {percentage}%"
+                    percentage = int((current / total) * 100)
+                    progress_bar = "{0}{1}".format(
+                        ''.join(["▰" for i in range(math.floor(percentage / 10))]),
+                        ''.join(["▱" for i in range(10 - math.floor(percentage / 10))])
                     )
-                    # --- BATAS PERBAIKAN ---
                     
-                    asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
-                except Exception:
-                    pass
+                    try:
+                        track_num = meta.get('tracknumber', '?')
+                        total_tracks = meta.get('totaltracks', '?')
+                        title = meta.get('title', 'Unknown Track')
+                        
+                        text = (
+                            f"**Mengunggah...**\n"
+                            f"Lagu {track_num} dari {total_tracks}\n" 
+                            f"`{title}`\n\n"
+                            f"{progress_bar} {percentage}%"
+                        )
+                        
+                        asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
+                    except Exception:
+                        pass
+                
+                progress_callback = internal_progress_callback # Tetapkan callback
+            # --- MODIFIKASI SELESAI ---
 
             msg = await aio.send_audio(
                 chat_id=chat_id,
@@ -218,7 +224,7 @@ async def send_message(user, item, itype='text',
                 title=meta['title'],
                 thumb=meta['thumbnail'],
                 reply_to_message_id=user['r_id'],
-                progress=progress_callback
+                progress=progress_callback # Ini akan menjadi None jika mode batch
             )
 
         elif itype == 'pic':
