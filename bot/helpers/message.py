@@ -137,18 +137,18 @@ async def send_message(user, item, itype='text',
             )
             
         elif itype == 'doc':
-            # --- MODIFIKASI DIMULAI (Menambahkan Thumbnail ke Dokumen) ---
+            # --- MODIFIKASI DIMULAI (Menggunakan Cover Resolusi Tinggi) ---
             thumb_path = None
-            if meta and meta.get('thumbnail'):
-                # Gunakan path thumbnail dari metadata jika ada
-                thumb_path = meta['thumbnail']
+            # Gunakan 'cover' (resolusi tinggi) BUKAN 'thumbnail' (resolusi rendah)
+            if meta and meta.get('cover'): 
+                thumb_path = meta['cover']
             
             msg = await aio.send_document(
                 chat_id=chat_id,
                 document=item,
                 caption=caption,
                 reply_to_message_id=user['r_id'],
-                thumb=thumb_path  # <-- Parameter thumb ditambahkan di sini
+                thumb=thumb_path
             )
             # --- MODIFIKASI SELESAI ---
 
@@ -191,7 +191,7 @@ async def send_message(user, item, itype='text',
                 duration=int(meta['duration']),
                 performer=meta['artist'],
                 title=meta['title'],
-                thumb=meta['thumbnail'],
+                thumb=meta['thumbnail'], # Untuk audio, thumbnail kecil sudah cukup
                 reply_to_message_id=user['r_id'],
                 progress=progress_callback
             )
