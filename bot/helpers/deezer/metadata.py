@@ -3,12 +3,13 @@ import time
 
 from config import Config
 from .dzapi import deezerapi
-from .utils import get_lrc # <-- MODIFIKASI: Kembali ke '.' (satu titik)
+from .utils import get_lrc # <-- Ini sudah benar (mengarah ke file di atas)
 from bot.logger import LOGGER
 from bot.helpers.metadata import create_cover_file
 
-# --- FUNGSI INI SEKARANG SANGAT BERBEDA ---
-# Dipanggil oleh handler.py saat mengunduh TRACK TUNGGAL
+# ... (Semua kode 'process_track_metadata' dan 'process_album_metadata' tetap sama) ...
+# ... (Saya singkat agar tidak terlalu panjang, TIDAK ADA PERUBAHAN DI SANA) ...
+
 async def process_track_metadata(t_id, r_id):
     metadata = {}
     try:
@@ -252,7 +253,8 @@ async def process_playlist_meta(raw_data, r_id):
         track_meta['genre'] = album_genre_name
         
         track_meta['disk'] = str(track.get('DISK_NUMBER', '1'))
-        track_meta['totaldiscs'] = str(a_m.get('DISK_COUNT', '1'))
+        # --- MODIFIKASI: Memperbaiki typo 'a_m' menjadi 'a_meta' ---
+        track_meta['totaldiscs'] = str(a_meta.get('DISK_COUNT', '1'))
 
         if t_meta_full.get('CONTRIBUTORS'):
             composers, songwriters = [], []
