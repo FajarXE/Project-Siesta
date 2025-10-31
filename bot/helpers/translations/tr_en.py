@@ -7,17 +7,17 @@ class EN(object):
 #----------------
     WELCOME_MSG = "ʜᴇʟʟᴏ {}"
     DOWNLOADING = 'ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ........'
-    
-    # --- MODIFIKASI DIMULAI (Tampilan Baru) ---
     DOWNLOAD_PROGRESS = """
-<b>📥 Mengunduh...</b>
-
-<b>Item:</b> <code>{3} ({4})</code>
-{0}
-<b>Progres:</b> <code>{1} / {2} lagu</code>
+<b>╭─ ᴘʀᴏɢʀᴇss
+│
+├ {0}
+│
+├ ᴅᴏɴᴇ : <code>{1} / {2}</code>
+│
+├ ᴛɪᴛʟᴇ : <code>{3}</code>
+│
+╰─ ᴛʏᴘᴇ : <code>{4}</code></b>
 """
-    # --- MODIFIKASI SELESAI ---
-
     UPLOADING = 'ᴜᴘʟᴏᴀᴅɪɴɢ........'
     ZIPPING = 'ᴢɪᴘᴘɪɴɢ........'
     TASK_COMPLETED = "ᴅᴏᴡɴʟᴏᴀᴅ ғɪɴɪsʜᴇᴅ"
@@ -149,11 +149,8 @@ Auth Chats : {4}
 ᴘʀᴏᴠɪᴅᴇʀ : {2}
 """
 
-    ARTIST_TEMPLATE = """
+ARTIST_TEMPLATE = """
 <b>ᴀʀᴛɪsᴛ :</b> {artist}
 <b>ǫᴜᴀʟɪᴛʏ :</b> {quality}
 <b>ᴘʀᴏᴠɪᴅᴇʀ :</b> {provider}
 """
-
-# Kurung '}' ini menutup 'class EN(object):'
-}
