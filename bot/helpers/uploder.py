@@ -1,8 +1,11 @@
 import os
+import asyncio # <-- MODIFIKASI: Ditambahkan
+from config import Config # <-- MODIFIKASI: Ditambahkan
 
 from ..settings import bot_set
 from .message import send_message, edit_message
 from .utils import *
+from bot.logger import LOGGER # <-- MODIFIKASI: Ditambahkan
 
 #
 #
@@ -37,7 +40,7 @@ async def album_upload(metadata, user):
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
-                    meta=metadata  # <-- MODIFIKASI DITAMBAHKAN
+                    meta=metadata
                 )
         else:
             await batch_telegram_upload(metadata, user)
@@ -63,7 +66,7 @@ async def artist_upload(metadata, user):
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
-                    meta=metadata  # <-- MODIFIKASI DITAMBAHKAN
+                    meta=metadata
                 )
         else:
             pass # artist telegram uploads are handled by album fucntion
@@ -91,7 +94,7 @@ async def playlist_upload(metadata, user):
             for item in metadata['folderpath']:
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
-                    meta=metadata  # <-- MODIFIKASI DITAMBAHKAN
+                    meta=metadata
                 )
         else:
             await batch_telegram_upload(metadata, user)
@@ -165,13 +168,25 @@ async def local_upload(metadata, user):
     shutil.rmtree(to_move)
 
 
-async def telegram_upload(track, user):
+async def telegram_upload(track, user, batch_mode=False): # <-- MODIFIKASI: Menambahkan batch_mode
     """
     Only upload a single track
     Args:
         track: track metadata
-        """
-    await send_message(user, track['filepath'], 'audio', meta=track)
+        batch_mode: (bool) If True, disables individual progress bar in send_message
+    """
+    # --- MODIFIKASI: Salin 'meta' dan tambahkan 'batch_mode' ---
+    meta = track.copy()
+    meta['batch_mode'] = batch_mode
+    
+    # Hapus bot_msg dari user jika dalam mode batch
+    user_copy = user
+    if batch_mode and 'bot_msg' in user:
+        user_copy = user.copy()
+        del user_copy['bot_msg']
+    # --- BATAS MODIFIKASI ---
+
+    await send_message(user_copy, track['filepath'], 'audio', meta=meta)
 
 
 async def batch_telegram_upload(metadata, user):
@@ -180,13 +195,34 @@ async def batch_telegram_upload(metadata, user):
         metadata: full metadata
         user: user details
     """
+    
+    # --- MODIFIKASI DIMULAI (Upload Konkuren/Paralel) ---
+    
+    tasks = []
     if metadata['type'] == 'album' or metadata['type'] == 'playlist':
         for track in metadata['tracks']:
-            try:
-                await telegram_upload(track, user)
-            except FileNotFoundError:
-                pass
+            # Beri tahu telegram_upload ini adalah mode batch
+            tasks.append(telegram_upload(track, user, batch_mode=True)) 
     elif metadata['type'] == 'artist':
         for album in metadata['albums']:
             for track in album['tracks']:
-                await telegram_upload(track, user)
+                tasks.append(telegram_upload(track, user, batch_mode=True))
+    
+    if not tasks:
+        return
+
+    # Buat Semaphore (Sama seperti di utils.py)
+    semaphore = asyncio.Semaphore(Config.MAX_WORKERS)
+    
+    async def sem_task(task):
+        async with semaphore:
+            try:
+                await task 
+            except FileNotFoundError:
+                LOGGER.warning(f"File not found during batch upload, skipping.")
+            except Exception as e:
+                LOGGER.error(f"Failed to upload one track during batch: {e}")
+
+    # Jalankan semua tugas unggah secara bersamaan (dibatasi oleh MAX_WORKERS)
+    await asyncio.gather(*(sem_task(task) for task in tasks))
+    # --- MODIFIKASI SELESAI ---
