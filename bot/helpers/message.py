@@ -137,15 +137,13 @@ async def send_message(user, item, itype='text',
             )
             
         elif itype == 'doc':
-            # --- MODIFIKASI DIMULAI (Menambahkan Progress Callback ke Dokumen) ---
             thumb_path = None
             if meta and meta.get('cover'): 
                 thumb_path = meta['cover']
 
-            last_update_time = [0] # Gunakan list agar mutable
+            last_update_time = [0] 
 
             async def progress_callback(current, total):
-                # Update setiap 5 detik untuk menghindari FloodWait
                 current_time = time.time()
                 if current_time - last_update_time[0] < 5:
                     return
@@ -158,15 +156,16 @@ async def send_message(user, item, itype='text',
                 )
                 
                 try:
-                    # Buat pesan status unggah zip
                     text = (
                         f"**Mengunggah file .zip...**\n"
                         f"`{os.path.basename(item)}`\n\n"
                         f"{progress_bar} {percentage}%"
                     )
                     
-                    # Edit pesan status utama bot
-                    await edit_message(user['bot_msg'], text, antiflood=False)
+                    # --- MODIFIKASI DIMULAI (Melepaskan await) ---
+                    # Menjalankan edit_message di latar belakang tanpa menjeda unggahan
+                    asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
+                    # --- MODIFIKASI SELESAI ---
                 except Exception:
                     pass
             
@@ -176,9 +175,8 @@ async def send_message(user, item, itype='text',
                 caption=caption,
                 reply_to_message_id=user['r_id'],
                 thumb=thumb_path,
-                progress=progress_callback  # <-- Parameter progres ditambahkan
+                progress=progress_callback
             )
-            # --- MODIFIKASI SELESAI ---
 
         elif itype == 'audio':
             
@@ -208,7 +206,10 @@ async def send_message(user, item, itype='text',
                         f"{progress_bar} {percentage}%"
                     )
                     
-                    await edit_message(user['bot_msg'], text, antiflood=False)
+                    # --- MODIFIKASI DIMULAI (Melepaskan await) ---
+                    # Menjalankan edit_message di latar belakang tanpa menjeda unggahan
+                    asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
+                    # --- MODIFIKASI SELESAI ---
                 except Exception:
                     pass
 
