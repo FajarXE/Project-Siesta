@@ -129,11 +129,9 @@ async def run_concurrent_tasks(tasks, progress_details=None):
                 # Jalankan task (misal: start_track)
                 result = await task 
             except Exception as e:
-                # --- MODIFIKASI DIMULAI (Mengubah level log) ---
                 # Diubah ke .info() agar tidak mengganggu log
                 LOGGER.info(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
                 result = False # Memberi sinyal kegagalan
-                # --- MODIFIKASI SELESAI ---
             
             if progress_details and result: # Hanya update progress jika 'start_track' mengembalikan True (sukses)
                 i[0]+=1 # currently done
@@ -302,17 +300,28 @@ async def post_art_poster(user:dict, meta:dict):
         return msg
 
 
+# --- MODIFIKASI DIMULAI (Menambahkan Kualitas ke Caption) ---
 async def create_simple_text(meta, user):
-    caption = await format_string(
-        lang.s.SIMPLE_TITLE.format(
-            meta['title'],
-            meta['type'].title(),
-            meta['provider']
-        ), 
-        meta, 
-        user
-    )
-    return caption
+    """
+    Membuat caption kustom untuk unggahan ZIP.
+    Mengabaikan template bahasa untuk memastikan format konsisten.
+    """
+    # Ambil data dengan nilai default jika tidak ada
+    name = meta.get('title', 'N/A')
+    type_ = meta.get('type', 'N/A').title()
+    provider = meta.get('provider', 'N/A')
+    quality = meta.get('quality', 'N/A') # <- Kita ambil kualitasnya
+
+    # Format caption baru
+    caption_lines = [
+        f"NAME : {name}",
+        f"TYPE : {type_}",
+        f"PROVIDER : {provider}",
+        f"QUALITY : {quality}" # <-- Baris baru ditambahkan
+    ]
+    
+    return "\n".join(caption_lines)
+# --- MODIFIKASI SELESAI ---
 
 
 async def edit_art_poster(metadata, user, r_link, i_link, caption):
