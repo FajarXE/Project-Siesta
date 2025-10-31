@@ -1,7 +1,7 @@
 import os
 import asyncio
-import time  # <-- MODIFIKASI: Ditambahkan
-import math  # <-- MODIFIKASI: Ditambahkan
+import time
+import math
 
 from pyrogram.types import Message
 from pyrogram.errors import MessageNotModified, FloodWait
@@ -137,20 +137,26 @@ async def send_message(user, item, itype='text',
             )
             
         elif itype == 'doc':
+            # --- MODIFIKASI DIMULAI (Menambahkan Thumbnail ke Dokumen) ---
+            thumb_path = None
+            if meta and meta.get('thumbnail'):
+                # Gunakan path thumbnail dari metadata jika ada
+                thumb_path = meta['thumbnail']
+            
             msg = await aio.send_document(
                 chat_id=chat_id,
                 document=item,
                 caption=caption,
-                reply_to_message_id=user['r_id']
+                reply_to_message_id=user['r_id'],
+                thumb=thumb_path  # <-- Parameter thumb ditambahkan di sini
             )
+            # --- MODIFIKASI SELESAI ---
 
         elif itype == 'audio':
             
-            # --- MODIFIKASI DIMULAI (Menambahkan Progress Callback) ---
-            last_update_time = [0] # Gunakan list agar mutable di dalam callback
+            last_update_time = [0]
 
             async def progress_callback(current, total):
-                # Update setiap 5 detik untuk menghindari FloodWait
                 current_time = time.time()
                 if current_time - last_update_time[0] < 5:
                     return
@@ -163,7 +169,6 @@ async def send_message(user, item, itype='text',
                 )
                 
                 try:
-                    # Buat pesan status yang informatif
                     track_num = meta.get('tracknumber', '?')
                     total_tracks = meta.get('totaltracks', '?')
                     title = meta.get('title', 'Unknown Track')
@@ -175,12 +180,9 @@ async def send_message(user, item, itype='text',
                         f"{progress_bar} {percentage}%"
                     )
                     
-                    # Edit pesan status utama bot
                     await edit_message(user['bot_msg'], text, antiflood=False)
                 except Exception:
-                    # Jangan gagalkan unggahan jika pesan status gagal
                     pass
-            # --- MODIFIKASI SELESAI ---
 
             msg = await aio.send_audio(
                 chat_id=chat_id,
@@ -191,7 +193,7 @@ async def send_message(user, item, itype='text',
                 title=meta['title'],
                 thumb=meta['thumbnail'],
                 reply_to_message_id=user['r_id'],
-                progress=progress_callback  # <-- MODIFIKASI: Melewatkan callback
+                progress=progress_callback
             )
 
         elif itype == 'pic':
