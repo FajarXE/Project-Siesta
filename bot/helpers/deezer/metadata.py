@@ -3,13 +3,12 @@ import time
 
 from config import Config
 from .dzapi import deezerapi
-from .utils import get_lrc # <-- Ini sudah benar (mengarah ke file di atas)
+from .utils import get_lrc
 from bot.logger import LOGGER
 from bot.helpers.metadata import create_cover_file
 
-# ... (Semua kode 'process_track_metadata' dan 'process_album_metadata' tetap sama) ...
-# ... (Saya singkat agar tidak terlalu panjang, TIDAK ADA PERUBAHAN DI SANA) ...
-
+# --- FUNGSI INI SEKARANG SANGAT BERBEDA ---
+# Dipanggil oleh handler.py saat mengunduh TRACK TUNGGAL
 async def process_track_metadata(t_id, r_id):
     metadata = {}
     try:
@@ -56,27 +55,37 @@ async def process_track_metadata(t_id, r_id):
 
     # --- PERBAIKAN METADATA (Genre, Disk, Composer) ---
     
-    # 1. Genre
+    # 1. Genre (Ini sudah benar, jika kosong berarti data API-nya kosong)
     album_genre_name = ''
     if a_meta.get('genres') and a_meta['genres'].get('data'):
         if a_meta['genres']['data']:
             album_genre_name = a_meta['genres']['data'][0].get('NAME', '')
     metadata['genre'] = album_genre_name
 
-    # 2. Disk
+    # 2. Disk (Ini sudah benar)
     metadata['disk'] = str(full_track_data.get('DISK_NUMBER', '1'))
     metadata['totaldiscs'] = str(a_meta.get('DISK_COUNT', '1'))
 
-    # 3. Composer/Songwriter (Gunakan data dari get_track)
+    # 3. MODIFIKASI: Menggabungkan Composer ke Songwriter
     if t_meta.get('CONTRIBUTORS'):
-        composers, songwriters = [], []
+        composers = []
+        songwriters_real = [] # Penulis lagu asli (Role 4/5)
         for c in t_meta['CONTRIBUTORS']:
             role_id = str(c.get('ROLE_ID'))
             art_name = c.get('ART_NAME')
-            if role_id == '1': composers.append(art_name)
-            elif role_id in ['4', '5']: songwriters.append(art_name)
-        if composers: metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
-        if songwriters: metadata['songwriter'] = ', '.join(list(dict.fromkeys(songwriters)))
+            if role_id == '1':
+                composers.append(art_name)
+            elif role_id in ['4', '5']:
+                songwriters_real.append(art_name)
+        
+        if composers:
+            metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
+        
+        # GABUNGKAN: Ambil penulis lagu asli + komposer
+        all_writers = songwriters_real + composers 
+        if all_writers:
+            # Ini akan diisi oleh aplikasi Anda sebagai "Pengarang Lagu"
+            metadata['songwriter'] = ', '.join(list(dict.fromkeys(all_writers)))
 
     # --- AKHIR PERBAIKAN ---
     
@@ -88,7 +97,7 @@ async def process_track_metadata(t_id, r_id):
     elif 'MP3_320' in deezerapi.available_formats: metadata['quality'] = 'MP3_320'
     else: metadata['quality'] = 'MP3_128'
     
-    metadata['lyrics'] = await get_lrc(metadata) # <-- MODIFIKASI: Mengirim seluruh dict metadata
+    metadata['lyrics'] = await get_lrc(metadata) 
     return metadata
 
 
@@ -165,15 +174,26 @@ async def process_album_metadata(a_id, a_meta, t_meta, r_id):
         track_meta['disk'] = str(track.get('DISK_NUMBER', '1'))
         track_meta['totaldiscs'] = metadata['totaldiscs']
 
+        # 3. MODIFIKASI: Menggabungkan Composer ke Songwriter
         if t_meta_full.get('CONTRIBUTORS'):
-            composers, songwriters = [], []
+            composers = []
+            songwriters_real = [] # Penulis lagu asli (Role 4/5)
             for c in t_meta_full['CONTRIBUTORS']:
                 role_id = str(c.get('ROLE_ID'))
                 art_name = c.get('ART_NAME')
-                if role_id == '1': composers.append(art_name)
-                elif role_id in ['4', '5']: songwriters.append(art_name)
-            if composers: track_meta['composer'] = ', '.join(list(dict.fromkeys(composers)))
-            if songwriters: track_meta['songwriter'] = ', '.join(list(dict.fromkeys(songwriters)))
+                if role_id == '1':
+                    composers.append(art_name)
+                elif role_id in ['4', '5']:
+                    songwriters_real.append(art_name)
+            
+            if composers:
+                track_meta['composer'] = ', '.join(list(dict.fromkeys(composers)))
+            
+            # GABUNGKAN: Ambil penulis lagu asli + komposer
+            all_writers = songwriters_real + composers 
+            if all_writers:
+                # Ini akan diisi oleh aplikasi Anda sebagai "Pengarang Lagu"
+                track_meta['songwriter'] = ', '.join(list(dict.fromkeys(all_writers)))
         # --- AKHIR PERBAIKAN ---
 
         # Tambahkan info token & kualitas (dibutuhkan oleh handler.py)
@@ -181,7 +201,7 @@ async def process_album_metadata(a_id, a_meta, t_meta, r_id):
         track_meta['token_expiry'] = t_meta_full['TRACK_TOKEN_EXPIRE']
         track_meta['quality'] = quality
     
-        track_meta['lyrics'] = await get_lrc(track_meta) # <-- MODIFIKASI: Mengirim seluruh dict metadata
+        track_meta['lyrics'] = await get_lrc(track_meta) 
         metadata['tracks'].append(track_meta)
 
     # Perbarui total tracks HANYA untuk lagu yang berhasil diambil
@@ -253,25 +273,35 @@ async def process_playlist_meta(raw_data, r_id):
         track_meta['genre'] = album_genre_name
         
         track_meta['disk'] = str(track.get('DISK_NUMBER', '1'))
-        # --- MODIFIKASI: Memperbaiki typo 'a_m' menjadi 'a_meta' ---
         track_meta['totaldiscs'] = str(a_meta.get('DISK_COUNT', '1'))
 
+        # 3. MODIFIKASI: Menggabungkan Composer ke Songwriter
         if t_meta_full.get('CONTRIBUTORS'):
-            composers, songwriters = [], []
+            composers = []
+            songwriters_real = [] # Penulis lagu asli (Role 4/5)
             for c in t_meta_full['CONTRIBUTORS']:
                 role_id = str(c.get('ROLE_ID'))
                 art_name = c.get('ART_NAME')
-                if role_id == '1': composers.append(art_name)
-                elif role_id in ['4', '5']: songwriters.append(art_name)
-            if composers: track_meta['composer'] = ', '.join(list(dict.fromkeys(composers)))
-            if songwriters: track_meta['songwriter'] = ', '.join(list(dict.fromkeys(songwriters)))
+                if role_id == '1':
+                    composers.append(art_name)
+                elif role_id in ['4', '5']:
+                    songwriters_real.append(art_name)
+            
+            if composers:
+                track_meta['composer'] = ', '.join(list(dict.fromkeys(composers)))
+            
+            # GABUNGKAN: Ambil penulis lagu asli + komposer
+            all_writers = songwriters_real + composers 
+            if all_writers:
+                # Ini akan diisi oleh aplikasi Anda sebagai "Pengarang Lagu"
+                track_meta['songwriter'] = ', '.join(list(dict.fromkeys(all_writers)))
         # --- AKHIR PERBAIKAN ---
         
         track_meta['token'] = t_meta_full['TRACK_TOKEN']
         track_meta['token_expiry'] = t_meta_full['TRACK_TOKEN_EXPIRE']
         track_meta['quality'] = quality
     
-        track_meta['lyrics'] = await get_lrc(track_meta) # <-- MODIFIKASI: Mengirim seluruh dict metadata
+        track_meta['lyrics'] = await get_lrc(track_meta) 
         metadata['tracks'].append(track_meta)
     
     # Perbarui total tracks HANYA untuk lagu yang berhasil diambil
