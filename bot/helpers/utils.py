@@ -130,8 +130,8 @@ async def run_concurrent_tasks(tasks, progress_details=None):
                 result = await task 
             except Exception as e:
                 # --- MODIFIKASI DIMULAI (Mengubah level log) ---
-                # Mengubah dari .error() menjadi .warning() agar tidak terlalu mengkhawatirkan
-                LOGGER.warning(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
+                # Diubah ke .info() agar tidak mengganggu log
+                LOGGER.info(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
                 result = False # Memberi sinyal kegagalan
                 # --- MODIFIKASI SELESAI ---
             
