@@ -77,7 +77,7 @@ async def download_file(url, path, retries=3, timeout=30):
             return str(e)
 
 
-
+# --- FUNGSI INI TELAH DIMODIFIKASI AGAR AMAN DARI KEYERROR ---
 async def format_string(text:str, data:dict, user=None):
     """
     Args:
@@ -87,28 +87,43 @@ async def format_string(text:str, data:dict, user=None):
     Returns:
         str
     """
-    text = text.replace(R'{title}', data['title'])
-    text = text.replace(R'{album}', data['album'])
-    text = text.replace(R'{artist}', data['artist'])
-    text = text.replace(R'{albumartist}', data['albumartist'])
-    text = text.replace(R'{tracknumber}', str(data['tracknumber']))
-    text = text.replace(R'{date}', str(data['date']))
-    text = text.replace(R'{upc}', str(data['upc']))
-    text = text.replace(R'{isrc}', str(data['isrc']))
-    text = text.replace(R'{totaltracks}', str(data['totaltracks']))
-    text = text.replace(R'{volume}', str(data['volume']))
-    text = text.replace(R'{totalvolume}', str(data['totalvolume']))
-    text = text.replace(R'{extension}', data['extension'])
-    text = text.replace(R'{duration}', str(data['duration']))
-    text = text.replace(R'{copyright}', data['copyright'])
-    text = text.replace(R'{genre}', data['genre'])
-    text = text.replace(R'{provider}', data['provider'].title())
-    text = text.replace(R'{quality}', data['quality'])
-    text = text.replace(R'{explicit}', str(data['explicit']))
+    # Menggunakan .get() untuk menghindari KeyError
+    text = text.replace(R'{title}', data.get('title', ''))
+    text = text.replace(R'{album}', data.get('album', ''))
+    text = text.replace(R'{artist}', data.get('artist', ''))
+    text = text.replace(R'{albumartist}', data.get('albumartist', ''))
+    text = text.replace(R'{tracknumber}', str(data.get('tracknumber', ''))) # <-- PERBAIKAN
+    text = text.replace(R'{date}', str(data.get('date', '')))
+    text = text.replace(R'{upc}', str(data.get('upc', '')))
+    text = text.replace(R'{isrc}', str(data.get('isrc', '')))
+    text = text.replace(R'{totaltracks}', str(data.get('totaltracks', '')))
+    
+    # Menggunakan key yang kita perbaiki (disk/totaldiscs) dan fallback ke key lama
+    text = text.replace(R'{disk}', str(data.get('disk', '')))
+    text = text.replace(R'{totaldiscs}', str(data.get('totaldiscs', '')))
+    text = text.replace(R'{volume}', str(data.get('volume', data.get('disk', '')))) # Fallback ke disk
+    text = text.replace(R'{totalvolume}', str(data.get('totalvolume', data.get('totaldiscs', '')))) # Fallback ke totaldiscs
+
+    # Menambahkan key yang hilang dari metadata.py (composer/songwriter)
+    text = text.replace(R'{composer}', data.get('composer', ''))
+    text = text.replace(R'{songwriter}', data.get('songwriter', ''))
+
+    text = text.replace(R'{extension}', data.get('extension', ''))
+    text = text.replace(R'{duration}', str(data.get('duration', '')))
+    text = text.replace(R'{copyright}', data.get('copyright', ''))
+    text = text.replace(R'{genre}', data.get('genre', ''))
+    text = text.replace(R'{provider}', data.get('provider', '').title())
+    text = text.replace(R'{quality}', data.get('quality', ''))
+    text = text.replace(R'{explicit}', str(data.get('explicit', '')))
+    
+    # Placeholder newline
+    text = text.replace(R'{nl}', '\n')
+    
     if user:
-        text = text.replace(R'{user}', user['name'])
-        text = text.replace(R'{username}', user['user_name'])
+        text = text.replace(R'{user}', user.get('name', ''))
+        text = text.replace(R'{username}', user.get('user_name', ''))
     return text
+# --- AKHIR MODIFIKASI ---
 
 
 async def run_concurrent_tasks(tasks, progress_details=None):
