@@ -43,7 +43,7 @@ async def album_upload(metadata, user):
                     meta=metadata
                 )
         else:
-            await batch_telegram_upload(metadata, user)
+            await batch_telegram_upload(metadata, user) # <-- Sekarang akan cepat
     else:
         rclone_link, index_link = await rclone_upload(user, metadata['folderpath'])
         if metadata['poster_msg']:
@@ -97,7 +97,7 @@ async def playlist_upload(metadata, user):
                     meta=metadata
                 )
         else:
-            await batch_telegram_upload(metadata, user)
+            await batch_telegram_upload(metadata, user) # <-- Sekarang akan cepat
     else:
         if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
@@ -108,7 +108,7 @@ async def playlist_upload(metadata, user):
                         rclone_link, index_link = await rclone_upload(user, track['filepath'])
                         if not bot_set.disable_sort_link:
                             await post_simple_message(user, track, rclone_link, index_link)
-                    except ValueError: # might try to upload track which is not available
+                    except ValueError:
                         pass
         else:
             rclone_link, index_link = await rclone_upload(user, metadata['folderpath'])
@@ -179,7 +179,7 @@ async def telegram_upload(track, user, batch_mode=False): # <-- MODIFIKASI: Mena
     meta = track.copy()
     meta['batch_mode'] = batch_mode
     
-    # Hapus bot_msg dari user jika dalam mode batch
+    # Hapus bot_msg dari user jika dalam mode batch (agar tidak mengedit status)
     user_copy = user
     if batch_mode and 'bot_msg' in user:
         user_copy = user.copy()
@@ -210,6 +210,9 @@ async def batch_telegram_upload(metadata, user):
     
     if not tasks:
         return
+
+    # Perbarui pesan status sebelum memulai batch upload
+    await edit_message(user['bot_msg'], f"Mengunggah {len(tasks)} lagu secara paralel...")
 
     # Buat Semaphore (Sama seperti di utils.py)
     semaphore = asyncio.Semaphore(Config.MAX_WORKERS)
