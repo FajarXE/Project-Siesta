@@ -5,7 +5,8 @@ from config import Config
 from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
-    TCON, TOPE, TSRC, USLT, TPOS, TXXX
+    TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
+    TCOM # <-- MODIFIKASI: Menambahkan tag Composer
 
 from bot.logger import LOGGER
 from .utils import download_file
@@ -36,6 +37,9 @@ metadata = {
         'provider': '',
         'tracks': [],
         'albums': [],
+        # --- MODIFIKASI: Menambahkan Composer ---
+        'composer': '', 
+        # --- MODIFIKASI SELESAI ---
         'tempfolder': f'{Config.DOWNLOAD_BASE_DIR}/', # specific folder for each user
         'filepath': '',   # if track, full path to file
         'folderpath': '', # if album/playlist the full path to folder
@@ -74,6 +78,13 @@ async def set_flac(data, handle):
     handle.tags['date'] = data['date']
     handle.tags['isrc'] = data['isrc']
     handle.tags['lyrics'] = data['lyrics']
+    
+    # --- MODIFIKASI DIMULAI (Menambahkan Tag FLAC yang Hilang) ---
+    handle.tags['discnumber'] = str(data['volume'])
+    handle.tags['disctotal'] = str(data['totalvolume'])
+    handle.tags['composer'] = data.get('composer', '')
+    # --- MODIFIKASI SELESAI ---
+    
     await savePic(handle, data)
     handle.save()
     return True
@@ -94,6 +105,12 @@ async def set_mp3(data, handle):
     handle.tags.add(TDRC(encoding=3, text=data['date']))
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
     handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
+    
+    # --- MODIFIKASI DIMULAI (Menambahkan Tag MP3 yang Hilang) ---
+    handle.tags.add(TCOM(encoding=3, text=data.get('composer', ''))) # Composer
+    # (Total disk/TPOS sudah ada)
+    # --- MODIFIKASI SELESAI ---
+    
     await savePic(handle, data)
     handle.save()
     return True
@@ -115,7 +132,10 @@ async def set_m4a(data, handle):
     volume = int(data['volume']) if data['volume'] != '' else 0
     totalvolume = int(data['totalvolume']) if data['totalvolume'] != '' else 0
     handle.tags['disk'] = [(volume, totalvolume)]
-
+    
+    # --- MODIFIKASI DIMULAI (Menambahkan Tag M4A yang Hilang) ---
+    handle.tags['\u00a9wrt'] = data.get('composer', '') # ©wrt adalah Composer
+    # --- MODIFIKASI SELESAI ---
 
     await savePic(handle, data)
     handle.save()
@@ -125,12 +145,9 @@ async def set_m4a(data, handle):
 async def savePic(handle, metadata):
     album_art = metadata['cover']
 
-    # --- MODIFIKASI DIMULAI (Penanganan Error Cover) ---
-    # Jika path cover adalah placeholder, jangan coba membukanya
     if album_art == './project-siesta.png' or not os.path.exists(album_art):
         LOGGER.warning(f"Cover art tidak ditemukan di {album_art}, tidak menambahkan gambar.")
         return
-    # --- MODIFIKASI SELESAI ---
 
     try:
         with open(album_art, "rb") as f:
@@ -169,26 +186,18 @@ async def get_audio_extension(path):
         return 'mp3'
 
 
-# --- MODIFIKASI DIMULAI (Fungsi ini dibuat lebih kuat) ---
 async def create_cover_file(url:dict, meta:dict, thumbnail=False):
     filename = f"{meta['itemid']}-thumb.jpg" if thumbnail else f"{meta['itemid']}.jpg"
     cover = meta['tempfolder'] + filename
     
-    # Coba unduh hanya jika belum ada
     if not os.path.exists(cover):
-        # MODIFIKASI PENTING: Timeout diubah dari 5 detik menjadi 60 detik (1 menit)
-        # untuk memberi waktu pada server untuk mengunduh gambar besar.
         err = await download_file(url, cover, retries=1, timeout=60) 
         
-        # Jika 'download_file' mengembalikan error, kembalikan placeholder
         if err:
             LOGGER.error(f"Gagal mengunduh cover art: {err}")
             return './project-siesta.png'
             
-    # Periksa lagi jika file ada (setelah 'download_file' mungkin mengembalikan None)
     if os.path.exists(cover) and os.path.getsize(cover) > 0:
         return cover
     else:
-        # Jika file masih tidak ada, kembalikan placeholder
         return './project-siesta.png'
-# --- MODIFIKASI SELESAI ---
