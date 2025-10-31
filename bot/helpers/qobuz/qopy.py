@@ -112,6 +112,7 @@ class QoClient:
                     epoint in ["track/getFileUrl", "favorite/getUserFavorites"]
                     and r.status == 400
                 ):
+                    # --- INI ADALAH BARIS YANG MENYEBABKAN CRASH ANDA ---
                     raise Exception("QOBUZ : Invalid App Secret. Please recheck your credentials.... Disabling QOBUZ")
                 
                 if r.status == 403:
@@ -139,15 +140,12 @@ class QoClient:
 
                 if offset == 0:
                     if key not in j_iterable:
-                        # Kunci 'total' (yang kita perbaiki di utils.py) harus ada
                         LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
                         return 
                         
-                    # --- MODIFIKASI: Kembalikan objek 'j' penuh ---
                     yield j 
                     total = j_iterable[key] - 99999
                 else:
-                    # --- MODIFIKASI: Kembalikan objek 'j' penuh ---
                     yield j 
                     total -= 99999
                 offset += 99999
@@ -201,7 +199,9 @@ class QoClient:
         try:
             async with self.ratelimit:
                 async with self.session.get(self.base + test_epoint, params=params) as r:
-                    if r.status in [200, 400]:
+                    # --- PERBAIKAN: Hanya 200 yang dianggap sukses ---
+                    if r.status == 200:
+                    # --- BATAS PERBAIKAN ---
                         return True
                     return False
         
