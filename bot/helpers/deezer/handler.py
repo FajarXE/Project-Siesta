@@ -12,12 +12,14 @@ from ..metadata import set_metadata, get_audio_extension
 from ...settings import bot_set
 import bot.helpers.translations as lang
 
-from bot.logger import LOGGER
+# --- MODIFIKASI DIMULAI (Perbaikan Path Impor) ---
+from bot.logger import LOGGER # <-- Path diperbaiki (bukan ..logger)
 from ..utils import fetch_zip_settings 
 from ..message import edit_message
+# --- MODIFIKASI SELESAI ---
 
 
-# --- PERBAIKAN UTAMA: Membungkus fungsi utama dengan try...except ---
+# --- MODIFIKASI DIMULAI (Membungkus fungsi utama dengan try...except) ---
 async def start_deezer(url:str, user: dict):
     """
     Fungsi 'manajer' utama untuk semua tugas Deezer.
@@ -29,6 +31,7 @@ async def start_deezer(url:str, user: dict):
         if media_type == 'artist':
             await start_artist(item_id, user)
         elif media_type == 'track':
+            # start_track mengembalikan True/False
             success = await start_track(item_id, user, None)
             if not success:
                 # Jika satu lagu gagal, lempar error agar 'except' menangkapnya
@@ -38,14 +41,14 @@ async def start_deezer(url:str, user: dict):
         elif media_type == 'playlist':
             await start_playlist(item_id, user)
         
-        # 5. Jika SEMUA berhasil, kirim pesan "Selesai" (TASK_COMPLETED)
+        # 5. Jika SEMUA berhasil, kirim pesan "Selesai"
         await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
         
     except Exception as e:
         # 6. Jika terjadi error fatal di mana pun, laporkan ke pengguna
         LOGGER.error(f"Error fatal di Deezer handler: {e}\n{traceback.format_exc()}")
         await edit_message(user['bot_msg'], f"Error Deezer: {e}")
-# --- BATAS PERBAIKAN UTAMA ---
+# --- MODIFIKASI SELESAI ---
 
 
 async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=True, \
@@ -92,25 +95,23 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
         return False
 
-    # --- PERBAIKAN (Menambahkan penanganan file rusak) ---
     try:
         await set_metadata(track_meta)
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Deezer (download_file gagal diam-diam?): {filepath}")
         return False
     except Exception as e:
-        # Menangkap error 'not a valid FLAC file'
         LOGGER.error(f"Gagal memproses metadata Deezer (File Rusak/Tidak Valid): {filepath} -> {e}")
         try:
             os.remove(filepath)
         except:
             pass
         return False
-    # --- BATAS PERBAIKAN ---
 
     if upload:
         await track_upload(track_meta, user, disable_link)
 
+    # Mengembalikan True untuk memberi sinyal sukses ke fungsi pemanggil (seperti start_deezer)
     return True
 
 
@@ -118,6 +119,7 @@ async def start_album(album_id:int, user:dict, upload=True):
     try:
         raw_data = await deezerapi.get_album(album_id)
     except Exception as e:
+        # Angkat error agar start_deezer bisa menangkapnya
         raise Exception(f"Gagal mendapatkan metadata album Deezer: {e}")
 
     album_meta = await process_album_metadata(album_id, raw_data['DATA'], raw_data['SONGS'], user['r_id'])
@@ -157,6 +159,7 @@ async def start_album(album_id:int, user:dict, upload=True):
     album_meta['totaltracks'] = len(successful_tracks)
 
     if not successful_tracks:
+        # Angkat error agar start_deezer bisa menangkapnya
         raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh untuk album {album_meta['title']}.")
 
     # Periksa pengaturan zip PENGGUNA
