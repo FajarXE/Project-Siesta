@@ -3,6 +3,7 @@ import os
 import aiohttp
 import aiofiles
 import aiolimiter
+import asyncio # <-- MODIFIKASI: Ditambahkan
 
 from random import randint
 from time import time
@@ -29,10 +30,35 @@ class DeezerAPI:
         self.client_id = '447462'
         self.client_secret = 'a83bf7f38ad2f137e444727cfc3775cf'
         self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
-
         self.quality = 'MP3_128'
+        self.session = None # <-- MODIFIKASI: Defaultkan ke None
+        self.user = None
+        self.country = None
+        self.license_token = None
+        self.renew_timestamp = ceil(time())
+        self.language = 'en'
+        self.available_formats = ['MP3_128']
+        self.bf_secret = Config.DEEZER_BF_SECRET.encode('ascii')
+
 
     async def _api_call(self, method, payload={}):
+        if not self.session or self.session.closed:
+            # --- MODIFIKASI: Buat sesi jika belum ada/tertutup ---
+            self.session = aiohttp.ClientSession(
+                headers={
+                    'accept': '*/*',
+                    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+                    'content-type': 'text/plain;charset=UTF-8',
+                    'origin': 'https://www.deezer.com',
+                    'sec-fetch-site': 'same-origin',
+                    'sec-fetch-mode': 'same-origin',
+                    'sec-fetch-dest': 'empty',
+                    'referer': 'https://www.deezer.com/',
+                    'accept-language': 'en-US,en;q=0.9',
+                }
+            )
+            # --- BATAS MODIFIKASI ---
+            
         api_token = self.api_token if method not in ('deezer.getUserData', 'user.getArl') else ''
         params = {
             'method': method,
@@ -52,9 +78,10 @@ class DeezerAPI:
             if type=='VALID_TOKEN_REQUIRED':
                 LOGGER.debug("Deezer: Refreshing User data")
                 try:
+                    # Menunggu sebentar sebelum mencoba refresh
+                    await asyncio.sleep(1)
                     await self._api_call('deezer.getUserData')
-                    await self._api_call(method, payload)
-                    return
+                    return await self._api_call(method, payload)
                 except:
                     LOGGER.error("Deezer: Refreshing User data failed")
             raise APIError(type, msg, resp['payload'])
@@ -71,35 +98,35 @@ class DeezerAPI:
             for k, v in format_dict.items():
                 if resp['results']['USER']['OPTIONS'][k]:
                     self.available_formats.append(v)
-
+            self.user = resp['results'] # <-- MODIFIKASI: Simpan user data
+        
         return resp['results']
 
 
     async def login(self):
-        self.session = aiohttp.ClientSession()
-        self.session.headers.update({
-            'accept': '*/*',
-            'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-            'content-type': 'text/plain;charset=UTF-8',
-            'origin': 'https://www.deezer.com',
-            'sec-fetch-site': 'same-origin',
-            'sec-fetch-mode': 'same-origin',
-            'sec-fetch-dest': 'empty',
-            'referer': 'https://www.deezer.com/',
-            'accept-language': 'en-US,en;q=0.9',
-        })
-        #self.legacy_url_cipher = AES.new(Config.DEEZER_TRACK_URL_KEY.encode('ascii'), AES.MODE_ECB)
-        self.bf_secret = Config.DEEZER_BF_SECRET.encode('ascii')
+        # --- MODIFIKASI: Inisialisasi sesi dipindahkan ke _api_call ---
+        # self.session = aiohttp.ClientSession() <-- DIHAPUS
+        # self.session.headers.update({...}) <-- DIHAPUS
+        # self.bf_secret = Config.DEEZER_BF_SECRET.encode('ascii') <-- Pindah ke __init__
+        # --- BATAS MODIFIKASI ---
+
         try:
             if Config.DEEZER_ARL:
                 await self.login_via_arl(Config.DEEZER_ARL)
-            else:
+            elif Config.DEEZER_EMAIL and Config.DEEZER_PASSWORD: # <-- MODIFIKASI: Pastikan kredensial email ada
                 await self.login_via_email(
                     Config.DEEZER_EMAIL,
                     Config.DEEZER_PASSWORD
                 )
+            else:
+                raise Exception("Tidak ada kredensial Deezer (ARL/Email) yang disediakan.")
+                
         except Exception as e:
             LOGGER.error(f"DEEZER : {e}")
+            # --- MODIFIKASI: Tutup sesi jika terjadi error login ---
+            if self.session:
+                await self.session.close()
+            # --- BATAS MODIFIKASI ---
             return False
 
         return True
@@ -107,7 +134,8 @@ class DeezerAPI:
     async def login_via_email(self, email, password):
         # server sends set-cookie header with new sid
         async with self.ratelimit:
-            await self.session.get('https://www.deezer.com')
+            # Gunakan _api_call untuk memastikan sesi ada
+            await self._api_call('deezer.getUserData') 
         
         password = MD5.new(password.encode()).hexdigest()
 
@@ -120,11 +148,12 @@ class DeezerAPI:
 
         # server sends set-cookie header with account sid
         async with self.ratelimit:
+            # Gunakan sesi yang sudah dibuat
             async with self.session.get('https://connect.deezer.com/oauth/user_auth.php', params=params) as r:
-                json = await r.json()
+                json_data = await r.json()
 
-        if 'error' in json:
-            raise Exception('Error while getting access token, check your credentials')
+        if 'error' in json_data:
+            raise Exception(f'Error saat mendapatkan access token: {json_data["error"]}')
 
         arl = await self._api_call('user.getArl')
 
@@ -132,6 +161,10 @@ class DeezerAPI:
 
     async def login_via_arl(self, arl):
         cookie = {'arl':arl}
+        # Ciptakan sesi jika belum ada sebelum menggunakan cookie_jar
+        if not self.session:
+            await self._api_call('deezer.getUserData') 
+            
         self.session.cookie_jar.update_cookies(cookie)
         user_data = await self._api_call('deezer.getUserData')
         if not user_data['USER']['USER_ID']:
@@ -150,9 +183,9 @@ class DeezerAPI:
         url = urlparse(link)
 
         if url.hostname == 'link.deezer.com':
+            # Gunakan _api_call untuk memastikan sesi ada
             async with self.ratelimit:
                 async with self.session.get(link, allow_redirects=True) as r:
-                    #resp = await r.json(content_type=None)
                     if r.status != 200:
                         raise Exception(f'DEEZER : Invalid URL: {link}')
                     url = r.real_url
@@ -183,7 +216,7 @@ class DeezerAPI:
             LOGGER.debug("Deezer: Track token expired - trying to refresh token")
             track_token = await self._api_call('song.getData', {'sng_id': id, 'array_default': ['TRACK_TOKEN']})['TRACK_TOKEN']
 
-        json = {
+        json_payload = { # <-- MODIFIKASI: Ganti 'json' menjadi 'json_payload'
             'license_token': self.license_token,
             'media': [
                 {
@@ -196,7 +229,7 @@ class DeezerAPI:
         async with self.ratelimit:
             async with self.session.post(
                 'https://media.deezer.com/v1/get_url',
-                json=json
+                json=json_payload # <-- MODIFIKASI: Gunakan json_payload
             ) as r:
                 resp = await r.json()
 
@@ -207,7 +240,7 @@ class DeezerAPI:
         try:
             res = await self._api_call('deezer.pageAlbum', {'alb_id': id, 'lang': self.language})
         except APIError as e:
-            if e.payload:
+            if e.payload and e.payload.get('FALLBACK') and e.payload['FALLBACK'].get('ALB_ID'): # <-- MODIFIKASI: Pengecekan lebih ketat
                 res = await self._api_call('deezer.pageAlbum', {'alb_id': e.payload['FALLBACK']['ALB_ID'], 'lang': self.language})
             else:
                 raise e
