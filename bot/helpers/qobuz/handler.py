@@ -51,7 +51,7 @@ async def start_qobuz(url:str, user:dict):
 
         except QobuzContentUnavailableError as e:
             last_error = f"Akun {client_label}: Konten tidak tersedia. ({e})"
-            LOGGER.info(last_error) # Diubah ke INFO agar tidak mengganggu
+            LOGGER.info(last_error) # Ini sudah INFO (Bagus)
             continue 
 
         except Exception as e:
@@ -113,7 +113,10 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         if i < len(task_results) and task_results[i]: # Jika task berhasil (True)
             successful_tracks.append(original_tracks[i])
         else:
-            LOGGER.warning(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} karena gagal diunduh.")
+            # --- MODIFIKASI DIMULAI (Mengubah level log) ---
+            # Diubah ke .info() agar tidak mengganggu log
+            LOGGER.info(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} karena gagal diunduh (ditangani).")
+            # --- MODIFIKASI SELESAI ---
 
     album_meta['tracks'] = successful_tracks
     album_meta['totaltracks'] = len(successful_tracks)
@@ -125,9 +128,7 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     _, __, album_zip = fetch_zip_settings(user)
     
     if album_zip:
-        # --- MODIFIKASI DIMULAI (Status Zipping Lebih Baik) ---
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
-        # --- MODIFIKASI SELESAI ---
         album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
 
     if upload:
@@ -201,9 +202,7 @@ async def start_artist(albums, user, artist):
 
     if not upload_album:
         if bot_set.artist_zip:
-            # --- MODIFIKASI DIMULAI (Status Zipping Lebih Baik) ---
             await edit_message(user['bot_msg'], f"Menyiapkan folder artis {artist_meta['title']} menjadi .zip...")
-            # --- MODIFIKASI SELESAI ---
             artist_meta['folderpath'] = await zip_handler(artist_meta['folderpath'])
         
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
@@ -253,6 +252,11 @@ async def start_playlist(tracks, playlist, user):
         for i in range(len(original_tracks)):
             if i < len(task_results) and task_results[i]:
                 successful_tracks.append(original_tracks[i])
+            else:
+                # --- MODIFIKASI DIMULAI (Mengubah level log) ---
+                LOGGER.info(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} di playlist karena gagal diunduh (ditangani).")
+                # --- MODIFIKASI SELESAI ---
+                
         play_meta['tracks'] = successful_tracks
         play_meta['totaltracks'] = len(successful_tracks) # Perbarui jumlah
 
@@ -271,9 +275,7 @@ async def start_playlist(tracks, playlist, user):
         play_meta['totaltracks'] = len(successful_tracks_non_conc) # Perbarui jumlah
 
     if playlist_zip:
-        # --- MODIFIKASI DIMULAI (Status Zipping Lebih Baik) ---
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
-        # --- MODIFIKASI SELESAI ---
         if playlist_sort:
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
         play_meta['folderpath'] = await zip_handler(play_meta['folderpath'])
