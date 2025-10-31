@@ -162,10 +162,7 @@ async def send_message(user, item, itype='text',
                         f"{progress_bar} {percentage}%"
                     )
                     
-                    # --- MODIFIKASI DIMULAI (Melepaskan await) ---
-                    # Menjalankan edit_message di latar belakang tanpa menjeda unggahan
                     asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
-                    # --- MODIFIKASI SELESAI ---
                 except Exception:
                     pass
             
@@ -199,17 +196,16 @@ async def send_message(user, item, itype='text',
                     total_tracks = meta.get('totaltracks', '?')
                     title = meta.get('title', 'Unknown Track')
                     
+                    # --- MODIFIKASI DIMULAI (Memperbaiki format string) ---
                     text = (
                         f"**Mengunggah...**\n"
-                        f"Lagu {track_num} dari {total_tracks}\n"
+                        f"Lagu {track_num} dari {total_tracks}\n" # <- PERBAIKAN: Menggunakan total_tracks
                         f"`{title}`\n\n"
                         f"{progress_bar} {percentage}%"
                     )
-                    
-                    # --- MODIFIKASI DIMULAI (Melepaskan await) ---
-                    # Menjalankan edit_message di latar belakang tanpa menjeda unggahan
-                    asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
                     # --- MODIFIKASI SELESAI ---
+                    
+                    asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
                 except Exception:
                     pass
 
