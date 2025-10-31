@@ -137,18 +137,46 @@ async def send_message(user, item, itype='text',
             )
             
         elif itype == 'doc':
-            # --- MODIFIKASI DIMULAI (Menggunakan Cover Resolusi Tinggi) ---
+            # --- MODIFIKASI DIMULAI (Menambahkan Progress Callback ke Dokumen) ---
             thumb_path = None
-            # Gunakan 'cover' (resolusi tinggi) BUKAN 'thumbnail' (resolusi rendah)
             if meta and meta.get('cover'): 
                 thumb_path = meta['cover']
+
+            last_update_time = [0] # Gunakan list agar mutable
+
+            async def progress_callback(current, total):
+                # Update setiap 5 detik untuk menghindari FloodWait
+                current_time = time.time()
+                if current_time - last_update_time[0] < 5:
+                    return
+                last_update_time[0] = current_time
+
+                percentage = int((current / total) * 100)
+                progress_bar = "{0}{1}".format(
+                    ''.join(["▰" for i in range(math.floor(percentage / 10))]),
+                    ''.join(["▱" for i in range(10 - math.floor(percentage / 10))])
+                )
+                
+                try:
+                    # Buat pesan status unggah zip
+                    text = (
+                        f"**Mengunggah file .zip...**\n"
+                        f"`{os.path.basename(item)}`\n\n"
+                        f"{progress_bar} {percentage}%"
+                    )
+                    
+                    # Edit pesan status utama bot
+                    await edit_message(user['bot_msg'], text, antiflood=False)
+                except Exception:
+                    pass
             
             msg = await aio.send_document(
                 chat_id=chat_id,
                 document=item,
                 caption=caption,
                 reply_to_message_id=user['r_id'],
-                thumb=thumb_path
+                thumb=thumb_path,
+                progress=progress_callback  # <-- Parameter progres ditambahkan
             )
             # --- MODIFIKASI SELESAI ---
 
@@ -191,7 +219,7 @@ async def send_message(user, item, itype='text',
                 duration=int(meta['duration']),
                 performer=meta['artist'],
                 title=meta['title'],
-                thumb=meta['thumbnail'], # Untuk audio, thumbnail kecil sudah cukup
+                thumb=meta['thumbnail'],
                 reply_to_message_id=user['r_id'],
                 progress=progress_callback
             )
