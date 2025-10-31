@@ -125,7 +125,8 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
     metadata['title'] = raw_meta['name']
     metadata['duration'] = raw_meta['duration']
-    metadata['totaltracks'] = raw_meta['tracks_count']
+    # --- PERBAIKAN: Kunci yang benar adalah 'total', bukan 'tracks_count' ---
+    metadata['totaltracks'] = raw_meta['total'] 
     metadata['itemid'] = raw_meta['id']
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Qobuz'
@@ -198,17 +199,18 @@ async def check_type(url, user: dict):
         
         content = []
         
-        # --- PERBAIKAN: Perbaiki logika pengumpulan hasil dari generator ---
         if type_dict["multi_type"]:
             
+            # --- PERBAIKAN: Gunakan 'total' sebagai Kunci Hitungan (Key) ---
             if url_type == "playlist":
                 epoint = "playlist/get"
-                key = "tracks_count"
+                key = "total" # <- BUKAN 'tracks_count'
             elif url_type in ["artist", "label", "interpreter"]:
                 epoint = f"{url_type}/get"
-                key = "albums_count"
+                key = "total" # <- BUKAN 'albums_count'
             else:
                 raise Exception("Tipe multi-meta tidak terdefinisi.")
+            # --- BATAS PERBAIKAN ---
 
             res_iterator = client.multi_meta(epoint, key, item_id, type_dict["multi_type"])
             
@@ -216,7 +218,6 @@ async def check_type(url, user: dict):
                 content.append(data)
                 
             if not content:
-                # Jika content kosong, multi_meta gagal, lempar exception untuk fallback
                 raise QobuzContentUnavailableError(f"API Qobuz gagal mengembalikan data untuk {url_type}/{item_id}. Coba akun lain.")
 
 
@@ -239,7 +240,6 @@ async def check_type(url, user: dict):
                     items = [item[type_dict["iterable_key"]]["items"] for item in content][0]
                 else:
                     raise Exception("Gagal memparsing struktur respons Qobuz.")
-        # --- BATAS PERBAIKAN ---
             
         return items, item_id, type_dict, content
     else:
@@ -248,7 +248,7 @@ async def check_type(url, user: dict):
 
 async def get_url_info(url):
     r = re.search(
-        r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a-z]{2}-[a-z]{2})"
+        r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a_z]{2}-[a-z]{2})"
         r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)",
         url,
     )
