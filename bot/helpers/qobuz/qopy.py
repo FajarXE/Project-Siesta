@@ -12,18 +12,13 @@ from bot.logger import LOGGER
 
 class QoClient:
     def __init__(self, email=None, password=None, user_id=None, user_token=None):
-        # MODIFIED: Terima kredensial saat inisialisasi
         self.email = email
         self.password = password
         self.user_id = user_id
         self.user_token = user_token
-
-        # Atribut state-spesifik pengguna
         self.uat = None
         self.label = None
         self.sec = None
-        
-        # Atribut instansi yang sudah ada
         self.id = None
         self.secrets = None
         self.session = None
@@ -113,8 +108,6 @@ class QoClient:
                         raise Exception('QOBUZ : Invalid credentials given..... Disabling QOBUZ')
                     elif r.status == 400:
                         raise Exception("QOBUZ : Invalid App ID. Please Recheck your credentials.... Disabling QOBUZ")
-                    else:
-                        pass
                 elif (
                     epoint in ["track/getFileUrl", "favorite/getUserFavorites"]
                     and r.status == 400
@@ -135,37 +128,36 @@ class QoClient:
             
             j = await self.api_call(epoint, id=id, offset=offset, type=type)
             
-            # --- PERBAIKAN: Menggunakan try...except untuk menangani respons yang rusak ---
             try:
                 if type in ["tracks", "albums"]:
                     if type not in j:
                         LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'.")
-                        return # Mengakhiri generator jika gagal
+                        return 
                     j_iterable = j[type]
                 else:
                     j_iterable = j
 
                 if offset == 0:
                     if key not in j_iterable:
+                        # Kunci 'total' (yang kita perbaiki di utils.py) harus ada
                         LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
-                        return # Mengakhiri generator jika gagal
+                        return 
                         
-                    yield j_iterable
+                    # --- MODIFIKASI: Kembalikan objek 'j' penuh ---
+                    yield j 
                     total = j_iterable[key] - 99999
                 else:
-                    yield j_iterable
+                    # --- MODIFIKASI: Kembalikan objek 'j' penuh ---
+                    yield j 
                     total -= 99999
                 offset += 99999
             
             except Exception as e:
-                # Jika terjadi error parsing JSON (misalnya data rusak), kita catat dan keluar
                 LOGGER.error(f"QOBUZ Multi-Meta Parsing Gagal untuk {epoint}: {e}")
-                return # Mengakhiri generator
-            # --- BATAS PERBAIKAN ---
-
+                return 
+            
 
     async def auth(self):
-        # MODIFIED: Gunakan kredensial dari 'self' (instansi) alih-alih 'Config' (global)
         if self.email:
             usr_info = await self.api_call(
                 "user/login", 
@@ -177,7 +169,6 @@ class QoClient:
                 userid=self.user_id,
                 usertoken=self.user_token)
         else:
-            # Jika tidak ada kredensial yang diberikan saat membuat instansi
             raise Exception("QOBUZ : No credentials (email/password or user_id/token) provided for this client instance.")
         
         if not usr_info:
@@ -189,41 +180,34 @@ class QoClient:
         self.session.headers.update({"X-User-Auth-Token": self.uat})
         self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
         
-        # MODIFIED: Tambahkan identifikasi pengguna ke log
         user_identifier = self.email or self.user_id
         LOGGER.info(f"QOBUZ : Logged in as {user_identifier}. Membership Status: {self.label}")
 
     async def test_secret(self, sec):
-        # --- PERBAIKAN: Logika tes secret yang lebih baik ---
         test_epoint = "track/getFileUrl"
         unix = time.time()
         
-        # Perhitungan sig yang disalin dari fungsi track/getFileUrl
         r_sig = "trackgetFileUrlformat_id5intentstreamtrack_id5966783{}{}".format(unix, sec)
         r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
         
         params = {
             "request_ts": unix,
             "request_sig": r_sig_hashed,
-            "track_id": 5966783, # Track ID yang valid untuk tes
+            "track_id": 5966783, 
             "format_id": 5,
             "intent": "stream",
         }
         
         try:
             async with self.ratelimit:
-                # Gunakan sesi yang sudah ada (self.session)
                 async with self.session.get(self.base + test_epoint, params=params) as r:
-                    # Secret valid jika status 200 (OK) atau 400 (error tapi secret dikenali)
                     if r.status in [200, 400]:
                         return True
                     return False
         
         except Exception as e:
-            # Ini akan menangkap Timeout atau error koneksi
             LOGGER.debug(f"Test Secret Failed due to connection/timeout for secret: {e}")
             return False
-        # --- BATAS PERBAIKAN ---
 
     def get_tokens(self):
         bundle = Bundle()
@@ -234,7 +218,6 @@ class QoClient:
 
     async def login(self):
         self.get_tokens()
-        # MODIFIKASI: Timeout diubah menjadi 60 detik untuk login
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) 
         
         self.session.headers.update(
@@ -254,7 +237,6 @@ class QoClient:
                 self.sec = secret
                 break
         if self.sec is None:
-            # Ini adalah pesan error yang Anda lihat
             raise Exception("QOBUZ : Can't find any valid app secret") 
 
     async def get_track_url(self, id, user: dict):
@@ -271,19 +253,19 @@ class QoClient:
 
     async def get_artist_meta(self, id):
         res = []
-        async for data in self.multi_meta("artist/get", "albums_count", id, "albums"): 
+        async for data in self.multi_meta("artist/get", "total", id, "albums"): 
             res.append(data)
         return res
 
     async def get_plist_meta(self, id):
         res = []
-        async for data in self.multi_meta("playlist/get", "tracks_count", id, "tracks"): 
+        async for data in self.multi_meta("playlist/get", "total", id, "tracks"): 
             res.append(data)
         return res
 
     async def get_label_meta(self, id):
         res = []
-        async for data in self.multi_meta("label/get", "albums_count", id, "albums"):
+        async for data in self.multi_meta("label/get", "total", id, "albums"):
             res.append(data)
         return res
 
