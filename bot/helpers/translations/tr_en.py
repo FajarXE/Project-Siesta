@@ -7,17 +7,17 @@ class EN(object):
 #----------------
     WELCOME_MSG = "ʜᴇʟʟᴏ {}"
     DOWNLOADING = 'ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ........'
+    
+    # --- MODIFIKASI DIMULAI (Tampilan Baru) ---
     DOWNLOAD_PROGRESS = """
-<b>╭─ ᴘʀᴏɢʀᴇss
-│
-├ {0}
-│
-├ ᴅᴏɴᴇ : <code>{1} / {2}</code>
-│
-├ ᴛɪᴛʟᴇ : <code>{3}</code>
-│
-╰─ ᴛʏᴘᴇ : <code>{4}</code></b>
+<b>📥 Mengunduh...</b>
+
+<b>Item:</b> <code>{3} ({4})</code>
+{0}
+<b>Progres:</b> <code>{1} / {2} lagu</code>
 """
+    # --- MODIFIKASI SELESAI ---
+
     UPLOADING = 'ᴜᴘʟᴏᴀᴅɪɴɢ........'
     ZIPPING = 'ᴢɪᴘᴘɪɴɢ........'
     TASK_COMPLETED = "ᴅᴏᴡɴʟᴏᴀᴅ ғɪɴɪsʜᴇᴅ"
@@ -154,3 +154,5 @@ ARTIST_TEMPLATE = """
 <b>ǫᴜᴀʟɪᴛʏ :</b> {quality}
 <b>ᴘʀᴏᴠɪᴅᴇʀ :</b> {provider}
 """
+
+}
