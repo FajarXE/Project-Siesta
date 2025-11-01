@@ -46,7 +46,7 @@ COPY . .
 RUN git submodule update --init --recursive
 
 WORKDIR /usr/src/app/bot/helpers/OrpheusDL
-RUN git submodule update --init --recursive && \
+RUN git clone https://github.com/utopian-society/orpheusdl-beatport.git && \
     # Clean up git to reduce image size
     apt-get remove -y git && \
     apt-get autoremove -y && \
