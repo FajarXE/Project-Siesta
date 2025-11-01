@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/deezer/handler.py]
+
 from pathvalidate import sanitize_filepath
 from config import Config
 import traceback
@@ -12,14 +14,11 @@ from ..metadata import set_metadata, get_audio_extension
 from ...settings import bot_set
 import bot.helpers.translations as lang
 
-# --- MODIFIKASI DIMULAI (Perbaikan Path Impor) ---
-from bot.logger import LOGGER # <-- Path diperbaiki (bukan ..logger)
+from bot.logger import LOGGER 
 from ..utils import fetch_zip_settings 
 from ..message import edit_message
-# --- MODIFIKASI SELESAI ---
 
 
-# --- MODIFIKASI DIMULAI (Membungkus fungsi utama dengan try...except) ---
 async def start_deezer(url:str, user: dict):
     """
     Fungsi 'manajer' utama untuk semua tugas Deezer.
@@ -48,7 +47,6 @@ async def start_deezer(url:str, user: dict):
         # 6. Jika terjadi error fatal di mana pun, laporkan ke pengguna
         LOGGER.error(f"Error fatal di Deezer handler: {e}\n{traceback.format_exc()}")
         await edit_message(user['bot_msg'], f"Error Deezer: {e}")
-# --- MODIFIKASI SELESAI ---
 
 
 async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=True, \
@@ -58,10 +56,12 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         if int(item_id) < 0: # For user uploaded
             raw_data = await deezerapi.get_track_data(item_id)
         else:
-            raw_data = await deezerapi.get_track(item_id)
+            raw_data = await deezerapi.get_track_data(item_id) # Diubah ke get_track_data
 
-        raw_data['DATA'] = raw_data['FALLBACK'] if 'FALLBACK' in raw_data.keys() else raw_data['DATA']
+        # 'get_track_data' tidak memiliki wrapper 'DATA', jadi kita langsung gunakan raw_data
+        t_meta = raw_data.get('FALLBACK', raw_data)
         try:
+            # Kita panggil process_track_metadata dengan 'raw' t_meta
             track_meta = await process_track_metadata(item_id, user['r_id'])
         except Exception as e:
             LOGGER.warning(f"Deezer track {item_id} tidak tersedia: {e}")
@@ -117,12 +117,17 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
 
 async def start_album(album_id:int, user:dict, upload=True):
     try:
+        # get_album sekarang mengembalikan data 'album.getData'
         raw_data = await deezerapi.get_album(album_id)
     except Exception as e:
         # Angkat error agar start_deezer bisa menangkapnya
         raise Exception(f"Gagal mendapatkan metadata album Deezer: {e}")
 
-    album_meta = await process_album_metadata(album_id, raw_data['DATA'], raw_data['SONGS'], user['r_id'])
+    # --- MODIFIKASI: Hapus ['DATA'] ---
+    # raw_data sekarang adalah metadata album itu sendiri
+    # raw_data['SONGS'] berisi list lagu
+    album_meta = await process_album_metadata(album_id, raw_data, raw_data['SONGS'], user['r_id'])
+    # --- BATAS MODIFIKASI ---
     
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
     
