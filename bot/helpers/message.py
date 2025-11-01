@@ -1,5 +1,7 @@
 import os
 import asyncio
+import time
+import math
 
 from pyrogram.types import Message
 from pyrogram.errors import MessageNotModified, FloodWait
@@ -135,14 +137,84 @@ async def send_message(user, item, itype='text',
             )
             
         elif itype == 'doc':
+            thumb_path = None
+            if meta and meta.get('cover'): 
+                thumb_path = meta['cover']
+
+            last_update_time = [0] 
+
+            async def progress_callback(current, total):
+                current_time = time.time()
+                if current_time - last_update_time[0] < 5:
+                    return
+                last_update_time[0] = current_time
+
+                percentage = int((current / total) * 100)
+                progress_bar = "{0}{1}".format(
+                    ''.join(["▰" for i in range(math.floor(percentage / 10))]),
+                    ''.join(["▱" for i in range(10 - math.floor(percentage / 10))])
+                )
+                
+                try:
+                    text = (
+                        f"**Mengunggah file .zip...**\n"
+                        f"`{os.path.basename(item)}`\n\n"
+                        f"{progress_bar} {percentage}%"
+                    )
+                    
+                    asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
+                except Exception:
+                    pass
+            
             msg = await aio.send_document(
                 chat_id=chat_id,
                 document=item,
                 caption=caption,
-                reply_to_message_id=user['r_id']
+                reply_to_message_id=user['r_id'],
+                thumb=thumb_path,
+                progress=progress_callback
             )
 
         elif itype == 'audio':
+            
+            # --- MODIFIKASI DIMULAI (Nonaktifkan progres untuk batch) ---
+            progress_callback = None # Default ke None
+            
+            # Hanya buat callback jika BUKAN mode batch DAN 'bot_msg' ada
+            if meta and not meta.get('batch_mode', False) and user.get('bot_msg'):
+                last_update_time = [0]
+
+                async def internal_progress_callback(current, total):
+                    current_time = time.time()
+                    if current_time - last_update_time[0] < 5:
+                        return
+                    last_update_time[0] = current_time
+
+                    percentage = int((current / total) * 100)
+                    progress_bar = "{0}{1}".format(
+                        ''.join(["▰" for i in range(math.floor(percentage / 10))]),
+                        ''.join(["▱" for i in range(10 - math.floor(percentage / 10))])
+                    )
+                    
+                    try:
+                        track_num = meta.get('tracknumber', '?')
+                        total_tracks = meta.get('totaltracks', '?')
+                        title = meta.get('title', 'Unknown Track')
+                        
+                        text = (
+                            f"**Mengunggah...**\n"
+                            f"Lagu {track_num} dari {total_tracks}\n" 
+                            f"`{title}`\n\n"
+                            f"{progress_bar} {percentage}%"
+                        )
+                        
+                        asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
+                    except Exception:
+                        pass
+                
+                progress_callback = internal_progress_callback # Tetapkan callback
+            # --- MODIFIKASI SELESAI ---
+
             msg = await aio.send_audio(
                 chat_id=chat_id,
                 audio=item,
@@ -151,7 +223,8 @@ async def send_message(user, item, itype='text',
                 performer=meta['artist'],
                 title=meta['title'],
                 thumb=meta['thumbnail'],
-                reply_to_message_id=user['r_id']
+                reply_to_message_id=user['r_id'],
+                progress=progress_callback # Ini akan menjadi None jika mode batch
             )
 
         elif itype == 'pic':
