@@ -52,8 +52,7 @@ RUN git clone https://github.com/utopian-society/orpheusdl-beatport modules/beat
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install -r requirements.txt && \
-    python orpheus.py
+RUN python orpheus.py
 
 
 WORKDIR /usr/src/app
