@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/deezer/dzapi.py]
+
 import re
 import os
 import aiohttp
@@ -158,14 +160,7 @@ class DeezerAPI:
 
 
     async def custom_url_parse(self, link) -> (str, int):
-        """
-        Args:
-            link: Deezer URL
-        Returns:
-            media type (str), id (int)
-        """
         url = urlparse(link)
-
         if url.hostname == 'link.deezer.com':
             async with self.ratelimit:
                 async with self.session.get(link, allow_redirects=True) as r:
@@ -176,7 +171,6 @@ class DeezerAPI:
         path_match = re.match(r'^\/(?:[a-z]{2}\/)?(track|album|artist|playlist)\/(\d+)\/?$', url.path)
         if not path_match:
             raise Exception(f'DEEZER : Invalid URL: {link}')
-
         return path_match.group(1), path_match.group(2)
 
 
@@ -192,58 +186,62 @@ class DeezerAPI:
         if time() - self.renew_timestamp >= 3600:
             LOGGER.debug("Deezer: License token expired - trying to refresh User data")
             await self._api_call('deezer.getUserData')
-
         if time() - track_token_expiry >= 0:
             LOGGER.debug("Deezer: Track token expired - trying to refresh token")
             track_token = await self._api_call('song.getData', {'sng_id': id, 'array_default': ['TRACK_TOKEN']})['TRACK_TOKEN']
-
         json_payload = { 
             'license_token': self.license_token,
-            'media': [
-                {
-                    'type': 'FULL',
-                    'formats': [{'cipher': 'BF_CBC_STRIPE', 'format': format}]
-                }
-            ],
+            'media': [{'type': 'FULL','formats': [{'cipher': 'BF_CBC_STRIPE', 'format': format}]}],
             'track_tokens': [track_token]
         }
         async with self.ratelimit:
-            async with self.session.post(
-                'https://media.deezer.com/v1/get_url',
-                json=json_payload 
-            ) as r:
+            async with self.session.post('https://media.deezer.com/v1/get_url', json=json_payload) as r:
                 resp = await r.json()
-
         return resp['data'][0]['media'][0]['sources'][0]['url']
 
 
     async def get_album(self, id):
+        """
+        Mengambil metadata album LENGKAP (Genre, UPC, dll)
+        TAPI TIDAK MENGAMBIL DAFTAR LAGU (SONGS).
+        """
         try:
-            # --- MODIFIKASI: Gunakan 'album.getData' untuk data LENGKAP ---
             res = await self._api_call('album.getData', {'alb_id': id, 'lang': self.language})
-            # --- BATAS MODIFIKASI ---
         except APIError as e:
-            # Fallback jika 'album.getData' gagal, coba 'pageAlbum'
             try:
                 LOGGER.warning(f"Deezer: album.getData gagal, mencoba fallback ke deezer.pageAlbum. Error: {e}")
                 res = await self._api_call('deezer.pageAlbum', {'alb_id': id, 'lang': self.language})
+                if 'DATA' in res:
+                    res = res['DATA'] 
             except APIError as e_fallback:
                 if e_fallback.payload and e_fallback.payload.get('FALLBACK') and e_fallback.payload['FALLBACK'].get('ALB_ID'):
-                    # Coba 'album.getData' lagi dengan ID fallback
                     res = await self._api_call('album.getData', {'alb_id': e_fallback.payload['FALLBACK']['ALB_ID'], 'lang': self.language})
                 else:
                     raise e_fallback
-        return res
+        return res # Mengembalikan metadata album
 
+    # --- MODIFIKASI: TAMBAHKAN FUNGSI BARU INI ---
+    async def get_album_tracks(self, id):
+        """
+        Secara terpisah mengambil daftar lagu (SONGS) untuk sebuah album.
+        API call ini (deezer.pageAlbum) MENGAMBIL DAFTAR LAGU.
+        """
+        try:
+            res = await self._api_call('deezer.pageAlbum', {'alb_id': id, 'lang': self.language})
+        except APIError as e:
+            if e.payload and e.payload.get('FALLBACK') and e.payload['FALLBACK'].get('ALB_ID'):
+                LOGGER.warning(f"Deezer: get_album_tracks gagal, mencoba fallback ID {e.payload['FALLBACK']['ALB_ID']}")
+                res = await self._api_call('deezer.pageAlbum', {'alb_id': e.payload['FALLBACK']['ALB_ID'], 'lang': self.language})
+            else:
+                raise e
+        return res # Mengembalikan {'DATA': ..., 'SONGS': ...}
+    # --- BATAS MODIFIKASI ---
 
     async def get_artist_album_ids(self, id, start, nb, credited_albums):
         payload = {
-            'art_id': id,
-            'start': start,
-            'nb': nb,
+            'art_id': id, 'start': start, 'nb': nb,
             'filter_role_id': [0,5] if credited_albums else [0],
-            'nb_songs': 0,
-            'discography_mode': 'all' if credited_albums else None,
+            'nb_songs': 0, 'discography_mode': 'all' if credited_albums else None,
             'array_default': ['ALB_ID']
         }
         resp = await self._api_call('album.getDiscography', payload)
@@ -257,9 +255,7 @@ class DeezerAPI:
 
     def _get_blowfish_key(self, track_id):
         md5_id = MD5.new(str(track_id).encode()).hexdigest().encode('ascii')
-
         key = bytes([md5_id[i] ^ md5_id[i + 16] ^ self.bf_secret[i] for i in range(16)])
-
         return key
     
 
@@ -269,7 +265,6 @@ class DeezerAPI:
             buf = bytearray()
             async for data, _ in resp.content.iter_chunks():
                 buf += data
-
             encrypt_chunk_size = 3 * 2048
             os.makedirs(os.path.dirname(path), exist_ok=True)
             async with aiofiles.open(path, "wb") as audio:
@@ -277,10 +272,7 @@ class DeezerAPI:
                 for i in range(0, buflen, encrypt_chunk_size):
                     data = buf[i : min(i + encrypt_chunk_size, buflen)]
                     if len(data) >= 2048:
-                        decrypted_chunk = (
-                            self._decrypt_chunk(bf_key, data[:2048])
-                            + data[2048:]
-                        )
+                        decrypted_chunk = (self._decrypt_chunk(bf_key, data[:2048]) + data[2048:])
                     else:
                         decrypted_chunk = data
                     await audio.write(decrypted_chunk)
@@ -288,10 +280,6 @@ class DeezerAPI:
 
     @staticmethod
     def _decrypt_chunk(key, data):
-        return Blowfish.new(
-            key,
-            Blowfish.MODE_CBC,
-            b"\x00\x01\x02\x03\x04\x05\x06\x07",
-        ).decrypt(data)
+        return Blowfish.new(key, Blowfish.MODE_CBC, b"\x00\x01\x02\x03\x04\x05\x06\x07").decrypt(data)
 
 deezerapi = DeezerAPI()
