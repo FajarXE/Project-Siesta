@@ -49,4 +49,6 @@ RUN git submodule update --init --recursive && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
+RUN ls -la /usr/src/app/bot/helpers/OrpheusDL/
+RUN sleep 3
 ENTRYPOINT ["python", "-m", "bot"]
