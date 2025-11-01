@@ -206,7 +206,7 @@ async def savePic(handle, metadata):
 async def get_audio_extension(path):
     handle = File(path)
     
-    if 'audio/x-m4a' in handle.mime:
+    if 'audio/x-flac' in handle.mime:
         return 'm4a'
     elif 'audio/x-flac' in handle.mime:
         return 'flac'
