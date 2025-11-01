@@ -8,7 +8,6 @@ from bot import CMD
 from bot.logger import LOGGER
 import bot.helpers.translations as lang
 
-# --- MODIFIKASI: Hapus impor ACTIVE_DOWNLOAD_TASKS ---
 from bot import BOT_QOBUZ_CLIENTS
 from bot.tgclient import aio 
 
@@ -16,13 +15,13 @@ from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
-# --- MODIFIKASI: Hapus impor antiSpam ---
+# --- MODIFIKASI: Menghapus impor antiSpam ---
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
 
 async def run_download_task(link: str, user: dict):
     """
-    Fungsi ini berjalan di latar belakang.
+    Fungsi ini berjalan di latar belakang (non-blocking).
     Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup.
     """
     try:
@@ -30,13 +29,12 @@ async def run_download_task(link: str, user: dict):
         
         await start_link(link, user)
         
+        # Jeda singkat agar pesan "Selesai" bisa terbaca
         await asyncio.sleep(5) 
         
     except asyncio.CancelledError:
-        # Meskipun kita menghapus /cancel, kita tetap biarkan ini
-        # untuk penanganan error yang aman jika server dimatikan
         LOGGER.info(f"Tugas untuk {user['user_id']} dibatalkan (mungkin shutdown).")
-        await send_message(user, "Tugas dibatalkan.")
+        await send_message(user, "Tugas dibatalkan (shutdown).")
         await asyncio.sleep(5) 
             
     except Exception as e:
@@ -47,14 +45,12 @@ async def run_download_task(link: str, user: dict):
             pass 
             
     finally:
+        # --- MODIFIKASI: Hapus antiSpam revoke ---
         await cleanup(user) # Hapus file
-        
-        # --- MODIFIKASI: Hapus task dari dictionary (jika ada) ---
-        # (Baris ini tidak diperlukan lagi karena kita tidak menambahkannya)
-        # ACTIVE_DOWNLOAD_TASKS.pop(task_id, None) 
-        # --- BATAS MODIFIKASI ---
+        # await antiSpam(user['user_id'], user['chat_id'], True) # <-- Dihapus
         
         try:
+            # Hapus pesan status terakhir
             await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
         except:
             pass
@@ -62,6 +58,11 @@ async def run_download_task(link: str, user: dict):
 
 @Client.on_message(filters.command(CMD.DOWNLOAD))
 async def download_track(c, msg:Message):
+    """
+    Ini adalah "Resepsionis" Anda.
+    Ia hanya mengambil link dan mendelegasikannya ke 'run_download_task'
+    untuk berjalan di latar belakang, lalu langsung selesai.
+    """
     if await check_user(msg=msg):
         try:
             if msg.reply_to_message:
@@ -76,24 +77,29 @@ async def download_track(c, msg:Message):
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
         
+        # --- MODIFIKASI DIMULAI (Blok antiSpam Dihapus Total) ---
+        # spam = await antiSpam(msg.from_user.id, msg.chat.id)
+        # if spam:
+        #    ...
+        #    return
+        
         user = await fetch_user_details(msg, reply)
         user['link'] = link
-        task_id = user['user_id']
-
-        # --- MODIFIKASI: MENGHAPUS SEMUA PENGECEKAN BLOKIR ---
-        # if task_id in ACTIVE_DOWNLOAD_TASKS:
-        #    await send_message(msg, "Anda sudah memiliki...")
-        #    return
-        # --- BATAS MODIFIKASI ---
         
-        # Buat task dan langsung jalankan di latar belakang
+        # 1. Jalankan tugas di latar belakang (non-blocking)
         asyncio.create_task(run_download_task(link, user))
         
-        # Hapus pesan "antrian"
+        # 2. Hapus pesan "antrian"
         # await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.") 
+        
+        # (Fungsi 'download_track' selesai di sini, siap untuk perintah berikutnya)
+        # --- MODIFIKASI SELESAI ---
 
 
 async def start_link(link: str, user: dict) -> None:
+    """
+    Ini adalah fungsi 'pekerja' yang sebenarnya yang dipanggil oleh 'run_download_task'.
+    """
     tidal = ["https://tidal.com", "https://listen.tidal.com", "tidal.com", "listen.tidal.com"]
     deezer = ["https://link.deezer.com", "https://deezer.com", "deezer.com", "https://www.deezer.com", "link.deezer.com"]
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
