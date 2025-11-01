@@ -45,14 +45,15 @@ COPY . .
 
 RUN git submodule update --init --recursive
 
-WORKDIR /usr/src/app/bot/modules/OrpheusDL
-RUN git clone https://github.com/utopian-society/orpheusdl-beatport modules/beatport && \
+WORKDIR /usr/src/app/bot/helpers/OrpheusDL
+RUN git submodule update --init --recursive && \
     # Clean up git to reduce image size
     apt-get remove -y git && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-RUN python orpheus.py
+RUN pip install -r requirements.txt && \
+    python orpheus.py
 
 
 WORKDIR /usr/src/app
