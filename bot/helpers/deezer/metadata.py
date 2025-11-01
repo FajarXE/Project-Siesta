@@ -48,7 +48,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'track'
     
-    # --- MODIFIKASI DIMULAI (Menambahkan Genre, Disk, Composer) ---
+    # --- INI ADALAH LOGIKA YANG HILANG ---
     if album_genre:
         metadata['genre'] = album_genre
     elif t_meta.get('GENRE_NAME'):
@@ -71,7 +71,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
         if composers:
             # Hapus duplikat sambil menjaga urutan
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
-    # --- MODIFIKASI SELESAI ---
+    # --- BATAS LOGIKA ---
 
     metadata['cover'] = cover if cover else await get_cover(t_meta['ALB_PICTURE'], metadata)
     metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta['ALB_PICTURE'], metadata, True)
@@ -95,7 +95,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['upc'] = a_meta['UPC']
     metadata['title'] = a_meta['ALB_TITLE']
     if a_meta.get('VERSION'):
-        metadata['title'] += f' ({a_meta['VERSION']})'
+        metadata['title'] += f' ({a_meta["VERSION"]})'
     metadata['album'] = a_meta['ALB_TITLE']
     metadata['artist'] = get_artists_name(a_meta)
     metadata['date'] = a_meta['DIGITAL_RELEASE_DATE']
@@ -104,7 +104,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['copyright'] = a_meta['COPYRIGHT']
     metadata['explicit'] = a_meta.get('explicit_lyrics', False)
     
-    # --- MODIFIKASI DIMULAI (Menambahkan Genre dan Total Disk) ---
+    # --- INI ADALAH LOGIKA YANG HILANG ---
     album_genre_name = ''
     if a_meta.get('genres') and a_meta['genres'].get('data'):
         # Pastikan data tidak kosong
@@ -113,7 +113,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
             metadata['genre'] = album_genre_name
     
     metadata['totalvolume'] = str(a_meta.get('DISK_COUNT', '1')) # Total Disk
-    # --- MODIFIKASI SELESAI ---
+    # --- BATAS LOGIKA ---
     
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
