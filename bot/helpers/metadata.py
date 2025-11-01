@@ -80,7 +80,7 @@ async def set_flac(data, handle):
     handle.tags['copyright'] = data['copyright']
     handle.tags['tracknumber'] = str(data['tracknumber'])
     handle.tags['tracktotal'] = str(data['totaltracks'])
-    handle.tags['genre'] = data.get('genre') or '' # <-- Dibuat aman
+    handle.tags['genre'] = data.get('genre') or '' 
     handle.tags['date'] = data['date']
     handle.tags['isrc'] = data['isrc']
     handle.tags['lyrics'] = data['lyrics']
@@ -126,14 +126,13 @@ async def set_mp3(data, handle):
     handle.tags.add(TOPE(encoding=3, text=data['albumartist']))
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
-    handle.tags.add(TRCK(encoding=3, text=track_pos)) # <-- DIPERBAIKI
-    handle.tags.add(TPOS(encoding=3, text=disc_pos)) # <-- DIPERBAIKI
-    # baris TXXX yang error DIHAPUS
-    handle.tags.add(TCON(encoding=3, text=genre_text)) # <-- DIPERBAIKI
+    handle.tags.add(TRCK(encoding=3, text=track_pos)) 
+    handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
+    handle.tags.add(TCON(encoding=3, text=genre_text)) 
     handle.tags.add(TDRC(encoding=3, text=data['date']))
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
     handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
-    handle.tags.add(TCOM(encoding=3, text=composer_text)) # <-- DIPERBAIKI
+    handle.tags.add(TCOM(encoding=3, text=composer_text)) 
     
     # --- MODIFIKASI SELESAI ---
     
@@ -144,12 +143,16 @@ async def set_mp3(data, handle):
 async def set_m4a(data, handle):
     if handle.tags is None:
         handle.add_tags()
+        
+    # --- MODIFIKASI: Memperbaiki TYPO ---
     handle.tags['\u00a9nam'] = data['title']
-    handle.tags['\u0S_S-E:A-L-B'] = data['album']
-    handle.tags['\u0S_S-E:A-R-T'] = data['artist']
+    handle.tags['\u00a9alb'] = data['album']  # <-- DIPERBAIKI
+    handle.tags['\u00a9ART'] = data['artist'] # <-- DIPERBAIKI
+    # --- BATAS PERBAIKAN ---
+    
     handle.tags['aART'] = data['albumartist']
     handle.tags['\u00a9day'] = data['date']
-    handle.tags['\u00a9gen'] = data.get('genre') or '' # <-- Dibuat aman
+    handle.tags['\u00a9gen'] = data.get('genre') or '' 
     handle.tags['\u00a9cpr'] = data['copyright']
 
     track_number = int(data['tracknumber']) if data['tracknumber'] else 0
@@ -226,3 +229,4 @@ async def create_cover_file(url:dict, meta:dict, thumbnail=False):
         return cover
     else:
         return './project-siesta.png'
+
