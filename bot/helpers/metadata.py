@@ -6,7 +6,7 @@ from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
-    TCOM # <-- MODIFIKASI: Menambahkan tag Composer
+    TCOM 
 
 from bot.logger import LOGGER
 from .utils import download_file
@@ -37,9 +37,7 @@ metadata = {
         'provider': '',
         'tracks': [],
         'albums': [],
-        # --- MODIFIKASI: Menambahkan Composer ---
         'composer': '', 
-        # --- MODIFIKASI SELESAI ---
         'tempfolder': f'{Config.DOWNLOAD_BASE_DIR}/', # specific folder for each user
         'filepath': '',   # if track, full path to file
         'folderpath': '', # if album/playlist the full path to folder
@@ -56,12 +54,15 @@ async def set_metadata(metadata:dict):
     if metadata['duration'] == '':
         metadata['duration'] = handle.info.length
 
-    if 'audio/x-flac' in handle.mime:
-        await set_flac(metadata, handle)
-    elif 'audio/mpeg' in handle.mime:
-        await set_mp3(metadata, handle)
-    elif 'audio/x-m4a' in handle.mime: 
-        await set_m4a(metadata, handle)
+    try:
+        if 'audio/x-flac' in handle.mime:
+            await set_flac(metadata, handle)
+        elif 'audio/mpeg' in handle.mime:
+            await set_mp3(metadata, handle)
+        elif 'audio/x-m4a' in handle.mime: 
+            await set_m4a(metadata, handle)
+    except Exception as e:
+        LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
 
 
 async def set_flac(data, handle):
@@ -74,16 +75,14 @@ async def set_flac(data, handle):
     handle.tags['copyright'] = data['copyright']
     handle.tags['tracknumber'] = str(data['tracknumber'])
     handle.tags['tracktotal'] = str(data['totaltracks'])
-    handle.tags['genre'] = data['genre']
+    handle.tags['genre'] = data.get('genre') or '' # <-- Dibuat aman
     handle.tags['date'] = data['date']
     handle.tags['isrc'] = data['isrc']
     handle.tags['lyrics'] = data['lyrics']
     
-    # --- MODIFIKASI DIMULAI (Menambahkan Tag FLAC yang Hilang) ---
     handle.tags['discnumber'] = str(data['volume'])
     handle.tags['disctotal'] = str(data['totalvolume'])
     handle.tags['composer'] = data.get('composer', '')
-    # --- MODIFIKASI SELESAI ---
     
     await savePic(handle, data)
     handle.save()
@@ -93,22 +92,44 @@ async def set_mp3(data, handle):
     # ID3
     if handle.tags is None:
             handle.add_tags()
+
+    # --- MODIFIKASI DIMULAI (Memperbaiki format tag MP3) ---
+
+    # Menggabungkan nomor track dan total track (Contoh: "1/10")
+    track_num = str(data.get('tracknumber', ''))
+    track_total = str(data.get('totaltracks', ''))
+    if track_total and track_total != '0':
+        track_pos = f"{track_num}/{track_total}"
+    else:
+        track_pos = track_num
+
+    # Menggabungkan nomor disk dan total disk (Contoh: "1/2")
+    disc_num = str(data.get('volume', ''))
+    disc_total = str(data.get('totalvolume', ''))
+    if disc_total and disc_total != '0':
+        disc_pos = f"{disc_num}/{disc_total}"
+    else:
+        disc_pos = disc_num
+
+    # Memastikan genre dan composer tidak None (minimal string kosong)
+    genre_text = data.get('genre') or ''
+    composer_text = data.get('composer') or ''
+    
+    # Menambahkan tag dengan data yang sudah dibersihkan
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
     handle.tags.add(TOPE(encoding=3, text=data['albumartist']))
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
-    handle.tags.add(TRCK(encoding=3, text=str(data['tracknumber'])))
-    handle.tags.add(TPOS(encoding=3, text=str(data['volume'])))
-    handle.tags.add(TXXX(encoding=3, text=str(data['totaltracks'])))
-    handle.tags.add(TCON(encoding=3, text=data['genre']))
+    handle.tags.add(TRCK(encoding=3, text=track_pos)) # <-- DIPERBAIKI
+    handle.tags.add(TPOS(encoding=3, text=disc_pos)) # <-- DIPERBAIKI
+    # baris TXXX yang error DIHAPUS
+    handle.tags.add(TCON(encoding=3, text=genre_text)) # <-- DIPERBAIKI
     handle.tags.add(TDRC(encoding=3, text=data['date']))
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
     handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
+    handle.tags.add(TCOM(encoding=3, text=composer_text)) # <-- DIPERBAIKI
     
-    # --- MODIFIKASI DIMULAI (Menambahkan Tag MP3 yang Hilang) ---
-    handle.tags.add(TCOM(encoding=3, text=data.get('composer', ''))) # Composer
-    # (Total disk/TPOS sudah ada)
     # --- MODIFIKASI SELESAI ---
     
     await savePic(handle, data)
@@ -123,19 +144,18 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     handle.tags['\u00a9day'] = data['date']
-    handle.tags['\u00a9gen'] = data['genre']
+    handle.tags['\u00a9gen'] = data.get('genre') or '' # <-- Dibuat aman
     handle.tags['\u00a9cpr'] = data['copyright']
 
-    track_number = int(data['tracknumber']) if data['tracknumber'] != '' else 0
-    totaltracks = int(data['totaltracks']) if data['totaltracks'] != '' else 0
+    track_number = int(data['tracknumber']) if data['tracknumber'] else 0
+    totaltracks = int(data['totaltracks']) if data['totaltracks'] else 0
     handle.tags['trkn'] = [(track_number, totaltracks)]
-    volume = int(data['volume']) if data['volume'] != '' else 0
-    totalvolume = int(data['totalvolume']) if data['totalvolume'] != '' else 0
+    
+    volume = int(data['volume']) if data['volume'] else 0
+    totalvolume = int(data['totalvolume']) if data['totalvolume'] else 0
     handle.tags['disk'] = [(volume, totalvolume)]
     
-    # --- MODIFIKASI DIMULAI (Menambahkan Tag M4A yang Hilang) ---
     handle.tags['\u00a9wrt'] = data.get('composer', '') # ©wrt adalah Composer
-    # --- MODIFIKASI SELESAI ---
 
     await savePic(handle, data)
     handle.save()
