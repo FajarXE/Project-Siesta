@@ -22,3 +22,4 @@ Pillow
 tqdm
 ffmpeg-python
 m3u8
+utils
