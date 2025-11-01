@@ -8,12 +8,16 @@ from bot.logger import LOGGER
 
 
 async def process_track_metadata(track_id, r_id, cover=None, 
-    thumbnail=None, total_tracks=None, album_genre=None, total_disks=None): # <-- MODIFIKASI: Menambahkan genre/disk
+    thumbnail=None, total_tracks=None, album_genre=None, total_disks=None): 
     metadata = copy.deepcopy(base_meta)
 
     raw_meta = await deezerapi.get_track(track_id)
     raw_meta=raw_meta['DATA']
     t_meta = raw_meta.get('FALLBACK', raw_meta)
+    
+    # --- TAMBAHAN DEBUGGING BARU ---
+    LOGGER.info(f"DEBUG DEEZER (TRACK): Lagu '{t_meta.get('SNG_TITLE')}' | Genre API: {t_meta.get('GENRE_NAME')} | Contributors API: {'ADA' if t_meta.get('CONTRIBUTORS') else 'TIDAK ADA'}")
+    # --- BATAS DEBUGGING ---
     
     metadata['tempfolder'] += f"{r_id}-temp/"
 
@@ -48,7 +52,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'track'
     
-    # --- INI ADALAH LOGIKA YANG HILANG ---
+    # --- INI ADALAH LOGIKA YANG SEHARUSNYA BERJALAN ---
     if album_genre:
         metadata['genre'] = album_genre
     elif t_meta.get('GENRE_NAME'):
@@ -64,12 +68,10 @@ async def process_track_metadata(track_id, r_id, cover=None,
         composers = []
         # Cari Composer (1), Writer (4), atau Lyricist (5)
         for contributor in t_meta['CONTRIBUTORS']:
-            # Beberapa role ID mungkin integer, kita pastikan keduanya string
             role_id = str(contributor.get('ROLE_ID'))
             if role_id in ['1', '4', '5']: 
                 composers.append(contributor.get('ART_NAME'))
         if composers:
-            # Hapus duplikat sambil menjaga urutan
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
     # --- BATAS LOGIKA ---
 
@@ -104,10 +106,13 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['copyright'] = a_meta['COPYRIGHT']
     metadata['explicit'] = a_meta.get('explicit_lyrics', False)
     
-    # --- INI ADALAH LOGIKA YANG HILANG ---
+    # --- TAMBAHAN DEBUGGING BARU ---
+    LOGGER.info(f"DEBUG DEEZER (ALBUM): Album '{a_meta.get('ALB_TITLE')}' | Data Genres API: {a_meta.get('genres')}")
+    # --- BATAS DEBUGGING ---
+    
+    # --- INI ADALAH LOGIKA YANG SEHARUSNYA BERJALAN ---
     album_genre_name = ''
-    if a_meta.get('genres') and a_meta['genres'].get('data'):
-        # Pastikan data tidak kosong
+    if a_meta.get('genres') and a_meta.get('genres').get('data'):
         if a_meta['genres']['data']:
             album_genre_name = a_meta['genres']['data'][0].get('NAME', '')
             metadata['genre'] = album_genre_name
