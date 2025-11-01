@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/deezer/metadata.py]
+# [GANTI FILE: bot/helpers/deezer/metadata.py] (VERSI BERSIH)
 
 import copy
 from datetime import datetime
@@ -61,11 +61,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
         metadata['totaltracks'] = total_tracks
     metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', t_meta_page.get('PHYSICAL_RELEASE_DATE', ''))
 
-    # --- TAMBAHKAN LOG DEBUG DI SINI ---
-    LOGGER.info(f"DEBUG: (Lagu: {metadata['title']}) Mencari 'GENRE_NAME' di API pageTrack. Ditemukan: {t_meta_page.get('GENRE_NAME')}")
-    LOGGER.info(f"DEBUG: (Lagu: {metadata['title']}) Mencari 'CONTRIBUTORS' di API song.getData. Ditemukan: {t_meta.get('CONTRIBUTORS') is not None}")
-    # --- BATAS LOG DEBUG ---
-
+    # Ambil Genre dari API 2 (t_meta_page)
     if album_genre:
         metadata['genre'] = album_genre
     elif t_meta_page.get('GENRE_NAME'): 
@@ -75,6 +71,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
     if total_disks:
         metadata['totalvolume'] = str(total_disks)
     
+    # Ambil Composer dari API 1 (t_meta)
     if t_meta.get('CONTRIBUTORS'): 
         composers = []
         for contributor in t_meta['CONTRIBUTORS']:
@@ -83,10 +80,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
                 composers.append(contributor.get('ART_NAME'))
         if composers:
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
-    
-    # --- TAMBAHKAN LOG DEBUG FINAL ---
-    LOGGER.info(f"DEBUG: (Lagu: {metadata['title']}) Nilai final: Genre='{metadata.get('genre', '')}', Composer='{metadata.get('composer', '')}'")
-    # --- BATAS LOG DEBUG ---
 
     metadata['artist'] = get_artists_name(t_meta)
     if not metadata['artist']:
