@@ -179,7 +179,7 @@ class DeezerAPI:
         return res
 
     async def get_track_data(self, id):
-        # --- INI ADALAH PERBAIKAN YANG HILANG ---
+        # --- INI ADALAH PERBAIKAN YANG ANDA LEWATKAN ---
         # Meminta 'CONTRIBUTORS' secara eksplisit
         payload = {
             'sng_id': id,
