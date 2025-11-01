@@ -12,50 +12,71 @@ from bot.logger import LOGGER
 async def process_track_metadata(track_id, r_id, cover=None, 
     thumbnail=None, total_tracks=None, album_genre=None, total_disks=None): 
     metadata = copy.deepcopy(base_meta)
-
-    raw_meta = await deezerapi.get_track_data(track_id)
-    t_meta = raw_meta.get('FALLBACK', raw_meta)
-    
     metadata['tempfolder'] += f"{r_id}-temp/"
 
-    metadata['itemid'] = track_id
-    metadata['copyright'] = t_meta.get('COPYRIGHT', '')
-    metadata['albumartist'] = t_meta['ART_NAME']
-    metadata['artist'] = get_artists_name(t_meta)
-    metadata['album'] = t_meta['ALB_TITLE']
-    metadata['isrc'] = t_meta['ISRC']
+    # --- MODIFIKASI: Panggil KEDUA API ---
+    
+    # Panggilan API 1: song.getData (untuk metadata kaya: Genre, Composer)
+    try:
+        raw_meta_data = await deezerapi.get_track_data(track_id)
+        t_meta = raw_meta_data.get('FALLBACK', raw_meta_data)
+    except Exception as e:
+        LOGGER.warning(f"Deezer: song.getData gagal untuk {track_id}: {e}")
+        t_meta = {} # Buat dict kosong jika gagal
 
-    metadata['title'] = t_meta['SNG_TITLE']
+    # Panggilan API 2: deezer.pageTrack (untuk data ketersediaan, token, & fallback)
+    try:
+        raw_meta_page = await deezerapi.get_track(track_id)
+        t_meta_page = raw_meta_page.get('DATA', {}) # Ambil wrapper 'DATA'
+        t_meta_page = t_meta_page.get('FALLBACK', t_meta_page) # Ambil fallback
+    except Exception as e:
+        LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
+        # Panggilan ini sangat penting, jika gagal, kita tidak bisa lanjut
+        raise Exception(f"Deezer : Track not available (pageTrack API failed)")
+    
+    # --- BATAS MODIFIKASI ---
+
+    metadata['itemid'] = track_id
+    
+    # --- Isi Metadata (Prioritaskan API 1, fallback ke API 2) ---
+    metadata['copyright'] = t_meta.get('COPYRIGHT', t_meta_page.get('COPYRIGHT', ''))
+    metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
+    metadata['album'] = t_meta.get('ALB_TITLE', t_meta_page.get('ALB_TITLE', ''))
+    metadata['isrc'] = t_meta.get('ISRC', t_meta_page.get('ISRC', ''))
+    metadata['title'] = t_meta.get('SNG_TITLE', t_meta_page.get('SNG_TITLE', ''))
+    
     if t_meta.get('VERSION'):
         metadata['title'] += f' ({t_meta["VERSION"]})'
+    elif t_meta_page.get('VERSION'):
+         metadata['title'] += f' ({t_meta_page["VERSION"]})'
 
     metadata['title'] = metadata['title'].replace('/', ' ')
-
-    metadata['duration'] = t_meta.get('DURATION', 0) # Dibuat aman
+    metadata['duration'] = t_meta.get('DURATION', t_meta_page.get('DURATION', 0))
     
     try:
-        explicit_status = t_meta.get('EXPLICIT_TRACK_CONTENT', {}).get('EXPLICIT_LYRICS_STATUS', 0)
+        # Coba API 1 dulu
+        explicit_data = t_meta.get('EXPLICIT_TRACK_CONTENT')
+        if not explicit_data:
+            # Coba API 2
+            explicit_data = t_meta_page.get('EXPLICIT_TRACK_CONTENT', {})
+        
+        explicit_status = explicit_data.get('EXPLICIT_LYRICS_STATUS', 0)
         metadata['explicit'] = True if explicit_status == 1 else False
     except Exception:
         metadata['explicit'] = False 
     
-    metadata['tracknumber'] = t_meta.get('TRACK_NUMBER', '1') # Dibuat aman
-
+    metadata['tracknumber'] = t_meta.get('TRACK_NUMBER', t_meta_page.get('TRACK_NUMBER', '1'))
     if total_tracks:
         metadata['totaltracks'] = total_tracks
+    metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', t_meta_page.get('PHYSICAL_RELEASE_DATE', ''))
 
-    metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', '')
-
-    metadata['provider'] = 'Deezer'
-    metadata['type'] = 'track'
-    
+    # Ambil Genre & Composer dari API 1 (t_meta)
     if album_genre:
         metadata['genre'] = album_genre
     elif t_meta.get('GENRE_NAME'):
          metadata['genre'] = t_meta['GENRE_NAME']
          
-    metadata['volume'] = str(t_meta.get('DISK_NUMBER', '1'))
-    
+    metadata['volume'] = str(t_meta.get('DISK_NUMBER', t_meta_page.get('DISK_NUMBER', '1')))
     if total_disks:
         metadata['totalvolume'] = str(total_disks)
     
@@ -67,40 +88,48 @@ async def process_track_metadata(track_id, r_id, cover=None,
                 composers.append(contributor.get('ART_NAME'))
         if composers:
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
+    
+    # Ambil Artis dari API 1 (t_meta)
+    metadata['artist'] = get_artists_name(t_meta)
+    if not metadata['artist']:
+        # Fallback ke API 2 (t_meta_page)
+        metadata['artist'] = get_artists_name(t_meta_page)
 
-    metadata['cover'] = cover if cover else await get_cover(t_meta.get('ALB_PICTURE', ''), metadata) # Dibuat aman
-    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta.get('ALB_PICTURE', ''), metadata, True) # Dibuat aman
+    metadata['provider'] = 'Deezer'
+    metadata['type'] = 'track'
+    
+    # --- Ambil data penting dari API 2 (t_meta_page) ---
+    cover_id = t_meta.get('ALB_PICTURE', t_meta_page.get('ALB_PICTURE', ''))
+    metadata['cover'] = cover if cover else await get_cover(cover_id, metadata)
+    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(cover_id, metadata, True)
 
-    metadata['token'] = t_meta['TRACK_TOKEN']
-    metadata['token_expiry'] = t_meta['TRACK_TOKEN_EXPIRE']
-
-    metadata['quality'] = await get_quality(t_meta)
+    # Ini SANGAT PENTING
+    metadata['token'] = t_meta_page['TRACK_TOKEN']
+    metadata['token_expiry'] = t_meta_page['TRACK_TOKEN_EXPIRE']
+    
+    # Kirim t_meta_page (dari API 2) ke get_quality
+    metadata['quality'] = await get_quality(t_meta_page)
+    # --- BATAS MODIFIKASI PENTING ---
 
     return metadata
             
 
 async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
+    # (a_meta dari get_album, t_meta dari get_album_tracks)
     metadata = copy.deepcopy(base_meta)
-
     metadata['tempfolder'] += f"{r_id}-temp/"
-
     metadata['itemid'] = album_id
-
-    metadata['albumartist'] = a_meta.get('ART_NAME', '') # Dibuat aman
+    metadata['albumartist'] = a_meta.get('ART_NAME', '')
     metadata['upc'] = a_meta.get('UPC', '')
-    metadata['title'] = a_meta.get('ALB_TITLE', 'Unknown Album') # Dibuat aman
+    metadata['title'] = a_meta.get('ALB_TITLE', 'Unknown Album')
     if a_meta.get('VERSION'):
         metadata['title'] += f' ({a_meta["VERSION"]})'
-    metadata['album'] = a_meta.get('ALB_TITLE', 'Unknown Album') # Dibuat aman
+    metadata['album'] = a_meta.get('ALB_TITLE', 'Unknown Album')
     metadata['artist'] = get_artists_name(a_meta)
-    metadata['date'] = a_meta.get('DIGITAL_RELEASE_DATE', '') # Dibuat aman
-    metadata['totaltracks'] = a_meta.get('NUMBER_TRACK', '0') # Dibuat aman
-    
-    # --- MODIFIKASI: Gunakan .get() agar aman jika 'DURATION' tidak ada ---
+    metadata['date'] = a_meta.get('DIGITAL_RELEASE_DATE', '')
+    metadata['totaltracks'] = a_meta.get('NUMBER_TRACK', '0')
     metadata['duration'] = a_meta.get('DURATION', 0)
-    # --- BATAS MODIFIKASI ---
-    
-    metadata['copyright'] = a_meta.get('COPYRIGHT', '') # Dibuat aman
+    metadata['copyright'] = a_meta.get('COPYRIGHT', '')
     metadata['explicit'] = a_meta.get('explicit_lyrics', False)
     
     album_genre_name = ''
@@ -110,15 +139,14 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
             metadata['genre'] = album_genre_name
     
     metadata['totalvolume'] = str(a_meta.get('DISK_COUNT', '1'))
-    
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
-
-    metadata['cover'] = await get_cover(a_meta.get('ALB_PICTURE', ''), metadata) # Dibuat aman
-    metadata['thumbnail'] = await get_cover(a_meta.get('ALB_PICTURE', ''), metadata, True) # Dibuat aman
+    
+    cover_id = a_meta.get('ALB_PICTURE', '')
+    metadata['cover'] = await get_cover(cover_id, metadata)
+    metadata['thumbnail'] = await get_cover(cover_id, metadata, True)
         
     metadata['tracks'] = []
-    # Gunakan 't_meta' (dari get_album_tracks) untuk daftar lagu
     for track in t_meta['data']:
         try:
             track_meta = await process_track_metadata(
@@ -133,14 +161,12 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
             metadata['tracks'].append(track_meta)
         except Exception as e:
             LOGGER.warning(f"Gagal memproses metadata untuk track ID {track.get('SNG_ID')}: {e}")
-            continue # Lanjutkan ke lagu berikutnya
+            continue
 
-    if metadata['tracks']:
-        metadata['quality'] = metadata['tracks'][0]['quality']
-    else:
-        # Jika tidak ada lagu yang berhasil diproses, lempar error
+    if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
+    metadata['quality'] = metadata['tracks'][0]['quality']
     return metadata
 
 
@@ -177,6 +203,7 @@ async def process_playlist_meta(raw_meta, r_id):
 
 def get_artists_name(meta:dict):
     artists = []
+    # Kunci 'ARTISTS' ada di kedua API (song.getData dan deezer.pageAlbum)
     if meta.get('ARTISTS'):
         for a in meta['ARTISTS']:
             artists.append(a['ART_NAME'])
@@ -195,8 +222,12 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
 
 
 async def get_quality(meta:dict):
+    # 'meta' yang dikirim ke sini SEKARANG adalah 't_meta_page'
+    # yang berisi 'AVAILABLE_COUNTRIES'
     format = 'FLAC'
     premium_formats = ['FLAC', 'MP3_320']
+    
+    # 'AVAILABLE_COUNTRIES' ada di 't_meta_page'
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
     
     if not countries:
@@ -212,6 +243,7 @@ async def get_quality(meta:dict):
                 break
         temp_f = None
         for f in formats_to_check:
+            # Kunci 'FILESIZE' juga ada di 't_meta_page'
             if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
                 temp_f = f
                 break
