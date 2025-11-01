@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/deezer/metadata.py]
+
 import copy
 from datetime import datetime
 
@@ -11,13 +13,12 @@ async def process_track_metadata(track_id, r_id, cover=None,
     thumbnail=None, total_tracks=None, album_genre=None, total_disks=None): 
     metadata = copy.deepcopy(base_meta)
 
-    raw_meta = await deezerapi.get_track(track_id)
-    raw_meta=raw_meta['DATA']
+    # --- MODIFIKASI: Ganti ke get_track_data (song.getData) untuk data LENGKAP ---
+    # get_track (deezer.pageTrack) tidak mengembalikan genre/contributors
+    raw_meta = await deezerapi.get_track_data(track_id)
+    # 'get_track_data' tidak memiliki 'DATA' wrapper, jadi kita langsung gunakan raw_meta
     t_meta = raw_meta.get('FALLBACK', raw_meta)
-    
-    # --- TAMBAHAN DEBUGGING BARU ---
-    LOGGER.info(f"DEBUG DEEZER (TRACK): Lagu '{t_meta.get('SNG_TITLE')}' | Genre API: {t_meta.get('GENRE_NAME')} | Contributors API: {'ADA' if t_meta.get('CONTRIBUTORS') else 'TIDAK ADA'}")
-    # --- BATAS DEBUGGING ---
+    # --- BATAS MODIFIKASI ---
     
     metadata['tempfolder'] += f"{r_id}-temp/"
 
@@ -52,28 +53,24 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'track'
     
-    # --- INI ADALAH LOGIKA YANG SEHARUSNYA BERJALAN ---
     if album_genre:
         metadata['genre'] = album_genre
     elif t_meta.get('GENRE_NAME'):
          metadata['genre'] = t_meta['GENRE_NAME']
          
-    metadata['volume'] = str(t_meta.get('DISK_NUMBER', '1')) # Nomor Disk
+    metadata['volume'] = str(t_meta.get('DISK_NUMBER', '1'))
     
     if total_disks:
-        metadata['totalvolume'] = str(total_disks) # Total Disk dari Album
+        metadata['totalvolume'] = str(total_disks)
     
-    # Menambahkan Pengarang Lagu (Composer/Writer)
     if t_meta.get('CONTRIBUTORS'):
         composers = []
-        # Cari Composer (1), Writer (4), atau Lyricist (5)
         for contributor in t_meta['CONTRIBUTORS']:
             role_id = str(contributor.get('ROLE_ID'))
-            if role_id in ['1', '4', '5']: 
+            if role_id in ['1', '4', '5']: # Composer (1), Writer (4), Lyricist (5)
                 composers.append(contributor.get('ART_NAME'))
         if composers:
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
-    # --- BATAS LOGIKA ---
 
     metadata['cover'] = cover if cover else await get_cover(t_meta['ALB_PICTURE'], metadata)
     metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta['ALB_PICTURE'], metadata, True)
@@ -106,19 +103,13 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['copyright'] = a_meta['COPYRIGHT']
     metadata['explicit'] = a_meta.get('explicit_lyrics', False)
     
-    # --- TAMBAHAN DEBUGGING BARU ---
-    LOGGER.info(f"DEBUG DEEZER (ALBUM): Album '{a_meta.get('ALB_TITLE')}' | Data Genres API: {a_meta.get('genres')}")
-    # --- BATAS DEBUGGING ---
-    
-    # --- INI ADALAH LOGIKA YANG SEHARUSNYA BERJALAN ---
     album_genre_name = ''
     if a_meta.get('genres') and a_meta.get('genres').get('data'):
         if a_meta['genres']['data']:
             album_genre_name = a_meta['genres']['data'][0].get('NAME', '')
             metadata['genre'] = album_genre_name
     
-    metadata['totalvolume'] = str(a_meta.get('DISK_COUNT', '1')) # Total Disk
-    # --- BATAS LOGIKA ---
+    metadata['totalvolume'] = str(a_meta.get('DISK_COUNT', '1'))
     
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
@@ -134,8 +125,8 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
             metadata['cover'], 
             metadata['thumbnail'],
             metadata['totaltracks'],
-            album_genre_name, # <-- Meneruskan Genre
-            metadata['totalvolume'] # <-- Meneruskan Total Disk
+            album_genre_name, 
+            metadata['totalvolume']
         )
         metadata['tracks'].append(track_meta)
 
@@ -218,7 +209,6 @@ async def get_quality(meta:dict):
 
         temp_f = None
         for f in formats_to_check:
-            # Pastikan kunci filesize ada sebelum mengaksesnya
             if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
                 temp_f = f
                 break
