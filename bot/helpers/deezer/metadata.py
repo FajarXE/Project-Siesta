@@ -31,7 +31,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
 
     metadata['title'] = metadata['title'].replace('/', ' ')
 
-    metadata['duration'] = t_meta['DURATION']
+    metadata['duration'] = t_meta.get('DURATION', 0) # Dibuat aman
     
     try:
         explicit_status = t_meta.get('EXPLICIT_TRACK_CONTENT', {}).get('EXPLICIT_LYRICS_STATUS', 0)
@@ -39,7 +39,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
     except Exception:
         metadata['explicit'] = False 
     
-    metadata['tracknumber'] = t_meta['TRACK_NUMBER']
+    metadata['tracknumber'] = t_meta.get('TRACK_NUMBER', '1') # Dibuat aman
 
     if total_tracks:
         metadata['totaltracks'] = total_tracks
@@ -68,8 +68,8 @@ async def process_track_metadata(track_id, r_id, cover=None,
         if composers:
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
 
-    metadata['cover'] = cover if cover else await get_cover(t_meta['ALB_PICTURE'], metadata)
-    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta['ALB_PICTURE'], metadata, True)
+    metadata['cover'] = cover if cover else await get_cover(t_meta.get('ALB_PICTURE', ''), metadata) # Dibuat aman
+    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta.get('ALB_PICTURE', ''), metadata, True) # Dibuat aman
 
     metadata['token'] = t_meta['TRACK_TOKEN']
     metadata['token_expiry'] = t_meta['TRACK_TOKEN_EXPIRE']
@@ -86,21 +86,21 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
 
     metadata['itemid'] = album_id
 
-    metadata['albumartist'] = a_meta['ART_NAME']
-    
-    # --- MODIFIKASI: Gunakan .get() agar aman jika 'UPC' tidak ada ---
+    metadata['albumartist'] = a_meta.get('ART_NAME', '') # Dibuat aman
     metadata['upc'] = a_meta.get('UPC', '')
-    # --- BATAS MODIFIKASI ---
-    
-    metadata['title'] = a_meta['ALB_TITLE']
+    metadata['title'] = a_meta.get('ALB_TITLE', 'Unknown Album') # Dibuat aman
     if a_meta.get('VERSION'):
         metadata['title'] += f' ({a_meta["VERSION"]})'
-    metadata['album'] = a_meta['ALB_TITLE']
+    metadata['album'] = a_meta.get('ALB_TITLE', 'Unknown Album') # Dibuat aman
     metadata['artist'] = get_artists_name(a_meta)
-    metadata['date'] = a_meta['DIGITAL_RELEASE_DATE']
-    metadata['totaltracks'] = a_meta['NUMBER_TRACK'] 
-    metadata['duration'] = a_meta['DURATION']
-    metadata['copyright'] = a_meta['COPYRIGHT']
+    metadata['date'] = a_meta.get('DIGITAL_RELEASE_DATE', '') # Dibuat aman
+    metadata['totaltracks'] = a_meta.get('NUMBER_TRACK', '0') # Dibuat aman
+    
+    # --- MODIFIKASI: Gunakan .get() agar aman jika 'DURATION' tidak ada ---
+    metadata['duration'] = a_meta.get('DURATION', 0)
+    # --- BATAS MODIFIKASI ---
+    
+    metadata['copyright'] = a_meta.get('COPYRIGHT', '') # Dibuat aman
     metadata['explicit'] = a_meta.get('explicit_lyrics', False)
     
     album_genre_name = ''
@@ -114,27 +114,32 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
 
-    metadata['cover'] = await get_cover(a_meta['ALB_PICTURE'], metadata)
-    metadata['thumbnail'] = await get_cover(a_meta['ALB_PICTURE'], metadata, True)
+    metadata['cover'] = await get_cover(a_meta.get('ALB_PICTURE', ''), metadata) # Dibuat aman
+    metadata['thumbnail'] = await get_cover(a_meta.get('ALB_PICTURE', ''), metadata, True) # Dibuat aman
         
     metadata['tracks'] = []
     # Gunakan 't_meta' (dari get_album_tracks) untuk daftar lagu
     for track in t_meta['data']:
-        track_meta = await process_track_metadata(
-            track['SNG_ID'], 
-            r_id,
-            metadata['cover'], 
-            metadata['thumbnail'],
-            metadata['totaltracks'],
-            album_genre_name, 
-            metadata['totalvolume']
-        )
-        metadata['tracks'].append(track_meta)
+        try:
+            track_meta = await process_track_metadata(
+                track['SNG_ID'], 
+                r_id,
+                metadata['cover'], 
+                metadata['thumbnail'],
+                metadata['totaltracks'],
+                album_genre_name, 
+                metadata['totalvolume']
+            )
+            metadata['tracks'].append(track_meta)
+        except Exception as e:
+            LOGGER.warning(f"Gagal memproses metadata untuk track ID {track.get('SNG_ID')}: {e}")
+            continue # Lanjutkan ke lagu berikutnya
 
     if metadata['tracks']:
         metadata['quality'] = metadata['tracks'][0]['quality']
     else:
-        metadata['quality'] = "N/A"
+        # Jika tidak ada lagu yang berhasil diproses, lempar error
+        raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
     return metadata
 
