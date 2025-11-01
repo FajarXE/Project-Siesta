@@ -16,22 +16,22 @@ async def process_track_metadata(track_id, r_id, cover=None,
 
     # --- MODIFIKASI: Panggil KEDUA API ---
     
-    # Panggilan API 1: song.getData (untuk metadata kaya: Genre, Composer)
+    # Panggilan API 1: song.getData (untuk metadata kaya: Composer, dll)
     try:
+        # 'get_track_data' sekarang secara eksplisit meminta 'CONTRIBUTORS'
         raw_meta_data = await deezerapi.get_track_data(track_id)
         t_meta = raw_meta_data.get('FALLBACK', raw_meta_data)
     except Exception as e:
         LOGGER.warning(f"Deezer: song.getData gagal untuk {track_id}: {e}")
-        t_meta = {} # Buat dict kosong jika gagal
+        t_meta = {} 
 
-    # Panggilan API 2: deezer.pageTrack (untuk data ketersediaan, token, & fallback)
+    # Panggilan API 2: deezer.pageTrack (untuk data ketersediaan, token, & Genre)
     try:
         raw_meta_page = await deezerapi.get_track(track_id)
-        t_meta_page = raw_meta_page.get('DATA', {}) # Ambil wrapper 'DATA'
-        t_meta_page = t_meta_page.get('FALLBACK', t_meta_page) # Ambil fallback
+        t_meta_page = raw_meta_page.get('DATA', {}) 
+        t_meta_page = t_meta_page.get('FALLBACK', t_meta_page) 
     except Exception as e:
         LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
-        # Panggilan ini sangat penting, jika gagal, kita tidak bisa lanjut
         raise Exception(f"Deezer : Track not available (pageTrack API failed)")
     
     # --- BATAS MODIFIKASI ---
@@ -54,12 +54,9 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['duration'] = t_meta.get('DURATION', t_meta_page.get('DURATION', 0))
     
     try:
-        # Coba API 1 dulu
         explicit_data = t_meta.get('EXPLICIT_TRACK_CONTENT')
         if not explicit_data:
-            # Coba API 2
             explicit_data = t_meta_page.get('EXPLICIT_TRACK_CONTENT', {})
-        
         explicit_status = explicit_data.get('EXPLICIT_LYRICS_STATUS', 0)
         metadata['explicit'] = True if explicit_status == 1 else False
     except Exception:
@@ -70,17 +67,20 @@ async def process_track_metadata(track_id, r_id, cover=None,
         metadata['totaltracks'] = total_tracks
     metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', t_meta_page.get('PHYSICAL_RELEASE_DATE', ''))
 
-    # Ambil Genre & Composer dari API 1 (t_meta)
+    # --- MODIFIKASI: Perbaiki Logika Genre & Composer ---
+    
+    # 1. Ambil Genre dari 'album_genre' ATAU dari API 2 (t_meta_page)
     if album_genre:
         metadata['genre'] = album_genre
-    elif t_meta.get('GENRE_NAME'):
-         metadata['genre'] = t_meta['GENRE_NAME']
+    elif t_meta_page.get('GENRE_NAME'): # <-- DIPERBAIKI: Gunakan t_meta_page
+         metadata['genre'] = t_meta_page['GENRE_NAME']
          
     metadata['volume'] = str(t_meta.get('DISK_NUMBER', t_meta_page.get('DISK_NUMBER', '1')))
     if total_disks:
         metadata['totalvolume'] = str(total_disks)
     
-    if t_meta.get('CONTRIBUTORS'):
+    # 2. Ambil Composer dari API 1 (t_meta)
+    if t_meta.get('CONTRIBUTORS'): # <-- 'get_track_data' sekarang MENGIRIMKAN ini
         composers = []
         for contributor in t_meta['CONTRIBUTORS']:
             role_id = str(contributor.get('ROLE_ID'))
@@ -89,27 +89,23 @@ async def process_track_metadata(track_id, r_id, cover=None,
         if composers:
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
     
-    # Ambil Artis dari API 1 (t_meta)
+    # --- BATAS MODIFIKASI ---
+    
     metadata['artist'] = get_artists_name(t_meta)
     if not metadata['artist']:
-        # Fallback ke API 2 (t_meta_page)
         metadata['artist'] = get_artists_name(t_meta_page)
 
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'track'
     
-    # --- Ambil data penting dari API 2 (t_meta_page) ---
     cover_id = t_meta.get('ALB_PICTURE', t_meta_page.get('ALB_PICTURE', ''))
     metadata['cover'] = cover if cover else await get_cover(cover_id, metadata)
     metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(cover_id, metadata, True)
 
-    # Ini SANGAT PENTING
     metadata['token'] = t_meta_page['TRACK_TOKEN']
     metadata['token_expiry'] = t_meta_page['TRACK_TOKEN_EXPIRE']
     
-    # Kirim t_meta_page (dari API 2) ke get_quality
     metadata['quality'] = await get_quality(t_meta_page)
-    # --- BATAS MODIFIKASI PENTING ---
 
     return metadata
             
@@ -203,7 +199,6 @@ async def process_playlist_meta(raw_meta, r_id):
 
 def get_artists_name(meta:dict):
     artists = []
-    # Kunci 'ARTISTS' ada di kedua API (song.getData dan deezer.pageAlbum)
     if meta.get('ARTISTS'):
         for a in meta['ARTISTS']:
             artists.append(a['ART_NAME'])
@@ -222,12 +217,9 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
 
 
 async def get_quality(meta:dict):
-    # 'meta' yang dikirim ke sini SEKARANG adalah 't_meta_page'
-    # yang berisi 'AVAILABLE_COUNTRIES'
+    # 'meta' adalah 't_meta_page'
     format = 'FLAC'
     premium_formats = ['FLAC', 'MP3_320']
-    
-    # 'AVAILABLE_COUNTRIES' ada di 't_meta_page'
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
     
     if not countries:
@@ -243,7 +235,6 @@ async def get_quality(meta:dict):
                 break
         temp_f = None
         for f in formats_to_check:
-            # Kunci 'FILESIZE' juga ada di 't_meta_page'
             if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
                 temp_f = f
                 break
