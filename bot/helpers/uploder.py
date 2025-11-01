@@ -212,7 +212,7 @@ async def batch_telegram_upload(metadata, user):
         return
 
     # Perbarui pesan status sebelum memulai batch upload
-    await edit_message(user['bot_msg'], f"Mengunggah {len(tasks)} lagu secara paralel...")
+    await edit_message(user['bot_msg'], f"Mengunggah {len(tasks)} lagu secara paralel (dibatasi oleh MAX_WORKERS)...")
 
     # Buat Semaphore (Sama seperti di utils.py)
     semaphore = asyncio.Semaphore(Config.MAX_WORKERS)
