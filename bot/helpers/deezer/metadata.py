@@ -14,18 +14,13 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
 
-    # --- MODIFIKASI: Panggil KEDUA API ---
-    
-    # Panggilan API 1: song.getData (untuk metadata kaya: Composer, dll)
+    # --- Panggil KEDUA API ---
     try:
-        # 'get_track_data' sekarang secara eksplisit meminta 'CONTRIBUTORS'
         raw_meta_data = await deezerapi.get_track_data(track_id)
         t_meta = raw_meta_data.get('FALLBACK', raw_meta_data)
     except Exception as e:
         LOGGER.warning(f"Deezer: song.getData gagal untuk {track_id}: {e}")
         t_meta = {} 
-
-    # Panggilan API 2: deezer.pageTrack (untuk data ketersediaan, token, & Genre)
     try:
         raw_meta_page = await deezerapi.get_track(track_id)
         t_meta_page = raw_meta_page.get('DATA', {}) 
@@ -34,11 +29,10 @@ async def process_track_metadata(track_id, r_id, cover=None,
         LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
         raise Exception(f"Deezer : Track not available (pageTrack API failed)")
     
-    # --- BATAS MODIFIKASI ---
+    # --- BATAS PANGGILAN API ---
 
     metadata['itemid'] = track_id
     
-    # --- Isi Metadata (Prioritaskan API 1, fallback ke API 2) ---
     metadata['copyright'] = t_meta.get('COPYRIGHT', t_meta_page.get('COPYRIGHT', ''))
     metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
     metadata['album'] = t_meta.get('ALB_TITLE', t_meta_page.get('ALB_TITLE', ''))
@@ -67,30 +61,33 @@ async def process_track_metadata(track_id, r_id, cover=None,
         metadata['totaltracks'] = total_tracks
     metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', t_meta_page.get('PHYSICAL_RELEASE_DATE', ''))
 
-    # --- MODIFIKASI: Perbaiki Logika Genre & Composer ---
-    
-    # 1. Ambil Genre dari 'album_genre' ATAU dari API 2 (t_meta_page)
+    # --- TAMBAHKAN LOG DEBUG DI SINI ---
+    LOGGER.info(f"DEBUG: (Lagu: {metadata['title']}) Mencari 'GENRE_NAME' di API pageTrack. Ditemukan: {t_meta_page.get('GENRE_NAME')}")
+    LOGGER.info(f"DEBUG: (Lagu: {metadata['title']}) Mencari 'CONTRIBUTORS' di API song.getData. Ditemukan: {t_meta.get('CONTRIBUTORS') is not None}")
+    # --- BATAS LOG DEBUG ---
+
     if album_genre:
         metadata['genre'] = album_genre
-    elif t_meta_page.get('GENRE_NAME'): # <-- DIPERBAIKI: Gunakan t_meta_page
+    elif t_meta_page.get('GENRE_NAME'): 
          metadata['genre'] = t_meta_page['GENRE_NAME']
          
     metadata['volume'] = str(t_meta.get('DISK_NUMBER', t_meta_page.get('DISK_NUMBER', '1')))
     if total_disks:
         metadata['totalvolume'] = str(total_disks)
     
-    # 2. Ambil Composer dari API 1 (t_meta)
-    if t_meta.get('CONTRIBUTORS'): # <-- 'get_track_data' sekarang MENGIRIMKAN ini
+    if t_meta.get('CONTRIBUTORS'): 
         composers = []
         for contributor in t_meta['CONTRIBUTORS']:
             role_id = str(contributor.get('ROLE_ID'))
-            if role_id in ['1', '4', '5']: # Composer (1), Writer (4), Lyricist (5)
+            if role_id in ['1', '4', '5']: 
                 composers.append(contributor.get('ART_NAME'))
         if composers:
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
     
-    # --- BATAS MODIFIKASI ---
-    
+    # --- TAMBAHKAN LOG DEBUG FINAL ---
+    LOGGER.info(f"DEBUG: (Lagu: {metadata['title']}) Nilai final: Genre='{metadata.get('genre', '')}', Composer='{metadata.get('composer', '')}'")
+    # --- BATAS LOG DEBUG ---
+
     metadata['artist'] = get_artists_name(t_meta)
     if not metadata['artist']:
         metadata['artist'] = get_artists_name(t_meta_page)
@@ -111,7 +108,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
             
 
 async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
-    # (a_meta dari get_album, t_meta dari get_album_tracks)
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     metadata['itemid'] = album_id
@@ -217,7 +213,6 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
 
 
 async def get_quality(meta:dict):
-    # 'meta' adalah 't_meta_page'
     format = 'FLAC'
     premium_formats = ['FLAC', 'MP3_320']
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
