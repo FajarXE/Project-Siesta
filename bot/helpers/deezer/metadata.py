@@ -13,12 +13,8 @@ async def process_track_metadata(track_id, r_id, cover=None,
     thumbnail=None, total_tracks=None, album_genre=None, total_disks=None): 
     metadata = copy.deepcopy(base_meta)
 
-    # --- MODIFIKASI: Ganti ke get_track_data (song.getData) untuk data LENGKAP ---
-    # get_track (deezer.pageTrack) tidak mengembalikan genre/contributors
     raw_meta = await deezerapi.get_track_data(track_id)
-    # 'get_track_data' tidak memiliki 'DATA' wrapper, jadi kita langsung gunakan raw_meta
     t_meta = raw_meta.get('FALLBACK', raw_meta)
-    # --- BATAS MODIFIKASI ---
     
     metadata['tempfolder'] += f"{r_id}-temp/"
 
@@ -91,7 +87,11 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['itemid'] = album_id
 
     metadata['albumartist'] = a_meta['ART_NAME']
-    metadata['upc'] = a_meta['UPC']
+    
+    # --- MODIFIKASI: Gunakan .get() agar aman jika 'UPC' tidak ada ---
+    metadata['upc'] = a_meta.get('UPC', '')
+    # --- BATAS MODIFIKASI ---
+    
     metadata['title'] = a_meta['ALB_TITLE']
     if a_meta.get('VERSION'):
         metadata['title'] += f' ({a_meta["VERSION"]})'
@@ -118,6 +118,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['thumbnail'] = await get_cover(a_meta['ALB_PICTURE'], metadata, True)
         
     metadata['tracks'] = []
+    # Gunakan 't_meta' (dari get_album_tracks) untuk daftar lagu
     for track in t_meta['data']:
         track_meta = await process_track_metadata(
             track['SNG_ID'], 
@@ -141,9 +142,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
 
 async def process_playlist_meta(raw_meta, r_id):
     metadata = copy.deepcopy(base_meta)
-
     metadata['tempfolder'] += f"{r_id}-temp/"
-
     metadata['title'] = raw_meta['DATA']['TITLE']
     metadata['duration'] = raw_meta['DATA']['DURATION']
     metadata['totaltracks'] = raw_meta['DATA']['NB_SONG'] 
@@ -206,7 +205,6 @@ async def get_quality(meta:dict):
                 formats_to_check.pop(0)
             else:
                 break
-
         temp_f = None
         for f in formats_to_check:
             if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
@@ -215,7 +213,6 @@ async def get_quality(meta:dict):
         if temp_f is None:
             temp_f = 'MP3_128'
         format = temp_f
-
         if format not in deezerapi.available_formats:
             raise Exception("Deezer : Format not available by your subscription")
 
