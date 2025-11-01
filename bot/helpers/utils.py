@@ -212,7 +212,8 @@ def split_zip_folder(folderpath) -> list:
         else:
             zip_path = f"{zip_name}.part{part_num}.zip"
 
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # --- MODIFIKASI: Diubah ke ZIP_STORED agar lebih cepat ---
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
             for file_path, arcname in files_to_add:
                 zipf.write(file_path, arcname)
                 os.remove(file_path)  # Delete the file after zipping
@@ -248,7 +249,8 @@ def zip_folder(folderpath) -> str:
     """
     zip_path = f"{folderpath}.zip"
     
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    # --- MODIFIKASI: Diubah ke ZIP_STORED agar lebih cepat ---
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
         for root, dirs, files in os.walk(folderpath):
             for file in files:
                 file_path = os.path.join(root, file)
@@ -443,3 +445,4 @@ def fetch_zip_settings(users: typing.Dict) -> typing.Union[bool, bool, bool]:
     album_zip = user_dict.get("album_zip", bot_set.album_zip)
     #logging.info((user_dict))
     return playlist_zip, art_poster, album_zip
+
