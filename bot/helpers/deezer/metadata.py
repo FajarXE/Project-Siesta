@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/deezer/metadata.py] (VERSI BERSIH)
+# [GANTI FILE: bot/helpers/deezer/metadata.py]
 
 import copy
 from datetime import datetime
@@ -110,7 +110,10 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     if a_meta.get('VERSION'):
         metadata['title'] += f' ({a_meta["VERSION"]})'
     metadata['album'] = a_meta.get('ALB_TITLE', 'Unknown Album')
-    metadata['artist'] = get_artists_name(a_meta)
+    
+    # PANGGILAN INI SEKARANG AKAN BERHASIL KARENA FUNGSI get_artists_name SUDAH DIPERBAIKI
+    metadata['artist'] = get_artists_name(a_meta) 
+    
     metadata['date'] = a_meta.get('DIGITAL_RELEASE_DATE', '')
     metadata['totaltracks'] = a_meta.get('NUMBER_TRACK', '0')
     metadata['duration'] = a_meta.get('DURATION', 0)
@@ -168,6 +171,11 @@ async def process_playlist_meta(raw_meta, r_id):
     metadata['cover'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata)
     metadata['thumbnail'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata, True)
     
+    # --- MODIFIKASI: Tambahkan Creator sebagai 'artist' untuk playlist ---
+    if raw_meta['DATA'].get('CREATOR') and raw_meta['DATA']['CREATOR'].get('NAME'):
+        metadata['artist'] = raw_meta['DATA']['CREATOR']['NAME']
+    # --- BATAS MODIFIKASI ---
+
     for track in raw_meta['SONGS']['data']:
         try:
             track_meta = await process_track_metadata(
@@ -186,12 +194,24 @@ async def process_playlist_meta(raw_meta, r_id):
 
     return metadata
 
+# --- MODIFIKASI DI SINI ---
 def get_artists_name(meta:dict):
+    """
+    Mengambil daftar artis.
+    Bekerja dengan metadata lagu (yang memiliki 'ARTISTS')
+    dan metadata album (yang hanya memiliki 'ART_NAME').
+    """
     artists = []
     if meta.get('ARTISTS'):
+        # Jika ini adalah metadata lagu, ambil daftar artis
         for a in meta['ARTISTS']:
             artists.append(a['ART_NAME'])
-    return ', '.join([str(artist) for artist in artists])
+    elif meta.get('ART_NAME'):
+        # Jika ini adalah metadata album, gunakan 'ART_NAME' sebagai fallback
+        artists.append(meta.get('ART_NAME'))
+        
+    return ', '.join([str(artist) for artist in artists if artist])
+# --- BATAS MODIFIKASI ---
 
 
 async def get_cover(cover_id, meta:dict, thumbnail=False):
