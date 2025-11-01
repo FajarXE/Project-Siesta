@@ -179,13 +179,14 @@ class DeezerAPI:
         return res
 
     async def get_track_data(self, id):
-        # --- MODIFIKASI: Minta 'CONTRIBUTORS' secara eksplisit ---
+        # --- INI ADALAH PERBAIKAN YANG HILANG ---
+        # Meminta 'CONTRIBUTORS' secara eksplisit
         payload = {
             'sng_id': id,
             'array_default': ['CONTRIBUTORS']
         }
         res = await self._api_call('song.getData', payload)
-        # --- BATAS MODIFIKASI ---
+        # --- BATAS PERBAIKAN ---
         return res
 
     async def get_track_url(self, id, track_token, track_token_expiry, format):
