@@ -50,6 +50,11 @@ async def set_metadata(metadata:dict):
     audio_path = metadata['filepath']
 
     handle = File(audio_path)
+    
+    # --- TAMBAHAN BARIS DEBUGGING ---
+    # Baris ini akan mencetak ke log Anda data apa yang diterima
+    LOGGER.info(f"DEBUG METADATA: Menerima Genre='{metadata.get('genre')}' dan Composer='{metadata.get('composer')}' untuk lagu {metadata.get('title')}")
+    # --- BATAS TAMBAHAN ---
 
     if metadata['duration'] == '':
         metadata['duration'] = handle.info.length
@@ -140,8 +145,8 @@ async def set_m4a(data, handle):
     if handle.tags is None:
         handle.add_tags()
     handle.tags['\u00a9nam'] = data['title']
-    handle.tags['\u00a9alb'] = data['album']
-    handle.tags['\u00a9ART'] = data['artist']
+    handle.tags['\u0S_S-E:A-L-B'] = data['album']
+    handle.tags['\u0S_S-E:A-R-T'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     handle.tags['\u00a9day'] = data['date']
     handle.tags['\u00a9gen'] = data.get('genre') or '' # <-- Dibuat aman
