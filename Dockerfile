@@ -43,14 +43,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN git submodule update --init --recursive
+
+WORKDIR /usr/src/app/bot/modules/OrpheusDL
 RUN git submodule update --init --recursive && \
     # Clean up git to reduce image size
     apt-get remove -y git && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usr/src/app/bot/modules/OrpheusDL
-RUN git submodule update --init --recursive
 
 WORKDIR /usr/src/app
 ENTRYPOINT ["python", "-m", "bot"]
