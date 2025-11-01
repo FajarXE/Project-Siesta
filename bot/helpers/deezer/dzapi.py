@@ -179,7 +179,13 @@ class DeezerAPI:
         return res
 
     async def get_track_data(self, id):
-        res = await self._api_call('song.getData', {'sng_id': id})
+        # --- MODIFIKASI: Minta 'CONTRIBUTORS' secara eksplisit ---
+        payload = {
+            'sng_id': id,
+            'array_default': ['CONTRIBUTORS']
+        }
+        res = await self._api_call('song.getData', payload)
+        # --- BATAS MODIFIKASI ---
         return res
 
     async def get_track_url(self, id, track_token, track_token_expiry, format):
@@ -201,10 +207,6 @@ class DeezerAPI:
 
 
     async def get_album(self, id):
-        """
-        Mengambil metadata album LENGKAP (Genre, UPC, dll)
-        TAPI TIDAK MENGAMBIL DAFTAR LAGU (SONGS).
-        """
         try:
             res = await self._api_call('album.getData', {'alb_id': id, 'lang': self.language})
         except APIError as e:
@@ -218,14 +220,9 @@ class DeezerAPI:
                     res = await self._api_call('album.getData', {'alb_id': e_fallback.payload['FALLBACK']['ALB_ID'], 'lang': self.language})
                 else:
                     raise e_fallback
-        return res # Mengembalikan metadata album
+        return res 
 
-    # --- MODIFIKASI: TAMBAHKAN FUNGSI BARU INI ---
     async def get_album_tracks(self, id):
-        """
-        Secara terpisah mengambil daftar lagu (SONGS) untuk sebuah album.
-        API call ini (deezer.pageAlbum) MENGAMBIL DAFTAR LAGU.
-        """
         try:
             res = await self._api_call('deezer.pageAlbum', {'alb_id': id, 'lang': self.language})
         except APIError as e:
@@ -234,9 +231,8 @@ class DeezerAPI:
                 res = await self._api_call('deezer.pageAlbum', {'alb_id': e.payload['FALLBACK']['ALB_ID'], 'lang': self.language})
             else:
                 raise e
-        return res # Mengembalikan {'DATA': ..., 'SONGS': ...}
-    # --- BATAS MODIFIKASI ---
-
+        return res 
+    
     async def get_artist_album_ids(self, id, start, nb, credited_albums):
         payload = {
             'art_id': id, 'start': start, 'nb': nb,
