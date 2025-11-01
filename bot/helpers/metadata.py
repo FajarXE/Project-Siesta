@@ -144,7 +144,7 @@ async def set_m4a(data, handle):
     if handle.tags is None:
         handle.add_tags()
         
-    # --- MODIFIKASI: Memperbaiki TYPO ---
+    # --- INI ADALAH PERBAIKAN DARI ERROR SEBELUMNYA ---
     handle.tags['\u00a9nam'] = data['title']
     handle.tags['\u00a9alb'] = data['album']  # <-- DIPERBAIKI
     handle.tags['\u00a9ART'] = data['artist'] # <-- DIPERBAIKI
@@ -229,4 +229,3 @@ async def create_cover_file(url:dict, meta:dict, thumbnail=False):
         return cover
     else:
         return './project-siesta.png'
-
