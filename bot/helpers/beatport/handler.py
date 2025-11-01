@@ -80,7 +80,7 @@ class OrpheusDLHandler:
 
             LOGGER.info("OrpheusDL download completed successfully, processing files...")
             
-            # Process and upload files
+            # Process and upload files - THIS MUST COMPLETE BEFORE CLEANUP
             await self._process_downloaded_files(user_temp_dir, user, url)
             
             LOGGER.info(f"File processing and upload completed for user {user_id}")
@@ -92,8 +92,9 @@ class OrpheusDLHandler:
             return False
 
         finally:
-            # Always cleanup temp directory
+            # Cleanup temp directory ONLY AFTER UPLOAD COMPLETES
             if user_temp_dir and user_temp_dir.exists():
+                LOGGER.info(f"Starting cleanup of temp directory: {user_temp_dir}")
                 await self._safe_cleanup(user_temp_dir)
 
     def _create_user_temp_dir(self, user_id: str) -> Path:
@@ -217,7 +218,7 @@ class OrpheusDLHandler:
             raise
 
     async def _process_downloaded_files(self, temp_dir: Path, user: Dict, original_url: str):
-        """Process and upload downloaded files"""
+        """Process and upload downloaded files - THIS MUST COMPLETE BEFORE ANY CLEANUP"""
         user_id = user['r_id']
         LOGGER.info(f"Processing downloaded files for user {user_id} in {temp_dir}")
 
@@ -250,10 +251,10 @@ class OrpheusDLHandler:
         # Route to appropriate upload function
         if len(music_files) == 1:
             LOGGER.info("Single track detected, routing to track upload")
-            await self._upload_single_track(music_files[0], user)
+            await self._upload_single_track(music_files[0], user, temp_dir)
         else:
             LOGGER.info(f"Multiple tracks detected ({len(music_files)}), routing to album upload")
-            await self._upload_multiple_tracks(music_files, user)
+            await self._upload_multiple_tracks(music_files, user, temp_dir)
 
     async def _extract_metadata_from_file(self, file_path: Path, user: Dict) -> Dict:
         """Extract metadata from audio file"""
@@ -326,14 +327,21 @@ class OrpheusDLHandler:
                 'provider': 'Beatport'
             }
 
-    async def _upload_single_track(self, track_meta: Dict, user: Dict):
-        """Upload a single track"""
+    async def _upload_single_track(self, track_meta: Dict, user: Dict, temp_dir: Path):
+        """Upload a single track - ensure files exist during upload"""
         user_id = user['r_id']
         track_name = track_meta['title']
         
         LOGGER.info(f"Starting single track upload for user {user_id}: {track_name}")
         
         try:
+            # Verify file still exists before upload
+            file_path = Path(track_meta['filepath'])
+            if not file_path.exists():
+                LOGGER.error(f"File missing during upload: {file_path}")
+                await send_message(user, f"Error: File missing during upload - {track_name}")
+                return
+
             await edit_message(user['bot_msg'], f"Uploading: {track_name}")
             LOGGER.debug(f"Setting metadata for track: {track_name}")
             
@@ -347,12 +355,24 @@ class OrpheusDLHandler:
             LOGGER.error(f"Single track upload error for {track_name}: {traceback.format_exc()}")
             await send_message(user, f"Failed to upload {track_name}")
 
-    async def _upload_multiple_tracks(self, music_files: List[Dict], user: Dict):
-        """Upload multiple tracks as an album"""
+    async def _upload_multiple_tracks(self, music_files: List[Dict], user: Dict, temp_dir: Path):
+        """Upload multiple tracks as an album - ensure files exist during upload"""
         user_id = user['r_id']
         LOGGER.info(f"Starting multiple tracks upload for user {user_id}. Total tracks: {len(music_files)}")
         
         try:
+            # Verify all files still exist before starting album upload
+            missing_files = []
+            for track in music_files:
+                file_path = Path(track['filepath'])
+                if not file_path.exists():
+                    missing_files.append(file_path.name)
+                    LOGGER.error(f"File missing during album upload: {file_path}")
+
+            if missing_files:
+                await send_message(user, f"Error: {len(missing_files)} files missing during album upload")
+                return
+
             # Group by album
             albums = {}
             for track in music_files:
@@ -379,7 +399,7 @@ class OrpheusDLHandler:
 
                 if len(tracks) == 1:
                     LOGGER.info(f"Single track in album {album_name}, using single track upload")
-                    await self._upload_single_track(tracks[0], user)
+                    await self._upload_single_track(tracks[0], user, temp_dir)
                 else:
                     LOGGER.info(f"Uploading album {album_name} with {len(tracks)} tracks")
                     album_meta = {
@@ -402,7 +422,7 @@ class OrpheusDLHandler:
             await send_message(user, f"Album upload failed: {str(e)}")
 
     async def _safe_cleanup(self, temp_dir: Path):
-        """Safely cleanup temporary directory"""
+        """Safely cleanup temporary directory - ONLY CALLED AFTER UPLOAD COMPLETES"""
         try:
             if temp_dir.exists():
                 LOGGER.info(f"Starting cleanup of temp directory: {temp_dir}")
@@ -445,20 +465,30 @@ async def cleanup_old_downloads():
             return
 
         cleaned_count = 0
+        current_time = asyncio.get_event_loop().time() * 1000
+        
         for item in temp_dir.iterdir():
             if item.is_dir():
                 try:
                     # Extract timestamp from directory name
-                    timestamp = int(item.name.split('_')[-1])
-                    current_time = asyncio.get_event_loop().time() * 1000
-                    if current_time - timestamp > 3600000:  # 1 hour
-                        LOGGER.info(f"Cleaning up old directory: {item.name}")
-                        shutil.rmtree(item, ignore_errors=True)
-                        cleaned_count += 1
-                except (ValueError, IndexError):
+                    parts = item.name.split('_')
+                    if len(parts) >= 2:
+                        timestamp = int(parts[-1])
+                        if current_time - timestamp > 3600000:  # 1 hour
+                            LOGGER.info(f"Cleaning up old directory: {item.name}")
+                            shutil.rmtree(item, ignore_errors=True)
+                            cleaned_count += 1
+                    else:
+                        # If we can't parse, delete if older than 2 hours by modification time
+                        if item.stat().st_mtime < (time.time() - 7200):
+                            LOGGER.info(f"Cleaning up directory with invalid name (old mtime): {item.name}")
+                            shutil.rmtree(item, ignore_errors=True)
+                            cleaned_count += 1
+                except (ValueError, IndexError) as e:
+                    LOGGER.warning(f"Error parsing directory name {item.name}: {e}")
                     # If we can't parse, delete if older than 2 hours by modification time
                     if item.stat().st_mtime < (time.time() - 7200):
-                        LOGGER.info(f"Cleaning up directory with invalid name (old mtime): {item.name}")
+                        LOGGER.info(f"Cleaning up directory with parsing error (old mtime): {item.name}")
                         shutil.rmtree(item, ignore_errors=True)
                         cleaned_count += 1
 
