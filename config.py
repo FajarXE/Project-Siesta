@@ -63,6 +63,17 @@ class Config:
     DOWNLOADS_FOLDER = getenv("DOWNLOADS_FOLDER", "DOWNLOADS")
     DOWNLOAD_BASE_DIR = WORK_DIR + DOWNLOADS_FOLDER
     LOCAL_STORAGE = getenv("LOCAL_STORAGE", DOWNLOAD_BASE_DIR)
+
+#--------------------
+
+# PYROGRAM SESSION CONFIGURATION
+
+#--------------------
+    # Session configuration to prevent AUTH_KEY_DUPLICATED
+    SESSION_NAME = getenv("SESSION_NAME", "siesta")
+    SESSION_DIR = getenv("SESSION_DIR", "/data/sessions")
+    # Full session path will be os.path.join(SESSION_DIR, SESSION_NAME)
+
 #--------------------
 
 # FILE/FOLDER NAMING
