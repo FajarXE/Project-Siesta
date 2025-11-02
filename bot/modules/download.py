@@ -12,7 +12,7 @@ from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
 from ..helpers.message import send_message, antiSpam, check_user, fetch_user_details
-from ..helpers.beatport.handler import start_orpheusdl_beatport
+from ..helpers.beatport.handler import start_beatport
 
 @Client.on_message(filters.command(CMD.DOWNLOAD))
 async def download_track(c, msg:Message):
@@ -63,4 +63,5 @@ async def start_link(link: str, user: dict) -> None:
         await send_message(user, lang.s.ERR_SPOTIFY_UNSUPPORTED)
         user['provider'] = 'Spotify'
     elif link.startswith(tuple(beatport)):
-        await start_orpheusdl_beatport(link, user)
+        await start_beatport(link, user)
+        user["provider"] = "Beatport"

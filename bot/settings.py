@@ -15,6 +15,7 @@ from .helpers.qobuz.qopy import qobuz_api
 from .helpers.deezer.dzapi import deezerapi
 from .helpers.tidal.tidal_api import tidalapi
 from .helpers.translations import lang_available
+from .helpers.beatport.handler import beatport_login
 
 
 def __encrypt_string__(string):
@@ -208,5 +209,7 @@ class BotSettings:
         if self.tidal:
             self.tidal.user_data = user_data
         self.user_data = user_data
+    async def beatport_login(self):
+        await beatport_handler.beatport_login()
 
 bot_set = BotSettings()
