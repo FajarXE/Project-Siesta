@@ -46,7 +46,7 @@ async def start_beatport(url:str, user:dict):
             original_settings = json.load(f)
         
         user_settings = original_settings.copy()
-        user_settings["global"]["general"]["download_path"] = str(user_config_temp)
+        user_settings["global"]["general"]["download_path"] = str(user_temp_dir)
         
         # with open(user_temp_config_path, "w") as f:
         #         json.dump(user_settings, f, indent=4)
