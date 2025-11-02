@@ -74,7 +74,9 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
         metadata['composer'] = q_meta['composer'].get('name', '')
     # --- BATAS PERBAIKAN ---
 
-    metadata['cover'] = await create_cover_file(q_meta['album']['image']['large'], metadata)
+    # --- PERBAIKAN: Mengubah Kualitas Sampul ---
+    metadata['cover'] = await create_cover_file(q_meta['album']['image']['original'], metadata)
+    # --- BATAS PERBAIKAN ---
     metadata['thumbnail'] = await create_cover_file(q_meta['album']['image']['thumbnail'], metadata, True)
 
     return metadata, None  
@@ -110,7 +112,9 @@ async def get_album_metadata(item_id, r_id, user: dict):
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'album'
 
-    metadata['cover'] = await create_cover_file(q_meta['image']['large'], metadata)
+    # --- PERBAIKAN: Mengubah Kualitas Sampul ---
+    metadata['cover'] = await create_cover_file(q_meta['image']['original'], metadata)
+    # --- BATAS PERBAIKAN ---
     metadata['thumbnail'] = await create_cover_file(q_meta['image']['thumbnail'], metadata, True)
 
     metadata['tracks'] = await get_track_meta_from_alb(q_meta, metadata) 
