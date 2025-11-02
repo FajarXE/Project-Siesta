@@ -19,7 +19,6 @@ from mutagen.mp4 import MP4
 
 from config import Config
 from bot.logger import LOGGER
-from ..uploder import track_upload, album_upload
 from ..metadata import set_metadata
 
 current_directory = Path(__file__).resolve().parent
@@ -227,6 +226,7 @@ async def process_downloaded_files(download_dir: Path, user_id: str, user: dict)
         raise Exception("No music files were downloaded")
     
     elif music_files_number == 1:
+        from ..uploder import track_upload
         # Single track - extract metadata including duration
         file_path = music_files[0]
         metadata = get_audio_metadata(file_path)
@@ -245,6 +245,8 @@ async def process_downloaded_files(download_dir: Path, user_id: str, user: dict)
         LOGGER.info(f"Uploaded single track for user {user_id}")
         
     else:
+        from ..uploder import album_upload
+
         # Album or multiple tracks
         # Find the common parent directory for all files
         common_parent = find_common_parent(music_files)
