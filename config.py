@@ -15,16 +15,40 @@ class Config:
 #--------------------
     try:
         TG_BOT_TOKEN = getenv("TG_BOT_TOKEN")
-        APP_ID = int(getenv("APP_ID"))
+        if not TG_BOT_TOKEN or TG_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+            raise ValueError("TG_BOT_TOKEN is not set in .env file. Get it from @BotFather on Telegram.")
+
+        APP_ID = getenv("APP_ID")
+        if not APP_ID or APP_ID == "YOUR_APP_ID_HERE":
+            raise ValueError("APP_ID is not set in .env file. Get it from https://my.telegram.org/apps")
+        APP_ID = int(APP_ID)
+
         API_HASH = getenv("API_HASH")
+        if not API_HASH or API_HASH == "YOUR_API_HASH_HERE":
+            raise ValueError("API_HASH is not set in .env file. Get it from https://my.telegram.org/apps")
+
         DATABASE_URL = getenv("DATABASE_URL")
-        BOT_USERNAME = getenv("BOT_USERNAME").lstrip("@")
-        ADMINS = set(int(x) for x in getenv("ADMINS").split())
+        if not DATABASE_URL:
+            raise ValueError("DATABASE_URL is not set in .env file. Example: mongodb://localhost:27017/projectsiesta")
+
+        BOT_USERNAME = getenv("BOT_USERNAME")
+        if not BOT_USERNAME or BOT_USERNAME == "YOUR_BOT_USERNAME_HERE":
+            raise ValueError("BOT_USERNAME is not set in .env file.")
+        BOT_USERNAME = BOT_USERNAME.lstrip("@")
+
+        ADMINS_STR = getenv("ADMINS")
+        if not ADMINS_STR or ADMINS_STR == "YOUR_TELEGRAM_USER_ID_HERE":
+            raise ValueError("ADMINS is not set in .env file. Add your Telegram User ID.")
+        ADMINS = set(int(x) for x in ADMINS_STR.split())
+
         PORT = getenv("PORT", "0")
         if PORT.isdigit():
             PORT = int(PORT)
+    except ValueError as e:
+        logging.error(f"\n{'='*60}\nCONFIGURATION ERROR\n{'='*60}\n{e}\n\nPlease check your .env file and ensure all required values are set.\nSee SETUP_GUIDE.md for detailed instructions.\n{'='*60}")
+        sys.exit(1)
     except Exception as e:
-        logging.warning(f"BOT : Essential Configs are missing -> {e}")
+        logging.error(f"\n{'='*60}\nCONFIGURATION ERROR\n{'='*60}\nBOT : Essential Configs are missing or invalid -> {e}\n\nPlease check your .env file and ensure all required values are set.\nSee SETUP_GUIDE.md for detailed instructions.\n{'='*60}")
         sys.exit(1)
 
 
