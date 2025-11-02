@@ -55,7 +55,7 @@ async def start_beatport(url:str, user:dict):
             global user_temp_config
             global user_temp_config_path
             user_temp_config = f"{user_id}_settings.json"
-            user_temp_config_path = os.path.join(tempdir, user_temp_config)
+            user_temp_config_path = os.path.join(tmpdir, user_temp_config)
 
             with open(user_temp_config_path, "w") as f:
                 json.dump(user_settings, f, indent=4)
