@@ -36,7 +36,9 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
             upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
             async with session.get(upc_url) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
+                    # --- PERBAIKAN: Izinkan mimetype text/javascript ---
+                    data = await resp.json(content_type=None)
+                    # --- BATAS PERBAIKAN ---
                     if data.get('resultCount', 0) > 0:
                         artwork_url = data['results'][0].get('artworkUrl100')
                         if artwork_url:
@@ -49,7 +51,9 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
             search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
             async with session.get(search_url) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
+                    # --- PERBAIKAN: Izinkan mimetype text/javascript ---
+                    data = await resp.json(content_type=None)
+                    # --- BATAS PERBAIKAN ---
                     if data.get('resultCount', 0) > 0:
                         # Iterasi hasil untuk menemukan kecocokan terbaik
                         for result in data['results']:
