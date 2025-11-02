@@ -51,4 +51,6 @@ RUN pip install -r requirements.txt && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
+RUN rm -f *.session && \
+    rm -f /tmp/*.session
 ENTRYPOINT ["python", "-m", "bot"]
