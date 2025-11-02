@@ -18,8 +18,8 @@ from ..uploder import track_upload, album_upload
 from ..metadata import set_metadata
 
 current_directory = Path(__file__).resolve().parent
-orpheusdl_dir = Path(__file__).resolve().parent.parent / "OrpheusDL"
-orpheusdl_config_path = orpheusdl_dir / "config" / "settings.json"
+orpheus_dir = Path(__file__).resolve().parent.parent / "OrpheusDL"
+orpheusdl_config_path = orpheus_dir / "config" / "settings.json"
 orpheusdl_dir = orpheusdl_dir / "Download"
 
 def beatport_login():
@@ -60,7 +60,7 @@ async def start_beatport(url:str, user:dict):
             with open(user_temp_config_path, "w") as f:
                 json.dump(user_settings, f, indent=4)
             
-            os.chdir(orpheusdl_dir)
+            os.chdir(orpheus_dir)
             os.symlink(orpheusdl_config_path, user_temp_config_path)
             LOGGER.info(f"created user config symlink for {user_id}")
         
