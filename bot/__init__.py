@@ -7,9 +7,14 @@ plugins = dict(
     root="bot/modules"
 )
 
+# Note: previously this module started gunicorn on import. That caused a
+# side-effect where importing the `bot` package (for example by
+# `python -m bot`) spawned a separate process which could import the
+# project again and lead to multiple Pyrogram clients using the same
+# session file simultaneously (AuthKeyDuplicated). Avoid spawning
+# background processes on import. Start web server explicitly from
+# a dedicated entrypoint (start.sh / docker command) if needed.
 PORT = int(os.getenv("PORT", "0"))
-
-subprocess.Popen([f"gunicorn server:app --bind 0.0.0.0:{PORT} --worker-class gevent"], shell=True)
 
 class CMD(object):
     START = ["start"]
