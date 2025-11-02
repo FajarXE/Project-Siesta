@@ -19,7 +19,6 @@ from mutagen.mp4 import MP4
 
 from config import Config
 from bot.logger import LOGGER
-from bot.helpers.message import send_message, edit_message
 from ..uploder import track_upload, album_upload
 from ..metadata import set_metadata
 
@@ -29,6 +28,19 @@ orpheusdl_main_config_path = orpheusdl_main_dir / "config" / "settings.json"
 
 # Thread-safe lock for creating user instances
 instance_lock = Lock()
+
+def beatport_login():
+    with open(orpheusdl_config_path, "r") as f:
+        config = json.load(f)
+    config["modules"]["beatport"]["username"] = Config.BEATPORT_USERNAME
+    config["modules"]["beatport"]["password"] = Config.BEATPORT_PASSWORD
+    with open(orpheusdl_config_path, "w") as f:
+        json.dump(config, f, indent=4)
+    
+    album_meta = {}
+    track_meta = {}
+    LOGGER.info("created album_meta and track_meta dictionaries")
+
 
 async def start_beatport(url: str, user: dict):
     user_id = user['r_id']
