@@ -3,6 +3,10 @@ import re
 import copy
 import bot.helpers.translations as lang
 import logging
+# --- PERBAIKAN: Impor aiohttp dan urllib untuk pencarian sampul iTunes ---
+import aiohttp
+import urllib.parse
+# --- BATAS PERBAIKAN ---
 
 from ..message import send_message, edit_message
 from ..utils import format_string
@@ -19,6 +23,55 @@ except ImportError:
     class QobuzContentUnavailableError(Exception):
         pass
 # --- BATAS MODIFIKASI ---
+
+
+# --- FUNGSI BARU: Pencarian Sampul iTunes ---
+async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
+    """
+    Mencoba mengambil URL sampul 3000x3000 dari iTunes menggunakan UPC atau pencarian Teks.
+    """
+    try:
+        # 1. Coba cari via UPC (Paling Akurat)
+        if metadata.get('upc') and metadata['upc'] != "0":
+            upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
+            async with session.get(upc_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get('resultCount', 0) > 0:
+                        artwork_url = data['results'][0].get('artworkUrl100')
+                        if artwork_url:
+                            # Mengganti ke 3000x3000 (atau resolusi tertinggi)
+                            return artwork_url.replace('100x100bb.jpg', '3000x3000bb.jpg')
+
+        # 2. Jika UPC gagal, coba cari via Teks (Album Artist + Album Title)
+        if metadata.get('albumartist') and metadata.get('album'):
+            search_term = urllib.parse.quote(f"{metadata['albumartist']} {metadata['album']}")
+            search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
+            async with session.get(search_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get('resultCount', 0) > 0:
+                        # Iterasi hasil untuk menemukan kecocokan terbaik
+                        for result in data['results']:
+                            itunes_album = result.get('collectionName', '').lower()
+                            itunes_artist = result.get('artistName', '').lower()
+                            local_album = metadata['album'].lower()
+                            local_artist = metadata['albumartist'].lower()
+                            
+                            # Cek kecocokan yang kuat
+                            if (local_album in itunes_album or itunes_album in local_album) and \
+                               (local_artist in itunes_artist):
+                                artwork_url = result.get('artworkUrl100')
+                                if artwork_url:
+                                    return artwork_url.replace('100x100bb.jpg', '3000x3000bb.jpg')
+
+    except Exception as e:
+        # Jangan crash jika pencarian iTunes gagal, cukup log
+        logging.warning(f"Pencarian sampul iTunes gagal untuk UPC {metadata.get('upc')}: {e}")
+        return None
+    
+    return None
+# --- BATAS FUNGSI BARU ---
 
 
 async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
@@ -59,24 +112,30 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     metadata['date'] = q_meta['release_date_original']
     metadata['totaltracks'] = q_meta['album']['tracks_count']
 
-    # --- PERBAIKAN: Menambahkan Genre ---
     if q_meta.get('album') and q_meta['album'].get('genre'):
          metadata['genre'] = q_meta['album']['genre'].get('name', '')
-    # --- BATAS PERBAIKAN ---
 
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'track'
 
-    # --- PERBAIKAN: Menambahkan metadata Disk dan Composer ---
     metadata['volume'] = q_meta.get('media_number', '')
     metadata['totalvolume'] = q_meta['album'].get('media_count', '')
     if q_meta.get('composer'):
         metadata['composer'] = q_meta['composer'].get('name', '')
-    # --- BATAS PERBAIKAN ---
 
-    # --- PERBAIKAN: Mengubah Kualitas Sampul ---
-    metadata['cover'] = await create_cover_file(q_meta['album']['image']['original'], metadata)
+    # --- PERBAIKAN: Prioritaskan sampul iTunes 3000x3000 ---
+    qobuz_fallback_url = q_meta['album']['image'].get('original', q_meta['album']['image'].get('large'))
+    high_res_url = None
+    try:
+        async with aiohttp.ClientSession() as session:
+            high_res_url = await get_itunes_cover_url(metadata, session)
+    except Exception as e:
+        logging.warning(f"Gagal memulai sesi aiohttp untuk sampul iTunes: {e}")
+
+    cover_url = high_res_url if high_res_url else qobuz_fallback_url
+    metadata['cover'] = await create_cover_file(cover_url, metadata)
     # --- BATAS PERBAIKAN ---
+    
     metadata['thumbnail'] = await create_cover_file(q_meta['album']['image']['thumbnail'], metadata, True)
 
     return metadata, None  
@@ -104,17 +163,25 @@ async def get_album_metadata(item_id, r_id, user: dict):
     metadata['copyright'] = q_meta['copyright']
     metadata['genre'] = q_meta['genre']['name']
     
-    # --- PERBAIKAN: Menambahkan total disk (volume) ---
     metadata['totalvolume'] = q_meta.get('media_count', '')
-    # --- BATAS PERBAIKAN ---
     
     metadata['explicit'] = q_meta['parental_warning']
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'album'
 
-    # --- PERBAIKAN: Mengubah Kualitas Sampul ---
-    metadata['cover'] = await create_cover_file(q_meta['image']['original'], metadata)
+    # --- PERBAIKAN: Prioritaskan sampul iTunes 3000x3000 ---
+    qobuz_fallback_url = q_meta['image'].get('original', q_meta['image'].get('large'))
+    high_res_url = None
+    try:
+        async with aiohttp.ClientSession() as session:
+            high_res_url = await get_itunes_cover_url(metadata, session)
+    except Exception as e:
+        logging.warning(f"Gagal memulai sesi aiohttp untuk sampul iTunes: {e}")
+
+    cover_url = high_res_url if high_res_url else qobuz_fallback_url
+    metadata['cover'] = await create_cover_file(cover_url, metadata)
     # --- BATAS PERBAIKAN ---
+    
     metadata['thumbnail'] = await create_cover_file(q_meta['image']['thumbnail'], metadata, True)
 
     metadata['tracks'] = await get_track_meta_from_alb(q_meta, metadata) 
@@ -135,11 +202,9 @@ async def get_track_meta_from_alb(q_meta:dict, alb_meta):
         metadata['isrc'] = track['isrc']
         metadata['tracknumber'] = track['track_number']
 
-        # --- PERBAIKAN: Menambahkan nomor disk dan composer ---
         metadata['volume'] = track.get('media_number', '')
         if track.get('composer'):
             metadata['composer'] = track['composer'].get('name', '')
-        # --- BATAS PERBAIKAN ---
 
         metadata['tracks'] = ''
         metadata['type'] = 'track'
@@ -152,13 +217,10 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
     metadata['tempfolder'] += f"{r_id}-temp/"
 
-    # --- PERBAIKAN: Mengakses data dari objek Playlist (j) yang benar ---
     metadata['title'] = raw_meta['name']
     metadata['duration'] = raw_meta['duration']
-    # 'tracks' (sub-objek) berisi 'total'
     metadata['totaltracks'] = raw_meta['tracks']['total'] 
     metadata['itemid'] = raw_meta['id']
-    # --- BATAS PERBAIKAN ---
     
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Qobuz'
@@ -175,9 +237,7 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
 async def get_artist_meta(artist_raw):
     metadata = copy.deepcopy(base_meta)
-    # --- PERBAIKAN: Mengakses 'name' dari objek artist penuh ---
     metadata['title'] = artist_raw['name']
-    # --- BATAS PERBAIKAN ---
     metadata['type'] = 'artist'
     metadata['provider'] = 'Qobuz'
     return metadata
@@ -235,18 +295,15 @@ async def check_type(url, user: dict):
         
         if type_dict["multi_type"]:
             
-            # --- PERBAIKAN: Gunakan 'total' sebagai Kunci Hitungan (Key) ---
             if url_type == "playlist":
                 epoint = "playlist/get"
-                key = "total" # <- BUKAN 'tracks_count'
+                key = "total"
             elif url_type in ["artist", "label", "interpreter"]:
                 epoint = f"{url_type}/get"
-                key = "total" # <- BUKAN 'albums_count'
+                key = "total"
             else:
                 raise Exception("Tipe multi-meta tidak terdefinisi.")
-            # --- BATAS PERBAIKAN ---
 
-            # multi_meta sekarang mengembalikan 'j' (objek penuh)
             res_iterator = client.multi_meta(epoint, key, item_id, type_dict["multi_type"])
             
             async for data in res_iterator:
@@ -265,20 +322,13 @@ async def check_type(url, user: dict):
                     skip_extras=True,
                 )
             else:
-                # --- PERBAIKAN: Ekstrak 'items' dari 'j' (objek penuh) ---
-                # content[0] adalah 'j' (objek penuh)
-                # type_dict["iterable_key"] adalah "tracks" atau "albums"
-                
-                # Pastikan iterable_key ada di respons
                 if type_dict["iterable_key"] not in content[0]:
                      raise QobuzContentUnavailableError(f"Respons Qobuz tidak memiliki '{type_dict['iterable_key']}'")
                 
-                # Akses items
                 if 'items' in content[0][type_dict["iterable_key"]]:
                     items = content[0][type_dict["iterable_key"]]['items']
                 else:
                     raise QobuzContentUnavailableError(f"Playlist ID:{item_id} kosong atau tidak memiliki track.")
-                # --- BATAS PERBAIKAN ---
             
         return items, item_id, type_dict, content
     else:
@@ -315,13 +365,10 @@ def smart_discography_filter(
             return album.lower()
         return r.group(1).strip().lower()
 
-    # --- PERBAIKAN: Mengakses 'name' dari objek artist penuh ---
-    # contents[0] sekarang adalah objek 'j' penuh, 'albums' ada di dalamnya
     requested_artist = contents[0]['name']
     items = []
     for item in contents:
         items.extend(item['albums']['items'])
-    # --- BATAS PERBAIKAN ---
 
     title_grouped = dict()
     for item in items:
