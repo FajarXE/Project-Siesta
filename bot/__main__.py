@@ -44,8 +44,13 @@ async def login_single_client(creds: dict):
         
         # 2. Muat Kualitas Default Bot dari DB
         try:
-            # (Ini mengambil nilai yang disimpan oleh provider_settings.py)
-            db_default_q = await database.get_variable('QOBUZ_QUALITY')
+            # --- PERBAIKAN 1: Memanggil get_variable() tanpa argumen ---
+            # Ini mengambil seluruh dokumen pengaturan
+            db_settings = await database.get_variable()
+            # Sekarang kita ambil kunci spesifik dari kamus hasil
+            db_default_q = db_settings.get('QOBUZ_QUALITY')
+            # --- BATAS PERBAIKAN 1 ---
+
             client.quality = int(db_default_q) if db_default_q else 6 # Default 6 (Lossless) jika tidak ada
             logging.info(f"Berhasil memuat Kualitas Default Qobuz '{client.quality}' untuk Akun #{account_id}.")
         except Exception as e:
@@ -57,13 +62,15 @@ async def login_single_client(creds: dict):
             # (Ini mengambil nilai yang disimpan oleh user_settings.py)
             logging.info(f"Memuat pengaturan Qobuz pengguna dari DB untuk Akun #{account_id}...")
             
-            # Asumsi koleksi pengguna Anda bernama 'users'
-            all_users_from_db = await database.users.find({}).to_list(None)
+            # --- PERBAIKAN 2: Menggunakan database.client.users ---
+            all_users_from_db = await database.client.users.find({}).to_list(None)
+            # --- BATAS PERBAIKAN 2 ---
             
             count = 0
             for user_doc in all_users_from_db:
                 user_id = user_doc.get('_id')
-                qobuz_qual = user_doc.get('qobuz_qual') # Kunci yang disimpan di user_settings.py
+                # Kunci yang disimpan di user_settings.py harus 'qobuz_qual'
+                qobuz_qual = user_doc.get('qobuz_qual') 
                 
                 if user_id and qobuz_qual:
                     # Ini memuat pengaturan ke kamus client.user_data
