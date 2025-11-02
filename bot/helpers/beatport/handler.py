@@ -19,7 +19,6 @@ from mutagen.mp4 import MP4
 
 from config import Config
 from bot.logger import LOGGER
-from ..metadata import set_metadata
 
 current_directory = Path(__file__).resolve().parent
 orpheusdl_main_dir = Path(__file__).resolve().parent.parent / "OrpheusDL"
