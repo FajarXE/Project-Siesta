@@ -15,7 +15,7 @@ from .helpers.qobuz.qopy import qobuz_api
 from .helpers.deezer.dzapi import deezerapi
 from .helpers.tidal.tidal_api import tidalapi
 from .helpers.translations import lang_available
-from .helpers.beatport.beatport_login import beatport_login as beatport_login_func
+from .helpers.beatport.beatport_login import beatport_login
 
 
 def __encrypt_string__(string):
@@ -128,7 +128,10 @@ class BotSettings:
             else:
                 LOGGER.error('DEEZER : Check BF_SECRET and TRACK_URL_KEY')
 
-
+    
+    def beatport_initialise(self):
+        beatport_login()
+    
     async def login_tidal(self):
         # Check if Tidal is enabled
         self.can_enable_tidal = Config.ENABLE_TIDAL
@@ -209,7 +212,5 @@ class BotSettings:
         if self.tidal:
             self.tidal.user_data = user_data
         self.user_data = user_data
-    def beatport_initialise(self):
-        beatport_login_func()
 
 bot_set = BotSettings()
