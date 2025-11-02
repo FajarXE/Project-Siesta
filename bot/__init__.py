@@ -7,8 +7,8 @@ plugins = dict(
     root="bot/modules"
 )
 
-subprocess.Popen([f"gunicorn server:app --bind 0.0.0.0:{PORT} --worker-class gevent"], shell=True)
 PORT = int(os.getenv("PORT", "0"))
+subprocess.Popen([f"gunicorn server:app --bind 0.0.0.0:{PORT} --worker-class gevent"], shell=True)
 
 class CMD(object):
     START = ["start"]
