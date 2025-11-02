@@ -32,6 +32,17 @@ class Bot(Client):
         LOGGER.info(f"BOT : - Bot username: {Config.BOT_USERNAME}")
         LOGGER.info(f"BOT : - Work dir: {Config.WORK_DIR}")
         
+        # Log MongoDB connection info (sanitized)
+        mongo_uri = Config.MONGODB_URI
+        # Remove credentials for logging
+        if '@' in mongo_uri:
+            # Extract host:port part after credentials
+            host_part = mongo_uri.split('@')[-1]
+        else:
+            host_part = mongo_uri.replace('mongodb://', '').replace('mongodb+srv://', '')
+        
+        LOGGER.info(f"BOT : - MongoDB target: {host_part}, database: {Config.MONGODB_DB}")
+        
         # Initialize distributed lock (optional, enabled by default)
         self.use_distributed_lock = os.environ.get('ENABLE_DISTRIBUTED_LOCK', 'true').lower() == 'true'
         self.distributed_lock = None
@@ -51,7 +62,7 @@ class Bot(Client):
             plugins=plugins,
             workdir=Config.WORK_DIR,
             workers=100,
-            mongodb=dict(connection=AsyncClient(Config.DATABASE_URL), remove_peers=True)
+            mongodb=dict(connection=AsyncClient(Config.MONGODB_URI), database=Config.MONGODB_DB, remove_peers=True)
         )
 
     async def start(self):

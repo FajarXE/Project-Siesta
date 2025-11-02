@@ -24,20 +24,29 @@ current_directory = Path(__file__).resolve().parent
 orpheusdl_main_dir = Path(__file__).resolve().parent.parent / "OrpheusDL"
 orpheusdl_main_config_path = orpheusdl_main_dir / "config" / "settings.json"
 
+# Add import-time guard for OrpheusDL configuration
+# Note: This only warns at import time - actual validation happens when functions are called
+if not orpheusdl_main_config_path.exists():
+    LOGGER.warning(f"OrpheusDL configuration not found at {orpheusdl_main_config_path}. "
+                  "Beatport functionality will not be available until OrpheusDL is properly installed.")
+
 # Thread-safe lock for creating user instances
 instance_lock = Lock()
 
 def beatport_login():
-    with open(orpheusdl_config_path, "r") as f:
+    # Runtime validation of OrpheusDL configuration
+    if not orpheusdl_main_config_path.exists():
+        raise FileNotFoundError(f"OrpheusDL configuration not found at {orpheusdl_main_config_path}. "
+                              "Please ensure OrpheusDL is properly installed and configured before using Beatport functionality.")
+    
+    with open(orpheusdl_main_config_path, "r") as f:
         config = json.load(f)
     config["modules"]["beatport"]["username"] = Config.BEATPORT_USERNAME
     config["modules"]["beatport"]["password"] = Config.BEATPORT_PASSWORD
-    with open(orpheusdl_config_path, "w") as f:
+    with open(orpheusdl_main_config_path, "w") as f:
         json.dump(config, f, indent=4)
     
-    album_meta = {}
-    track_meta = {}
-    LOGGER.info("created album_meta and track_meta dictionaries")
+    LOGGER.info("Beatport login configuration updated successfully.")
 
 
 async def start_beatport(url: str, user: dict):

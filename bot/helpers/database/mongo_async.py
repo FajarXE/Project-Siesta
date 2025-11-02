@@ -9,14 +9,14 @@ class MongoDB:
     """
     
     def __init__(self) -> None:
-        self.db = AsyncClient(Config.DATABASE_URL)
-        self.client = self.db[Config.BOT_USERNAME]
+        self.db = AsyncClient(Config.MONGODB_URI)
+        self.client = self.db[Config.MONGODB_DB]
     
     async def initialize_users(self) -> dict:
-        exists = await self.db[Config.BOT_USERNAME].users.find_one({})
+        exists = await self.client.users.find_one({})
         if exists:
             user_data = {} 
-            rows = self.db[Config.BOT_USERNAME].users.find({})
+            rows = self.client.users.find({})
             # Return User data
             async for row in rows:
                 uid = row["_id"]
@@ -62,7 +62,7 @@ class MongoDB:
     async def save_user_settings(self, user_id: int=0, data: dict={}) -> None:
         user_id = int(user_id) if isinstance(user_id, str) else user_id
         try:
-            await self.db[Config.BOT_USERNAME].users.update_one({"_id": user_id}, {"$set": data}, upsert=True)
+            await self.client.users.update_one({"_id": user_id}, {"$set": data}, upsert=True)
         except Exception:
             logging.info(traceback.format_exc())
 

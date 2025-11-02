@@ -47,8 +47,12 @@ API_HASH=0123456789abcdef0123456789abcdef
 BOT_USERNAME=YourBotName
 ADMINS=123456789
 
-# MongoDB URL (adjust if needed)
-DATABASE_URL=mongodb://localhost:27017/projectsiesta
+# MongoDB configuration (NEW FORMAT)
+MONGODB_URI=mongodb://localhost:27017/
+MONGODB_DB=siesta_bot
+
+# Legacy support (will be deprecated)
+# DATABASE_URL=mongodb://localhost:27017/projectsiesta
 ```
 
 ### 5. Install Dependencies

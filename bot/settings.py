@@ -130,7 +130,15 @@ class BotSettings:
 
     
     def beatport_initialise(self):
-        beatport_login()
+        try:
+            beatport_login()
+            LOGGER.info("BEATPORT: Initialization completed successfully")
+        except (FileNotFoundError, ImportError) as e:
+            LOGGER.warning(f"BEATPORT: Initialization skipped - {e}")
+            LOGGER.warning("BEATPORT: Beatport functionality will not be available")
+        except Exception as e:
+            LOGGER.error(f"BEATPORT: Initialization failed - {e}")
+            # Don't re-raise - allow bot to start without Beatport
     
     async def login_tidal(self):
         # Check if Tidal is enabled

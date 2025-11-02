@@ -7,6 +7,28 @@ from dotenv import load_dotenv
 if not os.environ.get("ENV"):
     load_dotenv('.env', override=True)
 
+def _validate_database_name(db_name: str) -> bool:
+    """Validate MongoDB database name according to MongoDB rules"""
+    if not db_name:
+        return False
+    
+    # Database names cannot contain: '/', '\', ' ', '.', '"', '*', '<', '>', ':', '|', '?'
+    invalid_chars = ['/', '\\', ' ', '.', '"', '*', '<', '>', ':', '|', '?']
+    
+    for char in invalid_chars:
+        if char in db_name:
+            return False
+    
+    # Cannot be empty string
+    if not db_name.strip():
+        return False
+    
+    # Cannot be null
+    if db_name.lower() == 'null':
+        return False
+    
+    return True
+
 class Config:
 #--------------------
 
@@ -27,9 +49,36 @@ class Config:
         if not API_HASH or API_HASH == "YOUR_API_HASH_HERE":
             raise ValueError("API_HASH is not set in .env file. Get it from https://my.telegram.org/apps")
 
+        # MongoDB configuration - separate URI and database name
+        MONGODB_URI = getenv("MONGODB_URI")
+        MONGODB_DB = getenv("MONGODB_DB")
+        
+        # Support legacy DATABASE_URL for backward compatibility
         DATABASE_URL = getenv("DATABASE_URL")
-        if not DATABASE_URL:
-            raise ValueError("DATABASE_URL is not set in .env file. Example: mongodb://localhost:27017/projectsiesta")
+        
+        if DATABASE_URL and not MONGODB_URI:
+            # Legacy mode: extract URI and DB from DATABASE_URL
+            MONGODB_URI = DATABASE_URL
+            # Extract database name from URI if present
+            if '/' in DATABASE_URL.rsplit(':', 1)[-1]:
+                # Remove the database part from URI and use as DB name
+                parts = DATABASE_URL.rsplit('/', 1)
+                MONGODB_URI = parts[0] + '/'
+                MONGODB_DB = parts[1]
+                LOGGER.warning("CONFIG: Using legacy DATABASE_URL format. Please migrate to MONGODB_URI and MONGODB_DB for better validation.")
+        
+        if not MONGODB_URI:
+            raise ValueError("MONGODB_URI is not set in .env file. Example: mongodb://localhost:27017/")
+        
+        if not MONGODB_DB:
+            raise ValueError("MONGODB_DB is not set in .env file. Example: siesta_bot")
+        
+        # Validate database name
+        if not _validate_database_name(MONGODB_DB):
+            raise ValueError(f"Invalid database name '{MONGODB_DB}'. Database names cannot contain '/', '\\', ' ', '.', '\"', '*', '<', '>', ':', '|', '?', or start with '.'. Please set MONGODB_DB to a simple name like 'siesta_bot'")
+        
+        # Set DATABASE_URL for backward compatibility with existing code
+        DATABASE_URL = MONGODB_URI
 
         BOT_USERNAME = getenv("BOT_USERNAME")
         if not BOT_USERNAME or BOT_USERNAME == "YOUR_BOT_USERNAME_HERE":
