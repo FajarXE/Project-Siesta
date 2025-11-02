@@ -29,32 +29,28 @@ FROM base AS final
 
 COPY --from=builder /usr/bin/rclone /usr/bin/rclone
 
-COPY .gitmodules .gitignore ./
-
-RUN apt-get update -qq && \
-    apt-get install -qq -y git && \
-    git init && \
-    git config --global --add safe.directory /usr/src/app
-
-RUN git submodule update --init --recursive
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN git submodule update --init --recursive
+RUN apt-get update -qq && \
+    apt-get install -qq -y git
+    # git init && \
+    # git config --global --add safe.directory /usr/src/app
+
+RUN git clone https://github.com/OrfiTeam/OrpheusDL bot/helpers/OrpheusDL
 
 WORKDIR /usr/src/app/bot/helpers/OrpheusDL
-RUN git clone https://github.com/utopian-society/orpheusdl-beatport.git modules/beatport && \
+RUN git clone https://github.com/Dniel97/orpheusdl-beatport modules/beatport
+RUN pip install -r requirements.txt && \
+    python orpheus.py && \
     # Clean up git to reduce image size
     apt-get remove -y git && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install -r requirements.txt && \
-    python orpheus.py
-
-
 WORKDIR /usr/src/app
+RUN rm -f *.session && \
+    rm -f /tmp/*.session
 ENTRYPOINT ["python", "-m", "bot"]

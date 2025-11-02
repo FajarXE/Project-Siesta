@@ -4,6 +4,7 @@ import asyncio
 import sys
 import logging
 import traceback
+import glob
 
 from bot import Config
 from .tgclient import aio
@@ -17,16 +18,18 @@ def signal_handler(s, f):
         sys.exit(1)
 
 async def main():
-    # Clean any existing session files to prevent AuthKeyDuplicated error
-    session_files = [
+    # Enhanced session file cleanup
+    session_patterns = [
+        "*.session",
         "aiobot.session",
         f"{Config.BOT_USERNAME}.session",
+        f"{Config.WORK_DIR}/*.session",
         f"{Config.WORK_DIR}/aiobot.session",
         f"{Config.WORK_DIR}/{Config.BOT_USERNAME}.session"
     ]
     
-    for session_file in session_files:
-        if os.path.exists(session_file):
+    for pattern in session_patterns:
+        for session_file in glob.glob(pattern):
             try:
                 os.remove(session_file)
                 logging.info(f"Removed session file: {session_file}")
@@ -38,12 +41,18 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
-    if not os.path.isdir(Config.DOWNLOAD_BASE_DIR):
-        os.makedirs(Config.DOWNLOAD_BASE_DIR)
+    # Create necessary directories
+    directories = [
+        Config.DOWNLOAD_BASE_DIR,
+        Config.WORK_DIR,
+        'bot/helpers/OrpheusDL/Download',
+        'downloads',
+        'tmp'
+    ]
     
-    # Ensure work directory exists
-    if Config.WORK_DIR and not os.path.isdir(Config.WORK_DIR):
-        os.makedirs(Config.WORK_DIR)
+    for directory in directories:
+        if directory and not os.path.isdir(directory):
+            os.makedirs(directory, exist_ok=True)
     
     loop = asyncio.get_event_loop()
     try:

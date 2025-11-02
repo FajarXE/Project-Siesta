@@ -6,13 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 WORKDIR /usr/src/app
 
 RUN apt-get update -qq && \
-    apt-get install -qq -y ffmpeg gcc libffi-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install build dependencies and rclone in a separate stage
-FROM base AS builder
-RUN apt-get update -qq && \
-    apt-get install -qq -y git wget curl unzip && \
+    apt-get install -qq -y ffmpeg gcc libffi-dev git wget curl unzip && \
     rm -rf /var/lib/apt/lists/*
 
 # Download and install rclone
@@ -24,33 +18,31 @@ RUN ARCH=$(uname -m) && \
     install -m 755 rclone-v1.70.2-linux-${ARCH}/rclone /usr/bin/rclone && \
     rm -rf rclone-v1.70.2-linux-${ARCH}*
 
-# Final stage with only necessary files
-FROM base AS final
-
-COPY --from=builder /usr/bin/rclone /usr/bin/rclone
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN apt-get update -qq && \
-    apt-get install -qq -y git
-    # git init && \
-    # git config --global --add safe.directory /usr/src/app
-
-RUN git clone https://github.com/OrfiTeam/OrpheusDL bot/helpers/OrpheusDL
+# Clone OrpheusDL to the correct location
+RUN git clone https://github.com/OrfiTeam/OrpheusDL.git bot/helpers/OrpheusDL
 
 WORKDIR /usr/src/app/bot/helpers/OrpheusDL
-RUN git clone https://github.com/Dniel97/orpheusdl-beatport modules/beatport
+
+# Clone the beatport module
+RUN git clone https://github.com/Dniel97/orpheusdl-beatport.git modules/beatport
+
+# Install OrpheusDL requirements and initialize
 RUN pip install -r requirements.txt && \
-    python orpheus.py && \
-    # Clean up git to reduce image size
-    apt-get remove -y git && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
+    python orpheus.py settings refresh
 
 WORKDIR /usr/src/app
-RUN rm -f *.session && \
-    rm -f /tmp/*.session
+
+# Clean up session files and temporary files
+RUN find . -name "*.session" -delete && \
+    find /tmp -name "*.session" -delete 2>/dev/null || true && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create necessary directories
+RUN mkdir -p downloads tmp
+
 ENTRYPOINT ["python", "-m", "bot"]
