@@ -29,7 +29,7 @@ class Bot(Client):
         await bot_set.login_deezer()
         await bot_set.login_tidal()
         await bot_set.initialize_users()
-        await bot_set.beatport_login()
+        await bot_set.beatport_initialise()
         LOGGER.info("BOT : Started Successfully")
 
     async def stop(self, block=False):

@@ -209,7 +209,7 @@ class BotSettings:
         if self.tidal:
             self.tidal.user_data = user_data
         self.user_data = user_data
-    async def beatport_login(self):
+    async def beatport_initialise(self):
         await beatport_login.beatport_login()
 
 bot_set = BotSettings()
