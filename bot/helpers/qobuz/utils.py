@@ -61,6 +61,13 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'track'
 
+    # --- PERBAIKAN: Menambahkan metadata Disk dan Composer ---
+    metadata['volume'] = q_meta.get('media_number', '')
+    metadata['totalvolume'] = q_meta['album'].get('media_count', '')
+    if q_meta.get('composer'):
+        metadata['composer'] = q_meta['composer'].get('name', '')
+    # --- BATAS PERBAIKAN ---
+
     metadata['cover'] = await create_cover_file(q_meta['album']['image']['large'], metadata)
     metadata['thumbnail'] = await create_cover_file(q_meta['album']['image']['thumbnail'], metadata, True)
 
@@ -88,6 +95,11 @@ async def get_album_metadata(item_id, r_id, user: dict):
     metadata['duration'] = q_meta['duration']
     metadata['copyright'] = q_meta['copyright']
     metadata['genre'] = q_meta['genre']['name']
+    
+    # --- PERBAIKAN: Menambahkan total disk (volume) ---
+    metadata['totalvolume'] = q_meta.get('media_count', '')
+    # --- BATAS PERBAIKAN ---
+    
     metadata['explicit'] = q_meta['parental_warning']
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'album'
@@ -112,6 +124,13 @@ async def get_track_meta_from_alb(q_meta:dict, alb_meta):
         metadata['duration'] = track['duration']
         metadata['isrc'] = track['isrc']
         metadata['tracknumber'] = track['track_number']
+
+        # --- PERBAIKAN: Menambahkan nomor disk dan composer ---
+        metadata['volume'] = track.get('media_number', '')
+        if track.get('composer'):
+            metadata['composer'] = track['composer'].get('name', '')
+        # --- BATAS PERBAIKAN ---
+
         metadata['tracks'] = ''
         metadata['type'] = 'track'
         tracks.append(metadata)
