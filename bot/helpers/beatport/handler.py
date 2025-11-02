@@ -33,7 +33,7 @@ def beatport_login():
     
     album_meta = {}
     track_meta = {}
-    LOGGER.info("created album_mta and track_meta dictionaries")
+    LOGGER.info("created album_meta and track_meta dictionaries")
 
 async def start_beatport(url:str, user:dict):
     user_id = user['r_id']
@@ -50,6 +50,8 @@ async def start_beatport(url:str, user:dict):
         #         json.dump(user_settings, f, indent=4)
             
         with tempfile.TemporaryDirectory() as tmpdir:
+            global user_temp_config
+            global user_temp_config_path
             user_temp_config = f"{user_id}_settings.json"
             user_temp_config_path = os.path.join(tempdir, user_temp_config)
 
