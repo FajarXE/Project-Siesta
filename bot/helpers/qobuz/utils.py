@@ -58,6 +58,12 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     metadata['tracknumber'] = q_meta['track_number']
     metadata['date'] = q_meta['release_date_original']
     metadata['totaltracks'] = q_meta['album']['tracks_count']
+
+    # --- PERBAIKAN: Menambahkan Genre ---
+    if q_meta.get('album') and q_meta['album'].get('genre'):
+         metadata['genre'] = q_meta['album']['genre'].get('name', '')
+    # --- BATAS PERBAIKAN ---
+
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'track'
 
