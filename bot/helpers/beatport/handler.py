@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from threading import Lock
 
+# Add mutagen for audio metadata extraction
+import mutagen
+from mutagen.easyid3 import EasyID3
+from mutagen.flac import FLAC
+from mutagen.mp4 import MP4
+
 from config import Config
 from bot.logger import LOGGER
 from bot.helpers.message import send_message, edit_message
@@ -156,6 +162,60 @@ async def run_user_orpheus(user_orpheus_dir: Path, url: str, user_id: str):
     finally:
         os.chdir(original_cwd)
 
+def get_audio_duration(file_path: Path) -> int:
+    """Extract duration from audio file using mutagen"""
+    try:
+        audio = mutagen.File(file_path)
+        if audio is not None:
+            return int(audio.info.length)
+        else:
+            LOGGER.warning(f"Could not read audio file: {file_path}")
+            return 0
+    except Exception as e:
+        LOGGER.warning(f"Error getting duration for {file_path}: {e}")
+        return 0
+
+def get_audio_metadata(file_path: Path) -> dict:
+    """Extract metadata from audio file"""
+    try:
+        audio = mutagen.File(file_path)
+        metadata = {
+            'duration': 0,
+            'title': file_path.stem,
+            'artist': 'Unknown Artist',
+            'album': 'Unknown Album'
+        }
+        
+        if audio is not None:
+            metadata['duration'] = int(audio.info.length)
+            
+            # Try to get ID3 tags for MP3
+            if hasattr(audio, 'tags') and audio.tags is not None:
+                if 'title' in audio.tags:
+                    metadata['title'] = str(audio.tags['title'][0])
+                if 'artist' in audio.tags:
+                    metadata['artist'] = str(audio.tags['artist'][0])
+                if 'album' in audio.tags:
+                    metadata['album'] = str(audio.tags['album'][0])
+            # For FLAC files
+            elif file_path.suffix.lower() == '.flac':
+                if 'title' in audio:
+                    metadata['title'] = audio['title'][0]
+                if 'artist' in audio:
+                    metadata['artist'] = audio['artist'][0]
+                if 'album' in audio:
+                    metadata['album'] = audio['album'][0]
+                    
+        return metadata
+    except Exception as e:
+        LOGGER.warning(f"Error extracting metadata from {file_path}: {e}")
+        return {
+            'duration': 0,
+            'title': file_path.stem,
+            'artist': 'Unknown Artist',
+            'album': 'Unknown Album'
+        }
+
 async def process_downloaded_files(download_dir: Path, user_id: str, user: dict):
     """Process downloaded music files"""
     if not download_dir.exists():
@@ -186,12 +246,20 @@ async def process_downloaded_files(download_dir: Path, user_id: str, user: dict)
         raise Exception("No music files were downloaded")
     
     elif music_files_number == 1:
-        # Single track
+        # Single track - extract metadata including duration
+        file_path = music_files[0]
+        metadata = get_audio_metadata(file_path)
+        
         track_meta = {
-            "filepath": music_files[0],
-            "title": music_files[0].stem,
+            "filepath": file_path,
+            "title": metadata['title'],
+            "artist": metadata['artist'],
+            "album": metadata['album'],
+            "duration": metadata['duration'],
             "user_id": user_id
         }
+        
+        LOGGER.info(f"Uploading single track: {track_meta['title']} by {track_meta['artist']}, duration: {track_meta['duration']}s")
         await track_upload(track_meta, user, disable_link=False)
         LOGGER.info(f"Uploaded single track for user {user_id}")
         
@@ -200,11 +268,15 @@ async def process_downloaded_files(download_dir: Path, user_id: str, user: dict)
         # Find the common parent directory for all files
         common_parent = find_common_parent(music_files)
         
+        # Create album metadata
         album_meta = {
             "folderpath": common_parent,
             "title": common_parent.name,
             "user_id": user_id
         }
+        
+        # If we need to process individual tracks for the album, we can do it here
+        # For now, let album_upload handle it
         await album_upload(album_meta, user)
         LOGGER.info(f"Uploaded album with {music_files_number} tracks for user {user_id}")
 
