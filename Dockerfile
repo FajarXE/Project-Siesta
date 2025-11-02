@@ -35,7 +35,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 RUN apt-get update -qq && \
-    apt-get install -qq -y git && \
+    apt-get install -qq -y git
     # git init && \
     # git config --global --add safe.directory /usr/src/app
 
