@@ -31,6 +31,8 @@ def beatport_login():
     with open(orpheusdl_config_path, "w") as f:
         json.dump(config, f, indent=4)
     
+    global album_meta
+    global track_meta
     album_meta = {}
     track_meta = {}
     LOGGER.info("created album_meta and track_meta dictionaries")
@@ -89,8 +91,6 @@ async def start_beatport(url:str, user:dict):
         
         if user_temp_dir.exists():
             shutil.rmtree(user_temp_dir)
-        if user_temp_config_path.exist():
-            os.unlink(user_config_temp)
-    
+        LOGGER.info(f"cleaned up temp files for user {user_id}")
 
         
