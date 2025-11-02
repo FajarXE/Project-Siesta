@@ -87,7 +87,7 @@ async def start_beatport(url:str, user:dict):
         
         if user_temp_dir.exists():
             shutil.rmtree(user_temp_dir)
-        if user_config_temp.exist():
+        if user_temp_config_path.exist():
             os.unlink(user_config_temp)
     
 
