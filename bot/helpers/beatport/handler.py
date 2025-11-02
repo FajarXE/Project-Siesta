@@ -30,37 +30,6 @@ orpheusdl_main_config_path = orpheusdl_main_dir / "config" / "settings.json"
 # Thread-safe lock for creating user instances
 instance_lock = Lock()
 
-def beatport_login():
-    """Initialize base Beatport configuration in main OrpheusDL instance"""
-    with instance_lock:
-        # Ensure main config directory exists
-        orpheusdl_main_config_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Read or create main config
-        if orpheusdl_main_config_path.exists():
-            with open(orpheusdl_main_config_path, "r") as f:
-                config = json.load(f)
-        else:
-            config = {
-                "global": {
-                    "general": {
-                        "download_path": str(orpheusdl_main_dir / "Download")
-                    }
-                },
-                "modules": {
-                    "beatport": {}
-                }
-            }
-        
-        # Update Beatport credentials
-        config["modules"]["beatport"]["username"] = Config.BEATPORT_USERNAME
-        config["modules"]["beatport"]["password"] = Config.BEATPORT_PASSWORD
-        
-        with open(orpheusdl_main_config_path, "w") as f:
-            json.dump(config, f, indent=4)
-    
-    LOGGER.info("Base Beatport configuration completed")
-
 async def start_beatport(url: str, user: dict):
     user_id = user['r_id']
     
