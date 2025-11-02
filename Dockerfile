@@ -50,4 +50,5 @@ RUN pip install -r requirements.txt && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
+WORKDIR /usr/src/app
 ENTRYPOINT ["python", "-m", "bot"]
