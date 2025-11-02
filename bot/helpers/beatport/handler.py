@@ -68,7 +68,7 @@ async def start_beatport(url:str, user:dict):
                 os.chdir(current_directory)
             
         music_files = os.listdir(user_temp_dir)
-        music_files = [for f in music_files]
+        music_files = [f for f in music_files]
         music_files_number = len(music_files)
         if musie_files_number == 1:
             track_meta["filepath"] = Path(music_files[0]).resolve()
