@@ -11,8 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-from bot.settings import bot_set
-from bot import Config
+from config import Config
 from bot.logger import LOGGER
 from bot.helpers.message import send_message, edit_message
 from ..uploder import track_upload, album_upload
