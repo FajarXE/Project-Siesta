@@ -37,7 +37,7 @@ def beatport_login():
 
 async def start_beatport(url:str, user:dict):
     user_id = user['r_id']
-    user_temp_dir = Path(tempfile.mkdtemp(prefix=f"{user_id}") / "Beatport")
+    user_temp_dir = Path(tempfile.mkdtemp(prefix=f"{user_id}")) / "Beatport"
     LOGGER.info(f"download task ready for {user_id}")
     try:
         with open(orpheusdl_config_path, "r") as f:
