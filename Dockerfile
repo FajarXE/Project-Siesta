@@ -36,13 +36,13 @@ COPY . .
 
 RUN apt-get update -qq && \
     apt-get install -qq -y git && \
-    git init && \
-    git config --global --add safe.directory /usr/src/app
+    # git init && \
+    # git config --global --add safe.directory /usr/src/app
 
-# RUN git clone https://github.com/OrfiTeam/OrpheusDL bot/helpers/OrpheusDL
+RUN git clone https://github.com/OrfiTeam/OrpheusDL bot/helpers/OrpheusDL
 
 WORKDIR /usr/src/app/bot/helpers/OrpheusDL
-# RUN git clone https://github.com/Dniel97/orpheusdl-beatport modules/beatport
+RUN git clone https://github.com/Dniel97/orpheusdl-beatport modules/beatport
 RUN pip install -r requirements.txt && \
     python orpheus.py && \
     # Clean up git to reduce image size
