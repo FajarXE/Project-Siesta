@@ -45,4 +45,12 @@ RUN find . -name "*.session" -delete && \
 # Create necessary directories
 RUN mkdir -p downloads tmp
 
+# Create session directory with proper permissions
+RUN mkdir -p /data/sessions && \
+    chmod 755 /data/sessions && \
+    chown -R nobody:nogroup /data/sessions
+
+# Set default volume for session directory
+VOLUME ["/data/sessions"]
+
 ENTRYPOINT ["python", "-m", "bot"]
