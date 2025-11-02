@@ -16,8 +16,8 @@ from bot.logger import LOGGER
 
 current_directory = Path(__file__).resolve().parent
 orpheus_dir = Path(__file__).resolve().parent.parent / "OrpheusDL"
-orpheusdl_config_path = orpheusdl_dir / "config" / "settings.json"
-orpheusdl_dir = orpheusdl_dir / "Download"
+orpheusdl_config_path = orpheus_dir / "config" / "settings.json"
+orpheusdl_dir = orpheus_dir / "Download"
 
 def beatport_login():
     with open(orpheusdl_config_path, "r") as f:
