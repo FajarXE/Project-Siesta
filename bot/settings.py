@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/settings.py]
+
 import os
 import json
 import base64
@@ -13,7 +15,11 @@ from bot.logger import LOGGER
 from .helpers.database.mongo_async import database
 # MODIFIKASI: Impor qobuz_api Dihapus
 # from .helpers.qobuz.qopy import qobuz_api 
-from .helpers.deezer.dzapi import deezerapi
+
+# --- MODIFIKASI: Hapus impor 'deezerapi' yang rusak ---
+# from .helpers.deezer.dzapi import deezerapi
+# --- BATAS MODIFIKASI ---
+
 from .helpers.tidal.tidal_api import tidalapi
 from .helpers.translations import lang_available
 
@@ -36,7 +42,11 @@ set_db = loop.run_until_complete(database.get_variable())
 
 class BotSettings:
     def __init__(self):
+        # --- MODIFIKASI: self.deezer tetap False sebagai default ---
+        # Ini akan diatur ke True oleh bot utama setelah manajer berhasil login.
         self.deezer = False
+        # --- BATAS MODIFIKASI ---
+        
         # MODIFIKASI: Atribut self.qobuz Dihapus
         # self.qobuz = False 
         self.tidal = None
@@ -54,18 +64,15 @@ class BotSettings:
 
         self.bot_public = self.set_db.get('BOT_PUBLIC')
 
-        # post photo of album/artist
         self.art_poster = self.set_db.get('ART_POSTER')
 
         self.playlist_sort = self.set_db.get('PLAYLIST_SORT')
-        # disable returning links for sorted playlist for cleaner chat
         self.disable_sort_link = self.set_db.get('PLAYLIST_LINK_DISABLE')
 
-        # Multithreaded downloads
         self.artist_batch = self.set_db.get('ARTIST_BATCH_UPLOAD')
         self.playlist_conc = self.set_db.get('PLAYLIST_CONCURRENT')
         
-        link_option = self.set_db.get('RCLONE_LINK_OPTIONS') #str
+        link_option = self.set_db.get('RCLONE_LINK_OPTIONS')
         self.link_options = link_option if self.rclone and link_option else 'False'
 
         self.album_zip = self.set_db.get('ALBUM_ZIP')
@@ -103,32 +110,20 @@ class BotSettings:
     # MODIFIKASI: Seluruh fungsi login_qobuz(self) Dihapus
     # (Ini sekarang ditangani di __main__.py)
 
-
-    async def login_deezer(self):
-        if Config.DEEZER_ARL or Config.DEEZER_EMAIL:
-            if Config.DEEZER_BF_SECRET:
-                login = await deezerapi.login()
-                if login:
-                    self.deezer = deezerapi
-                    self.clients.append(deezerapi)
-                    LOGGER.info(f"DEEZER : Subscription - {deezerapi.user['OFFER_NAME']}")
-                else:
-                    try:
-                        await deezerapi.session.close()
-                    except:
-                        pass
-            else:
-                LOGGER.error('DEEZER : Check BF_SECRET and TRACK_URL_KEY')
+    # --- MODIFIKASI: Hapus seluruh fungsi 'login_deezer' ---
+    # Logika ini sekarang ditangani oleh 'deezer_manager' saat startup.
+    # async def login_deezer(self):
+    #     ... (KODE LAMA DIHAPUS) ...
+    # --- BATAS MODIFIKASI ---
 
 
     async def login_tidal(self):
-        # Check if Tidal is enabled
+        # ... (Fungsi Tidal Anda tetap tidak berubah) ...
         self.can_enable_tidal = Config.ENABLE_TIDAL
         if not self.can_enable_tidal:
             return
-
+        # ... (sisa kode Tidal) ...
         data = None
-        # Refresh token in env is given preference
         if Config.TIDAL_REFRESH_TOKEN:
             data = {
                 'user_id': None, 
@@ -137,7 +132,6 @@ class BotSettings:
             }
             LOGGER.debug("TIDAL: Using refresh token from environment")
         else:
-            # Try to get saved authentication data
             saved_info = self.set_db.get("TIDAL_AUTH_DATA")
             if saved_info:
                 try:
@@ -146,24 +140,15 @@ class BotSettings:
                 except Exception as e:
                     LOGGER.error(f"TIDAL: Failed to decrypt/parse saved auth data: {e}")
                     return
-
         if not data:
             return
-
-        # Attempt login
         await tidalapi.login_from_saved(data)
-        
-        # Set audio quality
         quality = self.set_db.get('TIDAL_QUALITY')
         if quality:
             tidalapi.quality = quality
-        
-        # Set spatial audio
         spatial = self.set_db.get('TIDAL_SPATIAL')
         if spatial:
             tidalapi.spatial = spatial
-        
-        # Set instance variables
         self.tidal = tidalapi 
         self.clients.append(tidalapi)
 
@@ -174,7 +159,6 @@ class BotSettings:
             "refresh_token" : session.refresh_token,
             "country_code" : session.country_code
         }
-
         txt = json.dumps(data)
         await database.set_variable("TIDAL_AUTH_DATA", __encrypt_string__(txt))
         
@@ -182,20 +166,20 @@ class BotSettings:
     async def set_language(self):
         bot_lang = await database.get_variable()
         self.bot_lang = bot_lang.get("BOT_LANGUAGE", "en")
-        #logging.info(self.bot_lang)
-
         for item in lang_available:
             logging.info(item.__language__ == self.bot_lang)
             if item.__language__ == self.bot_lang:
                 lang.s = item
                 break
-        #logging.info(lang.s)
 
     async def initialize_users(self) -> dict:
         user_data = await database.initialize_users()
-        #logging.info(user_data)
-        if self.deezer:
-            self.deezer.user_data = user_data
+        # --- MODIFIKASI: Gunakan self.deezer (bool) ---
+        # Kita tidak lagi melampirkan 'user_data' ke klien di sini
+        # if self.deezer:
+        #    self.deezer.user_data = user_data
+        # --- BATAS MODIFIKASI ---
+        
         # MODIFIKASI: Blok if self.qobuz Dihapus
         if self.tidal:
             self.tidal.user_data = user_data
