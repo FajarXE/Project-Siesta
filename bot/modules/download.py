@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/modules/download.py]
+
 from pyrogram.types import Message
 from pyrogram import Client, filters
 import asyncio 
@@ -11,6 +13,10 @@ import bot.helpers.translations as lang
 # --- MODIFIKASI: Hapus impor ACTIVE_DOWNLOAD_TASKS ---
 from bot import BOT_QOBUZ_CLIENTS
 from bot.tgclient import aio 
+
+# --- MODIFIKASI BARU: Impor manajer Deezer ---
+from bot.helpers.deezer.manager import deezer_manager
+# --- BATAS MODIFIKASI ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -33,26 +39,25 @@ async def run_download_task(link: str, user: dict):
         await asyncio.sleep(5) 
         
     except asyncio.CancelledError:
-        # Meskipun kita menghapus /cancel, kita tetap biarkan ini
-        # untuk penanganan error yang aman jika server dimatikan
         LOGGER.info(f"Tugas untuk {user['user_id']} dibatalkan (mungkin shutdown).")
         await send_message(user, "Tugas dibatalkan.")
         await asyncio.sleep(5) 
             
     except Exception as e:
+        # --- MODIFIKASI: Kita akan menangani error "tidak ada akun" di sini ---
+        error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
+        # Beri pesan yang lebih baik jika tidak ada klien yang login
+        if "Tidak ada akun" in str(e):
+            error_message = f"Tugas Gagal: {e}"
+            
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
         try:
-            await edit_message(user['bot_msg'], f"Tugas Gagal: Terjadi error fatal.\n{e}")
+            await edit_message(user['bot_msg'], error_message)
         except:
             pass 
             
     finally:
         await cleanup(user) # Hapus file
-        
-        # --- MODIFIKASI: Hapus task dari dictionary (jika ada) ---
-        # (Baris ini tidak diperlukan lagi karena kita tidak menambahkannya)
-        # ACTIVE_DOWNLOAD_TASKS.pop(task_id, None) 
-        # --- BATAS MODIFIKASI ---
         
         try:
             await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
@@ -78,19 +83,8 @@ async def download_track(c, msg:Message):
         
         user = await fetch_user_details(msg, reply)
         user['link'] = link
-        task_id = user['user_id']
-
-        # --- MODIFIKASI: MENGHAPUS SEMUA PENGECEKAN BLOKIR ---
-        # if task_id in ACTIVE_DOWNLOAD_TASKS:
-        #    await send_message(msg, "Anda sudah memiliki...")
-        #    return
-        # --- BATAS MODIFIKASI ---
         
-        # Buat task dan langsung jalankan di latar belakang
         asyncio.create_task(run_download_task(link, user))
-        
-        # Hapus pesan "antrian"
-        # await send_message(msg, "✅ Tugas Anda telah ditambahkan ke antrian.") 
 
 
 async def start_link(link: str, user: dict) -> None:
@@ -102,9 +96,25 @@ async def start_link(link: str, user: dict) -> None:
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
         await start_tidal(link, user)
+        
     elif link.startswith(tuple(deezer)):
         user['provider'] = 'Deezer'
-        await start_deezer(link, user)
+        
+        # --- MODIFIKASI BARU: Tambahkan Logika Klien Deezer ---
+        # 1. Ambil klien dari kumpulan (pool)
+        client = deezer_manager.get_client()
+        
+        # 2. Periksa apakah klien ada
+        if not client:
+            # Lempar error agar 'run_download_task' bisa menangkapnya
+            raise Exception("Maaf, tidak ada akun Deezer bot yang aktif saat ini.")
+            
+        # 3. LAMPIRKAN klien ke kamus user
+        user['deezer_api'] = client
+        # --- BATAS MODIFIKASI ---
+        
+        await start_deezer(link, user) #
+        
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
 
