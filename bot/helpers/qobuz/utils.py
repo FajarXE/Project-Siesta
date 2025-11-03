@@ -67,7 +67,7 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                                (local_artist in itunes_artist):
                                 artwork_url = result.get('artworkUrl100')
                                 if artwork_url:
-                                    return artwork_url.replace('100x100bb.jpg', '3000x3000bb.jpg')
+                                    return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
 
     except Exception as e:
         # Jangan crash jika pencarian iTunes gagal, cukup log
