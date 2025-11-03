@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/tgclient.py]
+
 from config import Config
 
 from pyrogram import Client
@@ -6,9 +8,12 @@ from async_pymongo import AsyncClient
 from .logger import LOGGER
 from .settings import bot_set
 
-from bot import BOT_QOBUZ_CLIENTS # <-- MODIFIKASI: Dihapus
-from bot import BOT_QOBUZ_CLIENTS
-from .helpers.deezer.dzapi import deezerapi # <-- MODIFIKASI: Ditambahkan
+# Impor Qobuz (menghapus duplikat)
+from bot import BOT_QOBUZ_CLIENTS 
+
+# --- MODIFIKASI: Impor manajer Deezer untuk shutdown ---
+from .helpers.deezer.manager import deezer_manager
+# --- BATAS MODIFIKASI ---
 
 plugins = dict(
     root="bot/modules"
@@ -29,18 +34,16 @@ class Bot(Client):
 
     async def start(self):
         await super().start()
-        # --- MODIFIKASI: Memperbaiki alur login Deezer ---
-        # bot_set.login_qobuz() sudah pindah ke __main__.py
-        await bot_set.login_deezer() 
+        # --- MODIFIKASI: SEMUA logika login dihapus dari sini ---
+        # Logika login (Qobuz, Deezer, Tidal, initialize_users)
+        # sekarang semuanya ditangani di __main__.py SEBELUM aio.start() dipanggil.
         # --- BATAS MODIFIKASI ---
-        await bot_set.login_tidal()
-        await bot_set.initialize_users()
         LOGGER.info("BOT : Started Successfully")
 
     async def stop(self, block=False):
         await super().stop(block)
         
-        # Tutup klien Deezer & Tidal
+        # Tutup klien Tidal (dari bot_set.clients)
         for client in bot_set.clients:
             if hasattr(client, 'session') and client.session:
                 await client.session.close()
@@ -49,9 +52,10 @@ class Bot(Client):
         for client in BOT_QOBUZ_CLIENTS.values():
             await client.close_session() 
             
-        # --- MODIFIKASI: Tutup sesi API Deezer yang aktif ---
-        if deezerapi.session and not deezerapi.session.closed:
-            await deezerapi.session.close()
+        # --- MODIFIKASI: Gunakan deezer_manager untuk menutup sesi Deezer ---
+        for client in deezer_manager.clients:
+            if client.session and not client.session.closed:
+                await client.session.close()
         # --- BATAS MODIFIKASI ---
             
         LOGGER.info('BOT : Exited Successfully ! Bye..........')
