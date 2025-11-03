@@ -2,6 +2,11 @@
 
 import copy
 from datetime import datetime
+# --- MODIFIKASI: Impor aiohttp, urllib, dan logging untuk pencarian sampul iTunes ---
+import aiohttp
+import urllib.parse
+import logging
+# --- BATAS MODIFIKASI ---
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
@@ -9,12 +14,59 @@ from .dzapi import deezerapi
 from bot.logger import LOGGER
 
 
+# --- FUNGSI BARU: Disalin dari utils.py Qobuz untuk Pencarian Sampul iTunes ---
+async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
+    """
+    Mencoba mengambil URL sampul resolusi tinggi dari iTunes menggunakan UPC atau pencarian Teks.
+    """
+    try:
+        # 1. Coba cari via UPC (Paling Akurat)
+        # Pastikan UPC ada dan bukan string kosong atau "0"
+        if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
+            upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
+            async with session.get(upc_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None) # Izinkan text/javascript
+                    if data.get('resultCount', 0) > 0:
+                        artwork_url = data['results'][0].get('artworkUrl100')
+                        if artwork_url:
+                            # Mengganti ke resolusi tertinggi
+                            return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
+
+        # 2. Jika UPC gagal/tidak ada, coba cari via Teks (Album Artist + Album Title)
+        if metadata.get('albumartist') and metadata.get('album'):
+            search_term = urllib.parse.quote(f"{metadata['albumartist']} {metadata['album']}")
+            search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
+            async with session.get(search_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None) # Izinkan text/javascript
+                    if data.get('resultCount', 0) > 0:
+                        for result in data['results']:
+                            itunes_album = result.get('collectionName', '').lower()
+                            itunes_artist = result.get('artistName', '').lower()
+                            local_album = metadata['album'].lower()
+                            local_artist = metadata['albumartist'].lower()
+                            
+                            if (local_album in itunes_album or itunes_album in local_album) and \
+                               (local_artist in itunes_artist):
+                                artwork_url = result.get('artworkUrl100')
+                                if artwork_url:
+                                    return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
+
+    except Exception as e:
+        logging.warning(f"Pencarian sampul iTunes gagal untuk UPC {metadata.get('upc')}: {e}")
+        return None
+    
+    return None
+# --- BATAS FUNGSI BARU ---
+
+
 async def process_track_metadata(track_id, r_id, cover=None, 
     thumbnail=None, total_tracks=None, album_genre=None, total_disks=None): 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
 
-    # --- Panggil KEDUA API ---
+    # ... (Panggilan API tetap sama) ...
     try:
         raw_meta_data = await deezerapi.get_track_data(track_id)
         t_meta = raw_meta_data.get('FALLBACK', raw_meta_data)
@@ -29,16 +81,19 @@ async def process_track_metadata(track_id, r_id, cover=None,
         LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
         raise Exception(f"Deezer : Track not available (pageTrack API failed)")
     
-    # --- BATAS PANGGILAN API ---
-
+    # ... (Pengisian metadata dasar tetap sama) ...
     metadata['itemid'] = track_id
-    
     metadata['copyright'] = t_meta.get('COPYRIGHT', t_meta_page.get('COPYRIGHT', ''))
     metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
     metadata['album'] = t_meta.get('ALB_TITLE', t_meta_page.get('ALB_TITLE', ''))
     metadata['isrc'] = t_meta.get('ISRC', t_meta_page.get('ISRC', ''))
     metadata['title'] = t_meta.get('SNG_TITLE', t_meta_page.get('SNG_TITLE', ''))
     
+    # --- MODIFIKASI: Tambahkan UPC untuk pencarian iTunes ---
+    # (Meskipun UPC mungkin tidak selalu ada di metadata track, kita coba)
+    metadata['upc'] = t_meta.get('UPC', t_meta_page.get('UPC', ''))
+    # --- BATAS MODIFIKASI ---
+
     if t_meta.get('VERSION'):
         metadata['title'] += f' ({t_meta["VERSION"]})'
     elif t_meta_page.get('VERSION'):
@@ -47,6 +102,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['title'] = metadata['title'].replace('/', ' ')
     metadata['duration'] = t_meta.get('DURATION', t_meta_page.get('DURATION', 0))
     
+    # ... (Sisa metadata tetap sama) ...
     try:
         explicit_data = t_meta.get('EXPLICIT_TRACK_CONTENT')
         if not explicit_data:
@@ -61,7 +117,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
         metadata['totaltracks'] = total_tracks
     metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', t_meta_page.get('PHYSICAL_RELEASE_DATE', ''))
 
-    # Ambil Genre dari API 2 (t_meta_page)
     if album_genre:
         metadata['genre'] = album_genre
     elif t_meta_page.get('GENRE_NAME'): 
@@ -71,7 +126,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
     if total_disks:
         metadata['totalvolume'] = str(total_disks)
     
-    # Ambil Composer dari API 1 (t_meta)
     if t_meta.get('CONTRIBUTORS'): 
         composers = []
         for contributor in t_meta['CONTRIBUTORS']:
@@ -88,9 +142,37 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'track'
     
+    # --- MODIFIKASI: Logika Sampul Baru (Prioritaskan iTunes) ---
     cover_id = t_meta.get('ALB_PICTURE', t_meta_page.get('ALB_PICTURE', ''))
-    metadata['cover'] = cover if cover else await get_cover(cover_id, metadata)
-    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(cover_id, metadata, True)
+
+    if cover:
+        # Jika sampul disediakan (dari album), gunakan itu
+        metadata['cover'] = cover
+    else:
+        # Jika ini track mandiri, cari sampulnya di iTunes
+        high_res_url = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Gunakan metadata yang sudah kita kumpulkan (upc, albumartist, album)
+                high_res_url = await get_itunes_cover_url(metadata, session)
+        except Exception as e:
+            logging.warning(f"Gagal memulai sesi aiohttp untuk sampul iTunes (track): {e}")
+
+        # Tentukan URL fallback dari Deezer
+        deezer_fallback_url = None
+        if cover_id:
+            deezer_fallback_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
+
+        # Pilih URL terbaik, lalu buat filenya
+        cover_url = high_res_url if high_res_url else deezer_fallback_url
+        metadata['cover'] = await create_cover_file(cover_url, metadata)
+
+    if thumbnail:
+        metadata['thumbnail'] = thumbnail
+    else:
+        # Selalu gunakan sampul Deezer untuk thumbnail cepat
+        metadata['thumbnail'] = await get_cover(cover_id, metadata, True)
+    # --- BATAS MODIFIKASI ---
 
     metadata['token'] = t_meta_page['TRACK_TOKEN']
     metadata['token_expiry'] = t_meta_page['TRACK_TOKEN_EXPIRE']
@@ -103,6 +185,8 @@ async def process_track_metadata(track_id, r_id, cover=None,
 async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
+    
+    # ... (Pengisian metadata dasar tetap sama) ...
     metadata['itemid'] = album_id
     metadata['albumartist'] = a_meta.get('ART_NAME', '')
     metadata['upc'] = a_meta.get('UPC', '')
@@ -110,10 +194,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     if a_meta.get('VERSION'):
         metadata['title'] += f' ({a_meta["VERSION"]})'
     metadata['album'] = a_meta.get('ALB_TITLE', 'Unknown Album')
-    
-    # PANGGILAN INI SEKARANG AKAN BERHASIL KARENA FUNGSI get_artists_name SUDAH DIPERBAIKI
     metadata['artist'] = get_artists_name(a_meta) 
-    
     metadata['date'] = a_meta.get('DIGITAL_RELEASE_DATE', '')
     metadata['totaltracks'] = a_meta.get('NUMBER_TRACK', '0')
     metadata['duration'] = a_meta.get('DURATION', 0)
@@ -130,9 +211,28 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
     
+    # --- MODIFIKASI: Logika Sampul Baru (Prioritaskan iTunes) ---
     cover_id = a_meta.get('ALB_PICTURE', '')
-    metadata['cover'] = await get_cover(cover_id, metadata)
+    high_res_url = None
+    try:
+        # metadata sudah memiliki 'upc', 'albumartist', 'album'
+        async with aiohttp.ClientSession() as session:
+            high_res_url = await get_itunes_cover_url(metadata, session)
+    except Exception as e:
+        logging.warning(f"Gagal memulai sesi aiohttp untuk sampul iTunes (album): {e}")
+
+    # Tentukan URL fallback dari Deezer
+    deezer_fallback_url = None
+    if cover_id:
+        deezer_fallback_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
+
+    # Pilih URL terbaik, lalu buat filenya
+    cover_url = high_res_url if high_res_url else deezer_fallback_url
+    metadata['cover'] = await create_cover_file(cover_url, metadata)
+    
+    # Selalu gunakan sampul Deezer untuk thumbnail cepat
     metadata['thumbnail'] = await get_cover(cover_id, metadata, True)
+    # --- BATAS MODIFIKASI ---
         
     metadata['tracks'] = []
     for track in t_meta['data']:
@@ -140,7 +240,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id):
             track_meta = await process_track_metadata(
                 track['SNG_ID'], 
                 r_id,
-                metadata['cover'], 
+                metadata['cover'], # <--- Ini akan meneruskan sampul iTunes resolusi tinggi ke setiap track
                 metadata['thumbnail'],
                 metadata['totaltracks'],
                 album_genre_name, 
@@ -168,13 +268,13 @@ async def process_playlist_meta(raw_meta, r_id):
     metadata['itemid'] = raw_meta['DATA']['PLAYLIST_ID']
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Deezer'
+    
+    # (Sampul playlist tetap menggunakan default Deezer karena tidak ada padanan di iTunes)
     metadata['cover'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata)
     metadata['thumbnail'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata, True)
     
-    # --- MODIFIKASI: Tambahkan Creator sebagai 'artist' untuk playlist ---
     if raw_meta['DATA'].get('CREATOR') and raw_meta['DATA']['CREATOR'].get('NAME'):
         metadata['artist'] = raw_meta['DATA']['CREATOR']['NAME']
-    # --- BATAS MODIFIKASI ---
 
     for track in raw_meta['SONGS']['data']:
         try:
@@ -194,7 +294,7 @@ async def process_playlist_meta(raw_meta, r_id):
 
     return metadata
 
-# --- MODIFIKASI DI SINI ---
+
 def get_artists_name(meta:dict):
     """
     Mengambil daftar artis.
@@ -203,15 +303,12 @@ def get_artists_name(meta:dict):
     """
     artists = []
     if meta.get('ARTISTS'):
-        # Jika ini adalah metadata lagu, ambil daftar artis
         for a in meta['ARTISTS']:
             artists.append(a['ART_NAME'])
     elif meta.get('ART_NAME'):
-        # Jika ini adalah metadata album, gunakan 'ART_NAME' sebagai fallback
         artists.append(meta.get('ART_NAME'))
         
     return ', '.join([str(artist) for artist in artists if artist])
-# --- BATAS MODIFIKASI ---
 
 
 async def get_cover(cover_id, meta:dict, thumbnail=False):
@@ -222,6 +319,7 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
             if not thumbnail
             else f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/80x0-none-100-0-0.png'
         )
+    # create_cover_file akan menangani jika URL-nya None
     return await create_cover_file(url, meta, thumbnail)
 
 
