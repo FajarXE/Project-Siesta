@@ -28,7 +28,7 @@ except ImportError:
 # --- FUNGSI BARU: Pencarian Sampul iTunes ---
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
     """
-    Mencoba mengambil URL sampul 3000x3000 dari iTunes menggunakan UPC atau pencarian Teks.
+    Mencoba mengambil URL sampul 1200x1200 dari iTunes menggunakan UPC atau pencarian Teks.
     """
     try:
         # 1. Coba cari via UPC (Paling Akurat)
@@ -42,8 +42,8 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                     if data.get('resultCount', 0) > 0:
                         artwork_url = data['results'][0].get('artworkUrl100')
                         if artwork_url:
-                            # Mengganti ke 3000x3000 (atau resolusi tertinggi)
-                            return artwork_url.replace('100x100bb.jpg', '3000x3000bb.jpg')
+                            # Mengganti ke 1200x1200 (atau resolusi tertinggi)
+                            return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
 
         # 2. Jika UPC gagal, coba cari via Teks (Album Artist + Album Title)
         if metadata.get('albumartist') and metadata.get('album'):
