@@ -1,3 +1,5 @@
+# [GANTI FILE: config.py]
+
 import os
 import logging
 import sys
@@ -33,9 +35,7 @@ class Config:
 # BOT WORKING DIRECTORY
 
 #--------------------
-    # For pyrogram temp files
     WORK_DIR = getenv("WORK_DIR", "./bot/")
-    # Just name of the Downloads Folder
     DOWNLOADS_FOLDER = getenv("DOWNLOADS_FOLDER", "DOWNLOADS")
     DOWNLOAD_BASE_DIR = WORK_DIR + DOWNLOADS_FOLDER
     LOCAL_STORAGE = getenv("LOCAL_STORAGE", DOWNLOAD_BASE_DIR)
@@ -45,7 +45,6 @@ class Config:
 
 #--------------------
     PLAYLIST_NAME_FORMAT = getenv("PLAYLIST_NAME_FORMAT", "{title} - Playlist")
-    #ALBUM_NAME_FORMAT = getenv("ALBUM_PATH_FORMAT", "{album} - {albumartist}")
     TRACK_NAME_FORMAT = getenv("TRACK_NAME_FORMAT", "{title} - {artist}")
 #--------------------
 
@@ -53,7 +52,6 @@ class Config:
 
 #--------------------
     RCLONE_CONFIG = getenv("RCLONE_CONFIG", None)
-    # No trailing slashes '/' for both index and rclone_dest
     RCLONE_DEST = getenv("RCLONE_DEST", 'remote:newfolder')
     INDEX_LINK = getenv('INDEX_LINK', None)
 #--------------------
@@ -61,20 +59,13 @@ class Config:
 # QOBUZ
 #--------------------
     
-    # MODIFIKASI: Semua variabel Qobuz lama dihapus
-    # dan diganti dengan loop pintar di bawah ini.
-
     QOBUZ_ACCOUNTS = []
     i = 1
     while True:
-        # 1. Mencari akun berdasarkan User/Token
         user_id = getenv(f"QOBUZ_USER_{i}")
         user_token = getenv(f"QOBUZ_TOKEN_{i}")
-        
-        # 2. ATAU mencari akun berdasarkan Email/Password
         email = getenv(f"QOBUZ_EMAIL_{i}")
         password = getenv(f"QOBUZ_PASSWORD_{i}")
-
         account_data = {}
         if user_id and user_token:
             logging.info(f"Ditemukan Qobuz Akun #{i} (User/Token)")
@@ -83,13 +74,11 @@ class Config:
             logging.info(f"Ditemukan Qobuz Akun #{i} (Email/Pass)")
             account_data = {"email": email, "password": password}
         else:
-            # 3. Jika tidak ada lagi akun (misal QOBUZ_USER_3 tidak ada),
-            #    loop akan berhenti.
-            if i > 1: # Hanya tampilkan log jika setidaknya satu akun ditemukan
+            if i > 1:
                  logging.info(f"Selesai memuat {i-1} akun Qobuz.")
             break
         
-        account_data["id"] = i # Simpan ID unik (1, 2, 3...)
+        account_data["id"] = i
         QOBUZ_ACCOUNTS.append(account_data)
         i += 1
     
@@ -101,25 +90,46 @@ class Config:
 # DEEZER
 
 #--------------------
-    DEEZER_EMAIL = getenv("DEEZER_EMAIL", None)
-    DEEZER_PASSWORD = getenv("DEEZER_PASSWORD", None)
+    # --- MODIFIKASI: Mendukung Multi-Login Deezer ---
+    
+    # Kunci ini tetap global karena tidak spesifik per akun
     DEEZER_BF_SECRET = getenv("DEEZER_BF_SECRET", None)
-    #DEEZER_TRACK_URL_KEY = getenv("DEEZER_TRACK_URL_KEY", None)
-    DEEZER_ARL = getenv("DEEZER_ARL", None)
+    
+    # Hapus kredensial tunggal lama
+    # DEEZER_EMAIL = getenv("DEEZER_EMAIL", None)
+    # DEEZER_PASSWORD = getenv("DEEZER_PASSWORD", None)
+    # DEEZER_ARL = getenv("DEEZER_ARL", None)
+
+    # Buat daftar akun seperti Qobuz
+    DEEZER_ACCOUNTS = []
+    i = 1
+    while True:
+        # Kita akan menggunakan ARL untuk multi-akun karena ini yang paling stabil
+        arl = getenv(f"DEEZER_ARL_{i}")
+        
+        if arl:
+            logging.info(f"Ditemukan Deezer Akun #{i} (ARL)")
+            account_data = {"arl": arl, "id": i}
+            DEEZER_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            # Jika tidak ada lagi akun (misal DEEZER_ARL_3 tidak ada),
+            # loop akan berhenti.
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun Deezer.")
+            break
+
+    if not DEEZER_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Deezer (DEEZER_ARL_1, dll.) ditemukan di .env")
+    # --- BATAS MODIFIKASI ---
+
 #--------------------
 
 # TIDAL
 
 #--------------------
     ENABLE_TIDAL = getenv("ENABLE_TIDAL", None)
-    TIDAL_MOBILE = getenv("TIDAL_MOBILE", None) # only use email pass in mobile session
-    TIDAL_MOBILE_TOKEN = getenv("TIDAL_MOBILE_TOKEN", None)
-    TIDAL_ATMOS_MOBILE_TOKEN = getenv("TIDAL_ATMOS_MOBILE_TOKEN", None)
-    TIDAL_TV_TOKEN = getenv("TIDAL_TV_TOKEN", None)
-    TIDAL_TV_SECRET = getenv("TIDAL_TV_SECRET", None)
-    TIDAL_CONVERT_M4A = getenv("TIDAL_CONVERT_M4A", False)
-    TIDAL_REFRESH_TOKEN = getenv("TIDAL_REFRESH_TOKEN", None)
-    TIDAL_COUNTRY_CODE = getenv("TIDAL_COUNTRY_CODE", None) # example CA for Canada
+    # ... (sisa config tidal) ...
 #--------------------    
     
 # CONCURRENT
