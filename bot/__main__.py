@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/__main__.py]
+
 import os
 import signal
 import asyncio, sys, logging, traceback
@@ -7,27 +9,33 @@ from bot import Config
 from .tgclient import aio
 from .settings import bot_set
 
-# --- MODIFIKASI DIMULAI ---
-# 1. Impor QoClient (Sesuaikan path ini jika perlu!)
+# --- Blok Impor Qobuz (Tetap Sama) ---
 try:
     from .helpers.qobuz.qopy import QoClient
 except ImportError:
     logging.critical("Gagal mengimpor QoClient! Pastikan path 'from .helpers.qobuz.qopy import QoClient' benar.")
     sys.exit(1)
 
-# 2. Mengimpor dictionary global dari bot/__init__.py
-from bot import BOT_QOBUZ_CLIENTS
+from bot import BOT_QOBUZ_CLIENTS #
 
-# 3. Impor database
 try:
     from .helpers.database.mongo_async import database
 except ImportError:
     logging.critical("Gagal mengimpor 'database' dari .helpers.database.mongo_async!")
     sys.exit(1)
-# --- MODIFIKASI SELESAI ---
+# --- Batas Blok Impor Qobuz ---
 
 
-# PERBAIKAN: Fungsi ini diganti seluruhnya untuk memuat pengaturan dari DB
+# --- MODIFIKASI BARU: Impor Manajer Deezer ---
+try:
+    from .helpers.deezer.manager import deezer_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'deezer_manager' dari .helpers.deezer.manager!")
+    sys.exit(1)
+# --- BATAS MODIFIKASI ---
+
+
+# --- Fungsi Login Qobuz (Tetap Sama) ---
 async def login_single_client(creds: dict):
     """
     Helper untuk meloginkan satu klien, memuat pengaturannya dari DB,
@@ -39,55 +47,34 @@ async def login_single_client(creds: dict):
     client = QoClient(**creds_copy) 
     
     try:
-        # 1. Login Klien
         await client.login()
         
-        # 2. Muat Kualitas Default Bot dari DB
         try:
             db_settings = await database.get_variable()
             db_default_q = db_settings.get('QOBUZ_QUALITY')
-
-            client.quality = int(db_default_q) if db_default_q else 6 # Default 6 (Lossless) jika tidak ada
-            
-            # --- PERBAIKAN: Diubah ke .debug ---
+            client.quality = int(db_default_q) if db_default_q else 6 
             logging.debug(f"Berhasil memuat Kualitas Default Qobuz '{client.quality}' untuk Akun #{account_id}.")
-            # --- BATAS PERBAIKAN ---
-            
         except Exception as e:
             logging.error(f"Gagal memuat Kualitas Default Qobuz dari DB untuk Akun #{account_id}: {e}. Menggunakan default 6.")
             client.quality = 6
 
-        # 3. Muat Semua Pengaturan Kualitas Pengguna dari DB
         try:
-            # --- PERBAIKAN: Diubah ke .debug ---
             logging.debug(f"Memuat pengaturan Qobuz pengguna dari DB untuk Akun #{account_id}...")
-            # --- BATAS PERBAIKAN ---
-            
             all_users_from_db = await database.client.users.find({}).to_list(None)
-            
             count = 0
             for user_doc in all_users_from_db:
                 user_id = user_doc.get('_id')
                 qobuz_qual = user_doc.get('qobuz_qual') 
-                
                 if user_id and qobuz_qual:
                     await client.setup_quality(user_id, int(qobuz_qual))
                     count += 1
-            
-            # --- PERBAIKAN: Diubah ke .debug ---
             logging.debug(f"Berhasil memuat {count} pengaturan Qobuz pengguna untuk Akun #{account_id}.")
-            # --- BATAS PERBAIKAN ---
-            
         except Exception as e:
             logging.error(f"Gagal memuat pengaturan Qobuz pengguna dari DB: {e}")
             logging.warning("Pengaturan kualitas pengguna mungkin tidak akan persisten.")
 
-        # 4. Simpan klien yang SUDAH LOGIN & DIKONFIGURASI ke dictionary global
         BOT_QOBUZ_CLIENTS[account_id] = client
-        
-        # --- PERBAIKAN: Diubah ke .debug ---
         logging.debug(f"Berhasil login & konfigurasi Akun Qobuz #{account_id} (Label: {client.label})")
-        # --- BATAS PERBAIKAN ---
         
     except Exception as e:
         logging.error(f"Gagal login utama Akun Qobuz #{account_id}: {e}")
@@ -110,9 +97,8 @@ async def load_all_bot_qobuz_clients():
     if not BOT_QOBUZ_CLIENTS:
         logging.warning("PERINGATAN: Tidak ada akun Qobuz bot yang berhasil login! Fungsi Qobuz tidak akan bekerja.")
     else:
-        # Biarkan ini sebagai .info() sebagai konfirmasi akhir
         logging.info(f"Berhasil login total {len(BOT_QOBUZ_CLIENTS)} akun Qobuz.")
-# --- MODIFIKASI SELESAI ---
+# --- Batas Fungsi Login Qobuz ---
 
 
 def signal_handler(s, f):
@@ -126,8 +112,28 @@ def signal_handler(s, f):
 async def main():
     await bot_set.set_language()
     
-    # Panggil fungsi login Qobuz SEBELUM bot online
-    await load_all_bot_qobuz_clients()
+    # 1. Panggil fungsi login Qobuz (Tetap Sama)
+    await load_all_bot_qobuz_clients() #
+
+    # --- MODIFIKASI BARU: Tambahkan Inisialisasi Deezer ---
+    logging.info("Memulai inisialisasi Manajer Deezer...")
+    await deezer_manager.initialize_clients()
+    if deezer_manager.clients: # Periksa apakah ada klien yang berhasil login
+        # Beri tahu bot_set bahwa Deezer 'aktif'
+        bot_set.deezer = True 
+        logging.info(f"Manajer Deezer berhasil diinisialisasi dengan {len(deezer_manager.clients)} klien.")
+    else:
+        logging.warning("PERINGATAN: Tidak ada akun Deezer yang berhasil login! Fungsi Deezer tidak akan bekerja.")
+    # --- BATAS MODIFIKASI ---
+
+    # --- MODIFIKASI BARU: Panggil sisa login dari settings.py ---
+    # (Ini mungkin sudah ada di file Anda, tambahkan jika belum)
+    logging.info("Memulai login Tidal...")
+    await bot_set.login_tidal()
+
+    logging.info("Menginisialisasi data pengguna...")
+    await bot_set.initialize_users()
+    # --- BATAS MODIFIKASI ---
 
     await aio.start()
     signal.signal(signal.SIGINT, signal_handler)
