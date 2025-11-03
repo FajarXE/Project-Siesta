@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from Cryptodome.Hash import MD5
 from Cryptodome.Cipher import Blowfish
 
-from config import Config
+from config import Config # Masih diperlukan untuk BF_SECRET
 from bot.logger import LOGGER
 
 class APIError(Exception):
@@ -40,7 +40,13 @@ class DeezerAPI:
         self.renew_timestamp = ceil(time())
         self.language = 'en'
         self.available_formats = ['MP3_128']
-        self.bf_secret = Config.DEEZER_BF_SECRET.encode('ascii')
+        # --- MODIFIKASI: Ambil BF_SECRET saat inisialisasi ---
+        if not Config.DEEZER_BF_SECRET:
+            LOGGER.warning("DEEZER_BF_SECRET tidak diatur di Config!")
+            self.bf_secret = b'' # Atau tangani error
+        else:
+            self.bf_secret = Config.DEEZER_BF_SECRET.encode('ascii')
+        # --- BATAS MODIFIKASI ---
 
 
     async def _api_call(self, method, payload={}):
@@ -102,25 +108,28 @@ class DeezerAPI:
         return resp['results']
 
 
-    async def login(self):
+    # --- MODIFIKASI: 'login' sekarang menerima kredensial sebagai argumen ---
+    async def login(self, arl: str = None, email: str = None, password: str = None):
         try:
-            if Config.DEEZER_ARL:
-                await self.login_via_arl(Config.DEEZER_ARL)
-            elif Config.DEEZER_EMAIL and Config.DEEZER_PASSWORD: 
+            if arl:
+                await self.login_via_arl(arl)
+            elif email and password: 
                 await self.login_via_email(
-                    Config.DEEZER_EMAIL,
-                    Config.DEEZER_PASSWORD
+                    email,
+                    password
                 )
             else:
-                raise Exception("Tidak ada kredensial Deezer (ARL/Email) yang disediakan.")
+                raise Exception("Tidak ada kredensial Deezer (ARL atau Email/Password) yang disediakan untuk instans klien ini.")
                 
         except Exception as e:
             LOGGER.error(f"DEEZER : {e}")
             if self.session:
                 await self.session.close()
-            return False
+            raise e # Lempar ulang error agar pemanggil tahu login gagal
 
+        LOGGER.info(f"Deezer: Berhasil login untuk user ID {self.user['USER']['USER_ID']}")
         return True
+    # --- BATAS MODIFIKASI ---
 
     async def login_via_email(self, email, password):
         async with self.ratelimit:
@@ -149,6 +158,7 @@ class DeezerAPI:
     async def login_via_arl(self, arl):
         cookie = {'arl':arl}
         if not self.session:
+            # Panggil _api_call untuk menginisialisasi sesi jika belum ada
             await self._api_call('deezer.getUserData') 
             
         self.session.cookie_jar.update_cookies(cookie)
@@ -158,11 +168,17 @@ class DeezerAPI:
         self.user = user_data
         return user_data
 
+    # ... (Sisa fungsi get_track, get_album, dll, tetap sama) ...
+    # ... (Pastikan semua fungsi dari sini ke bawah menggunakan self.session) ...
 
     async def custom_url_parse(self, link) -> (str, int):
         url = urlparse(link)
         if url.hostname == 'link.deezer.com':
             async with self.ratelimit:
+                # Pastikan self.session sudah ada
+                if not self.session:
+                    await self.login_via_arl(Config.DEEZER_ARL) # Fallback? Atau pastikan login terjadi
+                
                 async with self.session.get(link, allow_redirects=True) as r:
                     if r.status != 200:
                         raise Exception(f'DEEZER : Invalid URL: {link}')
@@ -179,14 +195,11 @@ class DeezerAPI:
         return res
 
     async def get_track_data(self, id):
-        # --- INI ADALAH PERBAIKAN YANG ANDA LEWATKAN ---
-        # Meminta 'CONTRIBUTORS' secara eksplisit
         payload = {
             'sng_id': id,
             'array_default': ['CONTRIBUTORS']
         }
         res = await self._api_call('song.getData', payload)
-        # --- BATAS PERBAIKAN ---
         return res
 
     async def get_track_url(self, id, track_token, track_token_expiry, format):
@@ -279,4 +292,6 @@ class DeezerAPI:
     def _decrypt_chunk(key, data):
         return Blowfish.new(key, Blowfish.MODE_CBC, b"\x00\x01\x02\x03\x04\x05\x06\x07").decrypt(data)
 
-deezerapi = DeezerAPI()
+# --- MODIFIKASI: Hapus instans global ---
+# deezerapi = DeezerAPI()  <--- BARIS INI DIHAPUS
+# --- BATAS MODIFIKASI ---
