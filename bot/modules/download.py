@@ -10,19 +10,16 @@ from bot import CMD
 from bot.logger import LOGGER
 import bot.helpers.translations as lang
 
-# --- MODIFIKASI: Hapus impor ACTIVE_DOWNLOAD_TASKS ---
 from bot import BOT_QOBUZ_CLIENTS
 from bot.tgclient import aio 
 
-# --- MODIFIKASI BARU: Impor manajer Deezer ---
+# Impor manajer Deezer (sudah ada)
 from bot.helpers.deezer.manager import deezer_manager
-# --- BATAS MODIFIKASI ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
-# --- MODIFIKASI: Hapus impor antiSpam ---
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
 
@@ -44,10 +41,11 @@ async def run_download_task(link: str, user: dict):
         await asyncio.sleep(5) 
             
     except Exception as e:
-        # --- MODIFIKASI: Kita akan menangani error "tidak ada akun" di sini ---
+        # --- MODIFIKASI: Penanganan error yang lebih baik untuk failover ---
         error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
-        # Beri pesan yang lebih baik jika tidak ada klien yang login
-        if "Tidak ada akun" in str(e):
+        
+        # Beri pesan yang lebih jelas jika semua akun gagal
+        if "not available in any" in str(e) or "Maaf, tidak ada akun" in str(e):
             error_message = f"Tugas Gagal: {e}"
             
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
@@ -55,9 +53,10 @@ async def run_download_task(link: str, user: dict):
             await edit_message(user['bot_msg'], error_message)
         except:
             pass 
+        # --- BATAS MODIFIKASI ---
             
     finally:
-        await cleanup(user) # Hapus file
+        await cleanup(user) 
         
         try:
             await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
@@ -100,20 +99,54 @@ async def start_link(link: str, user: dict) -> None:
     elif link.startswith(tuple(deezer)):
         user['provider'] = 'Deezer'
         
-        # --- MODIFIKASI BARU: Tambahkan Logika Klien Deezer ---
-        # 1. Ambil klien dari kumpulan (pool)
-        client = deezer_manager.get_client()
+        # --- MODIFIKASI: Logika Failover Otomatis Deezer ---
         
-        # 2. Periksa apakah klien ada
-        if not client:
-            # Lempar error agar 'run_download_task' bisa menangkapnya
+        # 1. Periksa apakah ada klien yang aktif
+        if not deezer_manager.clients:
             raise Exception("Maaf, tidak ada akun Deezer bot yang aktif saat ini.")
-            
-        # 3. LAMPIRKAN klien ke kamus user
-        user['deezer_api'] = client
-        # --- BATAS MODIFIKASI ---
+
+        # 2. Ambil *seluruh daftar* klien dan acak urutannya
+        clients_list = random.sample(deezer_manager.clients, len(deezer_manager.clients))
         
-        await start_deezer(link, user) #
+        last_error = None
+        
+        # 3. Loop melalui setiap klien
+        for client in clients_list:
+            try:
+                # 4. Lampirkan SATU klien ke kamus user
+                # (handler.py sudah dirancang untuk menerima ini)
+                user['deezer_api'] = client 
+                
+                # 5. Coba jalankan seluruh tugas start_deezer
+                await start_deezer(link, user)
+                
+                # 6. Jika berhasil, hentikan loop dan keluar
+                LOGGER.info(f"Deezer: Unduhan berhasil menggunakan ARL ID {client.user['USER']['USER_ID']}")
+                return 
+                
+            except Exception as e:
+                # 7. Tangkap error spesifik yang terkait dengan ketersediaan
+                error_str = str(e).lower()
+                if "not available in your country" in error_str or \
+                   "not available by your subscription" in error_str or \
+                   "track not available" in error_str:
+                    
+                    LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Region/Sub Lock): {e}. Mencoba ARL berikutnya...")
+                    last_error = e # Simpan error untuk ditampilkan jika semua gagal
+                    continue # Lanjutkan ke ARL berikutnya
+                
+                else:
+                    # 8. Jika ini error fatal (misal 404, 500), segera hentikan
+                    LOGGER.error(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Fatal): {e}")
+                    raise e # Lempar ulang error fatal
+                    
+        # 9. Jika loop selesai (semua ARL gagal), lempar error terakhir
+        if last_error:
+            raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Deezer yang dicoba. Error terakhir: {last_error}")
+        else:
+            # Ini seharusnya tidak terjadi, tetapi sebagai pengaman
+            raise Exception("Gagal mengunduh Deezer karena alasan yang tidak diketahui setelah mencoba semua akun.")
+        # --- BATAS MODIFIKASI ---
         
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
