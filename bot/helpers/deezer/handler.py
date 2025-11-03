@@ -3,9 +3,12 @@
 from pathvalidate import sanitize_filepath
 from config import Config
 import traceback
+import os # <--- Impor os
 
 from .metadata import *
-from .dzapi import deezerapi
+# --- MODIFIKASI: Hapus impor global ---
+# from .dzapi import deezerapi 
+# --- BATAS MODIFIKASI ---
 
 from ..utils import *
 from ..uploder import *
@@ -20,18 +23,28 @@ from ..message import edit_message
 
 
 async def start_deezer(url:str, user: dict):
+    # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
+    deezerapi = user.get('deezer_api')
+    if not deezerapi:
+        await edit_message(user['bot_msg'], "Error: Sesi login Deezer tidak ditemukan untuk pengguna ini.")
+        return
+    # --- BATAS MODIFIKASI ---
+
     try:
         media_type, item_id = await deezerapi.custom_url_parse(url)
 
         if media_type == 'artist':
             await start_artist(item_id, user)
         elif media_type == 'track':
+            # --- MODIFIKASI: Kirim 'user' ke start_track ---
             success = await start_track(item_id, user, None)
             if not success:
                 raise Exception("Gagal mengunduh atau memproses track.")
         elif media_type == 'album':
+            # --- MODIFIKASI: Kirim 'user' ke start_album ---
             await start_album(item_id, user)
         elif media_type == 'playlist':
+            # --- MODIFIKASI: Kirim 'user' ke start_playlist ---
             await start_playlist(item_id, user)
         
         await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
@@ -44,9 +57,14 @@ async def start_deezer(url:str, user: dict):
 async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
 
+    # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
+    deezerapi = user['deezer_api']
+    # --- BATAS MODIFIKASI ---
+
     if not track_meta:
         try:
-            track_meta = await process_track_metadata(item_id, user['r_id'])
+            # --- MODIFIKASI: Teruskan 'user' ke process_track_metadata ---
+            track_meta = await process_track_metadata(item_id, user['r_id'], user=user)
         except Exception as e:
             LOGGER.warning(f"Deezer track {item_id} tidak tersedia: {e}")
             return False
@@ -74,6 +92,7 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
+    # --- MODIFIKASI: Panggil dl_track dari instans pengguna ---
     err = await deezerapi.dl_track(item_id, url, track_meta['filepath'])
     if err:
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
@@ -99,34 +118,25 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
 
 
 async def start_album(album_id:int, user:dict, upload=True):
+    # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
+    deezerapi = user['deezer_api']
+    # --- BATAS MODIFIKASI ---
+
     try:
-        # --- MODIFIKASI: Panggil 2 API (Metadata & Daftar Lagu) ---
-        
-        # 1. Panggil 'get_album' (album.getData) untuk Metadata Lengkap (Genre, UPC, dll)
         album_metadata_dict = await deezerapi.get_album(album_id)
-        
-        # 2. Panggil 'get_album_tracks' (deezer.pageAlbum) untuk Daftar Lagu (SONGS)
         tracklist_raw_data = await deezerapi.get_album_tracks(album_id)
-        
-        # --- BATAS MODIFIKASI ---
         
     except Exception as e:
         raise Exception(f"Gagal mendapatkan metadata album Deezer: {e}")
 
-    # --- MODIFIKASI: Cek data lagu dari panggilan API kedua ---
-    
     songs_dict = tracklist_raw_data.get('SONGS')
 
-    # Periksa apakah data lagu (SONGS) ada
     if not songs_dict or not songs_dict.get('data'):
-        # Jika 'SONGS' tidak ada atau kosong, lempar error
         album_title = album_metadata_dict.get('ALB_TITLE', f'(ID: {album_id})')
         raise Exception(f"Album '{album_title}' tidak memiliki daftar lagu ('SONGS' key missing or empty from API response).")
     
-    # Kirim data yang sudah digabung ke process_album_metadata
-    # album_metadata_dict -> metadata (Genre, dll)
-    # songs_dict -> daftar lagu
-    album_meta = await process_album_metadata(album_id, album_metadata_dict, songs_dict, user['r_id'])
+    # --- MODIFIKASI: Teruskan 'user' ke process_album_metadata ---
+    album_meta = await process_album_metadata(album_id, album_metadata_dict, songs_dict, user['r_id'], user=user)
     # --- BATAS MODIFIKASI ---
     
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
@@ -177,6 +187,10 @@ async def start_album(album_id:int, user:dict, upload=True):
 
 
 async def start_artist(artist_id, user):
+    # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
+    deezerapi = user['deezer_api']
+    # --- BATAS MODIFIKASI ---
+    
     album_ids = await deezerapi.get_artist_album_ids(artist_id, 0, -1, False)
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
     artist_zip = bot_set.user_data.get(user.get("user_id", 0), {}).get("artist_zip", bot_set.artist_zip)
@@ -190,8 +204,16 @@ async def start_artist(artist_id, user):
 
 
 async def start_playlist(playlist_id, user):
+    # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
+    deezerapi = user['deezer_api']
+    # --- BATAS MODIFIKASI ---
+    
     raw_data = await deezerapi.get_playlist(playlist_id, -1, 0)
-    play_meta = await process_playlist_meta(raw_data, user['r_id'])
+    
+    # --- MODIFIKASI: Teruskan 'user' ke process_playlist_meta ---
+    play_meta = await process_playlist_meta(raw_data, user['r_id'], user=user)
+    # --- BATAS MODIFIKASI ---
+
     playlist_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{play_meta['provider']}/"
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
     playlist_sort = False if bot_set.upload_mode == 'Telegram' else bot_set.playlist_sort
