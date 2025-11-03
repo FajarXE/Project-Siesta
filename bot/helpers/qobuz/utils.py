@@ -1,12 +1,13 @@
-# From vitiko98/qobuz-dl
+# [GANTI FILE: bot/helpers/qobuz/utils.py]
+
 import re
 import copy
 import bot.helpers.translations as lang
 import logging
-# --- PERBAIKAN: Impor aiohttp dan urllib untuk pencarian sampul iTunes ---
 import aiohttp
 import urllib.parse
-# --- BATAS PERBAIKAN ---
+import os # <-- MODIFIKASI: Impor OS
+from config import Config # <-- MODIFIKASI: Impor Config
 
 from ..message import send_message, edit_message
 from ..utils import format_string
@@ -14,65 +15,106 @@ from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 
 from bot.settings import bot_set
-from config import Config
+# Hapus Config dari sini karena sudah diimpor di atas
 
-# --- MODIFIKASI: Impor QobuzContentUnavailableError dari handler ---
 try:
     from .handler import QobuzContentUnavailableError
 except ImportError:
     class QobuzContentUnavailableError(Exception):
         pass
+
+# --- MODIFIKASI BARU: Tentukan path fallback secara eksplisit ---
+# Kita gunakan Config.WORK_DIR + nama file
+FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
 # --- BATAS MODIFIKASI ---
 
 
-# --- FUNGSI BARU: Pencarian Sampul iTunes ---
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
-    """
-    Mencoba mengambil URL sampul 1200x1200 dari iTunes menggunakan UPC atau pencarian Teks.
-    """
+    # ... (Fungsi ini tetap sama persis seperti di file Anda) ...
     try:
-        # 1. Coba cari via UPC (Paling Akurat)
         if metadata.get('upc') and metadata['upc'] != "0":
             upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
             async with session.get(upc_url) as resp:
                 if resp.status == 200:
-                    # --- PERBAIKAN: Izinkan mimetype text/javascript ---
                     data = await resp.json(content_type=None)
-                    # --- BATAS PERBAIKAN ---
                     if data.get('resultCount', 0) > 0:
                         artwork_url = data['results'][0].get('artworkUrl100')
                         if artwork_url:
-                            # Mengganti ke 1200x1200 (atau resolusi tertinggi)
                             return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
-
-        # 2. Jika UPC gagal, coba cari via Teks (Album Artist + Album Title)
         if metadata.get('albumartist') and metadata.get('album'):
             search_term = urllib.parse.quote(f"{metadata['albumartist']} {metadata['album']}")
             search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
             async with session.get(search_url) as resp:
                 if resp.status == 200:
-                    # --- PERBAIKAN: Izinkan mimetype text/javascript ---
                     data = await resp.json(content_type=None)
-                    # --- BATAS PERBAIKAN ---
                     if data.get('resultCount', 0) > 0:
-                        # Iterasi hasil untuk menemukan kecocokan terbaik
                         for result in data['results']:
                             itunes_album = result.get('collectionName', '').lower()
                             itunes_artist = result.get('artistName', '').lower()
                             local_album = metadata['album'].lower()
                             local_artist = metadata['albumartist'].lower()
-                            
-                            # Cek kecocokan yang kuat
                             if (local_album in itunes_album or itunes_album in local_album) and \
                                (local_artist in itunes_artist):
                                 artwork_url = result.get('artworkUrl100')
                                 if artwork_url:
                                     return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
-
     except Exception as e:
-        # Jangan crash jika pencarian iTunes gagal, cukup log
         logging.warning(f"Pencarian sampul iTunes gagal untuk UPC {metadata.get('upc')}: {e}")
         return None
+    return None
+# --- BATAS FUNGSI iTunes ---
+
+
+# --- FUNGSI BARU: Tambahkan pencarian MusicBrainz ---
+async def get_musicbrainz_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
+    """
+    Mencoba mengambil URL sampul resolusi tinggi dari MusicBrainz (Cover Art Archive).
+    """
+    headers = {'User-Agent': 'MusicDownloaderBot/1.0 (https://github.com/your-repo)'}
+    mbid = None # MusicBrainz Release ID
+    
+    try:
+        # 1. Coba cari berdasarkan UPC (Paling akurat)
+        if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
+            url = f"https://musicbrainz.org/ws/2/release/?query=barcode:{metadata['upc']}&fmt=json"
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get('releases') and len(data['releases']) > 0:
+                        mbid = data['releases'][0].get('id')
+                else:
+                    logging.warning(f"MusicBrainz UPC search returned HTTP {resp.status}")
+
+        # 2. Jika tidak ada MBID, coba cari berdasarkan Teks (Kurang akurat)
+        if not mbid and metadata.get('albumartist') and metadata.get('album'):
+            artist = urllib.parse.quote(metadata['albumartist'])
+            album = urllib.parse.quote(metadata['album'])
+            url = f"https://musicbrainz.org/ws/2/release/?query=release:{album}%20AND%20artist:{artist}&fmt=json"
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get('releases') and len(data['releases']) > 0:
+                        mbid = data['releases'][0].get('id')
+                else:
+                    logging.warning(f"MusicBrainz text search returned HTTP {resp.status}")
+
+        # 3. Jika kita punya MBID, ambil sampulnya dari Cover Art Archive
+        if mbid:
+            art_url = f"https://coverartarchive.org/release/{mbid}"
+            async with session.get(art_url, headers=headers, allow_redirects=False) as resp:
+                if resp.status != 200:
+                    logging.warning(f"MusicBrainz CAA: Tidak ada sampul untuk MBID {mbid} (Status: {resp.status})")
+                    return None
+                    
+                art_data = await resp.json()
+                for image in art_data.get('images', []):
+                    if 'Front' in image.get('types', []) and image.get('thumbnails'):
+                        return image['thumbnails'].get('1200', image.get('image'))
+                if art_data.get('images') and art_data['images'][0].get('thumbnails'):
+                     return art_data['images'][0]['thumbnails'].get('1200', art_data['images'][0].get('image'))
+
+    except Exception as e:
+        logging.warning(f"Pencarian sampul MusicBrainz gagal: {e}")
     
     return None
 # --- BATAS FUNGSI BARU ---
@@ -96,8 +138,8 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     
     metadata = copy.deepcopy(base_meta)
 
+    # ... (Pengisian metadata dasar tetap sama) ...
     metadata['tempfolder'] += f"{r_id}-temp/"
-
     metadata['itemid'] = item_id
     metadata['copyright'] = q_meta['copyright']
     metadata['albumartist'] = q_meta['album']['artist']['name']
@@ -105,40 +147,56 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     metadata['upc'] = q_meta['album']['upc']
     metadata['album'] = q_meta['album']['title']
     metadata['isrc'] = q_meta['isrc']
-
     metadata['title'] = q_meta['title']
     if q_meta['version']:
         metadata['title'] += f' ({q_meta["version"]})'
-
     metadata['duration'] = q_meta['duration']
     metadata['explicit'] = q_meta['parental_warning']
     metadata['tracknumber'] = q_meta['track_number']
     metadata['date'] = q_meta['release_date_original']
     metadata['totaltracks'] = q_meta['album']['tracks_count']
-
     if q_meta.get('album') and q_meta['album'].get('genre'):
          metadata['genre'] = q_meta['album']['genre'].get('name', '')
-
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'track'
-
     metadata['volume'] = q_meta.get('media_number', '')
     metadata['totalvolume'] = q_meta['album'].get('media_count', '')
     if q_meta.get('composer'):
         metadata['composer'] = q_meta['composer'].get('name', '')
 
-    # --- PERBAIKAN: Prioritaskan sampul iTunes 3000x3000 ---
+    # --- MODIFIKASI: Logika Sampul (iTunes -> MusicBrainz -> Qobuz -> Lokal) ---
     qobuz_fallback_url = q_meta['album']['image'].get('original', q_meta['album']['image'].get('large'))
-    high_res_url = None
+    cover_url = None
+    
     try:
         async with aiohttp.ClientSession() as session:
-            high_res_url = await get_itunes_cover_url(metadata, session)
+            # 1. Coba iTunes
+            logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
+            cover_url = await get_itunes_cover_url(metadata, session)
+            
+            # 2. Coba MusicBrainz
+            if not cover_url:
+                logging.debug(f"iTunes gagal, mencari sampul di MusicBrainz...")
+                cover_url = await get_musicbrainz_cover_url(metadata, session)
     except Exception as e:
-        logging.warning(f"Gagal memulai sesi aiohttp untuk sampul iTunes: {e}")
+        logging.warning(f"Sesi pencarian sampul pihak ketiga gagal (track): {e}")
 
-    cover_url = high_res_url if high_res_url else qobuz_fallback_url
-    metadata['cover'] = await create_cover_file(cover_url, metadata)
-    # --- BATAS PERBAIKAN ---
+    # 3. Coba Qobuz
+    if not cover_url:
+        logging.debug(f"Pihak ketiga gagal, menggunakan sampul Qobuz.")
+        cover_url = qobuz_fallback_url
+
+    # 4. Cek Final & Kirim ke create_cover_file
+    final_cover_path_or_url = cover_url
+    if not cover_url:
+        if os.path.exists(FALLBACK_IMAGE_PATH):
+            logging.warning(f"Semua sumber online gagal, menggunakan fallback lokal: {FALLBACK_IMAGE_PATH}")
+            final_cover_path_or_url = FALLBACK_IMAGE_PATH
+        else:
+            logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
+    
+    metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
+    # --- BATAS MODIFIKASI ---
     
     metadata['thumbnail'] = await create_cover_file(q_meta['album']['image']['thumbnail'], metadata, True)
 
@@ -153,8 +211,8 @@ async def get_album_metadata(item_id, r_id, user: dict):
     
     metadata = copy.deepcopy(base_meta)
 
+    # ... (Pengisian metadata dasar tetap sama) ...
     metadata['tempfolder'] += f"{r_id}-temp/"
-
     metadata['itemid'] = item_id
     metadata['albumartist'] = q_meta['artist']['name']
     metadata['upc'] = q_meta['upc']
@@ -166,25 +224,44 @@ async def get_album_metadata(item_id, r_id, user: dict):
     metadata['duration'] = q_meta['duration']
     metadata['copyright'] = q_meta['copyright']
     metadata['genre'] = q_meta['genre']['name']
-    
     metadata['totalvolume'] = q_meta.get('media_count', '')
-    
     metadata['explicit'] = q_meta['parental_warning']
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'album'
 
-    # --- PERBAIKAN: Prioritaskan sampul iTunes 3000x3000 ---
+    # --- MODIFIKASI: Logika Sampul (iTunes -> MusicBrainz -> Qobuz -> Lokal) ---
     qobuz_fallback_url = q_meta['image'].get('original', q_meta['image'].get('large'))
-    high_res_url = None
+    cover_url = None
+    
     try:
         async with aiohttp.ClientSession() as session:
-            high_res_url = await get_itunes_cover_url(metadata, session)
+            # 1. Coba iTunes
+            logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
+            cover_url = await get_itunes_cover_url(metadata, session)
+            
+            # 2. Coba MusicBrainz
+            if not cover_url:
+                logging.debug(f"iTunes gagal, mencari sampul di MusicBrainz...")
+                cover_url = await get_musicbrainz_cover_url(metadata, session)
     except Exception as e:
-        logging.warning(f"Gagal memulai sesi aiohttp untuk sampul iTunes: {e}")
+        logging.warning(f"Sesi pencarian sampul pihak ketiga gagal (album): {e}")
 
-    cover_url = high_res_url if high_res_url else qobuz_fallback_url
-    metadata['cover'] = await create_cover_file(cover_url, metadata)
-    # --- BATAS PERBAIKAN ---
+    # 3. Coba Qobuz
+    if not cover_url:
+        logging.debug(f"Pihak ketiga gagal, menggunakan sampul Qobuz.")
+        cover_url = qobuz_fallback_url
+
+    # 4. Cek Final & Kirim ke create_cover_file
+    final_cover_path_or_url = cover_url
+    if not cover_url:
+        if os.path.exists(FALLBACK_IMAGE_PATH):
+            logging.warning(f"Semua sumber online gagal, menggunakan fallback lokal: {FALLBACK_IMAGE_PATH}")
+            final_cover_path_or_url = FALLBACK_IMAGE_PATH
+        else:
+            logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
+    
+    metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
+    # --- BATAS MODIFIKASI ---
     
     metadata['thumbnail'] = await create_cover_file(q_meta['image']['thumbnail'], metadata, True)
 
@@ -193,23 +270,20 @@ async def get_album_metadata(item_id, r_id, user: dict):
     return metadata, None
 
 async def get_track_meta_from_alb(q_meta:dict, alb_meta):
+    # ... (Fungsi ini tetap sama) ...
     tracks = []
     for track in q_meta['tracks']['items']:
         metadata = copy.deepcopy(alb_meta)
         metadata['itemid'] = track['id']
-
         metadata['title'] = track['title']
         if track['version']:
             metadata['title'] += f' ({track["version"]})'
-
         metadata['duration'] = track['duration']
         metadata['isrc'] = track['isrc']
         metadata['tracknumber'] = track['track_number']
-
         metadata['volume'] = track.get('media_number', '')
         if track.get('composer'):
             metadata['composer'] = track['composer'].get('name', '')
-
         metadata['tracks'] = ''
         metadata['type'] = 'track'
         tracks.append(metadata)
@@ -228,8 +302,11 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
     
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Qobuz'
-    metadata['cover'] = './project-siesta.png'
-    metadata['thumbnail'] = './project-siesta.png'
+    
+    # --- MODIFIKASI: Gunakan path fallback yang konsisten ---
+    metadata['cover'] = FALLBACK_IMAGE_PATH
+    metadata['thumbnail'] = FALLBACK_IMAGE_PATH
+    # --- BATAS MODIFIKASI ---
     
     for track in tracks:
         track_meta, err = await get_track_metadata(track['id'], r_id, track, user=user)
@@ -240,6 +317,7 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
     return metadata
 
 async def get_artist_meta(artist_raw):
+    # ... (Fungsi ini tetap sama) ...
     metadata = copy.deepcopy(base_meta)
     metadata['title'] = artist_raw['name']
     metadata['type'] = 'artist'
@@ -247,6 +325,7 @@ async def get_artist_meta(artist_raw):
     return metadata
 
 async def get_artists_name(meta):
+    # ... (Fungsi ini tetap sama) ...
     artists = []
     try:
         for a in meta['artists']:
@@ -257,8 +336,8 @@ async def get_artists_name(meta):
 
 
 async def check_type(url, user: dict):
+    # ... (Fungsi ini tetap sama) ...
     client = user['qobuz_api'] 
-
     possibles = {
             "playlist": {
                 "func": "get_plist_meta", 
@@ -288,17 +367,12 @@ async def check_type(url, user: dict):
         type_dict = possibles[url_type]
     except (KeyError, IndexError):
         raise Exception(f"URL tidak dapat dikenali: {url}")
-
     content = None
     items = None
-    
     if type_dict["func"]:
         method_to_call = getattr(client, type_dict["func"])
-        
         content = []
-        
         if type_dict["multi_type"]:
-            
             if url_type == "playlist":
                 epoint = "playlist/get"
                 key = "total"
@@ -307,16 +381,11 @@ async def check_type(url, user: dict):
                 key = "total"
             else:
                 raise Exception("Tipe multi-meta tidak terdefinisi.")
-
             res_iterator = client.multi_meta(epoint, key, item_id, type_dict["multi_type"])
-            
             async for data in res_iterator:
                 content.append(data)
-                
             if not content:
                 raise QobuzContentUnavailableError(f"API Qobuz gagal mengembalikan data untuk {url_type}/{item_id}. Coba akun lain.")
-
-
         if content:
             smart_discography = True
             if smart_discography and url_type == "artist":
@@ -328,18 +397,17 @@ async def check_type(url, user: dict):
             else:
                 if type_dict["iterable_key"] not in content[0]:
                      raise QobuzContentUnavailableError(f"Respons Qobuz tidak memiliki '{type_dict['iterable_key']}'")
-                
                 if 'items' in content[0][type_dict["iterable_key"]]:
                     items = content[0][type_dict["iterable_key"]]['items']
                 else:
                     raise QobuzContentUnavailableError(f"Playlist ID:{item_id} kosong atau tidak memiliki track.")
-            
         return items, item_id, type_dict, content
     else:
         return None, item_id, type_dict, content
 
 
 async def get_url_info(url):
+    # ... (Fungsi ini tetap sama) ...
     r = re.search(
         r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a-z]{2}-[a-z]{2})"
         r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)",
@@ -349,38 +417,33 @@ async def get_url_info(url):
 
 
 def smart_discography_filter(
+    # ... (Fungsi ini tetap sama) ...
     contents: list, save_space: bool = False, skip_extras: bool = False
 ) -> list:
-
     TYPE_REGEXES = {
         "remaster": r"(?i)(re)?master(ed)?",
         "extra": r"(?i)(anniversary|deluxe|live|collector|demo|expanded)",
     }
-
     def is_type(album_t: str, album: dict) -> bool:
         version = album.get("version", "")
         title = album.get("title", "")
         regex = TYPE_REGEXES[album_t]
         return re.search(regex, f"{title} {version}") is not None
-
     def essence(album: dict) -> str:
         r = re.match(r"([^\(]+)(?:\s*[\(\[][^\)][\)\]])*", album)
         if not r:
             return album.lower()
         return r.group(1).strip().lower()
-
     requested_artist = contents[0]['name']
     items = []
     for item in contents:
         items.extend(item['albums']['items'])
-
     title_grouped = dict()
     for item in items:
         title_ = essence(item["title"])
         if title_ not in title_grouped:
             title_grouped[title_] = []
         title_grouped[title_].append(item)
-
     items = []
     for albums in title_grouped.values():
         best_bit_depth = max(a["maximum_bit_depth"] for a in albums)
@@ -391,7 +454,6 @@ def smart_discography_filter(
             if a["maximum_bit_depth"] == best_bit_depth
         )
         remaster_exists = any(is_type("remaster", a) for a in albums)
-
         def is_valid(album: dict) -> bool:
             return (
                 album["maximum_bit_depth"] == best_bit_depth
@@ -402,15 +464,14 @@ def smart_discography_filter(
                     or (skip_extras and is_type("extra", album))
                 )
             )
-
         filtered = tuple(filter(is_valid, albums))
         if len(filtered) >= 1:
             items.append(filtered[0])
-
     return items
 
     
 async def get_quality(meta: dict, user: dict):
+    # ... (Fungsi ini tetap sama) ...
     client = user['qobuz_api'] 
     user_dict = client.user_data.get(user.get("user_id", 0), {})
     quality = user_dict.get("qobuz_qual", client.quality)
