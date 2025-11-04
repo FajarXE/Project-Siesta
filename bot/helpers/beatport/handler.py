@@ -1,6 +1,7 @@
-# [FILE BARU: bot/helpers/beatport/handler.py]
+# [GANTI FILE: bot/helpers/beatport/handler.py]
 
-print("### DEBUG: Membaca bot/helpers/beatport/handler.py ###")
+# Kita tidak perlu print() debug lagi karena 'download.py' akan menangani logging
+# print("### DEBUG: Membaca bot/helpers/beatport/handler.py ###")
 
 import aiohttp
 import aiofiles
@@ -19,14 +20,14 @@ from .metadata import (
 from .api import BeatportError
 
 from ..utils import *
-# --- PERBAIKAN 1 (Sudah Anda lakukan, tapi untuk kelengkapan) ---
+# --- PERBAIKAN 1 (PENTING) ---
 from ..uploader import * # 'uploder' diubah menjadi 'uploader'
 # --- PERBAIKAN 1 SELESAI ---
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings
 
-# --- PERBAIKAN 2 (Ini adalah perbaikan krusial yang hilang) ---
+# --- PERBAIKAN 2 (PENTING) ---
 from ..settings import bot_set # '...' (tiga titik) diubah menjadi '..' (dua titik)
 # --- PERBAIKAN 2 SELESAI ---
 
@@ -215,4 +216,3 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await playlist_upload(play_meta, user)
 
-print("### DEBUG: handler.py SELESAI DIBACA ###")
