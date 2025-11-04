@@ -1,7 +1,19 @@
 import bot.helpers.translations as lang
 
 from bot.settings import bot_set
-from bot import BOT_QOBUZ_CLIENTS  # <-- MODIFIKASI: Ditambahkan
+from bot import BOT_QOBUZ_CLIENTS
+# --- MODIFIKASI DIMULAI ---
+# Impor manager Beatport untuk memeriksa apakah klien aktif
+try:
+    from bot.helpers.beatport.manager import beatport_manager
+except ImportError:
+    # Buat dummy manager jika terjadi error impor agar bot tidak crash
+    class DummyManager:
+        def __init__(self):
+            self.clients = []
+    beatport_manager = DummyManager()
+# --- MODIFIKASI SELESAI ---
+
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def fetch_base_buttons():
@@ -67,6 +79,20 @@ def providers_button():
                 )
             ]
         )
+    
+    # --- MODIFIKASI DIMULAI ---
+    # Tambahkan tombol Beatport jika kliennya aktif
+    if beatport_manager and beatport_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="BEATPORT", # Anda bisa mengganti ini dengan variabel lang.s.BEATPORT jika ada
+                    callback_data='bpP'
+                )
+            ]
+        )
+    # --- MODIFIKASI SELESAI ---
+        
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
@@ -300,6 +326,54 @@ def tidal_quality_button(qualities: dict, user_id: int = 0):
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
+# --- MODIFIKASI DIMULAI ---
+# Tambahkan fungsi bp_button (Beatport Button)
+def bp_button(quality: dict, user_id: int = None):
+    """Membuat tombol untuk pengaturan kualitas Beatport."""
+    buttons = []
+    usetting = user_id is not None
+    # Prefix "bpQ" untuk Admin (Provider), "ubps" untuk User (User BeatPort Set)
+    prefix = "bpQ" if not usetting else f"ubps"
+    
+    row = []
+    
+    # Map ini penting untuk mendapatkan callback_data yang benar
+    display_text_map = {
+        "lossless": "Lossless (FLAC)",
+        "high": "High (AAC 256)",
+        "medium": "Medium (AAC 128)"
+    }
+    
+    # quality dict akan terlihat seperti: {"lossless": "Lossless (FLAC)✅", "high": ...}
+    for i, (key, value) in enumerate(quality.items()):
+        
+        # Dapatkan teks display asli (tanpa checkmark) untuk callback
+        callback_text = display_text_map.get(key)
+        
+        if callback_text:
+            # Teks tombol adalah 'value' (yang mungkin punya '✅')
+            row.append(InlineKeyboardButton(value, callback_data=f"{prefix}_{callback_text}"))
+        
+        if (i + 1) % 2 == 0 or i == len(quality) - 1:
+            buttons.append(row)
+            row = []
+            
+    if usetting:
+        # Untuk panel pengguna, hanya tambahkan tombol 'Back'
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+    
+    # Untuk panel admin, tambahkan tombol menu utama & tutup
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+# --- MODIFIKASI SELESAI ---
+
+
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
     
@@ -323,6 +397,18 @@ def usetting_button() -> InlineKeyboardMarkup:
             )
         ]
         buttons.append(but)
+    
+    # --- MODIFIKASI DIMULAI ---
+    # Tambahkan tombol Beatport jika kliennya aktif
+    if beatport_manager and beatport_manager.clients:
+        but = [
+            InlineKeyboardButton(
+                text=f"Beatport Quality",
+                callback_data=f"uset_beatport"
+            )
+        ]
+        buttons.append(but)
+    # --- MODIFIKASI SELESAI ---
     
     PLAYLIST_ZIP_BUTTON = [InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")]
     buttons.append(PLAYLIST_ZIP_BUTTON)
