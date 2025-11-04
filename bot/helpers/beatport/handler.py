@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/beatport/handler.py]
+# [FILE: bot/helpers/beatport/handler.py]
 
 import aiohttp
 import aiofiles
@@ -17,7 +17,9 @@ from .metadata import (
 from .api import BeatportError
 
 from ..utils import *
-from ..uploder import *
+# --- PERBAIKAN DI SINI ---
+from ..uploader import * # 'uploder' diubah menjadi 'uploader'
+# --- PERBAIKAN SELESAI ---
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings
