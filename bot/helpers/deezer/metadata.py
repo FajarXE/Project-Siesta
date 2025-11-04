@@ -146,7 +146,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
 
         if not cover_url and cover_id:
             logging.debug(f"iTunes gagal, menggunakan sampul Deezer.")
-            cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
+            cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
         
         final_cover_path_or_url = cover_url
         if not cover_url:
@@ -213,7 +213,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
 
     if not cover_url and cover_id:
         logging.debug(f"iTunes gagal, menggunakan sampul Deezer.")
-        cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
+        cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
 
     final_cover_path_or_url = cover_url
     if not cover_url:
@@ -301,7 +301,7 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
     url = None
     if cover_id:
         url = (
-            f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
+            f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
             if not thumbnail
             else f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/80x0-none-100-0-0.png'
         )
