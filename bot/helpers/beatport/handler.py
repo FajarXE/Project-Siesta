@@ -16,11 +16,16 @@ from .metadata import (
 )
 from .api import BeatportError
 
-from ..utils import * # Ini sudah mengimpor track_upload, album_upload, zip_handler, dll.
+from ..utils import *
+# Baris 'from ..uploader import *' yang salah telah dihapus
+
 from ..metadata import set_metadata
 from ..message import edit_message
-from ..utils import fetch_zip_settings # Ini sebenarnya redundan, tapi tidak berbahaya
-from ..settings import bot_set
+from ..utils import fetch_zip_settings
+
+# --- PERBAIKAN DI SINI ---
+from ...settings import bot_set # '..' diubah kembali menjadi '...' (tiga titik)
+# --- PERBAIKAN SELESAI ---
 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
