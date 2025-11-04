@@ -90,21 +90,14 @@ class Config:
 # DEEZER
 
 #--------------------
-    # --- MODIFIKASI: Mendukung Multi-Login Deezer ---
     
     # Kunci ini tetap global karena tidak spesifik per akun
     DEEZER_BF_SECRET = getenv("DEEZER_BF_SECRET", None)
     
-    # Hapus kredensial tunggal lama
-    # DEEZER_EMAIL = getenv("DEEZER_EMAIL", None)
-    # DEEZER_PASSWORD = getenv("DEEZER_PASSWORD", None)
-    # DEEZER_ARL = getenv("DEEZER_ARL", None)
-
     # Buat daftar akun seperti Qobuz
     DEEZER_ACCOUNTS = []
     i = 1
     while True:
-        # Kita akan menggunakan ARL untuk multi-akun karena ini yang paling stabil
         arl = getenv(f"DEEZER_ARL_{i}")
         
         if arl:
@@ -113,20 +106,17 @@ class Config:
             DEEZER_ACCOUNTS.append(account_data)
             i += 1
         else:
-            # Jika tidak ada lagi akun (misal DEEZER_ARL_3 tidak ada),
-            # loop akan berhenti.
             if i > 1:
                  logging.info(f"Selesai memuat {i-1} akun Deezer.")
             break
 
     if not DEEZER_ACCOUNTS:
         logging.warning("Tidak ada kredensial Deezer (DEEZER_ARL_1, dll.) ditemukan di .env")
-    # --- BATAS MODIFIKASI ---
 
 #--------------------
 
 # TIDAL
-
+# (Menambahkan variabel yang hilang untuk memperbaiki error startup)
 #--------------------
     ENABLE_TIDAL = getenv("ENABLE_TIDAL", None)
     TIDAL_MOBILE = getenv("TIDAL_MOBILE", None) # only use email pass in mobile session
@@ -137,6 +127,29 @@ class Config:
     TIDAL_CONVERT_M4A = getenv("TIDAL_CONVERT_M4A", False)
     TIDAL_REFRESH_TOKEN = getenv("TIDAL_REFRESH_TOKEN", None)
     TIDAL_COUNTRY_CODE = getenv("TIDAL_COUNTRY_CODE", None) # example CA for Canada
+#--------------------    
+
+# BEATPORT
+# (Menambahkan bagian baru untuk Beatport)
+#--------------------
+    BEATPORT_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"BEATPORT_EMAIL_{i}")
+        password = getenv(f"BEATPORT_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan Beatport Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password, "id": i}
+            BEATPORT_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun Beatport.")
+            break
+
+    if not BEATPORT_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Beatport (BEATPORT_EMAIL_1, dll.) ditemukan di .env")
 #--------------------    
     
 # CONCURRENT
