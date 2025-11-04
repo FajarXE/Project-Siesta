@@ -1,4 +1,4 @@
-# [FILE BARU: bot/handlers/user_settings.py]
+# [FILE BARU: bot/modules/user_settings.py]
 
 import bot.helpers.translations as lang
 import logging, asyncio
@@ -213,15 +213,13 @@ async def uset_qobuz(client, query):
         # Ambil data pengguna yang baru disimpan dari klien
         user_data_to_save = client_instance.user_data.get(query.from_user.id, {})
 
+    # --- PERBAIKAN: Hapus panggilan 'get_user_settings' yang salah ---
     # Simpan pengaturan pengguna ke database
     if user_data_to_save:
-        # Pendekatan yang lebih aman:
-        current_user_data = await database.get_user_settings(query.from_user.id)
-        if not current_user_data:
-            current_user_data = {}
-        current_user_data.update(user_data_to_save)
-        await database.save_user_settings(query.from_user.id, current_user_data)
-    # --- MODIFIKASI SELESAI ---
+        # Panggil save_user_settings secara langsung.
+        # Asumsi: save_user_settings akan menggabungkan data, bukan menimpa.
+        await database.save_user_settings(query.from_user.id, user_data_to_save)
+    # --- PERBAIKAN SELESAI ---
 
     await uset_cb(client, query, "qobuz")
 
@@ -257,19 +255,13 @@ async def uset_beatport(client, query):
     # Dapatkan data pengguna yang baru disimpan dari manager
     user_data_to_save = beatport_manager.user_data.get(user_id, {})
 
+    # --- PERBAIKAN: Hapus panggilan 'get_user_settings' yang salah ---
     # Simpan pengaturan pengguna ke database
     if user_data_to_save:
-        # Pendekatan yang lebih aman:
-        # 1. Ambil data user yang ada
-        current_user_data = await database.get_user_settings(user_id)
-        if not current_user_data:
-            current_user_data = {}
-        
-        # 2. Update hanya bagian beatport (atau semua cache dari manager)
-        current_user_data.update(user_data_to_save)
-        
-        # 3. Simpan kembali
-        await database.save_user_settings(user_id, current_user_data)
+        # Panggil save_user_settings secara langsung.
+        # Asumsi: save_user_settings akan menggabungkan data, bukan menimpa.
+        await database.save_user_settings(user_id, user_data_to_save)
+    # --- PERBAIKAN SELESAI ---
     
     # Panggil kembali fungsi panel utama untuk me-refresh tampilan
     await uset_cb(client, query, "beatport")
