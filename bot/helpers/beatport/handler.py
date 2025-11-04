@@ -1,5 +1,7 @@
 # [FILE: bot/helpers/beatport/handler.py]
 
+print("### DEBUG: Membaca bot/helpers/beatport/handler.py ###")
+
 import aiohttp
 import aiofiles
 import os
@@ -17,14 +19,17 @@ from .metadata import (
 from .api import BeatportError
 
 from ..utils import *
-# --- PERBAIKAN DI SINI ---
+# --- PERBAIKAN 1 ---
 from ..uploader import * # 'uploder' diubah menjadi 'uploader'
-# --- PERBAIKAN SELESAI ---
+# --- PERBAIKAN 1 SELESAI ---
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings
 
-from ...settings import bot_set
+# --- PERBAIKAN 2 ---
+from ..settings import bot_set # '...' (tiga titik) diubah menjadi '..' (dua titik)
+# --- PERBAIKAN 2 SELESAI ---
+
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
@@ -209,3 +214,5 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await playlist_upload(play_meta, user)
+
+print("### DEBUG: handler.py SELESAI DIBACA ###")
