@@ -13,8 +13,9 @@ from ..metadata import create_cover_file
 from .dzapi import DeezerAPI 
 from bot.logger import LOGGER
 
-# --- Tentukan path fallback secara eksplisit ---
-FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png") - [2025-11-03 23:43:31,203]...]
+# --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
+FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
+# --- BATAS MODIFIKASI ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
@@ -59,8 +60,6 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
     
     return None
 
-# --- FUNGSI MusicBrainz DIHAPUS ---
-
 
 async def process_track_metadata(track_id, r_id, cover=None, 
     thumbnail=None, total_tracks=None, album_genre=None, total_disks=None, user: dict = None): 
@@ -72,7 +71,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
 
-    # ... (Panggilan API Deezer tetap sama) ...
     try:
         raw_meta_data = await deezerapi.get_track_data(track_id)
         t_meta = raw_meta_data.get('FALLBACK', raw_meta_data)
@@ -87,7 +85,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
         LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
         raise Exception(f"Deezer : Track not available (pageTrack API failed)")
     
-    # ... (Pengisian metadata dasar tetap sama) ...
     metadata['itemid'] = track_id
     metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
     metadata['album'] = t_meta.get('ALB_TITLE', t_meta_page.get('ALB_TITLE', ''))
@@ -134,7 +131,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
         if composers:
             metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
     
-    # --- MODIFIKASI: Logika Sampul (iTunes -> Deezer -> Lokal) ---
     cover_id = t_meta.get('ALB_PICTURE', t_meta_page.get('ALB_PICTURE', ''))
     
     if cover:
@@ -143,18 +139,15 @@ async def process_track_metadata(track_id, r_id, cover=None,
         cover_url = None
         try:
             async with aiohttp.ClientSession() as session:
-                # 1. Coba iTunes
                 logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
                 cover_url = await get_itunes_cover_url(metadata, session)
         except Exception as e:
             logging.warning(f"Sesi pencarian sampul iTunes gagal (track): {e}")
 
-        # 2. Coba Deezer (jika iTunes gagal)
         if not cover_url and cover_id:
             logging.debug(f"iTunes gagal, menggunakan sampul Deezer.")
             cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
         
-        # 3. Cek Final & Fallback Lokal
         final_cover_path_or_url = cover_url
         if not cover_url:
             if os.path.exists(FALLBACK_IMAGE_PATH):
@@ -164,7 +157,6 @@ async def process_track_metadata(track_id, r_id, cover=None,
                 logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
 
         metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
-    # --- BATAS MODIFIKASI ---
 
     if thumbnail:
         metadata['thumbnail'] = thumbnail
@@ -186,7 +178,6 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # ... (Pengisian metadata dasar tetap sama) ...
     metadata['itemid'] = album_id
     metadata['albumartist'] = a_meta.get('ART_NAME', '')
     metadata['upc'] = a_meta.get('UPC', '')
@@ -210,24 +201,20 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
     metadata['totalvolume'] = str(a_meta.get('DISK_COUNT', '1'))
     
     
-    # --- MODIFIKASI: Logika Sampul (iTunes -> Deezer -> Lokal) ---
     cover_id = a_meta.get('ALB_PICTURE', '')
     cover_url = None
     
     try:
         async with aiohttp.ClientSession() as session:
-            # 1. Coba iTunes
             logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
             cover_url = await get_itunes_cover_url(metadata, session)
     except Exception as e:
         logging.warning(f"Sesi pencarian sampul iTunes gagal (album): {e}")
 
-    # 2. Coba Deezer (jika iTunes gagal)
     if not cover_url and cover_id:
         logging.debug(f"iTunes gagal, menggunakan sampul Deezer.")
         cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/3000x0-none-100-0-0.png'
 
-    # 3. Cek Final & Fallback Lokal
     final_cover_path_or_url = cover_url
     if not cover_url:
         if os.path.exists(FALLBACK_IMAGE_PATH):
@@ -235,10 +222,8 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
             final_cover_path_or_url = FALLBACK_IMAGE_PATH
         else:
             logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
-            # Ini akan menyebabkan error `PHOTO_SAVE_FILE_INVALID`, tapi sekarang kita tahu persis mengapa.
 
     metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
-    # --- BATAS MODIFIKASI ---
     
     metadata['thumbnail'] = await get_cover(cover_id, metadata, True)
         
@@ -269,7 +254,6 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
 
 
 async def process_playlist_meta(raw_meta, r_id, user: dict = None):
-    # ... (Fungsi ini tetap sama) ...
     if not user:
         raise Exception("Fungsi process_playlist_meta memerlukan argumen 'user'.")
     deezerapi = user['deezer_api']
@@ -283,7 +267,7 @@ async def process_playlist_meta(raw_meta, r_id, user: dict = None):
     metadata['provider'] = 'Deezer'
     metadata['cover'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata)
     metadata['thumbnail'] = await get_cover(raw_meta['DATA']['PLAYLIST_PICTURE'], metadata, True)
-    if raw_meta['DATA'].get('CREATOR') and raw_meta['DATA']['CREATOR']['NAME']:
+    if raw_meta['DATA'].get('CREATOR') and raw_meta['DATA']['CREATOR'].get('NAME'):
         metadata['artist'] = raw_meta['DATA']['CREATOR']['NAME']
     for track in raw_meta['SONGS']['data']:
         try:
@@ -304,7 +288,6 @@ async def process_playlist_meta(raw_meta, r_id, user: dict = None):
 
 
 def get_artists_name(meta:dict):
-    # ... (Fungsi ini tetap sama) ...
     artists = []
     if meta.get('ARTISTS'):
         for a in meta['ARTISTS']:
@@ -315,7 +298,6 @@ def get_artists_name(meta:dict):
 
 
 async def get_cover(cover_id, meta:dict, thumbnail=False):
-    # ... (Fungsi ini tetap sama) ...
     url = None
     if cover_id:
         url = (
@@ -327,7 +309,6 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
 
 
 async def get_quality(meta:dict, deezerapi: DeezerAPI):
-    # ... (Fungsi ini tetap sama) ...
     format = 'FLAC'
     premium_formats = ['FLAC', 'MP3_320']
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
