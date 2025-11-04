@@ -1,4 +1,4 @@
-# [FILE: bot/helpers/beatport/handler.py]
+# [FILE BARU: bot/helpers/beatport/handler.py]
 
 print("### DEBUG: Membaca bot/helpers/beatport/handler.py ###")
 
@@ -19,14 +19,14 @@ from .metadata import (
 from .api import BeatportError
 
 from ..utils import *
-# --- PERBAIKAN 1 ---
+# --- PERBAIKAN 1 (Sudah Anda lakukan, tapi untuk kelengkapan) ---
 from ..uploader import * # 'uploder' diubah menjadi 'uploader'
 # --- PERBAIKAN 1 SELESAI ---
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings
 
-# --- PERBAIKAN 2 ---
+# --- PERBAIKAN 2 (Ini adalah perbaikan krusial yang hilang) ---
 from ..settings import bot_set # '...' (tiga titik) diubah menjadi '..' (dua titik)
 # --- PERBAIKAN 2 SELESAI ---
 
