@@ -8,12 +8,10 @@ from async_pymongo import AsyncClient
 from .logger import LOGGER
 from .settings import bot_set
 
-# Impor Qobuz (menghapus duplikat)
+# Impor untuk shutdown
 from bot import BOT_QOBUZ_CLIENTS 
-
-# --- MODIFIKASI: Impor manajer Deezer untuk shutdown ---
 from .helpers.deezer.manager import deezer_manager
-# --- BATAS MODIFIKASI ---
+from .helpers.beatport.manager import beatport_manager
 
 plugins = dict(
     root="bot/modules"
@@ -34,10 +32,7 @@ class Bot(Client):
 
     async def start(self):
         await super().start()
-        # --- MODIFIKASI: SEMUA logika login dihapus dari sini ---
-        # Logika login (Qobuz, Deezer, Tidal, initialize_users)
-        # sekarang semuanya ditangani di __main__.py SEBELUM aio.start() dipanggil.
-        # --- BATAS MODIFIKASI ---
+        # SEMUA logika login sekarang ada di __main__.py
         LOGGER.info("BOT : Started Successfully")
 
     async def stop(self, block=False):
@@ -52,11 +47,15 @@ class Bot(Client):
         for client in BOT_QOBUZ_CLIENTS.values():
             await client.close_session() 
             
-        # --- MODIFIKASI: Gunakan deezer_manager untuk menutup sesi Deezer ---
+        # Tutup semua klien Deezer
         for client in deezer_manager.clients:
             if client.session and not client.session.closed:
                 await client.session.close()
-        # --- BATAS MODIFIKASI ---
+                
+        # Tutup semua klien Beatport
+        for client in beatport_manager.clients:
+            if hasattr(client, 'session') and client.session and not client.session.closed:
+                await client.session.close()
             
         LOGGER.info('BOT : Exited Successfully ! Bye..........')
 
