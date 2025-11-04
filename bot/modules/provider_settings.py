@@ -1,4 +1,4 @@
-# [FILE BARU: bot/modules/provider_settings.py]
+# [FILE: bot/modules/provider_settings.py]
 
 import bot.helpers.translations as lang
 
@@ -9,8 +9,11 @@ from config import Config
 
 from ..logger import LOGGER
 from ..settings import bot_set
-# Tombol * sekarang akan menyertakan bp_button yang baru
-from ..helpers.buttons.settings import * from ..helpers.database.mongo_async import database
+# --- PERBAIKAN DI BAWAH INI ---
+# Kesalahan sebelumnya adalah menggabungkan dua baris ini:
+from ..helpers.buttons.settings import *
+from ..helpers.database.mongo_async import database
+# --- PERBAIKAN SELESAI ---
 from ..helpers.tidal.tidal_api import tidalapi
 from ..helpers.message import edit_message, check_user
 
@@ -53,7 +56,8 @@ async def qobuz_cb(c, cb:CallbackQuery):
         current = client_to_check.quality
         # --- MODIFIKASI SELESAI ---
         
-        quality[current] = quality[current] + '✅'
+        if current in quality:
+            quality[current] = quality[current] + '✅'
         await edit_message(
             cb.message,
             lang.s.QOBUZ_QUALITY_PANEL,
@@ -147,7 +151,8 @@ async def tidal_set_quality_cb(c, cb:CallbackQuery):
         await tidal_quality_cb(c, cb)
 
 
-# ... (Fungsi tidal_auth_cb, tidal_login_cb, tidal_remove_login_cb tetap sama) ...
+# show login button if not logged in
+# show refresh button in case logged in exist (both tv and mobile)
 @Client.on_callback_query(filters.regex(pattern=r"^tdAuth"))
 async def tidal_auth_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
