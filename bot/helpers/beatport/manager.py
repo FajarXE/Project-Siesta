@@ -1,5 +1,4 @@
 # [FILE: bot/helpers/beatport/manager.py]
-# GANTI SELURUH ISI FILE DENGAN INI
 
 import asyncio
 import itertools
@@ -53,9 +52,13 @@ class BeatportLoginManager:
         dan memuat pengaturan kualitas default.
         """
         
-        # --- TAMBAHAN: Muat Kualitas Default ---
+        # --- PERBAIKAN: Muat Kualitas Default ---
         try:
-            db_quality = await database.get_variable('BEATPORT_QUALITY')
+            # Error terjadi karena get_variable mengharapkan dict filter
+            db_quality_doc = await database.get_variable({"key": 'BEATPORT_QUALITY'})
+            # Ambil nilai dari dokumen yang dikembalikan
+            db_quality = db_quality_doc.get("value") if db_quality_doc else None
+            
             if db_quality in ["lossless", "high", "medium"]:
                 self.quality = db_quality
                 LOGGER.info(f"Beatport Manager: Kualitas default dimuat dari DB: {self.quality}")
