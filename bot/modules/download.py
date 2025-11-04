@@ -21,12 +21,22 @@ from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
+
+# --- MODIFIKASI DIAGNOSTIK DIMULAI ---
 # Impor handler Beatport (dengan fallback)
 try:
     from ..helpers.beatport.handler import start_beatport
-except ImportError:
+except ImportError as e:
+    # Ini akan mencetak error impor yang sebenarnya ke log Anda
+    LOGGER.critical("="*50)
+    LOGGER.critical(f"GAGAL MENGIMPOR BEATPORT HANDLER: {e}")
+    LOGGER.critical(traceback.format_exc()) # Cetak traceback lengkap
+    LOGGER.critical("="*50)
+    
+    # Fallback ke fungsi dummy
     async def start_beatport(*args, **kwargs):
         raise NotImplementedError("Modul Beatport ('handler.py') belum diimplementasikan.")
+# --- MODIFIKASI DIAGNOSTIK SELESAI ---
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
@@ -121,7 +131,7 @@ async def start_link(link: str, user: dict) -> None:
                 
             except Exception as e:
                 error_str = str(e).lower()
-                if "not available in your country" in error_str or \
+                if "not available in any country" in error_str or \
                    "not available by your subscription" in error_str or \
                    "track not available" in error_str:
                     
@@ -171,8 +181,10 @@ async def start_link(link: str, user: dict) -> None:
                 error_str = str(e).lower()
                 if "not available in your country" in error_str or \
                    "subscription" in error_str or \
-                   "region locked" in error_str:
-                    LOGGER.warning(f"Beatport: Akun gagal (Region/Sub Lock): {e}. Mencoba akun berikutnya...")
+                   "region locked" in error_str or \
+                   "not available for streaming" in error_str or \
+                   "tidak streamable" in error_str:
+                    LOGGER.warning(f"Beatport: Akun gagal (Region/Sub Lock/Tidak Streamable): {e}. Mencoba akun berikutnya...")
                     last_error = e 
                     continue 
                 else:
