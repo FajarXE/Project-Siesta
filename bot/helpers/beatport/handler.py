@@ -17,15 +17,19 @@ from .metadata import (
 from .api import BeatportError
 
 from ..utils import *
-# Baris 'from ..uploader import *' yang salah telah dihapus
+
+# --- PERBAIKAN FINAL (JALUR DAN NAMA FILE YANG BENAR) ---
+try:
+    from ...uploder import * # Tiga titik, dan nama 'uploder.py'
+except ImportError as e:
+    # Fallback jika impor gagal lagi (seharusnya tidak)
+    raise ImportError(f"Gagal mengimpor uploder.py: {e}")
+# --- PERBAIKAN SELESAI ---
 
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings
-
-# --- PERBAIKAN DI SINI ---
-from ...settings import bot_set # '..' diubah kembali menjadi '...' (tiga titik)
-# --- PERBAIKAN SELESAI ---
+from ...settings import bot_set # Tiga titik untuk settings.py
 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
@@ -54,7 +58,8 @@ async def start_beatport(url: str, user: dict):
         
     except Exception as e:
         LOGGER.error(f"Error fatal di Beatport handler: {e}\n{traceback.format_exc()}")
-        await edit_message(user['bot_msg'], f"Error Beatport: {e}")
+        # Melempar error agar download.py tahu tugasnya gagal
+        raise e 
 
 
 async def download_beatport_track(url: str, filepath: str):
