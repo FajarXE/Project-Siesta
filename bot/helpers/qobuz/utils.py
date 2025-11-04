@@ -15,7 +15,6 @@ from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 
 from bot.settings import bot_set
-# Hapus Config dari sini karena sudah diimpor di atas
 
 try:
     from .handler import QobuzContentUnavailableError
@@ -24,8 +23,7 @@ except ImportError:
         pass
 
 # --- MODIFIKASI BARU: Tentukan path fallback secara eksplisit ---
-# Kita gunakan Config.WORK_DIR + nama file
-FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
+FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png") - [2025-11-03 23:43:31,203]...]
 # --- BATAS MODIFIKASI ---
 
 
@@ -65,59 +63,7 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
 # --- BATAS FUNGSI iTunes ---
 
 
-# --- FUNGSI BARU: Tambahkan pencarian MusicBrainz ---
-async def get_musicbrainz_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
-    """
-    Mencoba mengambil URL sampul resolusi tinggi dari MusicBrainz (Cover Art Archive).
-    """
-    headers = {'User-Agent': 'MusicDownloaderBot/1.0 (https://github.com/your-repo)'}
-    mbid = None # MusicBrainz Release ID
-    
-    try:
-        # 1. Coba cari berdasarkan UPC (Paling akurat)
-        if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
-            url = f"https://musicbrainz.org/ws/2/release/?query=barcode:{metadata['upc']}&fmt=json"
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get('releases') and len(data['releases']) > 0:
-                        mbid = data['releases'][0].get('id')
-                else:
-                    logging.warning(f"MusicBrainz UPC search returned HTTP {resp.status}")
-
-        # 2. Jika tidak ada MBID, coba cari berdasarkan Teks (Kurang akurat)
-        if not mbid and metadata.get('albumartist') and metadata.get('album'):
-            artist = urllib.parse.quote(metadata['albumartist'])
-            album = urllib.parse.quote(metadata['album'])
-            url = f"https://musicbrainz.org/ws/2/release/?query=release:{album}%20AND%20artist:{artist}&fmt=json"
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get('releases') and len(data['releases']) > 0:
-                        mbid = data['releases'][0].get('id')
-                else:
-                    logging.warning(f"MusicBrainz text search returned HTTP {resp.status}")
-
-        # 3. Jika kita punya MBID, ambil sampulnya dari Cover Art Archive
-        if mbid:
-            art_url = f"https://coverartarchive.org/release/{mbid}"
-            async with session.get(art_url, headers=headers, allow_redirects=False) as resp:
-                if resp.status != 200:
-                    logging.warning(f"MusicBrainz CAA: Tidak ada sampul untuk MBID {mbid} (Status: {resp.status})")
-                    return None
-                    
-                art_data = await resp.json()
-                for image in art_data.get('images', []):
-                    if 'Front' in image.get('types', []) and image.get('thumbnails'):
-                        return image['thumbnails'].get('1200', image.get('image'))
-                if art_data.get('images') and art_data['images'][0].get('thumbnails'):
-                     return art_data['images'][0]['thumbnails'].get('1200', art_data['images'][0].get('image'))
-
-    except Exception as e:
-        logging.warning(f"Pencarian sampul MusicBrainz gagal: {e}")
-    
-    return None
-# --- BATAS FUNGSI BARU ---
+# --- FUNGSI MusicBrainz DIHAPUS ---
 
 
 async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
@@ -164,7 +110,7 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     if q_meta.get('composer'):
         metadata['composer'] = q_meta['composer'].get('name', '')
 
-    # --- MODIFIKASI: Logika Sampul (iTunes -> MusicBrainz -> Qobuz -> Lokal) ---
+    # --- MODIFIKASI: Logika Sampul (iTunes -> Qobuz -> Lokal) ---
     qobuz_fallback_url = q_meta['album']['image'].get('original', q_meta['album']['image'].get('large'))
     cover_url = None
     
@@ -173,20 +119,15 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
             # 1. Coba iTunes
             logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
             cover_url = await get_itunes_cover_url(metadata, session)
-            
-            # 2. Coba MusicBrainz
-            if not cover_url:
-                logging.debug(f"iTunes gagal, mencari sampul di MusicBrainz...")
-                cover_url = await get_musicbrainz_cover_url(metadata, session)
     except Exception as e:
-        logging.warning(f"Sesi pencarian sampul pihak ketiga gagal (track): {e}")
+        logging.warning(f"Sesi pencarian sampul iTunes gagal (track): {e}")
 
-    # 3. Coba Qobuz
+    # 2. Coba Qobuz (jika iTunes gagal)
     if not cover_url:
-        logging.debug(f"Pihak ketiga gagal, menggunakan sampul Qobuz.")
+        logging.debug(f"iTunes gagal, menggunakan sampul Qobuz.")
         cover_url = qobuz_fallback_url
 
-    # 4. Cek Final & Kirim ke create_cover_file
+    # 3. Cek Final & Fallback Lokal
     final_cover_path_or_url = cover_url
     if not cover_url:
         if os.path.exists(FALLBACK_IMAGE_PATH):
@@ -229,7 +170,7 @@ async def get_album_metadata(item_id, r_id, user: dict):
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'album'
 
-    # --- MODIFIKASI: Logika Sampul (iTunes -> MusicBrainz -> Qobuz -> Lokal) ---
+    # --- MODIFIKASI: Logika Sampul (iTunes -> Qobuz -> Lokal) ---
     qobuz_fallback_url = q_meta['image'].get('original', q_meta['image'].get('large'))
     cover_url = None
     
@@ -238,20 +179,15 @@ async def get_album_metadata(item_id, r_id, user: dict):
             # 1. Coba iTunes
             logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
             cover_url = await get_itunes_cover_url(metadata, session)
-            
-            # 2. Coba MusicBrainz
-            if not cover_url:
-                logging.debug(f"iTunes gagal, mencari sampul di MusicBrainz...")
-                cover_url = await get_musicbrainz_cover_url(metadata, session)
     except Exception as e:
-        logging.warning(f"Sesi pencarian sampul pihak ketiga gagal (album): {e}")
+        logging.warning(f"Sesi pencarian sampul iTunes gagal (album): {e}")
 
-    # 3. Coba Qobuz
+    # 2. Coba Qobuz (jika iTunes gagal)
     if not cover_url:
-        logging.debug(f"Pihak ketiga gagal, menggunakan sampul Qobuz.")
+        logging.debug(f"iTunes gagal, menggunakan sampul Qobuz.")
         cover_url = qobuz_fallback_url
 
-    # 4. Cek Final & Kirim ke create_cover_file
+    # 3. Cek Final & Fallback Lokal
     final_cover_path_or_url = cover_url
     if not cover_url:
         if os.path.exists(FALLBACK_IMAGE_PATH):
@@ -304,8 +240,14 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
     metadata['provider'] = 'Qobuz'
     
     # --- MODIFIKASI: Gunakan path fallback yang konsisten ---
-    metadata['cover'] = FALLBACK_IMAGE_PATH
-    metadata['thumbnail'] = FALLBACK_IMAGE_PATH
+    # Ini akan memperbaiki error crash jika Anda mencoba mengirim poster playlist
+    if os.path.exists(FALLBACK_IMAGE_PATH):
+        metadata['cover'] = FALLBACK_IMAGE_PATH
+        metadata['thumbnail'] = FALLBACK_IMAGE_PATH
+    else:
+        # Cadangan terakhir jika 'project-siesta.png' - [2025-11-03 23:43:31,203]...] tidak ada
+        metadata['cover'] = None 
+        metadata['thumbnail'] = None
     # --- BATAS MODIFIKASI ---
     
     for track in tracks:
