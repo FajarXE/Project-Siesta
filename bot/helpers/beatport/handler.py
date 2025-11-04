@@ -18,9 +18,12 @@ from .api import BeatportError
 
 from ..utils import *
 
-# --- PERBAIKAN FINAL (JALUR DAN NAMA FILE YANG BENAR) ---
+# --- PERBAIKAN FINAL (JALUR YANG BENAR) ---
 try:
-    from ...uploder import * # Tiga titik, dan nama 'uploder.py'
+    # 'handler.py' ada di bot/helpers/beatport/
+    # 'uploder.py' ada di bot/helpers/
+    # Kita perlu naik 1 level (..)
+    from ..uploder import * # Dua titik, dan nama 'uploder.py'
 except ImportError as e:
     # Fallback jika impor gagal lagi (seharusnya tidak)
     raise ImportError(f"Gagal mengimpor uploder.py: {e}")
@@ -29,7 +32,7 @@ except ImportError as e:
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings
-from ...settings import bot_set # Tiga titik untuk settings.py
+from ...settings import bot_set # Tiga titik untuk settings.py (bot/settings.py)
 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
