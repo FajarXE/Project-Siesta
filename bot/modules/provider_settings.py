@@ -1,22 +1,232 @@
-# [FILE: bot/modules/provider_settings.py]
+# [FILE BARU: bot/modules/provider_settings.py]
 
-# ... (Impor lainnya) ...
-# TAMBAHKAN IMPOR INI:
-from ..helpers.beatport.manager import beatport_manager
+import bot.helpers.translations as lang
+
+from pyrogram import Client, filters
+from pyrogram.types import CallbackQuery, Message
+
+from config import Config
+
+from ..logger import LOGGER
+from ..settings import bot_set
+# Tombol * sekarang akan menyertakan bp_button yang baru
+from ..helpers.buttons.settings import * from ..helpers.database.mongo_async import database
+from ..helpers.tidal.tidal_api import tidalapi
+from ..helpers.message import edit_message, check_user
 
 # --- MODIFIKASI DIMULAI ---
 # Impor dictionary klien Qobuz yang aktif
 from bot import BOT_QOBUZ_CLIENTS
+# Impor manager Beatport
+try:
+    from ..helpers.beatport.manager import beatport_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor beatport_manager. Panel Beatport tidak akan berfungsi.")
+    beatport_manager = None
 # --- MODIFIKASI SELESAI ---
 
-# ... (Fungsi provider_cb) ...
 
-# ... (Fungsi Qobuz) ...
+@Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
+async def provider_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        await edit_message(
+            cb.message,
+            lang.s.PROVIDERS_PANEL,
+            providers_button()
+        )
 
-# ... (Fungsi Tidal) ...
 
-# TAMBAHKAN FUNGSI BARU INI DI AKHIR FILE (SEBELUM FUNGSI TIDAL ATAU SETELAHNYA):
+#----------------
+# QOBUZ
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^qbP"))
+async def qobuz_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
+        
+        # --- MODIFIKASI DIMULAI ---
+        if not BOT_QOBUZ_CLIENTS:
+            return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+        
+        # Ambil klien pertama yang tersedia untuk *membaca* pengaturan default
+        client_to_check = list(BOT_QOBUZ_CLIENTS.values())[0]
+        current = client_to_check.quality
+        # --- MODIFIKASI SELESAI ---
+        
+        quality[current] = quality[current] + '✅'
+        await edit_message(
+            cb.message,
+            lang.s.QOBUZ_QUALITY_PANEL,
+            markup=qb_button(quality)
+        )
 
+@Client.on_callback_query(filters.regex(pattern=r"^qbQ"))
+async def qobuz_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
+        to_set = cb.data.split('_')[1]
+
+        # --- MODIFIKASI DIMULAI ---
+        qobuz_qual = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
+
+        if not BOT_QOBUZ_CLIENTS:
+            return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+        
+        # Set kualitas baru untuk SEMUA klien bot yang sedang berjalan
+        for client in BOT_QOBUZ_CLIENTS.values():
+            client.quality = qobuz_qual
+
+        # Simpan ke database sebagai default baru
+        await database.set_variable('QOBUZ_QUALITY', qobuz_qual)
+        # --- MODIFIKASI SELESAI ---
+        
+        await qobuz_cb(c, cb)
+
+
+#----------------
+# TIDAL
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^tdP"))
+async def tidal_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        await edit_message(
+            cb.message,
+            lang.s.TIDAL_PANEL,
+            tidal_buttons() # auth and quality button (quality button only if auth already done)
+        )
+    
+
+@Client.on_callback_query(filters.regex(pattern=r"^tdQ"))
+async def tidal_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qualities = {
+            'LOW': 'LOW',
+            'HIGH': 'HIGH',
+            'LOSSLESS': 'LOSSLESS'
+        }
+        if tidalapi.mobile_hires:
+            qualities['HI_RES'] = 'MAX'
+        qualities[tidalapi.quality] += '✅'
+
+        await edit_message(
+            cb.message,
+            lang.s.TIDAL_PANEL,
+            tidal_quality_button(qualities)
+        )
+
+
+@Client.on_callback_query(filters.regex(pattern=r"^tdSQ"))
+async def tidal_set_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        to_set = cb.data.split('_')[1]
+  
+        if to_set == 'spatial':
+            #options = ['OFF', 'ATMOS AC3 JOC', 'ATMOS AC4', 'Sony 360RA']
+            # assuming atleast tv session is added
+            options = ['OFF', 'ATMOS AC3 JOC']
+            if tidalapi.mobile_atmos:
+                options.append('ATMOS AC4')
+            if tidalapi.mobile_atmos or tidalapi.mobile_hires:
+                options.append('Sony 360RA')
+
+            try:
+                current = options.index(tidalapi.spatial)
+            except:
+                current = 0
+                
+            nexti = (current + 1) % 4
+            tidalapi.spatial = options[nexti]
+            #LOGGER.info((options, nexti)) # Debugging
+            await database.set_variable('TIDAL_SPATIAL', options[nexti])
+        else:
+            qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
+            to_set = list(filter(lambda x: qualities[x] == to_set, qualities))[0]
+            tidalapi.quality = to_set
+            await database.set_variable('TIDAL_QUALITY', to_set)
+            
+        await tidal_quality_cb(c, cb)
+
+
+# ... (Fungsi tidal_auth_cb, tidal_login_cb, tidal_remove_login_cb tetap sama) ...
+@Client.on_callback_query(filters.regex(pattern=r"^tdAuth"))
+async def tidal_auth_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        sub = tidalapi.sub_type
+        hires = True if tidalapi.mobile_hires else False
+        atmos = True if tidalapi.mobile_atmos else False
+        tv = True if tidalapi.tv_session else False
+
+        await edit_message(
+            cb.message,
+            lang.s.TIDAL_AUTH_PANEL.format(sub, hires, atmos, tv),
+            tidal_auth_buttons()
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^tdLogin"))
+async def tidal_login_cb(c:Client, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        auth_url, err = await tidalapi.get_tv_login_url()
+        if err:
+            return await c.answer_callback_query(
+                cb.id,
+                err,
+                True
+            )
+    
+        await edit_message(
+            cb.message,
+            lang.s.TIDAL_AUTH_URL.format(auth_url),
+            tidal_auth_buttons()
+        )
+
+        sub, err = await tidalapi.login_tv()
+        if err:
+            return await edit_message(
+                cb.message,
+                lang.s.ERR_LOGIN_TIDAL_TV_FAILED.format(err),
+                tidal_auth_buttons()
+            )
+        if sub:
+            bot_set.tidal = tidalapi
+            bot_set.clients.append(tidalapi)
+
+            await bot_set.save_tidal_login(tidalapi.tv_session)
+
+            hires = True if tidalapi.mobile_hires else False
+            atmos = True if tidalapi.mobile_atmos else False
+            tv = True if tidalapi.tv_session else False
+            await edit_message(
+                cb.message,
+                lang.s.TIDAL_AUTH_PANEL.format(sub, hires, atmos, tv) + '\n' + lang.s.TIDAL_AUTH_SUCCESSFULL,
+                tidal_auth_buttons()
+            )
+
+@Client.on_callback_query(filters.regex(pattern=r"^tdRemove"))
+async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        await database.set_variable("TIDAL_AUTH_DATA", None)
+
+        tidalapi.tv_session = None
+        tidalapi.mobile_atmos = None
+        tidalapi.mobile_hires = None
+        tidalapi.sub_type = None
+        tidalapi.saved = []
+
+        if hasattr(tidalapi, "session"):
+            await tidalapi.session.close()
+        
+        bot_set.tidal = None
+
+        await c.answer_callback_query(
+            cb.id,
+            lang.s.TIDAL_REMOVED_SESSION,
+            True
+        )
+
+        await tidal_auth_cb(c, cb)
+
+
+# --- TAMBAHAN DIMULAI ---
 #----------------
 # BEATPORT
 #----------------
@@ -32,14 +242,14 @@ async def beatport_cb(c, cb:CallbackQuery):
         if not beatport_manager or not beatport_manager.clients:
             return await edit_message(cb.message, "Layanan Beatport tidak aktif (tidak ada klien yang login).")
         
-        current = beatport_manager.quality
+        current = beatport_manager.quality # Baca kualitas default dari manager
         if current in quality:
             quality[current] = quality[current] + '✅'
         
         await edit_message(
             cb.message,
             "Pilih kualitas default untuk Beatport:",
-            markup=bp_button(quality) # Menggunakan bp_button dari settings.py
+            markup=bp_button(quality) # Menggunakan bp_button (mode admin)
         )
 
 @Client.on_callback_query(filters.regex(pattern=r"^bpQ"))
@@ -60,10 +270,12 @@ async def beatport_quality_cb(c, cb:CallbackQuery):
         if not beatport_manager or not beatport_manager.clients:
             return await edit_message(cb.message, "Layanan Beatport tidak aktif (tidak ada klien yang login).")
         
-        # Set kualitas baru
+        # Set kualitas baru di manager
         beatport_manager.quality = to_set
 
         # Simpan ke database sebagai default baru
         await database.set_variable('BEATPORT_QUALITY', to_set)
         
+        # Panggil kembali fungsi panel utama untuk me-refresh tampilan
         await beatport_cb(c, cb)
+# --- TAMBAHAN SELESAI ---
