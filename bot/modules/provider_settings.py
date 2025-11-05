@@ -32,6 +32,14 @@ except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor tidal_manager.")
     tidal_manager = None
 
+# --- TAMBAHAN: Impor Manajer KKBox ---
+try:
+    from ..helpers.kkbox.manager import kkbox_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor kkbox_manager.")
+    kkbox_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 @Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
 async def provider_cb(c, cb:CallbackQuery):
@@ -47,6 +55,7 @@ async def provider_cb(c, cb:CallbackQuery):
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^qbP"))
 async def qobuz_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
         if not BOT_QOBUZ_CLIENTS:
@@ -59,6 +68,7 @@ async def qobuz_cb(c, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^qbQ"))
 async def qobuz_quality_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
         to_set = cb.data.split('_')[1]
@@ -76,6 +86,7 @@ async def qobuz_quality_cb(c, cb:CallbackQuery):
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^tdP"))
 async def tidal_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         await edit_message(
             cb.message,
@@ -85,6 +96,7 @@ async def tidal_cb(c, cb:CallbackQuery):
     
 @Client.on_callback_query(filters.regex(pattern=r"^tdQ"))
 async def tidal_quality_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         qualities = {
             'LOW': 'LOW',
@@ -104,6 +116,7 @@ async def tidal_quality_cb(c, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdSQ"))
 async def tidal_set_quality_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         to_set = cb.data.split('_')[1]
   
@@ -133,6 +146,7 @@ async def tidal_set_quality_cb(c, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdAuth"))
 async def tidal_auth_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         text = f"{len(tidal_manager.clients)} akun Tidal terhubung.\n\n"
         
@@ -152,6 +166,7 @@ async def tidal_auth_cb(c, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdLogin"))
 async def tidal_login_cb(c:Client, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         
         temp_client = TidalApi() 
@@ -211,6 +226,7 @@ async def tidal_login_cb(c:Client, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdRemove"))
 async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         for client in tidal_manager.clients:
             if hasattr(client, "session") and client.session:
@@ -234,6 +250,7 @@ async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^bpP"))
 async def beatport_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
             "lossless": "Lossless (FLAC)",
@@ -256,6 +273,7 @@ async def beatport_cb(c, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^bpQ"))
 async def beatport_quality_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
             "Lossless (FLAC)": "lossless",
@@ -282,6 +300,7 @@ async def beatport_quality_cb(c, cb:CallbackQuery):
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^dzP"))
 async def deezer_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
             "FLAC": "FLAC",
@@ -304,6 +323,7 @@ async def deezer_cb(c, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^dzQ"))
 async def deezer_quality_cb(c, cb:CallbackQuery):
+    # ... (fungsi ini tetap sama) ...
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
             "FLAC": "FLAC",
@@ -323,3 +343,58 @@ async def deezer_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('DEEZER_QUALITY', to_set)
         
         await deezer_cb(c, cb)
+
+
+# --- TAMBAHAN: Handler Admin KKBox ---
+#----------------
+# KKBOX
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^kkbP")) # KKBox Panel
+async def kkbox_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        # Kualitas dari kkapi.py / interface.py
+        quality = {
+            "128k": "MP3 128k",
+            "192k": "MP3 192k",
+            "320k": "AAC 320k",
+            "hifi": "FLAC 16-bit",
+            "hires": "FLAC 24-bit"
+        }
+        
+        if not kkbox_manager or not kkbox_manager.clients:
+            return await edit_message(cb.message, "Layanan KKBox tidak aktif (tidak ada klien yang login).")
+        
+        current = kkbox_manager.quality 
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(
+            cb.message,
+            "Pilih kualitas default untuk KKBox:",
+            markup=kk_button(quality) 
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^kkbQ")) # KKBox Quality Set
+async def kkbox_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qual_map_display = {
+            "MP3 128k": "128k",
+            "MP3 192k": "192k",
+            "AAC 320k": "320k",
+            "FLAC 16-bit": "hifi",
+            "FLAC 24-bit": "hires"
+        }
+        to_set_display = cb.data.split('_')[1]
+        to_set = qual_map_display.get(to_set_display)
+        
+        if not to_set:
+            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
+
+        if not kkbox_manager or not kkbox_manager.clients:
+            return await edit_message(cb.message, "Layanan KKBox tidak aktif (tidak ada klien yang login).")
+        
+        kkbox_manager.quality = to_set
+        await database.set_variable('KKBOX_QUALITY', to_set) # Simpan ke DB
+        
+        await kkbox_cb(c, cb)
+# --- BATAS TAMBAHAN ---
