@@ -1,179 +1,238 @@
-# [FILE BARU: bot/helpers/beatport/api.py]
+# [GANTI FILE: bot/helpers/kkbox/api.py]
 
-import aiohttp
-import asyncio
-from datetime import timedelta, datetime
-from bot.logger import LOGGER
+import json
+import re
+import requests # <-- MODIFIKASI: Impor requests secara langsung
+from time import time, sleep
+from random import randrange
+from Cryptodome.Cipher import ARC4
+from Cryptodome.Hash import MD5
+from tqdm import tqdm
+# Hapus 'from utils.utils import create_requests_session'
 
-# Ini adalah kelas Error kustom kita
-class BeatportError(Exception):
-    def __init__(self, message):
-        self.message = message
-        super(BeatportError, self).__init__(message)
+class KkboxAPI:
+    def __init__(self, exception, kc1_key, secret_key, kkid = None):
+        self.exception = exception
 
-class BeatportAPI:
-    def __init__(self):
-        self.API_URL = "https://api.beatport.com/v4/"
-        # Client ID dari file Anda
-        self.client_id = "Zy2K9Wvy6DkUds7g8s1GNMHfk17E5Ch2BWHlyaGY"
-        self.redirect_uri = "seratodjlite://beatport"
+        key_pattern = re.compile("[0-9a-f]{32}")
+        if not key_pattern.fullmatch(kc1_key):
+            raise self.exception("kc1_key is invalid, change it in settings")
+        if not key_pattern.fullmatch(secret_key):
+            raise self.exception("secret_key is invalid, change it in settings")
 
-        self.access_token = None
-        self.refresh_token = None
-        self.expires = None
+        self.kc1_key = kc1_key.encode('ascii')
+        self.secret_key = secret_key.encode('ascii')
+
+        # --- MODIFIKASI: Hapus create_requests_session() ---
+        self.s = requests.Session() 
+        # --- BATAS MODIFIKASI ---
         
-        self.session = None # Akan menjadi ClientSession aiohttp
+        self.s.headers.update({
+            'user-agent': 'okhttp/3.14.9'
+        })
 
-    async def _init_session(self):
-        """Membuat sesi aiohttp jika belum ada."""
-        if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(
-                headers={'user-agent': 'libbeatport/v2.8.2'}
-            )
+        self.kkid = kkid or '%032X' % randrange(16**32)
 
-    async def close_session(self):
-        """Menutup sesi aiohttp."""
-        if self.session and not self.session.closed:
-            await self.session.close()
-
-    def _get_headers(self, use_access_token: bool = False):
-        """Mendapatkan header untuk permintaan."""
-        headers = {'user-agent': 'libbeatport/v2.8.2'}
-        if use_access_token and self.access_token:
-            headers['authorization'] = f'Bearer {self.access_token}'
-        return headers
-
-    async def login(self, email: str, password: str):
-        """Melakukan alur login OAuth lengkap secara async."""
-        await self._init_session()
-        
-        acc_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/131.0.0.0 Safari/537.36",
+        self.params = {
+            'enc': 'u',
+            'ver': '06120082',
+            'os': 'android',
+            'osver': '13',
+            'lang': 'en',
+            'ui_lang': 'en',
+            'dist': '0021',
+            'dist2': '0021',
+            'resolution': '411x841',
+            'of': 'j',
+            'oenc': 'kc1',
         }
-        
-        # 1. Otorisasi (dapatkan URL referer)
-        params_auth = {
-            "client_id": self.client_id,
-            "response_type": "code",
-            "redirect_uri": self.redirect_uri,
-        }
-        async with self.session.get(f"{self.API_URL}auth/o/authorize/", params=params_auth, headers=acc_headers, allow_redirects=False) as r:
-            if r.status != 302:
-                raise BeatportError(f"Auth step 1 gagal: {await r.text()}")
-            base_url = str(r.url).replace(r.request_info.url.path_qs, '')
-            referer = base_url + r.headers['location']
 
-        # 2. Login (kirim email/pass)
-        json_login = {"username": email, "password": password}
-        async with self.session.post(f"{self.API_URL}auth/login/", json=json_login, headers={**acc_headers, "Referer": referer}) as r:
-            if r.status != 200:
-                raise BeatportError(f"Auth step 2 (Login) gagal: {await r.text()}")
+    def kc1_decrypt(self, data):
+        cipher = ARC4.new(self.kc1_key)
+        return cipher.decrypt(data).decode('utf-8')
 
-        # 3. Otorisasi lagi (dapatkan kode)
-        async with self.session.get(f"{self.API_URL}auth/o/authorize/", params=params_auth, headers=acc_headers, allow_redirects=False) as r:
-            if r.status != 302:
-                raise BeatportError(f"Auth step 3 (Get Code) gagal: {await r.text()}")
-            code = r.headers['location'].split('code=')[1]
+    def api_call(self, host, path, params={}, payload=None):
+        if host == 'ticket':
+            payload = json.dumps(payload)
 
-        # 4. Tukarkan kode dengan token
-        data_token = {
-            "client_id": self.client_id,
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": self.redirect_uri,
-        }
-        async with self.session.post(f"{self.API_URL}auth/o/token/", data=data_token) as r:
-            if r.status != 200:
-                raise BeatportError(f"Auth step 4 (Get Token) gagal: {await r.text()}")
-            
-            resp_json = await r.json()
-            self.access_token = resp_json['access_token']
-            self.refresh_token = resp_json['refresh_token']
-            self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
-            LOGGER.info(f"Beatport: Login berhasil untuk {email}")
+        timestamp = int(time())
 
-    async def refresh(self):
-        """Me-refresh access token."""
-        await self._init_session()
-        data = {
-            'client_id': self.client_id,
-            'refresh_token': self.refresh_token,
-            'grant_type': 'refresh_token',
-        }
-        async with self.session.post(f'{self.API_URL}auth/o/token/', data=data) as r:
-            if r.status != 200:
-                LOGGER.error("Beatport: Gagal me-refresh token, mungkin perlu login ulang.")
-                raise BeatportError("Gagal me-refresh token")
-            
-            resp_json = await r.json()
-            self.access_token = resp_json['access_token']
-            self.refresh_token = resp_json['refresh_token']
-            self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
-            LOGGER.debug("Beatport: Token berhasil di-refresh.")
+        md5 = MD5.new()
+        md5.update(self.params['ver'].encode('ascii'))
+        md5.update(str(timestamp).encode('ascii'))
+        md5.update(self.secret_key)
 
-    async def _get(self, endpoint: str, params: dict = None):
-        """Fungsi pembantu GET yang aman untuk API."""
-        await self._init_session()
-        if not params:
-            params = {}
+        params.update(self.params)
+        params.update({'secret': md5.hexdigest()})
+        params.update({'timestamp': timestamp})
 
-        # Cek jika token kedaluwarsa
-        if self.expires and datetime.now() > self.expires:
-            try:
-                await self.refresh()
-            except Exception as e:
-                raise BeatportError(f"Token kedaluwarsa dan gagal di-refresh: {e}")
+        url = f'https://api-{host}.kkbox.com.tw/{path}'
+        if not payload:
+            r = self.s.get(url, params=params)
+        else:
+            r = self.s.post(url, params=params, data=payload)
 
-        async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(use_access_token=True)) as r:
-            if r.status == 401:
-                raise BeatportError("Token tidak valid atau kedaluwarsa.")
-            if r.status == 403:
-                try:
-                    detail = (await r.json()).get("detail", "")
-                    if "Territory" in detail:
-                        raise BeatportError("Region locked (Territory Restricted)")
-                except:
-                    pass
-                raise BeatportError(f"Akses ditolak (403): {await r.text()}")
-            
-            if r.status != 200:
-                raise ConnectionError(f"Beatport API Error {r.status}: {await r.text()}")
+        resp = json.loads(self.kc1_decrypt(r.content)) if r.content else None
+        return resp
 
-            return await r.json()
+    def login(self, email, password):
+        md5 = MD5.new()
+        md5.update(password.encode('utf-8'))
+        pswd = md5.hexdigest()
 
-    # --- Endpoint Katalog (Berdasarkan beatport_api.py) ---
+        resp = self.api_call('login', 'login.php', payload={
+            'uid': email,
+            'passwd': pswd,
+            'kkid': self.kkid,
+            'registration_id': '',
+        })
 
-    async def get_account(self):
-        return await self._get('auth/o/introspect')
+        if resp['status'] not in (2, 3):
+            if resp['status'] == -1:
+                raise self.exception('Email not found')
+            elif resp['status'] == -2:
+                raise self.exception('Incorrect password')
+            elif resp['status'] == -4:
+                raise self.exception('IP address is in unsupported region, use a VPN')
+            elif resp['status'] == 1:
+                raise self.exception('Account expired')
+            raise self.exception(f'Login failed, status code {resp["status"]}')
 
-    async def get_track(self, track_id: str):
-        return await self._get(f'catalog/tracks/{track_id}')
+        self.apply_session(resp)
 
-    async def get_release(self, release_id: str):
-        return await self._get(f'catalog/releases/{release_id}')
+    def renew_session(self):
+        resp = self.api_call('login', 'check.php')
+        if resp['status'] not in (2, 3):
+            raise self.exception('Session renewal failed')
+        self.apply_session(resp)
 
-    async def get_release_tracks(self, release_id: str, page: int = 1, per_page: int = 100):
-        return await self._get(f'catalog/releases/{release_id}/tracks', params={'page': page, 'per_page': per_page})
+    def apply_session(self, resp):
+        self.sid = resp['sid']
+        self.params['sid'] = self.sid
 
-    async def get_playlist(self, playlist_id: str):
-        return await self._get(f'catalog/playlists/{playlist_id}')
+        self.lic_content_key = resp['lic_content_key'].encode('ascii')
 
-    async def get_playlist_tracks(self, playlist_id: str, page: int = 1, per_page: int = 100):
-        return await self._get(f'catalog/playlists/{playlist_id}/tracks', params={'page': page, 'per_page': per_page})
+        self.available_qualities = ['128k', '192k', '320k']
+        if resp['high_quality']:
+            self.available_qualities.append('hifi')
+            self.available_qualities.append('hires')
 
-    async def get_chart(self, chart_id: str):
-        return await self._get(f'catalog/charts/{chart_id}')
+    def get_songs(self, ids):
+        resp = self.api_call('ds', 'v2/song', payload={
+            'ids': ','.join(ids),
+            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
+        })
+        if resp['status']['type'] != 'OK':
+            raise self.exception('Track not found')
+        return resp['data']['songs']
 
-    async def get_chart_tracks(self, chart_id: str, page: int = 1, per_page: int = 100):
-        return await self._get(f'catalog/charts/{chart_id}/tracks', params={'page': page, 'per_page': per_page})
+    def get_song_lyrics(self, id):
+        return self.api_call('ds', f'v1/song/{id}/lyrics')
 
-    async def get_artist(self, artist_id: str):
-        return await self._get(f'catalog/artists/{artist_id}')
+    # --- INI ADALAH FUNGSI YANG HILANG DARI SERVER ANDA ---
+    def get_album(self, id):
+        resp = self.api_call('ds', f'v1/album/{id}')
+        if resp['status']['type'] != 'OK':
+            raise self.exception('Album not found')
+        return resp['data']
+    # --- BATAS FUNGSI ---
 
-    async def get_artist_tracks(self, artist_id: str, page: int = 1, per_page: int = 100):
-        return await self._get(f'catalog/artists/{artist_id}/tracks', params={'page': page, 'per_page': per_page})
+    def get_album_more(self, raw_id):
+        return self.api_call('ds', 'album_more.php', params={
+            'album': raw_id
+        })
 
-    async def get_track_download(self, track_id: str, quality: str):
-        # 'quality' bisa "medium", "high", atau "lossless"
-        return await self._get(f'catalog/tracks/{track_id}/download', params={'quality': quality})
+    def get_artist(self, id):
+        resp = self.api_call('ds', f'v3/artist/{id}')
+        if resp['status']['type'] != 'OK':
+            raise self.exception('Artist not found')
+        return resp['data']
+    
+    def get_artist_albums(self, raw_id, limit, offset):
+        resp = self.api_call('ds', f'v2/artist/{raw_id}/album', params={
+            'limit': limit,
+            'offset': offset,
+        })
+        if resp['status']['type'] != 'OK':
+            raise self.exception('Artist not found')
+        return resp['data']['album']
+
+    def get_playlists(self, ids):
+        resp = self.api_call('ds', f'v1/playlists', params={
+            'playlist_ids': ','.join(ids)
+        })
+        if resp['status']['type'] != 'OK':
+            raise self.exception('Playlist not found')
+        return resp['data']['playlists']
+
+    def search(self, query, types, limit):
+        return self.api_call('ds', 'search_music.php', params={
+            'sf': ','.join(types),
+            'limit': limit,
+            'query': query,
+            'search_ranking': 'sc-A',
+        })
+
+    def get_ticket(self, song_id, play_mode = None):
+        resp = self.api_call('ticket', 'v1/ticket', payload={
+            'sid': self.sid,
+            'song_id': song_id,
+            'ver': '06120082',
+            'os': 'android',
+            'osver': '13',
+            'kkid': self.kkid,
+            'dist': '0021',
+            'dist2': '0021',
+            'timestamp': int(time()),
+            'play_mode': play_mode,
+        })
+
+        if resp['status'] != 1:
+            if resp['status'] == -1:
+                self.renew_session()
+                return self.get_ticket(song_id, play_mode)
+            elif resp['status'] == -4:
+                self.auth_device()
+                return self.get_ticket(song_id, play_mode)
+            elif resp['status'] == 2:
+                # tbh i'm not sure if this is some rate-limiting thing
+                # or if it's a bug on their slow-as-hell servers
+                sleep(0.5)
+                return self.get_ticket(song_id, play_mode)
+            raise self.exception("Couldn't get track URLs")
+
+        return resp['uris']
+
+    def auth_device(self):
+        resp = self.api_call('ds', 'active_sid.php', payload={
+            'ui_lang': 'en',
+            'of': 'j',
+            'os': 'android',
+            'enc': 'u',
+            'sid': self.sid,
+            'ver': '06120082',
+            'kkid': self.kkid,
+            'lang': 'en',
+            'oenc': 'kc1',
+            'osver': '13',
+        })
+        if resp['status'] != 1:
+            raise self.exception("Couldn't auth device")
+
+    def kkdrm_dl(self, url, path):
+        # skip first 1024 bytes of track file
+        resp = self.s.get(url, stream=True, headers={'range': 'bytes=1024-'})
+        resp.raise_for_status()
+
+        size = int(resp.headers['content-length'])
+        bar = tqdm(total=size, unit='B', unit_scale=True)
+
+        # drop 512 bytes of keystream
+        rc4 = ARC4.new(self.lic_content_key, drop=512)
+
+        with open(path, 'wb') as f:
+            for chunk in resp.iter_content(chunk_size=4096):
+                f.write(rc4.decrypt(chunk))
+                bar.update(len(chunk))
+
+        bar.close()
