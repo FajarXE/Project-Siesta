@@ -47,6 +47,14 @@ except ImportError:
     sys.exit(1)
 # --- Batas Impor ---
 
+# --- TAMBAHAN: Impor Manajer KKBox ---
+try:
+    from .helpers.kkbox.manager import kkbox_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'kkbox_manager'!")
+    sys.exit(1)
+# --- BATAS TAMBAHAN ---
+
 
 # --- Fungsi Login Qobuz ---
 async def login_single_client(creds: dict):
@@ -163,6 +171,16 @@ async def main():
         logging.info(f"Manajer Tidal berhasil diinisialisasi dengan {len(tidal_manager.clients)} klien.")
     else:
         logging.warning("PERINGATAN: Tidak ada akun Tidal yang berhasil login! (Gunakan /settings untuk login)")
+
+    # --- TAMBAHAN: Login KKBox ---
+    logging.info("Memulai inisialisasi Manajer KKBox...")
+    await kkbox_manager.initialize_clients()
+    if kkbox_manager.clients:
+        # Anda mungkin ingin menambahkan: bot_set.kkbox = True 
+        logging.info(f"Manajer KKBox berhasil diinisialisasi dengan {len(kkbox_manager.clients)} klien.")
+    else:
+        logging.warning("PERINGATAN: Tidak ada akun KKBox yang berhasil login!")
+    # --- BATAS TAMBAHAN ---
 
     logging.info("Menginisialisasi data pengguna...")
     await bot_set.initialize_users()
