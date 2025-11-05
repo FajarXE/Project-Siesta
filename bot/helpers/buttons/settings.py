@@ -28,7 +28,13 @@ try:
     from bot.helpers.tidal.manager import tidal_manager
 except ImportError:
     tidal_manager = _DummyManager()
-# --- MODIFIKASI SELESAI ---
+
+# --- TAMBAHAN: Impor Manajer KKBox ---
+try:
+    from bot.helpers.kkbox.manager import kkbox_manager
+except ImportError:
+    kkbox_manager = _DummyManager()
+# --- BATAS TAMBAHAN ---
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -75,7 +81,6 @@ def providers_button():
             ]
         )
     
-    # Gunakan manager untuk memeriksa apakah Deezer aktif
     if deezer_manager and deezer_manager.clients:
         inline_keyboard.append(
             [
@@ -105,12 +110,25 @@ def providers_button():
             ]
         )
         
+    # --- TAMBAHAN: Tombol Admin KKBox ---
+    if kkbox_manager and kkbox_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="KKBOX", 
+                    callback_data='kkbP' # KKBox Panel
+                )
+            ]
+        )
+    # --- BATAS TAMBAHAN ---
+        
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
 
 def tg_button():
+    # ... (fungsi ini tetap sama) ...
     inline_keyboard = [
         [
             InlineKeyboardButton(
@@ -137,6 +155,7 @@ def tg_button():
 
 
 def core_buttons():
+    # ... (fungsi ini tetap sama) ...
     inline_keyboard = []
 
     if bot_set.rclone:
@@ -204,13 +223,14 @@ def core_buttons():
 
 
 def language_buttons(languages, selected):
+    # ... (fungsi ini tetap sama) ...
     inline_keyboard = []
     for item in languages:
         text = f"{item.__language__} ✅" if item.__language__ == selected else item.__language__
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=text.upper(),
+                    text=text.UPPER(),
                     callback_data=f'langSet_{item.__language__}'
                 )
             ]
@@ -222,6 +242,7 @@ def language_buttons(languages, selected):
 
 # tidal panel
 def tidal_buttons():
+    # ... (fungsi ini tetap sama) ...
     inline_keyboard = [
         [
             InlineKeyboardButton(
@@ -245,6 +266,7 @@ def tidal_buttons():
     return InlineKeyboardMarkup(inline_keyboard)
 
 def tidal_auth_buttons():
+    # ... (fungsi ini tetap sama) ...
     inline_keyboard = []
     
     if tidal_manager and tidal_manager.clients:
@@ -274,6 +296,7 @@ def tidal_auth_buttons():
 
 # qobuz qualities
 def qb_button(qualities: dict, user_id: int = 0):
+    # ... (fungsi ini tetap sama) ...
     inline_keyboard = []
     usetting = user_id != 0
     for quality in qualities.values():
@@ -299,6 +322,7 @@ def qb_button(qualities: dict, user_id: int = 0):
 
 # tidal qualities
 def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'):
+    # ... (fungsi ini tetap sama) ...
     inline_keyboard = []
     usetting = user_id != 0
     
@@ -340,7 +364,7 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
 
 # Beatport Button
 def bp_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Beatport."""
+    # ... (fungsi ini tetap sama) ...
     buttons = []
     usetting = user_id is not None
     prefix = "bpQ" if not usetting else f"ubps"
@@ -377,7 +401,7 @@ def bp_button(quality: dict, user_id: int = None):
 
 # Deezer Button
 def dz_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Deezer."""
+    # ... (fungsi ini tetap sama) ...
     buttons = []
     usetting = user_id is not None
     prefix = "dzQ" if not usetting else f"udzs"
@@ -413,6 +437,47 @@ def dz_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 
 
+# --- TAMBAHAN: Tombol KKBox ---
+def kk_button(quality: dict, user_id: int = None):
+    """Membuat tombol untuk pengaturan kualitas KKBox."""
+    buttons = []
+    usetting = user_id is not None
+    prefix = "kkbQ" if not usetting else f"ukks" # KKBox Quality / User KKBox Set
+    
+    row = []
+    # Peta dari kkapi.py / interface.py
+    display_text_map = {
+        "128k": "MP3 128k",
+        "192k": "MP3 192k",
+        "320k": "AAC 320k",
+        "hifi": "FLAC 16-bit",
+        "hires": "FLAC 24-bit"
+    }
+    
+    for i, (key, value) in enumerate(quality.items()):
+        callback_text = display_text_map.get(key)
+        
+        if callback_text:
+            row.append(InlineKeyboardButton(value, callback_data=f"{prefix}_{callback_text}"))
+        
+        if (i + 1) % 2 == 0 or i == len(quality) - 1:
+            buttons.append(row)
+            row = []
+            
+    if usetting:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+    
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
+
+
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
     
@@ -427,6 +492,11 @@ def usetting_button() -> InlineKeyboardMarkup:
     
     if deezer_manager and deezer_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Deezer Quality", callback_data=f"uset_deezer")])
+    
+    # --- TAMBAHAN: Tombol Pengguna KKBox ---
+    if kkbox_manager and kkbox_manager.clients:
+        buttons.append([InlineKeyboardButton(text=f"KKBox Quality", callback_data=f"uset_kkbox")])
+    # --- BATAS TAMBAHAN ---
     
     buttons.append([InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")])
     buttons.append([InlineKeyboardButton(text="ALBUM_ZIP", callback_data="zip_album")])
