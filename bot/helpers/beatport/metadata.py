@@ -165,6 +165,16 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['tracknumber'] = str(track_data.get("number", 1))
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
+    # --- PERBAIKAN DIMULAI (Tambahkan Volume & Explicit) ---
+    # 1. Hardcode TOTAL VOLUMES (Nomor Disk)
+    # API Beatport tidak menyediakan ini; rilis digital hampir selalu 1 disk.
+    metadata['volume'] = "1"
+    metadata['totalvolume'] = "1"
+    
+    # 2. Ambil status EXPLICIT
+    metadata['explicit'] = track_data.get("explicit", False) 
+    # --- PERBAIKAN SELESAI ---
+    
     # Info teknis
     metadata['isrc'] = track_data.get("isrc")
     metadata['upc'] = album_data.get("upc")
@@ -190,7 +200,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     # --- LOGIKA KUALITAS YANG DIPERBARUI ---
     
-    # Dapatkan user_id dari dict 'user'
     user_id = user.get('user_id')
     if not user_id:
         LOGGER.warning(f"Beatport: user_id tidak ditemukan untuk track {track_id}, menggunakan kualitas default.")
@@ -200,7 +209,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     LOGGER.debug(f"Beatport: Menggunakan kualitas preferensi '{preferred_quality}' untuk user {user_id} (Track: {track_id})")
     
-    # Buat daftar kualitas untuk dicoba, mulai dari yang dipilih
     quality_order = []
     if preferred_quality == "lossless":
         quality_order = ["lossless", "high", "medium"]
@@ -209,7 +217,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     else: # medium
         quality_order = ["medium"]
     
-    # Info Kualitas & Download
     stream_data = None
     quality_map_display = {
         "lossless": ("FLAC", "flac"),
@@ -221,9 +228,9 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         try:
             stream_data_json = await client.get_track_download(track_id, QUALITY_MAP[quality_key])
             metadata['quality'], metadata['extension'] = quality_map_display[quality_key]
-            stream_data = stream_data_json # Simpan JSON respons
+            stream_data = stream_data_json 
             LOGGER.debug(f"Beatport: Berhasil mendapatkan URL untuk kualitas {quality_key} (Track: {track_id})")
-            break # Berhasil, keluar dari loop
+            break 
         except Exception as e:
             LOGGER.warning(f"Beatport: Gagal mendapatkan kualitas '{quality_key}' for track {track_id}. Mencoba fallback... Error: {e}")
             continue
@@ -238,7 +245,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     return metadata
 
 
-# --- INI FUNGSI YANG HILANG ---
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
     """Memproses metadata untuk satu album (release)."""
     client: BeatportAPI = user['beatport_api']
@@ -247,7 +253,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     album_data = await client.get_release(album_id)
     
-    # Kumpulkan semua track
     tracks_data = await client.get_release_tracks(album_id, per_page=100)
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
@@ -259,12 +264,11 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     if not tracks:
         raise BeatportError(f"Album {album_id} tidak memiliki track.")
 
-    # Isi metadata album
     metadata['itemid'] = album_id
     metadata['title'] = album_data.get("name")
     metadata['album'] = album_data.get("name")
     metadata['albumartist'] = ", ".join([a.get("name") for a in album_data.get("artists", [])])
-    metadata['artist'] = metadata['albumartist'] # Gunakan artis album untuk semua
+    metadata['artist'] = metadata['albumartist'] 
     metadata['upc'] = album_data.get("upc")
     metadata['date'] = album_data.get("publish_date")
     metadata['totaltracks'] = str(total_tracks)
@@ -272,19 +276,22 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['provider'] = 'Beatport'
     metadata['type'] = 'album'
     
-    # Sampul
+    # --- PERBAIKAN: Tambahkan Volume & Explicit ke Album ---
+    metadata['volume'] = "1"
+    metadata['totalvolume'] = "1"
+    metadata['explicit'] = album_data.get("explicit", False)
+    # --- PERBAIKAN SELESAI ---
+    
     bp_cover_url = await _generate_artwork_url(album_data.get("image").get("dynamic_uri"))
     metadata['cover'] = await _process_cover(metadata, bp_cover_url)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
-    # Proses semua track
     metadata['tracks'] = []
     for i, track_data in enumerate(tracks):
         try:
-            # Tambahkan info nomor track (Berdasarkan interface.py)
             track_data["number"] = i + 1
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
-            track_meta['cover'] = metadata['cover'] # Gunakan sampul album yang sudah diproses
+            track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
             metadata['tracks'].append(track_meta)
         except Exception as e:
@@ -296,7 +303,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     metadata['quality'] = metadata['tracks'][0]['quality']
     return metadata
-# --- FUNGSI YANG HILANG SELESAI ---
 
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
@@ -311,7 +317,6 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
         playlist_data = await client.get_playlist(playlist_id)
         tracks_data = await client.get_playlist_tracks(playlist_id, per_page=100)
 
-    # Kumpulkan semua track
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
 
@@ -325,11 +330,9 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     if not tracks:
         raise BeatportError(f"Playlist/Chart {playlist_id} tidak memiliki track.")
         
-    # Di playlist, data track mungkin ter-nesting
     if not is_chart:
         tracks = [t.get("track") for t in tracks if t.get("track")]
 
-    # Isi metadata playlist
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     metadata['itemid'] = playlist_id
@@ -343,17 +346,15 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
         metadata['artist'] = playlist_data.get("person", {}).get("owner_name", "Beatport")
         bp_cover_url = await _generate_artwork_url(playlist_data.get("image").get("dynamic_uri"))
     else:
-        metadata['artist'] = "User Playlist" # API tidak menyediakan info creator
+        metadata['artist'] = "User Playlist" 
         bp_cover_url = await _generate_artwork_url(playlist_data.get("release_images")[0])
 
     metadata['cover'] = await _process_cover(metadata, bp_cover_url)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
-    # Proses semua track
     metadata['tracks'] = []
     for i, track_data in enumerate(tracks):
         try:
-            # Tambahkan info nomor track (Berdasarkan interface.py)
             track_data["number"] = i + 1 
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
             metadata['tracks'].append(track_meta)
