@@ -2,12 +2,13 @@
 
 import json
 import re
+import requests # <-- Impor requests secara langsung
 from time import time, sleep
 from random import randrange
 from Cryptodome.Cipher import ARC4
 from Cryptodome.Hash import MD5
 from tqdm import tqdm
-from utils.utils import create_requests_session
+# Hapus 'from utils.utils import create_requests_session'
 
 class KkboxAPI:
     def __init__(self, exception, kc1_key, secret_key, kkid = None):
@@ -22,7 +23,9 @@ class KkboxAPI:
         self.kc1_key = kc1_key.encode('ascii')
         self.secret_key = secret_key.encode('ascii')
 
-        self.s = create_requests_session()
+        # --- Gunakan requests.Session() standar ---
+        self.s = requests.Session() 
+        
         self.s.headers.update({
             'user-agent': 'okhttp/3.14.9'
         })
@@ -125,13 +128,11 @@ class KkboxAPI:
     def get_song_lyrics(self, id):
         return self.api_call('ds', f'v1/song/{id}/lyrics')
 
-    # --- FUNGSI YANG HILANG ADA DI SINI ---
     def get_album(self, id):
         resp = self.api_call('ds', f'v1/album/{id}')
         if resp['status']['type'] != 'OK':
             raise self.exception('Album not found')
         return resp['data']
-    # --- BATAS FUNGSI ---
 
     def get_album_more(self, raw_id):
         return self.api_call('ds', 'album_more.php', params={
