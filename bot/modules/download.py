@@ -16,27 +16,23 @@ from bot.tgclient import aio
 # Impor semua manajer
 from bot.helpers.deezer.manager import deezer_manager
 from bot.helpers.beatport.manager import beatport_manager
+# --- MODIFIKASI: Tambahkan tidal_manager ---
+from bot.helpers.tidal.manager import tidal_manager
+# --- MODIFIKASI SELESAI ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
 
-# --- MODIFIKASI DIAGNOSTIK DIMULAI ---
-# Impor handler Beatport (dengan fallback)
+# --- MODIFIKASI: Bersihkan impor Beatport ---
 try:
     from ..helpers.beatport.handler import start_beatport
-except ImportError as e:
-    # Ini akan mencetak error impor yang sebenarnya ke log Anda
-    LOGGER.critical("="*50)
-    LOGGER.critical(f"GAGAL MENGIMPOR BEATPORT HANDLER: {e}")
-    LOGGER.critical(traceback.format_exc()) # Cetak traceback lengkap
-    LOGGER.critical("="*50)
-    
-    # Fallback ke fungsi dummy
+except ImportError:
+    # Fallback bersih
     async def start_beatport(*args, **kwargs):
         raise NotImplementedError("Modul Beatport ('handler.py') belum diimplementasikan.")
-# --- MODIFIKASI DIAGNOSTIK SELESAI ---
+# --- MODIFIKASI SELESAI ---
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
@@ -108,9 +104,45 @@ async def start_link(link: str, user: dict) -> None:
     spotify = ["https://open.spotify.com"]
     beatport = ["https://www.beatport.com", "beatport.com"]
     
+    # --- MODIFIKASI: Tambahkan logika loop Tidal ---
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
-        await start_tidal(link, user)
+        
+        if not tidal_manager.clients:
+            raise Exception("Maaf, tidak ada akun Tidal bot yang aktif saat ini.")
+
+        # Acak daftar klien jika ada lebih dari satu
+        clients_list = list(tidal_manager.clients)
+        if len(clients_list) > 1:
+            random.shuffle(clients_list)
+            
+        last_error = None
+
+        for client in clients_list:
+            try:
+                user['tidal_api'] = client # Injeksi klien
+                await start_tidal(link, user) # Panggil handler
+                
+                LOGGER.info(f"Tidal: Unduhan berhasil menggunakan akun User ID {client.user_id}")
+                return # Sukses
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                if 'asset is not ready' in error_str or \
+                   'not available in your region' in error_str or \
+                   'region-locked' in error_str:
+                    LOGGER.warning(f"Tidal: Akun {client.user_id} gagal (Region Lock): {e}. Mencoba akun berikutnya...")
+                    last_error = e
+                    continue
+                else:
+                    LOGGER.error(f"Tidal: Akun {client.user_id} gagal (Fatal): {e}")
+                    raise e # Lempar error fatal
+        
+        if last_error:
+            raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Tidal yang dicoba. Error terakhir: {last_error}")
+        else:
+            raise Exception("Gagal mengunduh Tidal karena alasan yang tidak diketahui setelah mencoba semua akun.")
+    # --- MODIFIKASI SELESAI ---
         
     elif link.startswith(tuple(deezer)):
         user['provider'] = 'Deezer'
