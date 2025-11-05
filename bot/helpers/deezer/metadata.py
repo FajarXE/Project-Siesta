@@ -13,6 +13,10 @@ from ..metadata import create_cover_file
 from .dzapi import DeezerAPI 
 from bot.logger import LOGGER
 
+# --- MODIFIKASI: Impor manager Deezer ---
+from .manager import deezer_manager
+# --- MODIFIKASI SELESAI ---
+
 # --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
 # --- BATAS MODIFIKASI ---
@@ -166,7 +170,9 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['token'] = t_meta_page['TRACK_TOKEN']
     metadata['token_expiry'] = t_meta_page['TRACK_TOKEN_EXPIRE']
     
-    metadata['quality'] = await get_quality(t_meta_page, deezerapi)
+    # --- MODIFIKASI: Teruskan user_id ke get_quality ---
+    metadata['quality'] = await get_quality(t_meta_page, deezerapi, user['user_id'])
+    # --- MODIFIKASI SELESAI ---
     return metadata
             
 
@@ -308,29 +314,48 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
     return await create_cover_file(url, meta, thumbnail)
 
 
-async def get_quality(meta:dict, deezerapi: DeezerAPI):
-    format = 'FLAC'
-    premium_formats = ['FLAC', 'MP3_320']
+# --- MODIFIKASI: Fungsi get_quality diubah total ---
+async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
     if not countries:
         raise Exception("Deezer : Track not available")
     elif deezerapi.country not in countries:
         raise Exception("Deezer : Track not available in your country")
-    else:
-        formats_to_check = premium_formats
-        while len(formats_to_check) != 0:
-            if formats_to_check[0] != format:
-                formats_to_check.pop(0)
-            else:
-                break
-        temp_f = None
-        for f in formats_to_check:
-            if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
-                temp_f = f
-                break
-        if temp_f is None:
-            temp_f = 'MP3_128'
-        format = temp_f
-        if format not in deezerapi.available_formats:
-            raise Exception("Deezer : Format not available by your subscription")
-    return format
+    
+    # Dapatkan preferensi pengguna
+    preferred_quality = deezer_manager.get_user_quality(user_id)
+    LOGGER.debug(f"Deezer: Menggunakan preferensi kualitas '{preferred_quality}' for user {user_id}")
+
+    # Buat daftar format untuk dicoba, berdasarkan preferensi
+    formats_to_check = []
+    if preferred_quality == "FLAC":
+        formats_to_check = ['FLAC', 'MP3_320', 'MP3_128']
+    elif preferred_quality == "MP3_320":
+        formats_to_check = ['MP3_320', 'MP3_128']
+    else: # MP3_128
+        formats_to_check = ['MP3_128']
+
+    final_format = None
+    
+    # Loop melalui format yang disukai
+    for f in formats_to_check:
+        # Periksa apakah format didukung oleh langganan ARL INI
+        if f not in deezerapi.available_formats:
+            continue # Coba format berikutnya yang lebih rendah
+            
+        # Periksa apakah lagu tersedia dalam format ini
+        if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
+            final_format = f
+            break # Format ditemukan, keluar dari loop
+
+    if final_format is None:
+        # Ini terjadi jika langganan ARL hanya gratis (MP3_128)
+        # tetapi pengguna meminta FLAC, dan loop di atas gagal
+        # Kita coba paksa MP3_128 sebagai upaya terakhir
+        if 'MP3_128' in deezerapi.available_formats and f'FILESIZE_MP3_128' in meta and meta[f'FILESIZE_MP3_128'] != '0':
+            final_format = 'MP3_128'
+        else:
+             raise Exception(f"Deezer: Format yang diminta ({preferred_quality}) atau fallback (MP3_128) tidak tersedia untuk lagu ini atau oleh langganan ARL ini.")
+
+    return final_format
+# --- MODIFIKASI SELESAI ---
