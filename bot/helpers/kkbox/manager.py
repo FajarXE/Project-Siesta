@@ -16,17 +16,14 @@ except (ImportError, ModuleNotFoundError):
 try:
     from .api import KkboxAPI
 except ImportError:
-    # --- BLOK FALLBACK YANG DIPERBAIKI ---
     LOGGER.critical("KKBox: Gagal mengimpor 'KkboxAPI' dari 'bot/helpers/kkbox/api.py'. File inti tidak ada.")
     class KkboxAPI:
         def __init__(self, *args, **kwargs): 
             pass
-        # Buat fungsi login sinkron (bukan async) agar to_thread bisa memanggilnya
         def login(self, *args, **kwargs): 
             raise NotImplementedError("File 'KkboxAPI' inti tidak ditemukan atau tidak bisa diimpor.")
         def close_session(self): 
             pass
-    # --- BATAS BLOK ---
 
 # Pengecualian kustom sederhana untuk diteruskan
 class KKBoxError(Exception):
@@ -100,8 +97,22 @@ class KKBoxLoginManager:
             secret_key=self.secret_key
         )
         
+        # --- MODIFIKASI: Baca proxy dari dict 'account' ---
+        proxy_url = account.get("proxy") # Dapatkan proxy spesifik akun
+        if proxy_url:
+            try:
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+                # Terapkan proxy ke objek sesi 's' milik klien
+                client.s.proxies.update(proxies) 
+                LOGGER.info(f"KKBox Akun #{account['id']}: Berhasil menerapkan proxy spesifik.")
+            except Exception as e:
+                LOGGER.error(f"KKBox Akun #{account['id']}: Gagal mengatur proxy: {e}")
+        # --- BATAS MODIFIKASI ---
+        
         try:
-            # Jalankan login sinkron di thread terpisah
             await asyncio.to_thread(
                 client.login,
                 email=account['email'], 
@@ -110,7 +121,6 @@ class KKBoxLoginManager:
             LOGGER.info(f"KKBox Manager: Berhasil login ke Akun #{account['id']}")
             return client
         except Exception as e:
-            # Jika dummy class digunakan, ini akan gagal dengan NotImplementedError
             LOGGER.error(f"KKBox Manager: Gagal login ke Akun #{account['id']}. Error: {e}")
             return None
 
