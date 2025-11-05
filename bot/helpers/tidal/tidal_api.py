@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/tidal/tidal_api.py]
+
 import aiohttp
 import asyncio
 import aiolimiter
@@ -30,11 +32,20 @@ class TidalApi:
         
         self.saved = [] # just for storing opened client session
 
+        # --- Tambahan: Variabel ini sekarang ada di instance, bukan global ---
+        self.user_id: str | None = None
+        self.country_code: str | None = None
+        # --- Selesai ---
+
         
     async def _get(self, url: str, params: dict | None = None, session=None, refresh=False):
         # if no session is given, use the first one (default)
         if session is None:
+            # --- MODIFIKASI: Gunakan sesi pertama yang disimpan di instance ini ---
+            if not self.saved:
+                 raise Exception("TidalApi: Tidak ada sesi (self.saved) yang tersedia untuk panggilan _get.")
             session = self.saved[0]
+            # --- MODIFIKASI SELESAI ---
 
         params = params or {}
         params.setdefault("countryCode", session.country_code)
@@ -105,7 +116,10 @@ class TidalApi:
 
     # call this from bot settings panel only
     async def get_tv_login_url(self):
-        self.session = aiohttp.ClientSession()
+        # --- MODIFIKASI: Inisialisasi sesi di sini ---
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
+        # --- MODIFIKASI SELESAI ---
 
         if not (Config.TIDAL_TV_TOKEN and Config.TIDAL_TV_SECRET):
             return False, "No Token/Secret added"
@@ -129,6 +143,10 @@ class TidalApi:
             await self.tv_session.auth()
             self.saved.append(self.tv_session)
             
+            # --- MODIFIKASI: Simpan user_id ke instance ---
+            self.user_id = self.tv_session.user_id
+            # --- MODIFIKASI SELESAI ---
+            
             self.sub_type = await self.get_subscription()
             LOGGER.info(f"TIDAL : Loaded account - {self.sub_type}")
 
@@ -141,7 +159,10 @@ class TidalApi:
 
 
     async def login_from_saved(self, data):
-        self.session = aiohttp.ClientSession()
+        # --- MODIFIKASI: Inisialisasi sesi di sini ---
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
+        # --- MODIFIKASI SELESAI ---
 
         self.tv_session = TvSession(
             Config.TIDAL_TV_TOKEN,
@@ -152,6 +173,11 @@ class TidalApi:
         self.tv_session.refresh_token = data['refresh_token']
         self.tv_session.country_code = data['country_code']
         self.tv_session.user_id = data['user_id']
+        
+        # --- MODIFIKASI: Simpan user_id ke instance ---
+        self.user_id = data['user_id']
+        self.country_code = data['country_code']
+        # --- MODIFIKASI SELESAI ---
 
         try:
             await self.tv_session.refresh()
@@ -209,15 +235,16 @@ class TidalApi:
                     raise Exception(f"TIDAL : {json_resp['userMessage']}")
                 return json_resp['subscription']['type']
         
-
-    async def setup_quality(self, user_id: int=0, qual: str="", spatial: str="") -> None:
-        data = {}
-        self.user_data.setdefault(user_id, {})
-        if qual:
-            data["tidal_qual"] = qual
-        if spatial:
-            data["tidal_spatial"] = spatial
-        self.user_data[user_id].update(data)
+    # --- MODIFIKASI: Fungsi ini sekarang ada di manager ---
+    # async def setup_quality(self, user_id: int=0, qual: str="", spatial: str="") -> None:
+    #     data = {}
+    #     self.user_data.setdefault(user_id, {})
+    #     if qual:
+    #         data["tidal_qual"] = qual
+    #     if spatial:
+    #         data["tidal_spatial"] = spatial
+    #     self.user_data[user_id].update(data)
+    # --- MODIFIKASI SELESAI ---
         
 
 
@@ -233,9 +260,12 @@ class BaseSession:
         self.expires: datetime | None = None
 
     def copy_from(self, other: "BaseSession"):
-        self.country_code = other.country_code
-        self.refresh_token = other.refresh_token
-        self.user_id = other.user_id
+        # --- MODIFIKASI: Pastikan 'other' tidak None ---
+        if other:
+            self.country_code = other.country_code
+            self.refresh_token = other.refresh_token
+            self.user_id = other.user_id
+        # --- MODIFIKASI SELESAI ---
 
     def auth_headers(self) -> dict:
         raise NotImplementedError
@@ -266,7 +296,9 @@ class MobileSession(BaseSession):
             json_resp = await r.json()
             if r.status == 200:
                 # get user_id in case of direct refresh token login
-                self.user_id = self.user_id or data["user_id"]
+                # --- MODIFIKASI: Gunakan self.user_id ---
+                self.user_id = self.user_id # or data["user_id"]
+                # --- MODIFIKASI SELESAI ---
                 self.access_token = json_resp['access_token']
                 self.expires = datetime.now() + timedelta(seconds=json_resp['expires_in'])
                 self.refresh_token = json_resp.get("refresh_token", self.refresh_token)
@@ -320,13 +352,21 @@ class TvSession(BaseSession):
         #expiry = datetime.now() + timedelta(seconds=self.login_timeout)
         status_code = 400
         i = 1
-        while status_code == 400:
+        # --- MODIFIKASI: Tambahkan batas waktu ---
+        timeout = datetime.now() + timedelta(minutes=5)
+        while status_code == 400 and datetime.now() < timeout:
+        # --- MODIFIKASI SELESAI ---
             """if datetime.now() > expiry:
                 raise Exception('TIDAL : Authorization Timedout')"""
             r = await self.session.post(self.AUTH_BASE + 'oauth2/token', data=self.temp_data)
             status_code = r.status
             await asyncio.sleep(i)
             i+=1
+            
+        # --- MODIFIKASI: Tambahkan penanganan timeout ---
+        if status_code == 400 and datetime.now() >= timeout:
+            raise Exception("TIDAL: Autentikasi TV timeout setelah 5 menit.")
+        # --- MODIFIKASI SELESAI ---
 
         json_resp = await r.json()
         
@@ -382,5 +422,6 @@ class TvSession(BaseSession):
             'User-Agent': 'TIDAL_ANDROID/1039 okhttp/3.14.9'
         }
 
-
-tidalapi = TidalApi()
+# --- MODIFIKASI: HAPUS BARIS INI ---
+# tidalapi = TidalApi()
+# --- MODIFIKASI SELESAI ---
