@@ -26,7 +26,19 @@ except ImportError:
     logging.warning("UserSettings: Gagal mengimpor tidal_manager.")
     tidal_manager = None
 
-from ..helpers.buttons.settings import usetting_button, tidal_quality_button, qb_button, bp_button, dz_button
+# --- TAMBAHAN: Impor Manajer KKBox ---
+try:
+    from ..helpers.kkbox.manager import kkbox_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor kkbox_manager.")
+    kkbox_manager = None
+# --- BATAS TAMBAHAN ---
+
+from ..helpers.buttons.settings import (
+    usetting_button, tidal_quality_button, 
+    qb_button, bp_button, dz_button,
+    kk_button # --- TAMBAHAN ---
+)
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
 from ..settings import bot_set
@@ -35,6 +47,7 @@ from ..helpers.message import send_message, edit_message, check_user, fetch_user
 
 @Client.on_message(filters.command(cmd.USETTING))
 async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
+    # ... (fungsi ini tetap sama) ...
     if not await check_user(msg=m):
         return
     USETTING_TEXT = """
@@ -65,7 +78,8 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer)"))
+# --- MODIFIKASI: Tambahkan 'kkbox' ke regex ---
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -79,6 +93,7 @@ async def uset_cb(client, query, datatype=""):
         await query.message.delete()
         
     if data[1] == "tidal" or datatype == "tidal":
+        # ... (bagian tidal tetap sama) ...
         if not tidal_manager or not tidal_manager.clients:
             return await edit_message(query.message, "Layanan Tidal tidak aktif (tidak ada klien yang login).")
             
@@ -97,11 +112,12 @@ async def uset_cb(client, query, datatype=""):
         return await edit_message(query.message, text, tidal_quality_button(qualities, user_id, spatial=user_spatial))
     
     if data[1] == "qobuz" or datatype == "qobuz":
+        # ... (bagian qobuz tetap sama) ...
         text = f"Choose Qobuz Audio Quality bellow:"
         quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
 
         if not BOT_QOBUZ_CLIENTS:
-            return await edit_message(query.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+            return await edit_message(query.message, "Layanan Qobuz tidakaktif (tidak ada klien yang login).")
         
         client_to_check = BOT_QOBUZ_CLIENTS.get(1) or list(BOT_QOBUZ_CLIENTS.values())[0]
 
@@ -116,6 +132,7 @@ async def uset_cb(client, query, datatype=""):
         )
 
     if data[1] == "beatport" or datatype == "beatport":
+        # ... (bagian beatport tetap sama) ...
         text = f"Choose Beatport Audio Quality bellow:"
         quality = {
             "lossless": "Lossless (FLAC)",
@@ -139,6 +156,7 @@ async def uset_cb(client, query, datatype=""):
         )
 
     if data[1] == "deezer" or datatype == "deezer":
+        # ... (bagian deezer tetap sama) ...
         text = f"Choose Deezer Audio Quality bellow:"
         quality = {
             "FLAC": "FLAC",
@@ -161,9 +179,37 @@ async def uset_cb(client, query, datatype=""):
             markup=dz_button(quality, user_id) 
         )
 
+    # --- TAMBAHAN: Panel Pengguna KKBox ---
+    if data[1] == "kkbox" or datatype == "kkbox":
+        text = f"Choose KKBox Audio Quality bellow:"
+        quality = {
+            "128k": "MP3 128k",
+            "192k": "MP3 192k",
+            "320k": "AAC 320k",
+            "hifi": "FLAC 16-bit",
+            "hires": "FLAC 24-bit"
+        }
+
+        if not kkbox_manager or not kkbox_manager.clients:
+            return await edit_message(query.message, "Layanan KKBox tidak aktif (tidak ada klien yang login).")
+        
+        user_dict = kkbox_manager.user_data.get(user_id, {})
+        current = user_dict.get("kkbox_qual", kkbox_manager.quality) 
+        
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        return await edit_message(
+            query.message,
+            text,
+            markup=kk_button(quality, user_id)
+        )
+    # --- BATAS TAMBAHAN ---
+
 
 @Client.on_callback_query(filters.regex("^utdqs"))
 async def uset_tidal(client, query):
+    # ... (fungsi ini tetap sama) ...
     m = query.message
     if not await check_user(msg=m):
         return
@@ -205,6 +251,7 @@ async def uset_tidal(client, query):
 
 @Client.on_callback_query(filters.regex("^uqbs"))
 async def uset_qobuz(client, query):
+    # ... (fungsi ini tetap sama) ...
     m = query.message
     if not await check_user(msg=m):
         return
@@ -230,6 +277,7 @@ async def uset_qobuz(client, query):
 
 @Client.on_callback_query(filters.regex("^ubps")) # User BeatPort Set
 async def uset_beatport(client, query):
+    # ... (fungsi ini tetap sama) ...
     m = query.message
     if not await check_user(msg=m):
         return
@@ -262,6 +310,7 @@ async def uset_beatport(client, query):
 
 @Client.on_callback_query(filters.regex("^udzs")) # User DeeZer Set
 async def uset_deezer(client, query):
+    # ... (fungsi ini tetap sama) ...
     m = query.message
     if not await check_user(msg=m):
         return
@@ -292,8 +341,47 @@ async def uset_deezer(client, query):
     await uset_cb(client, query, "deezer")
 
 
+# --- TAMBAHAN: Handler Pengguna KKBox ---
+@Client.on_callback_query(filters.regex("^ukks")) # User KKBox Set
+async def uset_kkbox(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    
+    qual_map_display = {
+        "MP3 128k": "128k",
+        "MP3 192k": "192k",
+        "AAC 320k": "320k",
+        "FLAC 16-bit": "hifi",
+        "FLAC 24-bit": "hires"
+    }
+    to_set_display = query.data.split('_')[1]
+    to_set = qual_map_display.get(to_set_display)
+    
+    if not to_set:
+        return await query.answer("Kualitas tidak valid.", True)
+
+    if not kkbox_manager or not kkbox_manager.clients:
+        await query.answer("Layanan KKBox tidak aktif!", show_alert=True)
+        return
+
+    user_id = query.from_user.id
+    
+    # Simpan di cache manager
+    await kkbox_manager.setup_quality(user_id, to_set)
+    user_data_to_save = kkbox_manager.user_data.get(user_id, {})
+
+    # Simpan ke DB
+    if user_data_to_save:
+        await database.save_user_settings(user_id, user_data_to_save)
+    
+    await uset_cb(client, query, "kkbox")
+# --- BATAS TAMBAHAN ---
+
+
 @Client.on_callback_query(filters.regex("^zip"))
 async def uset_zip(self, query):
+    # ... (fungsi ini tetap sama) ...
     if not await check_user(msg=query.message):
         return
     data = query.data.split("_")[1].lower()
@@ -378,7 +466,17 @@ async def debug(c, m): # debugger
     else:
         dt_td += "Tidak ada klien Tidal yang aktif."
 
+    # --- TAMBAHAN: Info Debug KKBox ---
+    dt_kk = "\n\nKKBOX:\n"
+    if kkbox_manager and kkbox_manager.clients:
+        dt_kk += f"{len(kkbox_manager.clients)} klien KKBox aktif.\n"
+        dt_kk += f"Kualitas Default: {kkbox_manager.quality}\n"
+        dt_kk += f"Cache User: {len(kkbox_manager.user_data)} pengguna"
+    else:
+        dt_kk += "Tidak ada klien KKBox yang aktif."
+    # --- BATAS TAMBAHAN ---
+
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
     zips += f"\n\n{user_dict}"
-    await m.reply(dt_qb + dt_bp + dt_dz + dt_td + zips, True)
+    await m.reply(dt_qb + dt_bp + dt_dz + dt_td + dt_kk + zips, True) # Tambahkan dt_kk
