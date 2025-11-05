@@ -1,16 +1,27 @@
+# [GANTI FILE: bot/helpers/tidal/handler.py]
+
 import json
 import base64
+import random
+import os # <-- Ditambahkan os
 
 from pathvalidate import sanitize_filepath
 
-from .tidal_api import tidalapi
+# --- MODIFIKASI: Impor manajer ---
+from .manager import tidal_manager
+try:
+    from .tidal_api import TidalApi
+except ImportError:
+    class TidalApi: pass
+# --- MODIFIKASI SELESAI ---
+
 from .utils import *
 from .metadata import *
 
 from ..utils import *
 from ..metadata import set_metadata, get_audio_extension
 from ..uploder import *
-from ..message import send_message
+from ..message import send_message, edit_message # <-- Ditambahkan edit_message
 
 from ...settings import bot_set
 import bot.helpers.translations as lang
@@ -21,26 +32,70 @@ from config import Config
 
 async def start_tidal(url:str, user:dict):
     item_id, type_ = await parse_url(url)
-
-    if type_ == 'track':
-        await start_track(item_id, user, None)
-    elif type_ == 'artist':
-        await start_artist(item_id, user)
-    elif type_ == 'album':
-        await start_album(item_id, user)
-    elif type_ == 'playlist':
-        pass
-    else:
+    if not type_:
         await send_message(user, "Invalid Tidal URL")
+        return
+
+    # --- MODIFIKASI: Logika Multi-Klien (Round-Robin) ---
+    if not tidal_manager.clients:
+        raise Exception("Maaf, tidak ada akun Tidal bot yang aktif saat ini.")
+    
+    # Dapatkan klien acak, jangan gunakan sample jika hanya 1
+    clients_list = [tidal_manager.get_client()]
+    if len(tidal_manager.clients) > 1:
+        clients_list = random.sample(tidal_manager.clients, len(tidal_manager.clients))
+        
+    last_error = None
+
+    for client in clients_list:
+        try:
+            user['tidal_api'] = client # Injeksi instance klien
+            
+            if type_ == 'track':
+                await start_track(item_id, user, None)
+            elif type_ == 'artist':
+                await start_artist(item_id, user)
+            elif type_ == 'album':
+                await start_album(item_id, user)
+            elif type_ == 'playlist':
+                pass # (Masih belum diimplementasikan di file Anda)
+            
+            LOGGER.info(f"Tidal: Unduhan berhasil menggunakan akun User ID {client.user_id}")
+            return # Sukses
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if 'asset is not ready' in error_str or \
+               'not available in your region' in error_str or \
+               'region-locked' in error_str:
+                LOGGER.warning(f"Tidal: Akun {client.user_id} gagal (Region Lock): {e}. Mencoba akun berikutnya...")
+                last_error = e
+                continue
+            else:
+                LOGGER.error(f"Tidal: Akun {client.user_id} gagal (Fatal): {e}")
+                raise e # Lempar error fatal
+    
+    if last_error:
+        raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Tidal yang dicoba. Error terakhir: {last_error}")
+    else:
+        raise Exception("Gagal mengunduh Tidal karena alasan yang tidak diketahui setelah mencoba semua akun.")
+    # --- MODIFIKASI SELESAI ---
         
 
 async def start_track(track_id:int, user:dict, track_meta:dict | None,
     upload=True, basefolder=None, session=None, 
     quality=None, disable_link=False, disable_msg=False
   ):
+    
+    # --- MODIFIKASI: Dapatkan klien yang diinjeksi ---
+    client: TidalApi = user['tidal_api']
+    # --- MODIFIKASI SELESAI ---
+
     if not track_meta:
         try:
-            track_data = await tidalapi.get_track(track_id)
+            # --- MODIFIKASI: Gunakan klien ---
+            track_data = await client.get_track(track_id)
+            # --- MODIFIKASI SELESAI ---
         except Exception as e:
             return await send_message(user, e)
 
@@ -52,14 +107,19 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         filepath = basefolder
 
     try:
-        stream_data = await tidalapi.get_stream_url(track_id, quality, session)
+        # --- MODIFIKASI: Gunakan klien ---
+        stream_data = await client.get_stream_url(track_id, quality, session)
+        # --- MODIFIKASI SELESAI ---
     except Exception as e:
         error = e
         # definitely region locked
         if 'Asset is not ready for playback' in str(e):
             error = f'Track [{track_id}] is not available in your region'
         LOGGER.error(error)
-        return await send_message(user, error)
+        # --- MODIFIKASI: Jangan kirim pesan, lempar error agar loop bisa menangani ---
+        raise Exception(error)
+        # return await send_message(user, error)
+        # --- MODIFIKASI SELESAI ---
     
 
     if stream_data is not None:
@@ -119,12 +179,23 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
 
 
 async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
+    # --- MODIFIKASI: Dapatkan klien yang diinjeksi ---
+    client: TidalApi = user['tidal_api']
+    # --- MODIFIKASI SELESAI ---
+    
     try:
-        album_data = await tidalapi.get_album(album_id)
+        # --- MODIFIKASI: Gunakan klien ---
+        album_data = await client.get_album(album_id)
+        # --- MODIFIKASI SELESAI ---
     except Exception as e:
-        return await send_message(user, e)
+        # --- MODIFIKASI: Lempar error ---
+        raise e
+        # return await send_message(user, e)
+        # --- MODIFIKASI SELESAI ---
         
-    tracks_data = await tidalapi.get_album_tracks(album_id)
+    # --- MODIFIKASI: Gunakan klien ---
+    tracks_data = await client.get_album_tracks(album_id)
+    # --- MODIFIKASI SELESAI ---
     
     album_meta = await get_album_metadata(album_id, album_data, tracks_data, user['r_id'])
 
@@ -138,9 +209,11 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
 
     # get a track to get quality
     track_id = tracks_data['items'][0]['id']
-    track_data = await tidalapi.get_track(track_id)
+    # --- MODIFIKASI: Gunakan klien ---
+    track_data = await client.get_track(track_id)
     session, quality = await get_stream_session(track_data, user)
-    stream_data = await tidalapi.get_stream_url(track_id, quality, session)
+    stream_data = await client.get_stream_url(track_id, quality, session)
+    # --- MODIFIKASI SELESAI ---
 
     album_meta['quality'] = await get_quality(stream_data)
 
@@ -173,19 +246,29 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
 
 
 async def start_artist(artist_id:int, user:dict):
-    artist_data = await tidalapi.get_artist(artist_id)
+    # --- MODIFIKASI: Dapatkan klien yang diinjeksi ---
+    client: TidalApi = user['tidal_api']
+    # --- MODIFIKASI SELESAI ---
+
+    # --- MODIFIKASI: Gunakan klien ---
+    artist_data = await client.get_artist(artist_id)
     artist_meta = await get_artist_metadata(artist_data, user['r_id'])
     artist_meta['folderpath'] = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{artist_meta['provider']}/{artist_meta['artist']}"
     artist_meta['folderpath'] = sanitize_filepath(artist_meta['folderpath'])
     
     try:
-        artist_albums = await tidalapi.get_artist_albums(artist_id)
-        artist_eps = await tidalapi.get_artist_albums_ep_singles(artist_id)
+        artist_albums = await client.get_artist_albums(artist_id)
+        artist_eps = await client.get_artist_albums_ep_singles(artist_id)
     except Exception as e:
-        return await send_message(user, e)
+        # --- MODIFIKASI: Lempar error ---
+        raise e
+        # return await send_message(user, e)
+        # --- MODIFIKASI SELESAI ---
 
-    albums = await sort_album_from_artist(artist_albums['items'])
-    ep_singles = await sort_album_from_artist(artist_eps['items'])
+    # --- MODIFIKASI: Teruskan 'user' ke sort_album_from_artist ---
+    albums = await sort_album_from_artist(artist_albums['items'], user)
+    ep_singles = await sort_album_from_artist(artist_eps['items'], user)
+    # --- MODIFIKASI SELESAI ---
     
     albums.extend(ep_singles)
 
