@@ -1,19 +1,18 @@
-# [FILE BARU: bot/helpers/tidal/manager.py]
+# [GANTI FILE: bot/helpers/tidal/manager.py]
 
 import asyncio
 import itertools
 import random
 from bot.logger import LOGGER
 from config import Config
-from .tidal_api import TidalApi # Impor kelas TidalApi, bukan instans
+from .tidal_api import TidalApi 
 
-# Impor database
 try:
     from ..database.mongo_async import database
 except (ImportError, ModuleNotFoundError):
     LOGGER.critical("Tidal Manager: Gagal mengimpor 'database'. Fungsi login/kualitas mungkin gagal.")
     class DummyDatabase:
-        async def get_variable(self, *args, **kwargs): return None
+        async def get_variable(self, *args, **kwargs): return {}
         async def set_variable(self, *args, **kwargs): pass
     database = DummyDatabase()
 
@@ -23,42 +22,44 @@ class TidalLoginManager:
     Mengelola kumpulan instans klien TidalApi yang sudah login.
     """
     def __init__(self):
-        self.clients = [] # Daftar instans TidalApi yang berhasil login
+        self.clients = [] 
         self._client_cycler = None
         
-        # Pengaturan Kualitas
-        self.quality = "LOSSLESS" # Default sebelum dimuat dari DB
-        self.spatial = "OFF"      # Default sebelum dimuat dari DB
-        self.user_data = {}       # Cache untuk pengaturan per-pengguna
+        self.quality = "LOSSLESS" 
+        self.spatial = "OFF"      
+        self.user_data = {}       
 
     async def initialize_clients(self):
         """
         Memuat semua akun Tidal dari database dan menginisialisasinya.
         """
-        self.clients = [] # Hapus klien lama jika ada
+        self.clients = [] 
         LOGGER.info("Tidal Manager: Menginisialisasi klien...")
-
-        # 1. Muat Pengaturan Kualitas Default
+        
+        # --- PERBAIKAN: Muat pengaturan dari satu dokumen ---
         try:
-            db_quality = (await database.get_variable({"key": 'TIDAL_QUALITY'})).get("value")
+            all_settings = await database.get_variable() # Ambil SEMUA pengaturan
+            if not all_settings:
+                all_settings = {}
+                
+            # 1. Muat Pengaturan Kualitas Default
+            db_quality = all_settings.get('TIDAL_QUALITY')
             if db_quality in ["LOW", "HIGH", "LOSSLESS", "HI_RES"]:
                 self.quality = db_quality
                 LOGGER.info(f"Tidal Manager: Kualitas default dimuat dari DB: {self.quality}")
             
-            db_spatial = (await database.get_variable({"key": 'TIDAL_SPATIAL'})).get("value")
+            db_spatial = all_settings.get('TIDAL_SPATIAL')
             if db_spatial:
                 self.spatial = db_spatial
                 LOGGER.info(f"Tidal Manager: Kualitas spasial default dimuat dari DB: {self.spatial}")
+            
+            # 2. Muat Daftar Akun dari DB
+            accounts_list = all_settings.get("TIDAL_ACCOUNTS_LIST", [])
+            
         except Exception as e:
-            LOGGER.error(f"Tidal Manager: Gagal memuat kualitas dari DB: {e}. Menggunakan default.")
-
-        # 2. Muat Daftar Akun dari DB
-        try:
-            accounts_list_doc = await database.get_variable({"key": "TIDAL_ACCOUNTS_LIST"})
-            accounts_list = accounts_list_doc.get("value", []) if accounts_list_doc else []
-        except Exception as e:
-            LOGGER.error(f"Tidal Manager: Gagal memuat daftar akun dari DB: {e}")
+            LOGGER.error(f"Tidal Manager: Gagal memuat data dari DB: {e}. Menggunakan default.")
             accounts_list = []
+        # --- PERBAIKAN SELESAI ---
 
         if not accounts_list:
             LOGGER.warning("Tidal Manager: Tidak ada akun di database untuk diinisialisasi.")
@@ -84,7 +85,6 @@ class TidalLoginManager:
         """Tugas login untuk satu akun."""
         client = TidalApi()
         try:
-            # login_from_saved akan me-refresh token
             await client.login_from_saved(auth_data)
             LOGGER.info(f"Tidal Manager: Berhasil login ke Akun #{account_id} (User {client.user_id})")
             return client
@@ -101,8 +101,6 @@ class TidalLoginManager:
             return None
         
         try:
-            # Acak daftar klien sebelum mengambil berikutnya untuk distribusi yang lebih baik
-            # jika salah satu klien region-locked
             clients_list = list(self.clients)
             random.shuffle(clients_list)
             self._client_cycler = itertools.cycle(clients_list)
@@ -131,5 +129,4 @@ class TidalLoginManager:
         user_spatial = user_dict.get('tidal_spatial', self.spatial)
         return user_qual, user_spatial
 
-# Buat satu instans global dari manajer
 tidal_manager = TidalLoginManager()
