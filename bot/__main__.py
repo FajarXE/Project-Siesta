@@ -39,6 +39,14 @@ except ImportError:
     sys.exit(1)
 # --- Batas Impor ---
 
+# --- MODIFIKASI: Impor Manajer Tidal ---
+try:
+    from .helpers.tidal.manager import tidal_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'tidal_manager'!")
+    sys.exit(1)
+# --- MODIFIKASI SELESAI ---
+
 
 # --- Fungsi Login Qobuz (Milik Anda, Tetap Sama) ---
 async def login_single_client(creds: dict):
@@ -57,8 +65,10 @@ async def login_single_client(creds: dict):
         
         # 2. Muat Kualitas Default Bot dari DB
         try:
-            db_settings = await database.get_variable()
-            db_default_q = db_settings.get('QOBUZ_QUALITY')
+            # --- PERBAIKAN QOBUZ: Gunakan filter yang benar ---
+            db_settings_doc = await database.get_variable({"key": "QOBUZ_QUALITY"})
+            db_default_q = db_settings_doc.get("value") if db_settings_doc else None
+            # --- PERBAIKAN SELESAI ---
             client.quality = int(db_default_q) if db_default_q else 6 # Default 6 (Lossless) jika tidak ada
             logging.debug(f"Berhasil memuat Kualitas Default Qobuz '{client.quality}' untuk Akun #{account_id}.")
         except Exception as e:
@@ -68,7 +78,9 @@ async def login_single_client(creds: dict):
         # 3. Muat Semua Pengaturan Kualitas Pengguna dari DB
         try:
             logging.debug(f"Memuat pengaturan Qobuz pengguna dari DB untuk Akun #{account_id}...")
+            # --- PERBAIKAN QOBUZ: Gunakan database.client ---
             all_users_from_db = await database.client.users.find({}).to_list(None)
+            # --- PERBAIKAN SELESAI ---
             
             count = 0
             for user_doc in all_users_from_db:
@@ -145,9 +157,15 @@ async def main():
     else:
         logging.warning("PERINGATAN: Tidak ada akun Beatport yang berhasil login!")
 
-    # 4. Sisa Login (Tidal, dll)
-    logging.info("Memulai login Tidal...")
-    await bot_set.login_tidal()
+    # --- MODIFIKASI: Ganti 'bot_set.login_tidal()' ---
+    # 4. Login Tidal
+    logging.info("Memulai inisialisasi Manajer Tidal...")
+    await tidal_manager.initialize_clients()
+    if tidal_manager.clients:
+        logging.info(f"Manajer Tidal berhasil diinisialisasi dengan {len(tidal_manager.clients)} klien.")
+    else:
+        logging.warning("PERINGATAN: Tidak ada akun Tidal yang berhasil login! (Gunakan /settings untuk login)")
+    # --- MODIFIKASI SELESAI ---
 
     logging.info("Menginisialisasi data pengguna...")
     await bot_set.initialize_users()
