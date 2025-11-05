@@ -1,7 +1,7 @@
 # [GANTI FILE: bot/modules/provider_settings.py]
 
 import bot.helpers.translations as lang
-import traceback # <-- Ditambahkan
+import traceback 
 
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, Message
@@ -12,9 +12,7 @@ from ..logger import LOGGER
 from ..settings import bot_set
 from ..helpers.buttons.settings import *
 from ..helpers.database.mongo_async import database
-# --- MODIFIKASI: Impor kelas, bukan instans ---
 from ..helpers.tidal.tidal_api import TidalApi
-# --- MODIFIKASI SELESAI ---
 from ..helpers.message import edit_message, check_user
 
 from bot import BOT_QOBUZ_CLIENTS
@@ -23,7 +21,6 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor beatport_manager.")
     beatport_manager = None
-# --- MODIFIKASI DIMULAI ---
 try:
     from ..helpers.deezer.manager import deezer_manager
 except ImportError:
@@ -34,7 +31,6 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor tidal_manager.")
     tidal_manager = None
-# --- MODIFIKASI SELESAI ---
 
 
 @Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
@@ -46,7 +42,6 @@ async def provider_cb(c, cb:CallbackQuery):
             providers_button()
         )
 
-# ... (Fungsi Qobuz tetap sama) ...
 #----------------
 # QOBUZ
 #----------------
@@ -85,7 +80,7 @@ async def tidal_cb(c, cb:CallbackQuery):
         await edit_message(
             cb.message,
             lang.s.TIDAL_PANEL,
-            tidal_buttons() # auth and quality button (quality button only if auth already done)
+            tidal_buttons() 
         )
     
 @Client.on_callback_query(filters.regex(pattern=r"^tdQ"))
@@ -96,7 +91,6 @@ async def tidal_quality_cb(c, cb:CallbackQuery):
             'HIGH': 'HIGH',
             'LOSSLESS': 'LOSSLESS'
         }
-        # --- MODIFIKASI: Gunakan manager ---
         if any(c.mobile_hires for c in tidal_manager.clients):
             qualities['HI_RES'] = 'MAX'
         qualities[tidal_manager.quality] += '✅'
@@ -104,9 +98,8 @@ async def tidal_quality_cb(c, cb:CallbackQuery):
         await edit_message(
             cb.message,
             lang.s.TIDAL_PANEL,
-            tidal_quality_button(qualities, spatial=tidal_manager.spatial) # Teruskan spatial default
+            tidal_quality_button(qualities, spatial=tidal_manager.spatial) 
         )
-        # --- MODIFIKASI SELESAI ---
 
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdSQ"))
@@ -116,7 +109,6 @@ async def tidal_set_quality_cb(c, cb:CallbackQuery):
   
         if to_set == 'spatial':
             options = ['OFF', 'ATMOS AC3 JOC']
-            # --- MODIFIKASI: Gunakan manager ---
             if any(c.mobile_atmos for c in tidal_manager.clients):
                 options.append('ATMOS AC4')
             if any(c.mobile_atmos or c.mobile_hires for c in tidal_manager.clients):
@@ -127,17 +119,14 @@ async def tidal_set_quality_cb(c, cb:CallbackQuery):
             except:
                 current = 0
                 
-            nexti = (current + 1) % len(options) # Diperbaiki
+            nexti = (current + 1) % len(options) 
             tidal_manager.spatial = options[nexti]
             await database.set_variable('TIDAL_SPATIAL', options[nexti])
-            # --- MODIFIKASI SELESAI ---
         else:
             qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
             to_set = list(filter(lambda x: qualities[x] == to_set, qualities))[0]
-            # --- MODIFIKASI: Gunakan manager ---
             tidal_manager.quality = to_set
             await database.set_variable('TIDAL_QUALITY', to_set)
-            # --- MODIFIKASI SELESAI ---
             
         await tidal_quality_cb(c, cb)
 
@@ -145,7 +134,6 @@ async def tidal_set_quality_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^tdAuth"))
 async def tidal_auth_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # --- MODIFIKASI: Tampilkan status multi-akun ---
         text = f"{len(tidal_manager.clients)} akun Tidal terhubung.\n\n"
         
         for i, client in enumerate(tidal_manager.clients):
@@ -161,14 +149,12 @@ async def tidal_auth_cb(c, cb:CallbackQuery):
             text,
             tidal_auth_buttons()
         )
-        # --- MODIFIKASI SELESAI ---
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdLogin"))
 async def tidal_login_cb(c:Client, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         
-        # --- MODIFIKASI: Alur login multi-akun ---
-        temp_client = TidalApi() # Buat instans sementara
+        temp_client = TidalApi() 
         
         try:
             auth_url, err = await temp_client.get_tv_login_url()
@@ -190,27 +176,26 @@ async def tidal_login_cb(c:Client, cb:CallbackQuery):
                 )
             
             if sub:
-                # Dapatkan data auth untuk disimpan
                 auth_data = {
                     'refresh_token': temp_client.tv_session.refresh_token,
                     'country_code': temp_client.tv_session.country_code,
                     'user_id': temp_client.tv_session.user_id
                 }
                 
-                # Ambil daftar akun yang ada dari DB
-                accounts_list_doc = await database.get_variable({"key": "TIDAL_ACCOUNTS_LIST"})
-                accounts_list = accounts_list_doc.get("value", []) if accounts_list_doc else []
+                # --- PERBAIKAN: Baca dari DB dengan benar ---
+                all_settings = await database.get_variable()
+                if not all_settings:
+                    all_settings = {}
+                accounts_list = all_settings.get("TIDAL_ACCOUNTS_LIST", [])
+                # --- PERBAIKAN SELESAI ---
                 
-                # Tambahkan akun baru
                 accounts_list.append(auth_data)
                 
-                # Simpan daftar baru ke DB
                 await database.set_variable('TIDAL_ACCOUNTS_LIST', accounts_list)
                 
-                # Inisialisasi ulang manajer
                 await tidal_manager.initialize_clients()
                 
-                await temp_client.session.close() # Tutup sesi sementara
+                await temp_client.session.close() 
 
                 await edit_message(
                     cb.message,
@@ -220,23 +205,19 @@ async def tidal_login_cb(c:Client, cb:CallbackQuery):
                 )
         except Exception as e:
             LOGGER.error(f"Gagal login Tidal: {traceback.format_exc()}")
-            await temp_client.session.close() # Pastikan sesi ditutup
+            if temp_client.session:
+                await temp_client.session.close() 
             await c.answer_callback_query(cb.id, f"Error: {e}", True)
-        # --- MODIFIKASI SELESAI ---
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdRemove"))
 async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # --- MODIFIKASI: Hapus SEMUA akun ---
-        # Tutup semua sesi klien yang ada
         for client in tidal_manager.clients:
-            if hasattr(client, "session"):
+            if hasattr(client, "session") and client.session:
                 await client.session.close()
         
-        # Hapus daftar akun dari DB
         await database.set_variable("TIDAL_ACCOUNTS_LIST", [])
         
-        # Inisialisasi ulang manajer (akan menjadi kosong)
         await tidal_manager.initialize_clients()
 
         await c.answer_callback_query(
@@ -246,37 +227,56 @@ async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
         )
 
         await tidal_auth_cb(c, cb)
-        # --- MODIFIKASI SELESAI ---
 
 
-# ... (Fungsi Beatport tetap sama) ...
+#----------------
+# BEATPORT
+#----------------
 @Client.on_callback_query(filters.regex(pattern=r"^bpP"))
 async def beatport_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        quality = {"lossless": "Lossless (FLAC)", "high": "High (AAC 256)", "medium": "Medium (AAC 128)"}
+        quality = {
+            "lossless": "Lossless (FLAC)",
+            "high": "High (AAC 256)",
+            "medium": "Medium (AAC 128)"
+        }
+        
         if not beatport_manager or not beatport_manager.clients:
             return await edit_message(cb.message, "Layanan Beatport tidak aktif (tidak ada klien yang login).")
-        current = beatport_manager.quality
+        
+        current = beatport_manager.quality 
         if current in quality:
             quality[current] = quality[current] + '✅'
-        await edit_message(cb.message, "Pilih kualitas default untuk Beatport:", markup=bp_button(quality))
+        
+        await edit_message(
+            cb.message,
+            "Pilih kualitas default untuk Beatport:",
+            markup=bp_button(quality) 
+        )
 
 @Client.on_callback_query(filters.regex(pattern=r"^bpQ"))
 async def beatport_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {"Lossless (FLAC)": "lossless", "High (AAC 256)": "high", "Medium (AAC 128)": "medium"}
+        qual_map_display = {
+            "Lossless (FLAC)": "lossless",
+            "High (AAC 256)": "high",
+            "Medium (AAC 128)": "medium"
+        }
         to_set_display = cb.data.split('_')[1]
         to_set = qual_map_display.get(to_set_display)
+        
         if not to_set:
             return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
+
         if not beatport_manager or not beatport_manager.clients:
             return await edit_message(cb.message, "Layanan Beatport tidak aktif (tidak ada klien yang login).")
+        
         beatport_manager.quality = to_set
         await database.set_variable('BEATPORT_QUALITY', to_set)
+        
         await beatport_cb(c, cb)
 
 
-# --- FUNGSI BARU: Deezer ---
 #----------------
 # DEEZER
 #----------------
@@ -299,7 +299,7 @@ async def deezer_cb(c, cb:CallbackQuery):
         await edit_message(
             cb.message,
             "Pilih kualitas default untuk Deezer:",
-            markup=dz_button(quality) # Menggunakan dz_button (mode admin)
+            markup=dz_button(quality) 
         )
 
 @Client.on_callback_query(filters.regex(pattern=r"^dzQ"))
@@ -323,4 +323,3 @@ async def deezer_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('DEEZER_QUALITY', to_set)
         
         await deezer_cb(c, cb)
-# --- FUNGSI BARU SELESAI ---
