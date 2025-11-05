@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/kkbox/handler.py]
+# [GANTI FILE: bot/helpers/kkbox/handler.py]
 
 import aiohttp
 import aiofiles
@@ -11,7 +11,7 @@ from config import Config
 
 from .metadata import (
     process_track_metadata, 
-    # process_album_metadata, 
+    process_album_metadata, # --- DITAMBAHKAN ---
     # process_playlist_metadata,
     custom_url_parse
 )
@@ -36,11 +36,13 @@ async def start_kkbox(url: str, user: dict):
             if not success:
                 raise Exception("Gagal mengunduh atau memproses track.")
         
-        # elif media_type == 'album':
-        #     await start_album(item_id, user)
-        
+        # --- MODIFIKASI DIMULAI ---
+        elif media_type == 'album':
+            await start_album(item_id, user)
+        # --- MODIFIKASI SELESAI ---
+            
         # elif media_type == 'playlist':
-        #     await start_playlist(item_id, user)
+            # raise NotImplementedError(f"Tipe media KKBox '{media_type}' belum didukung.")
             
         else:
             raise NotImplementedError(f"Tipe media KKBox '{media_type}' belum didukung.")
@@ -49,6 +51,7 @@ async def start_kkbox(url: str, user: dict):
         
     except Exception as e:
         LOGGER.error(f"Error fatal di KKBox handler: {e}\n{traceback.format_exc()}")
+        # Melempar error agar download.py tahu tugasnya gagal
         raise e 
 
 
@@ -133,8 +136,15 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
     try:
         await set_metadata(track_meta)
+    except FileNotFoundError:
+        LOGGER.error(f"[Errno 2] File not found setelah download KKBox: {filepath}")
+        return False
     except Exception as e:
         LOGGER.error(f"Gagal memproses metadata KKBox: {filepath} -> {e}")
+        try:
+            os.remove(filepath)
+        except:
+            pass
         return False
 
     if upload:
@@ -142,4 +152,52 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
     return True
 
-# ... (Implementasikan start_album / start_playlist nanti) ...
+# --- FUNGSI BARU ---
+async def start_album(album_id: str, user: dict, upload=True):
+    """
+    Handler untuk unduhan album (didasarkan pada handler.py Beatport)
+    """
+    try:
+        album_meta = await process_album_metadata(album_id, user['r_id'], user)
+    except Exception as e:
+        raise Exception(f"Gagal mendapatkan metadata album KKBox: {e}")
+
+    album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
+    
+    album_folder = sanitize_filepath(album_folder)
+    album_meta['folderpath'] = album_folder
+
+    if upload:
+        album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+
+    tasks = []
+    for track in album_meta['tracks']:
+        # Kirim track_meta (pre_data) ke start_track agar tidak perlu fetch ulang
+        tasks.append(start_track(track['itemid'], user, track, False, album_folder))
+
+    update_details = {
+        'text': lang.s.DOWNLOAD_PROGRESS,
+        'msg': user['bot_msg'],
+        'title': album_meta['title'],
+        'type': album_meta['type']
+    }
+    
+    task_results = await run_concurrent_tasks(tasks, update_details)
+    
+    successful_tracks = [album_meta['tracks'][i] for i, result in enumerate(task_results) if result]
+    album_meta['tracks'] = successful_tracks
+    album_meta['totaltracks'] = len(successful_tracks)
+
+    if not successful_tracks:
+        raise Exception(f"Tidak ada lagu KKBox yang berhasil diunduh untuk album {album_meta['title']}.")
+
+    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+
+    if album_zip: 
+        await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
+        album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+
+    if upload:
+        await edit_message(user['bot_msg'], lang.s.UPLOADING)
+        await album_upload(album_meta, user)
+# --- BATAS FUNGSI BARU ---
