@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/kkbox/api.py]
+# [GANTI FILE: bot/helpers/kkbox/api.py]
 
 import json
 import re
@@ -125,11 +125,13 @@ class KkboxAPI:
     def get_song_lyrics(self, id):
         return self.api_call('ds', f'v1/song/{id}/lyrics')
 
+    # --- FUNGSI YANG HILANG ADA DI SINI ---
     def get_album(self, id):
         resp = self.api_call('ds', f'v1/album/{id}')
         if resp['status']['type'] != 'OK':
             raise self.exception('Album not found')
         return resp['data']
+    # --- BATAS FUNGSI ---
 
     def get_album_more(self, raw_id):
         return self.api_call('ds', 'album_more.php', params={
