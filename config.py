@@ -116,7 +116,7 @@ class Config:
 #--------------------
 
 # TIDAL
-# (Menambahkan variabel yang hilang untuk memperbaiki error startup)
+# (Variabel yang dihapus tidak lagi digunakan oleh multi-login)
 #--------------------
     ENABLE_TIDAL = getenv("ENABLE_TIDAL", None)
     TIDAL_MOBILE = getenv("TIDAL_MOBILE", None) # only use email pass in mobile session
@@ -125,8 +125,9 @@ class Config:
     TIDAL_TV_TOKEN = getenv("TIDAL_TV_TOKEN", None)
     TIDAL_TV_SECRET = getenv("TIDAL_TV_SECRET", None)
     TIDAL_CONVERT_M4A = getenv("TIDAL_CONVERT_M4A", False)
-    TIDAL_REFRESH_TOKEN = getenv("TIDAL_REFRESH_TOKEN", None)
-    TIDAL_COUNTRY_CODE = getenv("TIDAL_COUNTRY_CODE", None) # example CA for Canada
+    # --- DUA BARIS DI BAWAH INI DIHAPUS ---
+    # TIDAL_REFRESH_TOKEN = getenv("TIDAL_REFRESH_TOKEN", None)
+    # TIDAL_COUNTRY_CODE = getenv("TIDAL_COUNTRY_CODE", None) # example CA for Canada
 #--------------------    
 
 # BEATPORT
