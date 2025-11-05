@@ -125,9 +125,6 @@ class Config:
     TIDAL_TV_TOKEN = getenv("TIDAL_TV_TOKEN", None)
     TIDAL_TV_SECRET = getenv("TIDAL_TV_SECRET", None)
     TIDAL_CONVERT_M4A = getenv("TIDAL_CONVERT_M4A", False)
-    # --- DUA BARIS DI BAWAH INI DIHAPUS ---
-    # TIDAL_REFRESH_TOKEN = getenv("TIDAL_REFRESH_TOKEN", None)
-    # TIDAL_COUNTRY_CODE = getenv("TIDAL_COUNTRY_CODE", None) # example CA for Canada
 #--------------------    
 
 # BEATPORT
@@ -152,8 +149,42 @@ class Config:
     if not BEATPORT_ACCOUNTS:
         logging.warning("Tidak ada kredensial Beatport (BEATPORT_EMAIL_1, dll.) ditemukan di .env")
 #--------------------    
+
+# --- BAGIAN BARU UNTUK KKBOX ---
+#--------------------    
+# KKBOX
+#--------------------
+    # Kunci global dari interface.py
+    KKBOX_KC1_KEY = getenv("KKBOX_KC1_KEY", None)
+    KKBOX_SECRET_KEY = getenv("KKBOX_SECRET_KEY", None)
+    
+    KKBOX_ACCOUNTS = []
+    i = 1
+    while True:
+        # Kredensial login dari kkapi.py
+        email = getenv(f"KKBOX_EMAIL_{i}")
+        password = getenv(f"KKBOX_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan KKBox Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password, "id": i}
+            KKBOX_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun KKBox.")
+            break
+
+    if not KKBOX_ACCOUNTS:
+        logging.warning("Tidak ada kredensial KKBox (KKBOX_EMAIL_1, dll.) ditemukan di .env")
+    if not KKBOX_KC1_KEY or not KKBOX_SECRET_KEY:
+        logging.warning("KKBOX_KC1_KEY atau KKBOX_SECRET_KEY tidak diatur! Modul KKBox akan gagal.")
+#-------------------- 
+# --- BATAS BAGIAN BARU ---
     
 # CONCURRENT
 
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
+
+}
