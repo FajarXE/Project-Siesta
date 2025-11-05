@@ -16,23 +16,25 @@ from bot.tgclient import aio
 # Impor semua manajer
 from bot.helpers.deezer.manager import deezer_manager
 from bot.helpers.beatport.manager import beatport_manager
-# --- MODIFIKASI: Tambahkan tidal_manager ---
 from bot.helpers.tidal.manager import tidal_manager
-# --- MODIFIKASI SELESAI ---
+# --- TAMBAHAN: Impor Manajer KKBox ---
+from bot.helpers.kkbox.manager import kkbox_manager
+# --- BATAS TAMBAHAN ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
+from ..helpers.beatport.handler import start_beatport
 
-# --- MODIFIKASI: Bersihkan impor Beatport ---
+# --- TAMBAHAN: Impor Handler KKBox ---
 try:
-    from ..helpers.beatport.handler import start_beatport
+    from ..helpers.kkbox.handler import start_kkbox
 except ImportError:
     # Fallback bersih
-    async def start_beatport(*args, **kwargs):
-        raise NotImplementedError("Modul Beatport ('handler.py') belum diimplementasikan.")
-# --- MODIFIKASI SELESAI ---
+    async def start_kkbox(*args, **kwargs):
+        raise NotImplementedError("Modul KKBox ('handler.py') belum diimplementasikan.")
+# --- BATAS TAMBAHAN ---
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
@@ -103,15 +105,17 @@ async def start_link(link: str, user: dict) -> None:
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
     beatport = ["https://www.beatport.com", "beatport.com"]
+    # --- TAMBAHAN: URL KKBox ---
+    kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
+    # --- BATAS TAMBAHAN ---
     
-    # --- MODIFIKASI: Tambahkan logika loop Tidal ---
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
         
         if not tidal_manager.clients:
             raise Exception("Maaf, tidak ada akun Tidal bot yang aktif saat ini.")
 
-        # Acak daftar klien jika ada lebih dari satu
+        # ... (Logika retry Tidal tetap sama) ...
         clients_list = list(tidal_manager.clients)
         if len(clients_list) > 1:
             random.shuffle(clients_list)
@@ -142,7 +146,6 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Tidal yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh Tidal karena alasan yang tidak diketahui setelah mencoba semua akun.")
-    # --- MODIFIKASI SELESAI ---
         
     elif link.startswith(tuple(deezer)):
         user['provider'] = 'Deezer'
@@ -150,6 +153,7 @@ async def start_link(link: str, user: dict) -> None:
         if not deezer_manager.clients:
             raise Exception("Maaf, tidak ada akun Deezer bot yang aktif saat ini.")
         
+        # ... (Logika retry Deezer tetap sama) ...
         clients_list = random.sample(deezer_manager.clients, len(deezer_manager.clients))
         last_error = None
         
@@ -186,6 +190,7 @@ async def start_link(link: str, user: dict) -> None:
         if not BOT_QOBUZ_CLIENTS:
             raise Exception("Maaf, tidak ada akun Qobuz bot yang aktif saat ini.")
         
+        # ... (Logika Qobuz tetap sama) ...
         clients_list = list(BOT_QOBUZ_CLIENTS.values())
         random.shuffle(clients_list)
         user['qobuz_clients_list'] = clients_list
@@ -198,6 +203,7 @@ async def start_link(link: str, user: dict) -> None:
         if not beatport_manager.clients:
             raise Exception("Maaf, tidak ada akun Beatport bot yang aktif saat ini.")
 
+        # ... (Logika retry Beatport tetap sama) ...
         clients_list = random.sample(beatport_manager.clients, len(beatport_manager.clients))
         last_error = None
 
@@ -227,3 +233,44 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Beatport yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh Beatport karena alasan yang tidak diketahui setelah mencoba semua akun.")
+
+    # --- TAMBAHAN: Blok Logika KKBox ---
+    elif link.startswith(tuple(kkbox)):
+        user['provider'] = 'KKBox'
+        
+        if not kkbox_manager.clients:
+            raise Exception("Maaf, tidak ada akun KKBox bot yang aktif saat ini.")
+
+        clients_list = random.sample(kkbox_manager.clients, len(kkbox_manager.clients))
+        last_error = None
+
+        for client in clients_list:
+            try:
+                user['kkbox_api'] = client # Injeksi klien
+                await start_kkbox(link, user) # Panggil handler
+                
+                LOGGER.info(f"KKBox: Unduhan berhasil menggunakan akun.") 
+                return # Sukses
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                # Sesuaikan ini dengan string error dari kkapi.py
+                if "unsupported region" in error_str or \
+                   "account expired" in error_str or \
+                   "quality not available" in error_str or \
+                   "incorrect password" in error_str or \
+                   "email not found" in error_str:
+                    LOGGER.warning(f"KKBox: Akun gagal (Region/Sub/Auth): {e}. Mencoba akun berikutnya...")
+                    last_error = e 
+                    continue # Coba akun berikutnya
+                else:
+                    # Error fatal yang tidak diketahui
+                    LOGGER.error(f"KKBox: Akun gagal (Fatal): {e}")
+                    raise e # Hentikan dan laporkan error
+                    
+        if last_error:
+            raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun KKBox yang dicoba. Error terakhir: {last_error}")
+        else:
+            raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
+    # --- BATAS TAMBAHAN ---
+
