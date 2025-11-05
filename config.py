@@ -152,6 +152,33 @@ class Config:
     if not BEATPORT_ACCOUNTS:
         logging.warning("Tidak ada kredensial Beatport (BEATPORT_EMAIL_1, dll.) ditemukan di .env")
 #--------------------    
+
+# KKBOX
+#--------------------
+    # Kunci ini global, didapat dari reverse engineering
+    KKBOX_KC1_KEY = getenv("KKBOX_KC1_KEY", "Dk'g8.30-iAz:3,p")
+    KKBOX_SECRET_KEY = getenv("KKBOX_SECRET_KEY", "31,8.30-iAz:3,p'gDk")
+
+    # Muat beberapa akun
+    KKBOX_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"KKBOX_EMAIL_{i}")
+        password = getenv(f"KKBOX_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan KKBox Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password, "id": i}
+            KKBOX_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun KKBox.")
+            break
+
+    if not KKBOX_ACCOUNTS:
+        logging.warning("Tidak ada kredensial KKBox (KKBOX_EMAIL_1, dll.) ditemukan di .env")
+#--------------------
     
 # CONCURRENT
 
