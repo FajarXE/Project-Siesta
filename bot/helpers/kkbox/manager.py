@@ -8,22 +8,24 @@ from config import Config
 try:
     from ..database.mongo_async import database
 except (ImportError, ModuleNotFoundError):
-    # --- BLOK FALLBACK YANG DIISI ---
     LOGGER.critical("KKBox Manager: Gagal mengimpor 'database'. Fungsi pemuatan kualitas mungkin gagal.")
     class DummyDatabase:
         async def get_variable(self, *args, **kwargs): return {}
     database = DummyDatabase()
-    # --- BATAS BLOK ---
 
 try:
     from .api import KkboxAPI
 except ImportError:
-    # --- BLOK FALLBACK YANG DIISI ---
+    # --- BLOK FALLBACK YANG DIPERBAIKI ---
     LOGGER.critical("KKBox: Gagal mengimpor 'KkboxAPI' dari 'bot/helpers/kkbox/api.py'. File inti tidak ada.")
     class KkboxAPI:
-        def __init__(self, *args, **kwargs): pass
-        async def login(self, *args, **kwargs): raise NotImplementedError("File 'KkboxAPI' inti tidak ditemukan.")
-        async def close_session(self): pass
+        def __init__(self, *args, **kwargs): 
+            pass
+        # Buat fungsi login sinkron (bukan async) agar to_thread bisa memanggilnya
+        def login(self, *args, **kwargs): 
+            raise NotImplementedError("File 'KkboxAPI' inti tidak ditemukan atau tidak bisa diimpor.")
+        def close_session(self): 
+            pass
     # --- BATAS BLOK ---
 
 # Pengecualian kustom sederhana untuk diteruskan
@@ -40,7 +42,6 @@ class KKBoxLoginManager:
         self.clients = [] 
         self._client_cycler = None
         
-        # Muat Kunci Global dari Config
         if not Config.KKBOX_KC1_KEY or not Config.KKBOX_SECRET_KEY:
             LOGGER.error("KKBox Manager: Kunci KC1 atau Secret tidak diatur di Config!")
             self.kc1_key = ""
@@ -49,8 +50,7 @@ class KKBoxLoginManager:
             self.kc1_key = Config.KKBOX_KC1_KEY
             self.secret_key = Config.KKBOX_SECRET_KEY
         
-        # Sesuaikan ini dengan kualitas KKBox (dari interface.py)
-        self.quality = "hifi" # Default 'hifi' (Lossless 16-bit), bukan 'hires'
+        self.quality = "hifi" 
         self.user_data = {} 
 
     async def initialize_clients(self):
@@ -59,16 +59,10 @@ class KKBoxLoginManager:
         dan memuat pengaturan kualitas default.
         """
         
-        # --- Muat Kualitas Default ---
         try:
-            all_settings = await database.get_variable() # Ambil SEMUA pengaturan
-            if not all_settings:
-                all_settings = {}
-
-            # Ganti nama variabel DB
+            all_settings = await database.get_variable() 
+            if not all_settings: all_settings = {}
             db_quality = all_settings.get('KKBOX_QUALITY') 
-            
-            # Ganti dengan kualitas KKBox
             if db_quality in ["128k", "192k", "320k", "hifi", "hires"]:
                 self.quality = db_quality
                 LOGGER.info(f"KKBox Manager: Kualitas default dimuat dari DB: {self.quality}")
@@ -76,7 +70,6 @@ class KKBoxLoginManager:
                 LOGGER.info(f"KKBox Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
         except Exception as e:
             LOGGER.error(f"KKBox Manager: Gagal memuat kualitas dari DB: {e}. Menggunakan default: {self.quality}")
-        # --- Selesai ---
 
         if not self.account_configs:
             LOGGER.warning("KKBox Manager: Tidak ada akun untuk diinisialisasi.")
@@ -101,8 +94,6 @@ class KKBoxLoginManager:
     async def _login_task(self, account: dict):
         """Tugas login untuk satu akun (menggunakan asyncio.to_thread)."""
         
-        # Buat instans client
-        # Kita meneruskan KKBoxError sebagai 'exception' yang dibutuhkan
         client = KkboxAPI(
             exception=KKBoxError,
             kc1_key=self.kc1_key, 
@@ -119,13 +110,11 @@ class KKBoxLoginManager:
             LOGGER.info(f"KKBox Manager: Berhasil login ke Akun #{account['id']}")
             return client
         except Exception as e:
+            # Jika dummy class digunakan, ini akan gagal dengan NotImplementedError
             LOGGER.error(f"KKBox Manager: Gagal login ke Akun #{account['id']}. Error: {e}")
             return None
 
     def get_client(self) -> KkboxAPI | None:
-        """
-        Mendapatkan klien berikutnya dari kumpulan (round-robin).
-        """
         if not self._client_cycler:
             LOGGER.error("KKBox Manager: Tidak ada klien yang tersedia.")
             return None
@@ -137,21 +126,16 @@ class KKBoxLoginManager:
             return None
     
     async def setup_quality(self, user_id: int, qual: str = None):
-        """Mengatur cache kualitas untuk pengguna tertentu."""
         if user_id not in self.user_data:
             self.user_data[user_id] = {}
-        # Ganti dengan kualitas KKBox
         if qual in ["128k", "192k", "320k", "hifi", "hires"]:
-            self.user_data[user_id]['kkbox_qual'] = qual # Ganti nama var
+            self.user_data[user_id]['kkbox_qual'] = qual 
             LOGGER.debug(f"KKBox Manager: Mengatur kualitas user {user_id} ke {qual}")
 
     def get_user_quality(self, user_id: int) -> str:
-        """Mendapatkan kualitas untuk pengguna, fallback ke default."""
-        user_qual = self.user_data.get(user_id, {}).get('kkbox_qual') # Ganti nama var
-        # Ganti dengan kualitas KKBox
+        user_qual = self.user_data.get(user_id, {}).get('kkbox_qual') 
         if user_qual in ["128k", "192k", "320k", "hifi", "hires"]:
             return user_qual
         return self.quality 
 
-# Buat instans global
 kkbox_manager = KKBoxLoginManager(Config.KKBOX_ACCOUNTS)
