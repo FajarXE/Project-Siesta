@@ -38,7 +38,7 @@ class Config:
     WORK_DIR = getenv("WORK_DIR", "./bot/")
     DOWNLOADS_FOLDER = getenv("DOWNLOADS_FOLDER", "DOWNLOADS")
     DOWNLOAD_BASE_DIR = WORK_DIR + DOWNLOADS_FOLDER
-    LOCAL_STORAGE = getenv("LOCAL_STORAGE", DOWNLOAD_BASE_DIR)
+    LOCAL_STORAGE = getenv("DOWNLOAD_BASE_DIR", DOWNLOAD_BASE_DIR) # Perbaikan dari file asli
 #--------------------
 
 # FILE/FOLDER NAMING
@@ -91,10 +91,8 @@ class Config:
 
 #--------------------
     
-    # Kunci ini tetap global karena tidak spesifik per akun
     DEEZER_BF_SECRET = getenv("DEEZER_BF_SECRET", None)
     
-    # Buat daftar akun seperti Qobuz
     DEEZER_ACCOUNTS = []
     i = 1
     while True:
@@ -116,10 +114,9 @@ class Config:
 #--------------------
 
 # TIDAL
-# (Variabel yang dihapus tidak lagi digunakan oleh multi-login)
 #--------------------
     ENABLE_TIDAL = getenv("ENABLE_TIDAL", None)
-    TIDAL_MOBILE = getenv("TIDAL_MOBILE", None) # only use email pass in mobile session
+    TIDAL_MOBILE = getenv("TIDAL_MOBILE", None) 
     TIDAL_MOBILE_TOKEN = getenv("TIDAL_MOBILE_TOKEN", None)
     TIDAL_ATMOS_MOBILE_TOKEN = getenv("TIDAL_ATMOS_MOBILE_TOKEN", None)
     TIDAL_TV_TOKEN = getenv("TIDAL_TV_TOKEN", None)
@@ -128,7 +125,6 @@ class Config:
 #--------------------    
 
 # BEATPORT
-# (Menambahkan bagian baru untuk Beatport)
 #--------------------
     BEATPORT_ACCOUNTS = []
     i = 1
@@ -150,24 +146,33 @@ class Config:
         logging.warning("Tidak ada kredensial Beatport (BEATPORT_EMAIL_1, dll.) ditemukan di .env")
 #--------------------    
 
-# --- BAGIAN BARU UNTUK KKBOX ---
 #--------------------    
 # KKBOX
 #--------------------
-    # Kunci global dari interface.py
     KKBOX_KC1_KEY = getenv("KKBOX_KC1_KEY", None)
     KKBOX_SECRET_KEY = getenv("KKBOX_SECRET_KEY", None)
+    
+    # --- PROXY GLOBAL DIHAPUS ---
+    # KKBOX_PROXY = getenv("KKBOX_PROXY", None) 
     
     KKBOX_ACCOUNTS = []
     i = 1
     while True:
-        # Kredensial login dari kkapi.py
         email = getenv(f"KKBOX_EMAIL_{i}")
         password = getenv(f"KKBOX_PASSWORD_{i}")
+        # --- MODIFIKASI: Baca proxy per-akun ---
+        proxy = getenv(f"KKBOX_PROXY_{i}", None) 
         
         if email and password:
             logging.info(f"Ditemukan KKBox Akun #{i} (Email/Pass)")
             account_data = {"email": email, "password": password, "id": i}
+            
+            # --- MODIFIKASI: Tambahkan proxy ke dict jika ada ---
+            if proxy:
+                logging.info(f" -> Ditemukan Proxy untuk Akun KKBox #{i}.")
+                account_data["proxy"] = proxy
+            # --- BATAS MODIFIKASI ---
+            
             KKBOX_ACCOUNTS.append(account_data)
             i += 1
         else:
@@ -180,11 +185,7 @@ class Config:
     if not KKBOX_KC1_KEY or not KKBOX_SECRET_KEY:
         logging.warning("KKBOX_KC1_KEY atau KKBOX_SECRET_KEY tidak diatur! Modul KKBox akan gagal.")
 #-------------------- 
-# --- BATAS BAGIAN BARU ---
     
 # CONCURRENT
-
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
-
-# --- TIDAK ADA '}' DI AKHIR ---
