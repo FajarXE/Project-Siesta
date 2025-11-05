@@ -7,7 +7,7 @@ from time import time, sleep
 from random import randrange
 from Cryptodome.Cipher import ARC4
 from Cryptodome.Hash import MD5
-# from tqdm import tqdm # <-- DIHAPUS untuk mengurangi dependensi
+# Hapus 'from tqdm import tqdm'
 
 class KkboxAPI:
     def __init__(self, exception, kc1_key, secret_key, kkid = None):
@@ -20,7 +20,9 @@ class KkboxAPI:
             raise self.exception("secret_key is invalid, change it in settings")
 
         self.kc1_key = kc1_key.encode('ascii')
-        self.secret_key = secret_key.encode('ascii'
+        # --- PERBAIKAN: Menambahkan ')' yang hilang ---
+        self.secret_key = secret_key.encode('ascii')
+        # --- BATAS PERBAIKAN ---
         
         self.s = requests.Session() 
         self.s.headers.update({
@@ -215,14 +217,14 @@ class KkboxAPI:
         resp = self.s.get(url, stream=True, headers={'range': 'bytes=1024-'})
         resp.raise_for_status()
 
-        size = int(resp.headers['content-length'])
-        # bar = tqdm(total=size, unit='B', unit_scale=True) # <-- DIHAPUS
+        # size = int(resp.headers['content-length']) # Dihapus
+        # bar = tqdm(total=size, unit='B', unit_scale=True) # Dihapus
 
         rc4 = ARC4.new(self.lic_content_key, drop=512)
 
         with open(path, 'wb') as f:
             for chunk in resp.iter_content(chunk_size=4096):
                 f.write(rc4.decrypt(chunk))
-                # bar.update(len(chunk)) # <-- DIHAPUS
+                # bar.update(len(chunk)) # Dihapus
 
-        # bar.close() # <-- DIHAPUS
+        # bar.close() # Dihapus
