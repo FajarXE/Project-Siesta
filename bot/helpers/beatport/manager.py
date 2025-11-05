@@ -1,34 +1,26 @@
-# [FILE: bot/helpers/beatport/manager.py]
+# [GANTI FILE: bot/helpers/beatport/manager.py]
 
 import asyncio
 import itertools
 from bot.logger import LOGGER
 from config import Config
 
-# Impor database
 try:
     from ..database.mongo_async import database
 except (ImportError, ModuleNotFoundError):
     LOGGER.critical("Beatport Manager: Gagal mengimpor 'database'. Fungsi pemuatan kualitas mungkin gagal.")
-    # Buat database dummy agar tidak crash jika impor gagal
     class DummyDatabase:
-        async def get_variable(self, *args, **kwargs): return None
+        async def get_variable(self, *args, **kwargs): return {}
     database = DummyDatabase()
 
-# PENTING: Impor ini mengasumsikan Anda akan membuat 
-# file 'api.py' dengan kelas 'BeatportAPI'
 try:
     from .api import BeatportAPI
 except ImportError:
     LOGGER.critical("Beatport: Gagal mengimpor 'BeatportAPI' dari 'bot/helpers/beatport/api.py'. File inti tidak ada.")
-    # Buat kelas dummy agar bot tidak crash saat startup
     class BeatportAPI:
-        def __init__(self, *args, **kwargs):
-            pass
-        async def login(self, *args, **kwargs):
-            raise NotImplementedError("File 'BeatportAPI' inti tidak ditemukan.")
-        async def close_session(self):
-            pass
+        def __init__(self, *args, **kwargs): pass
+        async def login(self, *args, **kwargs): raise NotImplementedError("File 'BeatportAPI' inti tidak ditemukan.")
+        async def close_session(self): pass
 
 
 class BeatportLoginManager:
@@ -38,13 +30,11 @@ class BeatportLoginManager:
     """
     def __init__(self, account_configs: list):
         self.account_configs = account_configs
-        self.clients = [] # Daftar instans BeatportAPI yang berhasil login
+        self.clients = [] 
         self._client_cycler = None
         
-        # --- TAMBAHAN PENGATURAN KUALITAS ---
-        self.quality = "lossless" # Default sebelum dimuat dari DB
-        self.user_data = {} # Cache untuk pengaturan per-pengguna
-        # ------------------------------------
+        self.quality = "lossless" 
+        self.user_data = {} 
 
     async def initialize_clients(self):
         """
@@ -54,10 +44,11 @@ class BeatportLoginManager:
         
         # --- PERBAIKAN: Muat Kualitas Default ---
         try:
-            # Error terjadi karena get_variable mengharapkan dict filter
-            db_quality_doc = await database.get_variable({"key": 'BEATPORT_QUALITY'})
-            # Ambil nilai dari dokumen yang dikembalikan
-            db_quality = db_quality_doc.get("value") if db_quality_doc else None
+            all_settings = await database.get_variable() # Ambil SEMUA pengaturan
+            if not all_settings:
+                all_settings = {}
+
+            db_quality = all_settings.get('BEATPORT_QUALITY')
             
             if db_quality in ["lossless", "high", "medium"]:
                 self.quality = db_quality
@@ -66,7 +57,7 @@ class BeatportLoginManager:
                 LOGGER.info(f"Beatport Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
         except Exception as e:
             LOGGER.error(f"Beatport Manager: Gagal memuat kualitas dari DB: {e}. Menggunakan default: {self.quality}")
-        # --------------------------------------
+        # --- PERBAIKAN SELESAI ---
 
         if not self.account_configs:
             LOGGER.warning("Beatport Manager: Tidak ada akun untuk diinisialisasi.")
@@ -92,7 +83,6 @@ class BeatportLoginManager:
         """Tugas login untuk satu akun."""
         client = BeatportAPI()
         try:
-            # Asumsi login menggunakan email dan password
             await client.login(
                 email=account['email'], 
                 password=account['password']
@@ -116,8 +106,6 @@ class BeatportLoginManager:
         except StopIteration:
             LOGGER.error("Beatport Manager: Kumpulan klien kosong.")
             return None
-
-    # --- TAMBAHAN: FUNGSI HELPER KUALITAS ---
     
     async def setup_quality(self, user_id: int, qual: str = None):
         """Mengatur cache kualitas untuk pengguna tertentu."""
@@ -132,8 +120,6 @@ class BeatportLoginManager:
         user_qual = self.user_data.get(user_id, {}).get('beatport_qual')
         if user_qual in ["lossless", "high", "medium"]:
             return user_qual
-        return self.quality # Fallback ke default admin
-    # ------------------------------------------
+        return self.quality 
 
-# Buat satu instans global dari manajer
 beatport_manager = BeatportLoginManager(Config.BEATPORT_ACCOUNTS)
