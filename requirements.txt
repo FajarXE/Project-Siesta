@@ -15,3 +15,4 @@ pyrofork
 python-dotenv
 requests
 tgcrypto-pyrofork
+tqdm
