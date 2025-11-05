@@ -2,8 +2,8 @@
 
 import json
 import base64
-import random
-import os # <-- Ditambahkan os
+import random # <-- Dihapus
+import os # <-- Ditambahkan
 
 from pathvalidate import sanitize_filepath
 
@@ -31,54 +31,27 @@ from config import Config
 
 
 async def start_tidal(url:str, user:dict):
+    # --- MODIFIKASI: HAPUS LOOP DARI SINI ---
+    # Loop sekarang ada di download.py
+    
     item_id, type_ = await parse_url(url)
     if not type_:
-        await send_message(user, "Invalid Tidal URL")
-        return
+        # --- MODIFIKASI: Lempar error ---
+        raise Exception("Invalid Tidal URL")
+        # await send_message(user, "Invalid Tidal URL")
+        # --- MODIFIKASI SELESAI ---
 
-    # --- MODIFIKASI: Logika Multi-Klien (Round-Robin) ---
-    if not tidal_manager.clients:
-        raise Exception("Maaf, tidak ada akun Tidal bot yang aktif saat ini.")
+    # Asumsi 'tidal_api' sudah diinjeksi oleh download.py
+    # Klien sudah ditetapkan oleh download.py
     
-    # Dapatkan klien acak, jangan gunakan sample jika hanya 1
-    clients_list = [tidal_manager.get_client()]
-    if len(tidal_manager.clients) > 1:
-        clients_list = random.sample(tidal_manager.clients, len(tidal_manager.clients))
-        
-    last_error = None
-
-    for client in clients_list:
-        try:
-            user['tidal_api'] = client # Injeksi instance klien
-            
-            if type_ == 'track':
-                await start_track(item_id, user, None)
-            elif type_ == 'artist':
-                await start_artist(item_id, user)
-            elif type_ == 'album':
-                await start_album(item_id, user)
-            elif type_ == 'playlist':
-                pass # (Masih belum diimplementasikan di file Anda)
-            
-            LOGGER.info(f"Tidal: Unduhan berhasil menggunakan akun User ID {client.user_id}")
-            return # Sukses
-            
-        except Exception as e:
-            error_str = str(e).lower()
-            if 'asset is not ready' in error_str or \
-               'not available in your region' in error_str or \
-               'region-locked' in error_str:
-                LOGGER.warning(f"Tidal: Akun {client.user_id} gagal (Region Lock): {e}. Mencoba akun berikutnya...")
-                last_error = e
-                continue
-            else:
-                LOGGER.error(f"Tidal: Akun {client.user_id} gagal (Fatal): {e}")
-                raise e # Lempar error fatal
-    
-    if last_error:
-        raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Tidal yang dicoba. Error terakhir: {last_error}")
-    else:
-        raise Exception("Gagal mengunduh Tidal karena alasan yang tidak diketahui setelah mencoba semua akun.")
+    if type_ == 'track':
+        await start_track(item_id, user, None)
+    elif type_ == 'artist':
+        await start_artist(item_id, user)
+    elif type_ == 'album':
+        await start_album(item_id, user)
+    elif type_ == 'playlist':
+        pass # (Masih belum diimplementasikan di file Anda)
     # --- MODIFIKASI SELESAI ---
         
 
@@ -97,7 +70,10 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             track_data = await client.get_track(track_id)
             # --- MODIFIKASI SELESAI ---
         except Exception as e:
-            return await send_message(user, e)
+            # --- MODIFIKASI: Lempar error ---
+            raise e
+            # return await send_message(user, e)
+            # --- MODIFIKASI SELESAI ---
 
         track_meta = await get_track_metadata(track_id, track_data, user['r_id'])
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
@@ -150,14 +126,20 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
                 temp_path = f"{filepath}.{i}"
                 err = await download_file(url, temp_path)
                 if err:
-                    return await send_message(user, err)
+                    # --- MODIFIKASI: Lempar error ---
+                    raise Exception(err)
+                    # return await send_message(user, err)
+                    # --- MODIFIKASI SELESAI ---
                 i+=1
                 temp_files.append(temp_path)
             await merge_tracks(temp_files, filepath)
         else:
             err = await download_file(urls, filepath)
             if err:
-                return await send_message(user, err)
+                # --- MODIFIKASI: Lempar error ---
+                raise Exception(err)
+                # return await send_message(user, err)
+                # --- MODIFIKASI SELESAI ---
 
         track_meta['extension'] = await get_audio_extension(filepath)
         
