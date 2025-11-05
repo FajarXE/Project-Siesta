@@ -187,4 +187,4 @@ class Config:
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
 
-}
+# --- TIDAK ADA '}' DI AKHIR ---
