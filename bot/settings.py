@@ -20,8 +20,14 @@ from .helpers.database.mongo_async import database
 # from .helpers.deezer.dzapi import deezerapi
 # --- BATAS MODIFIKASI ---
 
-from .helpers.tidal.tidal_api import tidalapi
+# --- MODIFIKASI: Impor 'tidalapi' yang rusak DIHAPUS ---
+# from .helpers.tidal.tidal_api import tidalapi 
+# --- MODIFIKASI SELESAI ---
 from .helpers.translations import lang_available
+
+# --- MODIFIKASI: Impor manajer baru ---
+from .helpers.tidal.manager import tidal_manager
+# --- MODIFIKASI SELESAI ---
 
 
 def __encrypt_string__(string):
@@ -49,7 +55,11 @@ class BotSettings:
         
         # MODIFIKASI: Atribut self.qobuz Dihapus
         # self.qobuz = False 
-        self.tidal = None
+        
+        # --- MODIFIKASI: Atribut self.tidal Dihapus ---
+        # self.tidal = None 
+        # --- MODIFIKASI SELESAI ---
+        
         self.admins = Config.ADMINS
         self.set_db = set_db
 
@@ -79,9 +89,16 @@ class BotSettings:
         self.playlist_zip = self.set_db.get('PLAYLIST_ZIP')
         self.artist_zip = self.set_db.get('ARTIST_ZIP')
 
-        self.clients = []
+        # --- MODIFIKASI: Hapus self.clients (tidak digunakan di sini) ---
+        # self.clients = []
+        # --- MODIFIKASI SELESAI ---
         
         self.user_data = {}
+        
+        # --- MODIFIKASI: Tambahkan variabel can_enable_tidal ---
+        # Ini dibutuhkan oleh provider_settings.py untuk menampilkan tombol Login
+        self.can_enable_tidal = Config.ENABLE_TIDAL
+        # --- MODIFIKASI SELESAI ---
 
 
     def check_upload_mode(self):
@@ -112,55 +129,17 @@ class BotSettings:
 
     # --- MODIFIKASI: Hapus seluruh fungsi 'login_deezer' ---
     # Logika ini sekarang ditangani oleh 'deezer_manager' saat startup.
-    # async def login_deezer(self):
-    #     ... (KODE LAMA DIHAPUS) ...
     # --- BATAS MODIFIKASI ---
 
 
-    async def login_tidal(self):
-        # ... (Fungsi Tidal Anda tetap tidak berubah) ...
-        self.can_enable_tidal = Config.ENABLE_TIDAL
-        if not self.can_enable_tidal:
-            return
-        # ... (sisa kode Tidal) ...
-        data = None
-        if Config.TIDAL_REFRESH_TOKEN:
-            data = {
-                'user_id': None, 
-                'refresh_token': Config.TIDAL_REFRESH_TOKEN, 
-                'country_code': Config.TIDAL_COUNTRY_CODE
-            }
-            LOGGER.debug("TIDAL: Using refresh token from environment")
-        else:
-            saved_info = self.set_db.get("TIDAL_AUTH_DATA")
-            if saved_info:
-                try:
-                    data = json.loads(__decrypt_string__(saved_info))
-                    LOGGER.debug("TIDAL: Using saved authentication data from Database")
-                except Exception as e:
-                    LOGGER.error(f"TIDAL: Failed to decrypt/parse saved auth data: {e}")
-                    return
-        if not data:
-            return
-        await tidalapi.login_from_saved(data)
-        quality = self.set_db.get('TIDAL_QUALITY')
-        if quality:
-            tidalapi.quality = quality
-        spatial = self.set_db.get('TIDAL_SPATIAL')
-        if spatial:
-            tidalapi.spatial = spatial
-        self.tidal = tidalapi 
-        self.clients.append(tidalapi)
+    # --- MODIFIKASI: Hapus seluruh fungsi 'login_tidal' ---
+    # Logika ini sekarang ditangani oleh 'tidal_manager' saat startup.
+    # --- BATAS MODIFIKASI ---
 
-
-    async def save_tidal_login(self, session):
-        data = {
-            "user_id" : session.user_id,
-            "refresh_token" : session.refresh_token,
-            "country_code" : session.country_code
-        }
-        txt = json.dumps(data)
-        await database.set_variable("TIDAL_AUTH_DATA", __encrypt_string__(txt))
+    
+    # --- MODIFIKASI: Hapus seluruh fungsi 'save_tidal_login' ---
+    # Logika ini sekarang ditangani oleh 'provider_settings.py'.
+    # --- BATAS MODIFIKASI ---
         
 
     async def set_language(self):
@@ -174,15 +153,19 @@ class BotSettings:
 
     async def initialize_users(self) -> dict:
         user_data = await database.initialize_users()
+        
         # --- MODIFIKASI: Gunakan self.deezer (bool) ---
         # Kita tidak lagi melampirkan 'user_data' ke klien di sini
-        # if self.deezer:
-        #    self.deezer.user_data = user_data
         # --- BATAS MODIFIKASI ---
         
         # MODIFIKASI: Blok if self.qobuz Dihapus
-        if self.tidal:
-            self.tidal.user_data = user_data
+        
+        # --- MODIFIKASI: Muat data pengguna ke manajer ---
+        # (Kita asumsikan manajer sudah diinisialisasi di __main__.py)
+        if tidal_manager and tidal_manager.clients:
+            tidal_manager.user_data = user_data
+        # --- MODIFIKASI SELESAI ---
+            
         self.user_data = user_data
 
 bot_set = BotSettings()
