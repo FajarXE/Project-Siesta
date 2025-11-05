@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/kkbox/metadata.py]
+# [GANTI FILE: bot/helpers/kkbox/metadata.py]
 
 import copy
 import re
@@ -59,7 +59,7 @@ async def _process_cover(metadata: dict, url_template: str):
     
     return await create_cover_file(url, metadata)
 
-async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None):
+async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, alb_info_pre: dict = None):
     """Memproses metadata untuk satu lagu."""
     client = user['kkbox_api']
     metadata = copy.deepcopy(base_meta)
@@ -74,10 +74,13 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             track_data = songs_list[0]
             
         # Dapatkan info album
-        album_raw_id = track_data.get('raw_album_id') or int(track_data['album_id'])
-        album_data_more = await asyncio.to_thread(client.get_album_more, album_raw_id)
-        alb_info = album_data_more['info']
-        alb_info['num_tracks'] = len(album_data_more['song_list']['song'])
+        if alb_info_pre:
+            alb_info = alb_info_pre
+        else:
+            album_raw_id = track_data.get('raw_album_id') or int(track_data['album_id'])
+            album_data_more = await asyncio.to_thread(client.get_album_more, album_raw_id)
+            alb_info = album_data_more['info']
+            alb_info['num_tracks'] = len(album_data_more['song_list']['song'])
 
     except Exception as e:
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata track {track_id}: {e}")
@@ -142,5 +145,63 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     return metadata
 
-# ... (Anda perlu mengimplementasikan process_album_metadata dan process_playlist_metadata) ...
-# ... (dengan menyalin logika dari interface.py dan mengadaptasinya) ...
+# --- FUNGSI BARU ---
+async def process_album_metadata(album_id: str, r_id: str, user: dict):
+    """Memproses metadata untuk satu album (diadaptasi dari interface.py)"""
+    client = user['kkbox_api']
+    metadata = copy.deepcopy(base_meta)
+    metadata['tempfolder'] += f"{r_id}-temp/"
+    
+    try:
+        # Panggil API di thread terpisah
+        album_resp = await asyncio.to_thread(client.get_album, album_id)
+        raw_id = album_resp['album']['album_id']
+        
+        album_data_more = await asyncio.to_thread(client.get_album_more, raw_id)
+        alb_info = album_data_more['info']
+        tracks_list = album_data_more['song_list']['song']
+        alb_info['num_tracks'] = len(tracks_list)
+
+    except Exception as e:
+        LOGGER.error(f"KKBox: Gagal mendapatkan metadata album {album_id}: {e}")
+        raise e
+
+    metadata['itemid'] = album_id
+    metadata['title'] = alb_info['album_name']
+    metadata['album'] = alb_info['album_name']
+    metadata['artist'] = alb_info['artist_name']
+    metadata['albumartist'] = alb_info['artist_name']
+    metadata['date'] = alb_info['album_date']
+    metadata['totaltracks'] = str(alb_info['num_tracks'])
+    metadata['explicit'] = bool(alb_info['album_is_explicit'])
+    metadata['provider'] = 'KKBox'
+    metadata['type'] = 'album'
+    
+    # Sampul
+    cover_template = alb_info['album_photo_info']['url_template']
+    metadata['cover'] = await _process_cover(metadata, cover_template)
+    metadata['thumbnail'] = await create_cover_file(cover_template.replace('{width}', '80').replace('{height}', '80').replace('{format}', 'jpg'), metadata, True)
+
+    metadata['tracks'] = []
+    for song_data in tracks_list:
+        try:
+            track_id = song_data['song_more_url'].split('/')[-1]
+            # Kirim pre_data dan alb_info_pre agar tidak perlu fetch ulang
+            track_meta = await process_track_metadata(
+                track_id, r_id, user, 
+                pre_data=song_data, 
+                alb_info_pre=alb_info
+            )
+            track_meta['cover'] = metadata['cover'] 
+            track_meta['thumbnail'] = metadata['thumbnail']
+            metadata['tracks'].append(track_meta)
+        except Exception as e:
+            LOGGER.warning(f"KKBox: Gagal memproses track {song_data.get('song_more_url')} di album: {e}")
+            continue
+
+    if not metadata['tracks']:
+        raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
+    
+    metadata['quality'] = metadata['tracks'][0]['quality']
+    return metadata
+# --- BATAS FUNGSI BARU ---
