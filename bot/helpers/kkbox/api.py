@@ -1,4 +1,4 @@
-# [GANTI SELURUH FILE: bot/helpers/kkbox/api.py]
+# [GANTI FILE: bot/helpers/kkbox/api.py]
 
 import json
 import re
@@ -128,14 +128,11 @@ class KkboxAPI:
     def get_song_lyrics(self, id):
         return self.api_call('ds', f'v1/song/{id}/lyrics')
 
-    # --- INI ADALAH FUNGSI YANG HILANG DARI SERVER ANDA ---
-    # --- PASTIKAN FUNGSI INI ADA SETELAH ANDA MENYALIN ---
     def get_album(self, id):
         resp = self.api_call('ds', f'v1/album/{id}')
         if resp['status']['type'] != 'OK':
             raise self.exception('Album not found')
         return resp['data']
-    # --- BATAS FUNGSI ---
 
     def get_album_more(self, raw_id):
         return self.api_call('ds', 'album_more.php', params={
@@ -195,8 +192,6 @@ class KkboxAPI:
                 self.auth_device()
                 return self.get_ticket(song_id, play_mode)
             elif resp['status'] == 2:
-                # tbh i'm not sure if this is some rate-limiting thing
-                # or if it's a bug on their slow-as-hell servers
                 sleep(0.5)
                 return self.get_ticket(song_id, play_mode)
             raise self.exception("Couldn't get track URLs")
@@ -220,14 +215,12 @@ class KkboxAPI:
             raise self.exception("Couldn't auth device")
 
     def kkdrm_dl(self, url, path):
-        # skip first 1024 bytes of track file
         resp = self.s.get(url, stream=True, headers={'range': 'bytes=1024-'})
         resp.raise_for_status()
 
         size = int(resp.headers['content-length'])
         bar = tqdm(total=size, unit='B', unit_scale=True)
 
-        # drop 512 bytes of keystream
         rc4 = ARC4.new(self.lic_content_key, drop=512)
 
         with open(path, 'wb') as f:
