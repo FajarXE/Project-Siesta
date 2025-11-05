@@ -1,12 +1,22 @@
+# [GANTI FILE: bot/helpers/tidal/utils.py]
+
 import re
 import os
 import aiofiles
 import asyncio
+import logging
 
 from shutil import copyfileobj
 from xml.etree import ElementTree
 
-from .tidal_api import tidalapi
+# --- MODIFIKASI: Impor manajer baru ---
+from .manager import tidal_manager
+# Kita juga butuh Tipe data TidalApi
+try:
+    from .tidal_api import TidalApi
+except ImportError:
+    class TidalApi: pass # Fallback
+# --- MODIFIKASI SELESAI ---
 
 
 async def parse_url(url):
@@ -39,11 +49,12 @@ async def parse_url(url):
     return None, None
 
 
-async def get_stream_session(track_data: dict, user: dict=None):
+async def get_stream_session(track_data: dict, user: dict):
     """
     Session needed for the quality chosen
     Args:
         track_data: raw data for the track
+        user: user dict (harus berisi 'tidal_api')
     Returns:
         session: TidalSession
         quality: LOW | HIGH | LOSSLESS | HI_RES | HI_RES_LOSSLESS
@@ -51,10 +62,17 @@ async def get_stream_session(track_data: dict, user: dict=None):
     media_tags = track_data['mediaMetadata']['tags']
     formats = None
 
-    import logging
-    user_dict = tidalapi.user_data.get(user["user_id"], {})
-    qual = user_dict.get("tidal_qual", tidalapi.quality)
-    spatial = user_dict.get("tidal_spatial", tidalapi.spatial)
+    # --- MODIFIKASI: Gunakan manager dan klien yang diinjeksi ---
+    if 'tidal_api' not in user:
+        raise ValueError("User dict tidak memiliki 'tidal_api' client instance.")
+    
+    client: TidalApi = user['tidal_api']
+    
+    # Dapatkan pengaturan dari manager, bukan dari 'tidalapi' global
+    user_dict = tidal_manager.user_data.get(user["user_id"], {})
+    qual = user_dict.get("tidal_qual", tidal_manager.quality)
+    spatial = user_dict.get("tidal_spatial", tidal_manager.spatial)
+    # --- MODIFIKASI SELESAI ---
 
     if 'SONY_360RA' in media_tags and spatial == 'Sony 360RA':
         formats = '360ra'
@@ -66,18 +84,20 @@ async def get_stream_session(track_data: dict, user: dict=None):
     elif 'HIRES_LOSSLESS' in media_tags and qual == 'HI_RES':
         formats = 'flac_hires'
 
+    # --- MODIFIKASI: Gunakan instance klien ---
     session = {
-            'flac_hires': tidalapi.mobile_hires,
-            '360ra': tidalapi.mobile_hires if tidalapi.mobile_hires else tidalapi.mobile_atmos,
-            'ac4': tidalapi.mobile_atmos,
-            'ac3': tidalapi.tv_session,
-            None: tidalapi.tv_session,
+            'flac_hires': client.mobile_hires,
+            '360ra': client.mobile_hires if client.mobile_hires else client.mobile_atmos,
+            'ac4': client.mobile_atmos,
+            'ac3': client.tv_session,
+            None: client.tv_session,
     }[formats]
 
     # tv sesion gets atmos always so try mobi1e session if exists
     if not formats and 'DOLBY_ATMOS' in media_tags:
-        if tidalapi.mobile_hires:
-            session = tidalapi.mobile_hires
+        if client.mobile_hires:
+            session = client.mobile_hires
+    # --- MODIFIKASI SELESAI ---
 
     quality = qual if formats != 'flac_hires' else 'HI_RES_LOSSLESS'
     #logging.info((session, quality))
@@ -169,16 +189,23 @@ async def get_quality(stream_data: dict):
     return quality_dict[stream_data['audioQuality']]
 
 
-async def sort_album_from_artist(album_data: dict):
+async def sort_album_from_artist(album_data: dict, user: dict):
     albums = []
+    
+    # --- MODIFIKASI: Gunakan manager untuk pengaturan ---
+    user_dict = tidal_manager.user_data.get(user["user_id"], {})
+    spatial = user_dict.get("tidal_spatial", tidal_manager.spatial)
+    # --- MODIFIKASI SELESAI ---
 
     for album in album_data:
+        # --- MODIFIKASI: Gunakan variabel spasial ---
         if album['audioModes'] == ['DOLBY_ATMOS'] \
-            and tidalapi.spatial in ['ATMOS AC3 JOC', 'ATMOS AC4']: 
+            and spatial in ['ATMOS AC3 JOC', 'ATMOS AC4']: 
             albums.append(album)
         elif album['audioModes'] == ['STEREO'] \
-            and tidalapi.spatial == 'OFF':
+            and spatial == 'OFF':
             albums.append(album)
+        # --- MODIFIKASI SELESAI ---
 
     unique_albums = {}
 
