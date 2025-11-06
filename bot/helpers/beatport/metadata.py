@@ -166,12 +166,8 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
     # --- PERBAIKAN DIMULAI (Tambahkan Volume & Explicit) ---
-    # 1. Hardcode TOTAL VOLUMES (Nomor Disk)
-    # API Beatport tidak menyediakan ini; rilis digital hampir selalu 1 disk.
     metadata['volume'] = "1"
     metadata['totalvolume'] = "1"
-    
-    # 2. Ambil status EXPLICIT
     metadata['explicit'] = track_data.get("explicit", False) 
     # --- PERBAIKAN SELESAI ---
     
@@ -253,13 +249,17 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     album_data = await client.get_release(album_id)
     
-    tracks_data = await client.get_release_tracks(album_id, per_page=100)
+    # --- PERBAIKAN: Ubah per_page dari 100 menjadi 50 ---
+    tracks_data = await client.get_release_tracks(album_id, per_page=50)
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
     
-    for page in range(2, (total_tracks - 1) // 100 + 2):
-        tracks_page = await client.get_release_tracks(album_id, page=page, per_page=100)
+    # --- PERBAIKAN: Ubah logika loop dari 100 menjadi 50 ---
+    per_page = 50
+    for page in range(2, (total_tracks - 1) // per_page + 2):
+        tracks_page = await client.get_release_tracks(album_id, page=page, per_page=per_page)
         tracks.extend(tracks_page.get("results", []))
+    # --- AKHIR PERBAIKAN ---
 
     if not tracks:
         raise BeatportError(f"Album {album_id} tidak memiliki track.")
@@ -310,22 +310,27 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     client: BeatportAPI = user['beatport_api']
     is_chart = extra.get("is_chart", False)
     
+    # --- PERBAIKAN: Ubah per_page dari 100 menjadi 50 ---
+    per_page = 50
     if is_chart:
         playlist_data = await client.get_chart(playlist_id)
-        tracks_data = await client.get_chart_tracks(playlist_id, per_page=100)
+        tracks_data = await client.get_chart_tracks(playlist_id, per_page=per_page)
     else:
         playlist_data = await client.get_playlist(playlist_id)
-        tracks_data = await client.get_playlist_tracks(playlist_id, per_page=100)
+        tracks_data = await client.get_playlist_tracks(playlist_id, per_page=per_page)
+    # --- AKHIR PERBAIKAN ---
 
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
 
-    for page in range(2, (total_tracks - 1) // 100 + 2):
+    # --- PERBAIKAN: Ubah logika loop dari 100 menjadi 50 ---
+    for page in range(2, (total_tracks - 1) // per_page + 2):
         if is_chart:
-            tracks_page = await client.get_chart_tracks(playlist_id, page=page, per_page=100)
+            tracks_page = await client.get_chart_tracks(playlist_id, page=page, per_page=per_page)
         else:
-            tracks_page = await client.get_playlist_tracks(playlist_id, page=page, per_page=100)
+            tracks_page = await client.get_playlist_tracks(playlist_id, page=page, per_page=per_page)
         tracks.extend(tracks_page.get("results", []))
+    # --- AKHIR PERBAIKAN ---
     
     if not tracks:
         raise BeatportError(f"Playlist/Chart {playlist_id} tidak memiliki track.")
