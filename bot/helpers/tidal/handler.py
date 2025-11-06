@@ -51,8 +51,9 @@ async def start_tidal(url:str, user:dict):
     elif type_ == 'album':
         await start_album(item_id, user)
     elif type_ == 'playlist':
-        pass # (Masih belum diimplementasikan di file Anda)
-    # --- MODIFIKASI SELESAI ---
+        # --- MODIFIKASI: Panggil start_playlist ---
+        await start_playlist(item_id, user) 
+        # --- MODIFIKASI SELESAI ---
         
 
 async def start_track(track_id:int, user:dict, track_meta:dict | None,
@@ -225,6 +226,89 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await album_upload(album_meta, user)
 
+
+# --- TAMBAHAN BARU UNTUK PLAYLIST ---
+async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=None):
+    # --- MODIFIKASI: Dapatkan klien yang diinjeksi ---
+    client: TidalApi = user['tidal_api']
+    # --- MODIFIKASI SELESAI ---
+    
+    try:
+        # --- MODIFIKASI: Gunakan klien untuk get_playlist ---
+        playlist_data = await client.get_playlist(playlist_id)
+        # --- MODIFIKASI SELESAI ---
+    except Exception as e:
+        # --- MODIFIKASI: Lempar error ---
+        raise e
+        # --- MODIFIKASI SELESAI ---
+        
+    # --- MODIFIKASI: Gunakan klien untuk get_playlist_tracks ---
+    tracks_data = await client.get_playlist_tracks(playlist_id)
+    # --- MODIFIKASI SELESAI ---
+    
+    # --- MODIFIKASI: Gunakan get_playlist_metadata ---
+    playlist_meta = await get_playlist_metadata(playlist_id, playlist_data, tracks_data, user['r_id'])
+    # --- MODIFIKASI SELESAI ---
+
+    # Cek jika playlist kosong
+    if not playlist_meta['tracks']:
+        LOGGER.warning(f"Playlist {playlist_id} kosong atau tidak berisi track.")
+        raise Exception("Playlist ini kosong atau tidak berisi track yang valid.")
+
+    # Gunakan 'artist' dari metadata (creator) untuk path
+    playlist_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{playlist_meta['provider']}/{playlist_meta['artist']}/{playlist_meta['title']}"
+    
+    playlist_folder = sanitize_filepath(playlist_folder)
+    playlist_meta['folderpath'] = playlist_folder
+
+    # get a track to get quality
+    # Ambil track pertama dari respons API, bukan dari metadata yg sudah diproses
+    first_track_raw = None
+    for item in tracks_data['items']:
+        if item.get('type') == 'track' and item.get('item'):
+            first_track_raw = item['item']
+            break
+    
+    if not first_track_raw:
+        raise Exception("Playlist tidak berisi track valid untuk menentukan kualitas.")
+
+    # Kita sudah punya data track mentah, tidak perlu client.get_track()
+    session, quality = await get_stream_session(first_track_raw, user)
+    stream_data = await client.get_stream_url(first_track_raw['id'], quality, session)
+    # --- MODIFIKASI SELESAI ---
+
+    playlist_meta['quality'] = await get_quality(stream_data)
+
+    if upload:
+        playlist_meta['poster_msg'] = await post_art_poster(user, playlist_meta)
+
+    # concurrent
+    tasks = []
+    for track in playlist_meta['tracks']:
+        # Penting: 'track' di sini adalah metadata yang sudah diproses dari get_playlist_metadata
+        # Ini akan berisi info album/artis ASLI dari track tsb, BUKAN info playlist
+        # Kita teruskan 'session' dan 'quality' dari track pertama untuk konsistensi (mengikuti pola start_album)
+        tasks.append(start_track(track['itemid'], user, track, False, playlist_folder, session, quality))
+
+    update_details = {
+        'text': lang.s.DOWNLOAD_PROGRESS,
+        'msg': user['bot_msg'],
+        'title': playlist_meta['title'],
+        'type': playlist_meta['type'] # Ini akan menjadi 'playlist'
+    }
+    await run_concurrent_tasks(tasks, update_details)
+    
+    _, __, album_zip = fetch_zip_settings(user) # Gunakan pengaturan zip album untuk playlist
+    if album_zip:
+        await edit_message(user['bot_msg'], lang.s.ZIPPING)
+        playlist_meta['folderpath'] = await zip_handler(playlist_meta['folderpath'])
+
+    # Upload
+    if upload:
+        await edit_message(user['bot_msg'], lang.s.UPLOADING)
+        # Kita bisa menggunakan kembali 'album_upload' karena fungsinya generik
+        await album_upload(playlist_meta, user)
+# --- AKHIR TAMBAHAN ---
 
 
 async def start_artist(artist_id:int, user:dict):
