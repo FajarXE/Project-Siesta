@@ -511,5 +511,3 @@ def usetting_button() -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="Close", callback_data="uset_close")])
     
     return InlineKeyboardMarkup(buttons)
-
-}
