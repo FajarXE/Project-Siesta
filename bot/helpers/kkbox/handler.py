@@ -21,7 +21,7 @@ from .manager import KKBoxError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-from ..utils import fetch_zip_settings, run_concurrent_tasks
+from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string # <-- PERBAIKAN: Impor format_string
 from ...settings import bot_set 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
@@ -47,7 +47,9 @@ async def start_kkbox(url: str, user: dict):
         else:
             raise NotImplementedError(f"Tipe media KKBox '{media_type}' belum didukung.")
         
-        await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
+        # --- PERBAIKAN: Hapus 'TASK_COMPLETED' agar tidak menimpa status akhir ---
+        # await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
+        # --- AKHIR PERBAIKAN ---
         
     except Exception as e:
         LOGGER.error(f"Error fatal di KKBox handler: {e}\n{traceback.format_exc()}")
@@ -165,7 +167,7 @@ async def start_album(album_id: str, user: dict, upload=True):
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
     
     album_folder = sanitize_filepath(album_folder)
-    album_meta['folderpath'] = album_folder
+    album_meta['folderpath'] = album_folder # Path direktori asli (string)
 
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
@@ -195,7 +197,9 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
-        album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
+        album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
