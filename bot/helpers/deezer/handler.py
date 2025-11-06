@@ -47,7 +47,9 @@ async def start_deezer(url:str, user: dict):
             # --- MODIFIKASI: Kirim 'user' ke start_playlist ---
             await start_playlist(item_id, user)
         
-        await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
+        # --- PERBAIKAN: Hapus pesan 'TASK_COMPLETED' agar tidak menimpa status akhir ---
+        # await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
+        # --- AKHIR PERBAIKAN ---
         
     except Exception as e:
         LOGGER.error(f"Error fatal di Deezer handler: {e}\n{traceback.format_exc()}")
@@ -117,7 +119,7 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     return True
 
 
-async def start_album(album_id:int, user:dict, upload=True):
+async def start_album(album_id:int, user:dict, upload=True, basefolder=None): # <-- PERBAIKAN: Tambahkan 'basefolder'
     # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
     deezerapi = user['deezer_api']
     # --- BATAS MODIFIKASI ---
@@ -139,7 +141,12 @@ async def start_album(album_id:int, user:dict, upload=True):
     album_meta = await process_album_metadata(album_id, album_metadata_dict, songs_dict, user['r_id'], user=user)
     # --- BATAS MODIFIKASI ---
     
-    album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
+    # --- PERBAIKAN: Gunakan 'basefolder' jika ada (untuk Artist) ---
+    if basefolder:
+        album_folder = basefolder + f"/{album_meta['title']}"
+    else:
+        album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
+    # --- AKHIR PERBAIKAN ---
     
     album_folder = sanitize_filepath(album_folder)
     album_meta['folderpath'] = album_folder
@@ -179,7 +186,9 @@ async def start_album(album_id:int, user:dict, upload=True):
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
-        album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
+        album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
@@ -191,7 +200,21 @@ async def start_artist(artist_id, user):
     deezerapi = user['deezer_api']
     # --- BATAS MODIFIKASI ---
     
+    # --- PERBAIKAN: Dapatkan metadata artist dulu ---
+    try:
+        artist_data = await deezerapi.get_artist(artist_id)
+        artist_meta = await process_artist_metadata(artist_data, user['r_id'])
+    except Exception as e:
+        raise Exception(f"Gagal mendapatkan metadata artist Deezer: {e}")
+    # --- AKHIR PERBAIKAN ---
+
     album_ids = await deezerapi.get_artist_album_ids(artist_id, 0, -1, False)
+    
+    # --- PERBAIKAN: Pindahkan artist_meta['folderpath'] ke sini ---
+    artist_meta['folderpath'] = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{artist_meta['provider']}/{artist_meta['artist']}"
+    artist_meta['folderpath'] = sanitize_filepath(artist_meta['folderpath'])
+    # --- AKHIR PERBAIKAN ---
+
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
     artist_zip = bot_set.user_data.get(user.get("user_id", 0), {}).get("artist_zip", bot_set.artist_zip)
     upload_album = True
@@ -200,7 +223,19 @@ async def start_artist(artist_id, user):
     if artist_zip: 
         upload_album = False 
     for album in album_ids:
-        await start_album(album, user, upload_album)
+        # --- PERBAIKAN: Teruskan 'artist_meta['folderpath']' sebagai basefolder ---
+        await start_album(album, user, upload_album, basefolder=artist_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
+
+    # --- PERBAIKAN: Tambahkan logika upload artist (sebelumnya tidak ada) ---
+    if not upload_album:
+        if artist_zip:
+            await edit_message(user['bot_msg'], lang.s.ZIPPING)
+            artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
+
+        await edit_message(user['bot_msg'], lang.s.UPLOADING)
+        await artist_upload(artist_meta, user)
+    # --- AKHIR PERBAIKAN ---
 
 
 async def start_playlist(playlist_id, user):
@@ -268,7 +303,9 @@ async def start_playlist(playlist_id, user):
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
         if playlist_sort:
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
-        play_meta['folderpath'] = await zip_handler(play_meta['folderpath'])
+        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
+        play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if not upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
