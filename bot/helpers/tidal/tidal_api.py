@@ -16,7 +16,9 @@ from bot.logger import LOGGER
 
 class TidalApi:
     def __init__(self):
-        self.TIDAL_API_BASE = 'https://api. tidal.com/v1/'
+        # --- PERBAIKAN: Memperbaiki typo URL ---
+        self.TIDAL_API_BASE = 'https://api.tidal.com/v1/'
+        # --- PERBAIKAN SELESAI ---
         
         self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
         self.session: aiohttp.ClientSession | None = None
@@ -113,6 +115,10 @@ class TidalApi:
                 raise Exception("TidalApi: Tidak ada sesi (self.saved) yang tersedia.")
         default_session = self.saved[0]
 
+        # Jika total_tracks adalah 0, kita coba ambil 1 halaman saja
+        if total_tracks == 0:
+            total_tracks = limit # Coba ambil 100 pertama
+
         while offset < total_tracks:
             page_params = {
                 'limit': str(limit),
@@ -129,6 +135,10 @@ class TidalApi:
                 if 'items' in page_data and page_data['items']:
                     all_items.extend(page_data['items'])
                     offset += limit
+                    # Jika ini adalah loop pertama untuk total_tracks=0,
+                    # perbarui total_tracks dengan nilai sebenarnya
+                    if total_tracks == limit and offset == limit: 
+                        total_tracks = page_data.get('totalNumberOfItems', total_tracks)
                 else:
                     # Tidak ada item lagi, hentikan loop
                     break
@@ -150,8 +160,6 @@ class TidalApi:
     async def get_artist(self, artist_id):
         return await self._get('artists/' + str(artist_id))
 
-    # ... (Sisa file tidal_api.py tetap sama) ...
-    # ... (Salin sisa file Anda dari sini ke bawah) ...
 
     async def get_artist_albums(self, artist_id):
         return await self._get('artists/' + str(artist_id) + '/albums')
@@ -391,7 +399,7 @@ class TvSession(BaseSession):
                 raise Exception("TIDAL : Invalid TV Client ID or Token")
 
             json_resp = await r.json()
-            auth_link = f"https.link.tidal.com/{json_resp['userCode']}"
+            auth_link = f"https://link.tidal.com/{json_resp['userCode']}"
 
             self.temp_data = {
                 'client_id': self.client_id,
