@@ -1,15 +1,18 @@
+# [GANTI FILE: bot/helpers/uploder.py]
+
 import os
-import asyncio # <-- MODIFIKASI: Ditambahkan
-from config import Config # <-- MODIFIKASI: Ditambahkan
+import asyncio 
+from config import Config 
 
 from ..settings import bot_set
 from .message import send_message, edit_message
 from .utils import *
-from bot.logger import LOGGER # <-- MODIFIKASI: Ditambahkan
+from bot.logger import LOGGER 
 
 #
 #
 #  TASK HANDLER
+#
 #
 #
 
@@ -32,20 +35,28 @@ async def track_upload(metadata, user, disable_link=False):
 
 async def album_upload(metadata, user):
     user_dict = user.copy()
-    __, _, album_zip = fetch_zip_settings(user_dict)
+    # --- MODIFIKASI: Hapus flag zip lokal, kita gunakan metadata['zip_path'] ---
+    # __, _, album_zip = fetch_zip_settings(user_dict) 
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if album_zip:
-            for item in metadata['folderpath']:
+        # --- PERBAIKAN: Cek metadata['zip_path'] dan pastikan itu list ---
+        if metadata.get('zip_path'):
+            zip_files = metadata['zip_path']
+            if isinstance(zip_files, str):
+                zip_files = [zip_files] # Ubah string tunggal menjadi list
+            
+            for item in zip_files: # Loop ini sekarang aman
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
                     meta=metadata
                 )
+        # --- AKHIR PERBAIKAN ---
         else:
             await batch_telegram_upload(metadata, user) # <-- Sekarang akan cepat
     else:
-        rclone_link, index_link = await rclone_upload(user, metadata['folderpath'])
+        # (Logika Rclone tetap sama)
+        rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata['poster_msg']:
             try:
                 await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ALBUM_TEMPLATE, metadata, user))
@@ -54,6 +65,7 @@ async def album_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
+    # Cleanup akan menggunakan metadata['folderpath'] asli (string)
     await cleanup(None, metadata, user_dict)
 
 
@@ -62,16 +74,23 @@ async def artist_upload(metadata, user):
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if bot_set.artist_zip:
-            for item in metadata['folderpath']:
+        # --- PERBAIKAN: Cek metadata['zip_path'] dan pastikan itu list ---
+        if metadata.get('zip_path'): # Menggantikan 'if bot_set.artist_zip:'
+            zip_files = metadata['zip_path']
+            if isinstance(zip_files, str):
+                zip_files = [zip_files] # Ubah string tunggal menjadi list
+
+            for item in zip_files: # Loop ini sekarang aman
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
                     meta=metadata
                 )
+        # --- AKHIR PERBAIKAN ---
         else:
             pass # artist telegram uploads are handled by album fucntion
     else:
-        rclone_link, index_link = await rclone_upload(user, metadata['folderpath'])
+        # (Logika Rclone tetap sama)
+        rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata['poster_msg']:
             try:
                 await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ARTIST_TEMPLATE, metadata, user))
@@ -80,25 +99,34 @@ async def artist_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
+    # Cleanup akan menggunakan metadata['folderpath'] asli (string)
     await cleanup(None, metadata, user_dict)
 
 
 
 async def playlist_upload(metadata, user):
-    playlist_zip, _, __ = fetch_zip_settings(user)
-    is_owner = playlist_zip == bot_set.playlist_zip
+    # --- MODIFIKASI: Hapus flag zip lokal ---
+    # playlist_zip, _, __ = fetch_zip_settings(user)
+    # is_owner = playlist_zip == bot_set.playlist_zip
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if playlist_zip:
-            for item in metadata['folderpath']:
+        # --- PERBAIKAN: Cek metadata['zip_path'] dan pastikan itu list ---
+        if metadata.get('zip_path'): # Menggantikan 'if playlist_zip:'
+            zip_files = metadata['zip_path']
+            if isinstance(zip_files, str):
+                zip_files = [zip_files] # Ubah string tunggal menjadi list
+                
+            for item in zip_files: # Loop ini sekarang aman
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
                     meta=metadata
                 )
+        # --- AKHIR PERBAIKAN ---
         else:
             await batch_telegram_upload(metadata, user) # <-- Sekarang akan cepat
     else:
+        playlist_zip, _, __ = fetch_zip_settings(user) # <-- Dibutuhkan untuk logika rclone
         if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
                 await rclone_upload(user, f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
@@ -111,7 +139,8 @@ async def playlist_upload(metadata, user):
                     except ValueError:
                         pass
         else:
-            rclone_link, index_link = await rclone_upload(user, metadata['folderpath'])
+            # (Logika Rclone tetap sama)
+            rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
             if metadata['poster_msg']:
                 try:
                     await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.PLAYLIST_TEMPLATE, metadata, user))
@@ -120,9 +149,14 @@ async def playlist_upload(metadata, user):
             else:
                 await post_simple_message(user, metadata, rclone_link, index_link)
 
+    # Cleanup akan menggunakan metadata['folderpath'] asli (string)
+    await cleanup(None, metadata, user) # <-- Perbaikan: user, bukan user_dict
+
+
 #
 #
 #  CORE
+#
 #
 #
 
@@ -134,11 +168,33 @@ async def rclone_upload(user, realpath):
     Returns:
         rclone_link, index_link
     """
+    # --- PERBAIKAN: Rclone harus mengunggah file zip atau folder ---
+    path_to_upload = realpath
+    base_path = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/"
+
+    # Jika realpath adalah list (dari zip split), unggah base path
+    if isinstance(realpath, list):
+        path_to_upload = base_path
+    # Jika realpath adalah file zip tunggal
+    elif isinstance(realpath, str) and realpath.endswith('.zip'):
+        path_to_upload = realpath
+    # Jika ini adalah folder (tidak di-zip)
+    else:
+        path_to_upload = realpath # Ini sudah benar (path ke folder)
+
+    # Jika path_to_upload adalah file, kita perlu mengunggah ke direktori tujuan
+    # Jika path_to_upload adalah direktori, rclone akan menyalin isinya
+    
+    # Logika rclone copy yang disederhanakan:
+    # Selalu salin seluruh folder unduhan pengguna
     path = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/"
     cmd = f'rclone copy --config ./rclone.conf "{path}" "{Config.RCLONE_DEST}"'
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
-    r_link, i_link = await create_link(realpath, Config.DOWNLOAD_BASE_DIR + f"/{user['r_id']}/")
+    
+    # Buat link berdasarkan path asli (bisa berupa folder atau file zip)
+    r_link, i_link = await create_link(realpath, base_path)
+    # --- AKHIR PERBAIKAN ---
     return r_link, i_link
 
 
