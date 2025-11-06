@@ -39,7 +39,8 @@ except ImportError:
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
-    bs_button
+    bs_button,
+    gofile_settings_buttons # Impor tombol Gofile
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -49,6 +50,9 @@ from ..helpers.message import send_message, edit_message, check_user, fetch_user
 
 @Client.on_message(filters.command("setgofile"))
 async def set_gofile_creds(client: Client, m: Message):
+    """
+    Menangani perintah /setgofile untuk menyimpan atau menghapus kredensial Gofile pengguna.
+    """
     if not await check_user(msg=m):
         return
     
@@ -57,25 +61,16 @@ async def set_gofile_creds(client: Client, m: Message):
     try:
         parts = m.text.split()
         if len(parts) == 2 and parts[1].lower() == "clear":
-            data_to_save = {
-                'gofile_api_key': None,
-                'gofile_folder_id': None
-            }
-            # Simpan ke DB
-            await database.save_user_settings(user_id, data_to_save)
-            # Perbarui cache
-            if user_id not in bot_set.user_data:
-                bot_set.user_data[user_id] = {}
-            bot_set.user_data[user_id].update(data_to_save)
-            
-            await m.reply("Pengaturan Gofile Anda telah dihapus.", reply_to_message_id=m.id)
-            return
+            # (Logika /setgofile clear dipindahkan ke handler tombol)
+             await m.reply("Perintah ini usang. Silakan gunakan tombol 'Hapus Pengaturan' di /usetting > Gofile Settings.", reply_to_message_id=m.id)
+             return
         
         if len(parts) != 3:
             await m.reply(
                 "Format salah. Gunakan:\n"
-                "`/setgofile API_KEY FOLDER_ID`\n"
-                "Atau `/setgofile clear` untuk menghapus.",
+                "`/setgofile API_KEY FOLDER_ID`\n\n"
+                "Anda bisa mendapatkan API Key dari profil Gofile Anda.\n"
+                "Anda bisa mendapatkan Folder ID dari URL folder Gofile Anda (contoh: `https://gofile.io/d/FOLDER_ID`).",
                 reply_to_message_id=m.id
             )
             return
@@ -95,9 +90,8 @@ async def set_gofile_creds(client: Client, m: Message):
         bot_set.user_data[user_id].update(data_to_save)
         
         await m.reply(
-            "Pengaturan Gofile Anda telah disimpan!\n"
-            "Bot sekarang akan mengunggah file Anda ke akun Gofile ini, "
-            "mengabaikan mode unggahan default bot.",
+            "✅ Pengaturan Gofile Anda telah disimpan!\n"
+            "Bot sekarang akan mengunggah file Anda ke akun Gofile ini.",
             reply_to_message_id=m.id
         )
         
@@ -149,31 +143,26 @@ async def uset_cb(client, query, datatype=""):
         return await start_user_setting(client, query.message, True, users_)
     if data[1] == "close":
         await query.message.delete()
+        return
 
-    if data[1] == "gofile":
-        # --- PERBAIKAN DI SINI ---
-        # Ganti `database.get_user(user_id)` dengan `bot_set.user_data.get(user_id, {})`
+    if data[1] == "gofile" or datatype == "gofile_refresh":
+        # --- PERBAIKAN: Gunakan bot_set.user_data ---
         user_settings = bot_set.user_data.get(user_id, {})
         # --- BATAS PERBAIKAN ---
         
-        api_key = user_settings.get('gofile_api_key')
-        folder_id = user_settings.get('gofile_folder_id')
+        api_key_exists = bool(user_settings.get('gofile_api_key'))
+        folder_id_exists = bool(user_settings.get('gofile_folder_id'))
 
         text = "Pengaturan Unggahan Gofile Pribadi\n\n"
-        if api_key and folder_id:
-            text += f"**API Key:** `...{api_key[-5:]}` (Disimpan)\n"
-            text += f"**Folder ID:** `{folder_id}` (Disimpan)\n\n"
-            text += "Bot akan mengunggah ke akun Gofile ini. Untuk mengubah atau menghapus, gunakan perintah di bawah."
-        else:
-            text += "Anda belum mengatur Gofile pribadi.\n\n"
-            text += "Bot akan menggunakan mode unggahan default (Telegram/Rclone)."
+        text += "Gunakan tombol di bawah untuk melihat info atau menghapus pengaturan Anda."
         
-        text += "\n\nGunakan perintah ini untuk mengatur (kirim sebagai pesan biasa):\n"
-        text += "1. `/setgofile API_KEY FOLDER_ID`\n"
-        text += "2. `/setgofile clear` (untuk menghapus)"
-        
-        await edit_message(query.message, text, markup=None)
-        await query.answer() 
+        await edit_message(
+            query.message, 
+            text, 
+            markup=gofile_settings_buttons(api_key_exists, folder_id_exists)
+        )
+        if datatype != "gofile_refresh":
+            await query.answer() 
         return
         
     if data[1] == "tidal" or datatype == "tidal":
@@ -270,6 +259,49 @@ async def uset_cb(client, query, datatype=""):
         if current in quality:
             quality[current] = quality[current] + '✅'
         return await edit_message(query.message, text, markup=kk_button(quality, user_id))
+
+
+@Client.on_callback_query(filters.regex("^gofile_(info|clear)"))
+async def gofile_buttons_cb(client: Client, query: CallbackQuery):
+    if not await check_user(msg=query.message):
+        return
+
+    user_id = query.from_user.id
+    data = query.data.split("_")[1] # info atau clear
+
+    if data == "info":
+        # --- PERBAIKAN: Gunakan bot_set.user_data ---
+        user_settings = bot_set.user_data.get(user_id, {})
+        # --- BATAS PERBAIKAN ---
+        api_key = user_settings.get('gofile_api_key')
+        folder_id = user_settings.get('gofile_folder_id')
+
+        text = "Info Pengaturan Gofile\n\n"
+        if api_key and folder_id:
+            text += f"**API Key:** `...{api_key[-5:]}` (Disimpan)\n"
+            text += f"**Folder ID:** `{folder_id}` (Disimpan)\n\n"
+            text += "Bot akan mengunggah ke akun Gofile ini."
+        else:
+            text += "Anda belum mengatur Gofile pribadi.\n"
+            text += "Bot akan menggunakan mode unggahan default (Telegram/Rclone).\n\n"
+        
+        text += "Gunakan perintah ini untuk mengatur (kirim sebagai pesan biasa):\n"
+        text += "` /setgofile API_KEY FOLDER_ID`"
+        
+        await query.answer(text, show_alert=True) # Tampilkan sebagai pop-up
+        return
+
+    if data == "clear":
+        data_to_save = {'gofile_api_key': None, 'gofile_folder_id': None}
+        # Hapus dari DB
+        await database.save_user_settings(user_id, data_to_save)
+        # Hapus dari cache
+        if user_id in bot_set.user_data:
+            bot_set.user_data[user_id].update(data_to_save)
+        
+        await query.answer("Pengaturan Gofile telah dihapus!")
+        # Panggil kembali handler uset_cb untuk me-refresh menu
+        return await uset_cb(client, query, datatype="gofile_refresh")
 
 
 @Client.on_callback_query(filters.regex("^utdqs"))
