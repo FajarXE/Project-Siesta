@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/utils.py]
+
 import os
 import math
 import aiohttp
@@ -157,6 +159,13 @@ async def create_link(path, basepath):
         rclone_link: link from rclone
         index_link: index link if enabled
     """
+    # --- PERBAIKAN: Tangani jika path adalah list (dari zip split) ---
+    if isinstance(path, list):
+        # Jika ini adalah list, kita tidak bisa membuat link ke semua,
+        # jadi kita buat link ke direktori induknya.
+        path = Path(path[0]).parent
+    # --- AKHIR PERBAIKAN ---
+
     path = str(Path(path).relative_to(basepath))
 
     rclone_link = None
@@ -210,7 +219,9 @@ def split_zip_folder(folderpath) -> list:
         if part_num == 1:
             zip_path = f"{zip_name}.zip"
         else:
-            zip_path = f"{zip_name}.part{part_num}.zip"
+            # --- PERBAIKAN: Format penomoran file split ---
+            zip_path = f"{zip_name}.z{part_num:02d}"
+            # --- AKHIR PERBAIKAN ---
 
         # --- MODIFIKASI: Diubah ke ZIP_STORED agar lebih cepat ---
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
@@ -293,6 +304,8 @@ async def post_art_poster(user:dict, meta:dict):
     photo = meta['cover']
     if meta['type'] == 'album':
         caption = await format_string(lang.s.ALBUM_TEMPLATE, meta, user)
+    elif meta['type'] == 'artist': # <-- PERBAIKAN: Menambahkan tipe artist
+        caption = await format_string(lang.s.ARTIST_TEMPLATE, meta, user)
     else:
         caption = await format_string(lang.s.PLAYLIST_TEMPLATE, meta, user)
     
@@ -397,24 +410,28 @@ async def cleanup(user=None, metadata=None, user_dict: dict=None):
     
     """
     if metadata:
-        playlist_zip, _, album_zip = fetch_zip_settings(user_dict)
+        # --- PERBAIKAN: Logika cleanup disederhanakan ---
         try:
-            if metadata['type'] == 'album':
-                is_zip = True if album_zip else False
-            elif metadata['type'] == 'artist':
-                is_zip = True if bot_set.artist_zip else False
-            else:
-                is_zip = True if playlist_zip else False
-            if is_zip:
-                if type(metadata['folderpath']) == list:
-                    for i in metadata['folderpath']:
-                        os.remove(i)
-                else:
-                    os.remove(metadata['folderpath'])
-            else:
-                shutil.rmtree(metadata['folderpath'])
+            # 1. Selalu hapus folderpath, karena itu SELALU direktori.
+            if metadata.get('folderpath') and os.path.isdir(metadata['folderpath']):
+                 shutil.rmtree(metadata['folderpath'])
+
+            # 2. Jika 'zip_path' ada, hapus file zip-nya juga.
+            if metadata.get('zip_path'):
+                zip_files = metadata['zip_path']
+                if isinstance(zip_files, str):
+                    zip_files = [zip_files] # Buat jadi list
+                
+                for zip_file_path in zip_files:
+                    if os.path.exists(zip_file_path):
+                        os.remove(zip_file_path) # os.remove() benar untuk file zip
+
         except FileNotFoundError:
             pass
+        except Exception as e:
+            LOGGER.error(f"Error saat cleanup metadata: {e}")
+        # --- AKHIR PERBAIKAN ---
+
     if user:
         try:
             shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
@@ -445,4 +462,3 @@ def fetch_zip_settings(users: typing.Dict) -> typing.Union[bool, bool, bool]:
     album_zip = user_dict.get("album_zip", bot_set.album_zip)
     #logging.info((user_dict))
     return playlist_zip, art_poster, album_zip
-
