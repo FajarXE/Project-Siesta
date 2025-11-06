@@ -115,7 +115,6 @@ def providers_button():
             ]
         )
         
-    # --- TAMBAHAN: Tombol Admin Beatsource ---
     if beatsource_manager and beatsource_manager.clients:
         inline_keyboard.append(
             [
@@ -125,7 +124,6 @@ def providers_button():
                 )
             ]
         )
-    # --- BATAS TAMBAHAN ---
         
     if kkbox_manager and kkbox_manager.clients:
         inline_keyboard.append(
@@ -388,14 +386,12 @@ def bp_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN: Tombol Beatsource (Salinan dari Beatport) ---
+# Beatsource Button
 def bs_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Beatsource."""
     buttons = []
     usetting = user_id is not None
-    prefix = "bsQ" if not usetting else f"usbs" # Beatsource Quality / User Beatsource Set
+    prefix = "bsQ" if not usetting else f"usbs"
     row = []
-    # Peta ini sama dengan Beatport
     display_text_map = {
         "lossless": "Lossless (FLAC)",
         "high": "High (AAC 256)",
@@ -418,7 +414,6 @@ def bs_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
 
 # Deezer Button
 def dz_button(quality: dict, user_id: int = None):
@@ -485,6 +480,10 @@ def kk_button(quality: dict, user_id: int = None):
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
     
+    # --- TAMBAHAN: Tombol Pengaturan Gofile ---
+    buttons.append([InlineKeyboardButton(text="Gofile Settings", callback_data="uset_gofile")])
+    # --- BATAS TAMBAHAN ---
+    
     if tidal_manager and tidal_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Tidal Quality", callback_data=f"uset_tidal")])
         
@@ -494,10 +493,8 @@ def usetting_button() -> InlineKeyboardMarkup:
     if beatport_manager and beatport_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Beatport Quality", callback_data=f"uset_beatport")])
 
-    # --- TAMBAHAN: Tombol Pengguna Beatsource ---
     if beatsource_manager and beatsource_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Beatsource Quality", callback_data=f"uset_beatsource")])
-    # --- BATAS TAMBAHAN ---
     
     if deezer_manager and deezer_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Deezer Quality", callback_data=f"uset_deezer")])
