@@ -84,6 +84,67 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
     
     return metadata
 
+# --- TAMBAHAN BARU UNTUK PLAYLIST ---
+async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
+    """
+    Args:
+        playlist_id : playlist id (UUID)
+        p_meta : raw metadata from tidal for playlist
+        t_meta : raw metadata from tidal for playlist items (tracks)
+    Returns:
+        metadata: dict
+    """
+    metadata = copy.deepcopy(base_meta)
+
+    metadata['tempfolder'] += f"{r_id}-temp/"
+
+    metadata['itemid'] = playlist_id
+    # Gunakan pembuat playlist sebagai 'artist', fallback ke 'Various Artists'
+    metadata['albumartist'] = p_meta.get('creator', {}).get('name', 'Various Artists')
+    metadata['artist'] = p_meta.get('creator', {}).get('name', 'Various Artists')
+    metadata['title'] = p_meta['title']
+    metadata['album'] = p_meta['title'] # Gunakan judul playlist sebagai nama folder album
+    
+    # Coba ambil tanggal dari format 'created'
+    try:
+        parsed_date = datetime.strptime(p_meta['created'], '%Y-%m-%dT%H:%M:%S.%f%z')
+        metadata['date'] = str(parsed_date.date())
+    except (ValueError, KeyError):
+        metadata['date'] = '2000-01-01' # Fallback date
+
+    metadata['totaltracks'] = p_meta['numberOfTracks']
+    metadata['duration'] = p_meta['duration']
+    metadata['copyright'] = None # Playlist tidak memiliki info copyright
+    metadata['explicit'] = p_meta.get('explicit', False)
+    metadata['provider'] = 'Tidal'
+    metadata['type'] = 'playlist' # Set tipe sebagai playlist
+
+    # Gunakan 'image' (UUID) untuk cover playlist
+    metadata['cover'] = await get_cover(p_meta.get('image'), metadata)
+    metadata['thumbnail'] = await get_cover(p_meta.get('image'), metadata, True)
+
+    metadata['tracks'] = []
+    # Loop melalui 'items' dari data tracks
+    for item in t_meta['items']:
+        # Pastikan item adalah track dan memiliki data
+        if item.get('type') == 'track' and item.get('item'):
+            track = item['item']
+            # Panggil get_track_metadata untuk setiap track
+            # Lewatkan cover=None agar setiap track mendapatkan cover album aslinya
+            track_meta = await get_track_metadata(
+                track['id'], 
+                track,  # Ini adalah data track lengkap
+                r_id, 
+                cover=None, 
+                thumbnail=False
+            )
+            metadata['tracks'].append(track_meta)
+    
+    # Perbarui jumlah total track berdasarkan track yang valid ditemukan
+    metadata['totaltracks'] = len(metadata['tracks'])
+    
+    return metadata
+# --- AKHIR TAMBAHAN ---
 
 async def get_artist_metadata(a_meta:dict, r_id):
     metadata = copy.deepcopy(base_meta)
