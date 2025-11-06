@@ -57,7 +57,9 @@ async def start_beatport(url: str, user: dict):
         elif media_type == 'playlist':
             await start_playlist(item_id, user, extra_kwargs)
         
-        await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
+        # --- PERBAIKAN: Hapus 'TASK_COMPLETED' agar tidak menimpa status akhir ---
+        # await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
+        # --- AKHIR PERBAIKAN ---
         
     except Exception as e:
         LOGGER.error(f"Error fatal di Beatport handler: {e}\n{traceback.format_exc()}")
@@ -141,7 +143,7 @@ async def start_album(album_id: str, user: dict, upload=True):
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
     
     album_folder = sanitize_filepath(album_folder)
-    album_meta['folderpath'] = album_folder
+    album_meta['folderpath'] = album_folder # Path direktori asli (string)
 
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
@@ -170,7 +172,9 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
-        album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
+        album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
@@ -185,7 +189,7 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
 
     playlist_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{play_meta['provider']}/{play_meta['title']}"
     playlist_folder = sanitize_filepath(playlist_folder)
-    play_meta['folderpath'] = playlist_folder
+    play_meta['folderpath'] = playlist_folder # Path direktori asli (string)
 
     if upload:
         play_meta['poster_msg'] = await post_art_poster(user, play_meta)
@@ -214,7 +218,9 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
-        play_meta['folderpath'] = await zip_handler(play_meta['folderpath'])
+        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
+        play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
