@@ -16,7 +16,7 @@ from bot.logger import LOGGER
 
 class TidalApi:
     def __init__(self):
-        self.TIDAL_API_BASE = 'https://api.tidal.com/v1/'
+        self.TIDAL_API_BASE = 'https://api. tidal.com/v1/'
         
         self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
         self.session: aiohttp.ClientSession | None = None
@@ -49,7 +49,11 @@ class TidalApi:
 
         params = params or {}
         params.setdefault("countryCode", session.country_code)
-        params.setdefault("limit", "9999")
+        
+        # --- MODIFIKASI: Hanya set limit default jika tidak ada limit yg_disediakan ---
+        if 'limit' not in params:
+            params["limit"] = "9999"
+        # --- MODIFIKASI SELESAI ---
 
 
         async with self.ratelimit:
@@ -95,14 +99,59 @@ class TidalApi:
     async def get_playlist(self, playlist_id):
         return await self._get('playlists/' + str(playlist_id))
 
-    async def get_playlist_tracks(self, playlist_id):
+    # --- MODIFIKASI UNTUK PAGINATION ---
+    async def get_playlist_tracks(self, playlist_id, total_tracks: int):
         # Playlist menggunakan 'items' bukan 'tracks' untuk kontennya
-        return await self._get('playlists/' + str(playlist_id) + '/items')
-    # --- AKHIR TAMBAHAN ---
+        # API dibatasi hingga 100 item per halaman, kita perlu melakukan paginasi
+        
+        limit = 100
+        offset = 0
+        all_items = []
+        
+        # Ambil sesi default sekali
+        if not self.saved:
+                raise Exception("TidalApi: Tidak ada sesi (self.saved) yang tersedia.")
+        default_session = self.saved[0]
+
+        while offset < total_tracks:
+            page_params = {
+                'limit': str(limit),
+                'offset': str(offset)
+            }
+            
+            try:
+                page_data = await self._get(
+                    f'playlists/{playlist_id}/items',
+                    params=page_params,
+                    session=default_session # Gunakan sesi default
+                )
+                
+                if 'items' in page_data and page_data['items']:
+                    all_items.extend(page_data['items'])
+                    offset += limit
+                else:
+                    # Tidak ada item lagi, hentikan loop
+                    break
+            
+            except Exception as e:
+                # Jika satu halaman gagal, seluruh permintaan gagal
+                LOGGER.error(f"TidalAPI: Gagal mengambil halaman playlist (offset {offset}): {e}")
+                raise e # Lempar kembali error
+
+        # Kembalikan data dalam format yang diharapkan (sama seperti respons tunggal)
+        return {
+            'items': all_items,
+            'limit': total_tracks,
+            'offset': 0,
+            'totalNumberOfItems': len(all_items)
+        }
+    # --- AKHIR MODIFIKASI ---
 
     async def get_artist(self, artist_id):
         return await self._get('artists/' + str(artist_id))
 
+    # ... (Sisa file tidal_api.py tetap sama) ...
+    # ... (Salin sisa file Anda dari sini ke bawah) ...
 
     async def get_artist_albums(self, artist_id):
         return await self._get('artists/' + str(artist_id) + '/albums')
@@ -342,7 +391,7 @@ class TvSession(BaseSession):
                 raise Exception("TIDAL : Invalid TV Client ID or Token")
 
             json_resp = await r.json()
-            auth_link = f"https://link.tidal.com/{json_resp['userCode']}"
+            auth_link = f"https.link.tidal.com/{json_resp['userCode']}"
 
             self.temp_data = {
                 'client_id': self.client_id,
