@@ -468,5 +468,3 @@ async def debug(c, m): # debugger
     user_dict = bot_set.user_data
     zips += f"\n\n{user_dict}"
     await m.reply(dt_qb + dt_bp + dt_bs + dt_dz + dt_td + dt_kk + zips, True) # Tambahkan dt_bs
-
-}
