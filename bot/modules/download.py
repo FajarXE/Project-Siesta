@@ -292,5 +292,3 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun KKBox yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
-
-}
