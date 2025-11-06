@@ -50,6 +50,60 @@ from ..settings import bot_set
 from ..helpers.message import send_message, edit_message, check_user, fetch_user_details
 
 
+# --- TAMBAHAN: Perintah /setgofile ---
+@Client.on_message(filters.command("setgofile"))
+async def set_gofile_creds(client: Client, m: Message):
+    """
+    Menangani perintah /setgofile untuk menyimpan atau menghapus kredensial Gofile pengguna.
+    """
+    if not await check_user(msg=m):
+        return
+    
+    user_id = m.from_user.id
+    
+    try:
+        # Perintah diharapkan: /setgofile <api_key> <folder_id>
+        # atau /setgofile clear
+        parts = m.text.split()
+        if len(parts) == 2 and parts[1].lower() == "clear":
+            # Hapus kredensial
+            await database.save_user_settings(user_id, {
+                'gofile_api_key': None,
+                'gofile_folder_id': None
+            })
+            await m.reply("Pengaturan Gofile Anda telah dihapus.", reply_to_message_id=m.id)
+            return
+        
+        if len(parts) != 3:
+            await m.reply(
+                "Format salah. Gunakan:\n"
+                "`/setgofile API_KEY FOLDER_ID`\n"
+                "Atau `/setgofile clear` untuk menghapus.",
+                reply_to_message_id=m.id
+            )
+            return
+
+        api_key = parts[1]
+        folder_id = parts[2]
+        
+        # Simpan ke database
+        await database.save_user_settings(user_id, {
+            'gofile_api_key': api_key,
+            'gofile_folder_id': folder_id
+        })
+        
+        await m.reply(
+            "Pengaturan Gofile Anda telah disimpan!\n"
+            "Bot sekarang akan mengunggah file Anda ke akun Gofile ini, "
+            "mengabaikan mode unggahan default bot.",
+            reply_to_message_id=m.id
+        )
+        
+    except Exception as e:
+        await m.reply(f"Gagal menyimpan pengaturan: {e}", reply_to_message_id=m.id)
+# --- BATAS TAMBAHAN ---
+
+
 @Client.on_message(filters.command(cmd.USETTING))
 async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
     if not await check_user(msg=m):
@@ -82,8 +136,8 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-# --- MODIFIKASI: Tambahkan 'beatsource' ke regex ---
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource)"))
+# --- MODIFIKASI: Tambahkan 'gofile' ke regex ---
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|gofile)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -95,6 +149,32 @@ async def uset_cb(client, query, datatype=""):
         return await start_user_setting(client, query.message, True, users_)
     if data[1] == "close":
         await query.message.delete()
+
+    # --- TAMBAHAN: Handler Tombol Gofile ---
+    if data[1] == "gofile":
+        user_settings = await database.get_user(user_id)
+        api_key = user_settings.get('gofile_api_key')
+        folder_id = user_settings.get('gofile_folder_id')
+
+        text = "Pengaturan Unggahan Gofile Pribadi\n\n"
+        if api_key and folder_id:
+            text += f"**API Key:** `...{api_key[-5:]}` (Disimpan)\n"
+            text += f"**Folder ID:** `{folder_id}` (Disimpan)\n\n"
+            text += "Bot akan mengunggah ke akun Gofile ini. Untuk mengubah atau menghapus, gunakan perintah di bawah."
+        else:
+            text += "Anda belum mengatur Gofile pribadi.\n\n"
+            text += "Bot akan menggunakan mode unggahan default (Telegram/Rclone)."
+        
+        text += "\n\nGunakan perintah ini untuk mengatur (kirim sebagai pesan biasa):\n"
+        text += "1. `/setgofile API_KEY FOLDER_ID`\n"
+        text += "2. `/setgofile clear` (untuk menghapus)"
+        
+        # Kirim sebagai pesan baru atau edit? Edit lebih bersih.
+        await edit_message(query.message, text, markup=None)
+        # Beri tahu callback query bahwa kita sudah menanganinya
+        await query.answer() 
+        return
+    # --- BATAS TAMBAHAN ---
         
     if data[1] == "tidal" or datatype == "tidal":
         if not tidal_manager or not tidal_manager.clients:
@@ -137,7 +217,6 @@ async def uset_cb(client, query, datatype=""):
             quality[current] = quality[current] + '✅'
         return await edit_message(query.message, text, markup=bp_button(quality, user_id))
 
-    # --- TAMBAHAN: Panel Pengguna Beatsource ---
     if data[1] == "beatsource" or datatype == "beatsource":
         text = f"Choose Beatsource Audio Quality bellow:"
         quality = {
@@ -159,7 +238,6 @@ async def uset_cb(client, query, datatype=""):
             text + "\n(Kualitas tergantung langganan akun bot)",
             markup=bs_button(quality, user_id)
         )
-    # --- BATAS TAMBAHAN ---
 
     if data[1] == "deezer" or datatype == "deezer":
         text = f"Choose Deezer Audio Quality bellow:"
@@ -273,14 +351,12 @@ async def uset_beatport(client, query):
         await database.save_user_settings(user_id, user_data_to_save)
     await uset_cb(client, query, "beatport")
 
-# --- TAMBAHAN: Handler Pengguna Beatsource ---
 @Client.on_callback_query(filters.regex("^usbs")) # User BeatSource Set
 async def uset_beatsource(client, query):
     m = query.message
     if not await check_user(msg=m):
         return
     
-    # Peta ini sama dengan Beatport
     qual_map_display = {
         "Lossless (FLAC)": "lossless",
         "High (AAC 256)": "high",
@@ -298,16 +374,13 @@ async def uset_beatsource(client, query):
 
     user_id = query.from_user.id
     
-    # Simpan di cache manager
     await beatsource_manager.setup_quality(user_id, to_set)
     user_data_to_save = beatsource_manager.user_data.get(user_id, {})
 
-    # Simpan ke DB
     if user_data_to_save:
         await database.save_user_settings(user_id, user_data_to_save)
     
     await uset_cb(client, query, "beatsource")
-# --- BATAS TAMBAHAN ---
 
 @Client.on_callback_query(filters.regex("^udzs")) # User DeeZer Set
 async def uset_deezer(client, query):
@@ -429,7 +502,6 @@ async def debug(c, m): # debugger
     else:
         dt_bp += "Tidak ada klien Beatport yang aktif."
 
-    # --- TAMBAHAN: Info Debug Beatsource ---
     dt_bs = "\n\nBEATSOURCE:\n"
     if beatsource_manager and beatsource_manager.clients:
         dt_bs += f"{len(beatsource_manager.clients)} klien Beatsource aktif.\n"
@@ -438,7 +510,6 @@ async def debug(c, m): # debugger
         dt_bs += f"Cache Langganan: { {k.session.cookie_jar.filter_cookies(k.API_URL).get('sessionid').value[:5]+'...': v for k, v in beatsource_manager.subscription_cache.items()} }"
     else:
         dt_bs += "Tidak ada klien Beatsource yang aktif."
-    # --- BATAS TAMBAHAN ---
 
     dt_dz = "\n\nDEEZER:\n"
     if deezer_manager and deezer_manager.clients:
