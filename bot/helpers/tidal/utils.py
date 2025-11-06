@@ -227,6 +227,9 @@ async def sort_album_from_artist(album_data: dict, user: dict):
 
 
 async def ffmpeg_convert(input_file):
-    cmd = f'ffmpeg -i "{input_file}" -c:a copy -loglevel error -y "{input_file}.flac"'
+    # --- PERBAIKAN: Escape karakter $ untuk shell ---
+    input_file_escaped = input_file.replace("$", "\\$")
+    cmd = f'ffmpeg -i "{input_file_escaped}" -c:a copy -loglevel error -y "{input_file_escaped}.flac"'
+    # --- AKHIR PERBAIKAN ---
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
