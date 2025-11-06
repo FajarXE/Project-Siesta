@@ -1,6 +1,10 @@
 # [GANTI FILE: bot/helpers/metadata.py]
 
 import os
+# --- TAMBAHAN BARU: Impor untuk downloader kustom ---
+import aiohttp
+import aiofiles
+# --- AKHIR TAMBAHAN ---
 
 from mutagen import File
 from config import Config
@@ -11,7 +15,9 @@ from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCOM 
 
 from bot.logger import LOGGER
-from .utils import download_file
+# --- MODIFIKASI: Hapus impor download_file, kita buat sendiri ---
+# from .utils import download_file
+# --- MODIFIKASI SELESAI ---
 
 
 metadata = {
@@ -181,12 +187,39 @@ async def get_audio_extension(path):
     else:
         return 'mp3'
 
+# --- TAMBAHAN BARU: Downloader kustom untuk cover art ---
+async def _download_cover_with_headers(url: str, destination: str):
+    """Downloader kustom untuk cover art dengan User-Agent."""
+    if not url:
+        return "No URL provided"
+    
+    # Header User-Agent palsu untuk menyamar sebagai browser
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, timeout=60) as response:
+                if response.status == 200:
+                    async with aiofiles.open(destination, 'wb') as f:
+                        await f.write(await response.read())
+                    return None # Tidak ada error
+                else:
+                    # Kembalikan pesan error yang sama seperti sebelumnya
+                    return f"HTTP Status: {response.status} (URL: {url})"
+    except Exception as e:
+        return f"Exception: {e} (URL: {url})"
+# --- AKHIR TAMBAHAN ---
 
-async def create_cover_file(url:dict, meta:dict, thumbnail=False):
+
+async def create_cover_file(url:str, meta:dict, thumbnail=False): # <-- Perbaikan type hint: url:str
     filename = f"{meta['itemid']}-thumb.jpg" if thumbnail else f"{meta['itemid']}.jpg"
     cover = meta['tempfolder'] + filename
     if not os.path.exists(cover):
-        err = await download_file(url, cover, retries=1, timeout=60) 
+        # --- MODIFIKASI: Gunakan downloader kustom kita ---
+        err = await _download_cover_with_headers(url, cover) 
+        # --- MODIFIKASI SELESAI ---
         if err:
             LOGGER.error(f"Gagal mengunduh cover art: {err}")
             return './project-siesta.png'
