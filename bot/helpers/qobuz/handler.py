@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/qobuz/handler.py]
+
 import shutil
 from .utils import *
 from config import Config
@@ -133,11 +135,15 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         LOGGER.error(f"Tidak ada lagu yang berhasil diunduh untuk album {album_meta['title']}.")
         return
 
-    _, __, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Ambil 'album_zip' (item ke-3 / indeks 2) ---
+    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
     
-    if album_zip:
+    if album_zip: # <-- Sekarang ini menggunakan variabel yang benar
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
-        album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+        # --- PERBAIKAN: Gunakan 'zip_path' untuk Qobuz juga agar konsisten ---
+        album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await album_upload(album_meta, user)
@@ -200,18 +206,24 @@ async def start_artist(albums, user, artist):
 
     upload_album = True
     
+    # --- PERBAIKAN: Ambil pengaturan zip artis dari bot_set (karena tidak ada per-user) ---
+    artist_zip = bot_set.artist_zip 
+    # --- AKHIR PERBAIKAN ---
+    
     if bot_set.artist_batch:
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
-    if bot_set.artist_zip:
+    if artist_zip: # <-- Gunakan variabel yang benar
         upload_album = False 
 
     for album in albums:
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        if bot_set.artist_zip:
+        if artist_zip: # <-- Gunakan variabel yang benar
             await edit_message(user['bot_msg'], f"Menyiapkan folder artis {artist_meta['title']} menjadi .zip...")
-            artist_meta['folderpath'] = await zip_handler(artist_meta['folderpath'])
+            # --- PERBAIKAN: Gunakan 'zip_path' untuk Qobuz juga ---
+            artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
+            # --- AKHIR PERBAIKAN ---
         
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await artist_upload(artist_meta, user)
@@ -246,7 +258,9 @@ async def start_playlist(tracks, playlist, user):
     play_meta['poster_msg'] = await post_art_poster(user, play_meta)
 
     upload = True
-    playlist_zip, _, __ = fetch_zip_settings(user)
+    # --- PERBAIKAN: Ambil 'playlist_zip' (item ke-1 / indeks 0) ---
+    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
     
     if bot_set.playlist_conc:
         upload = False
@@ -280,11 +294,13 @@ async def start_playlist(tracks, playlist, user):
         play_meta['tracks'] = successful_tracks_non_conc
         play_meta['totaltracks'] = len(successful_tracks_non_conc)
 
-    if playlist_zip:
+    if playlist_zip: # <-- Sekarang menggunakan variabel yang benar
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
         if playlist_sort:
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
-        play_meta['folderpath'] = await zip_handler(play_meta['folderpath'])
+        # --- PERBAIKAN: Gunakan 'zip_path' untuk Qobuz juga ---
+        play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
        
     if not upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
