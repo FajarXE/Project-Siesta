@@ -34,12 +34,11 @@ try:
 except ImportError:
     kkbox_manager = _DummyManager()
 
-# --- TAMBAHAN: Impor Manajer Beatsource ---
+# Impor Manajer Beatsource
 try:
     from bot.helpers.beatsource.manager import beatsource_manager
 except ImportError:
     beatsource_manager = _DummyManager()
-# --- BATAS TAMBAHAN ---
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -477,12 +476,44 @@ def kk_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 
 
+# --- TAMBAHAN BARU: Tombol Menu Pengaturan Gofile ---
+def gofile_settings_buttons(api_key_exists: bool, folder_id_exists: bool) -> InlineKeyboardMarkup:
+    """Membuat tombol untuk panel pengaturan Gofile."""
+    buttons = []
+    
+    # Tampilkan status saat ini
+    key_status = "✅ Disimpan" if api_key_exists else "❌ Kosong"
+    folder_status = "✅ Disimpan" if folder_id_exists else "❌ Kosong"
+
+    # Tombol info/status
+    buttons.append(
+        [InlineKeyboardButton(f"API Key: {key_status}", callback_data="gofile_info")]
+    )
+    buttons.append(
+        [InlineKeyboardButton(f"Folder ID: {folder_status}", callback_data="gofile_info")]
+    )
+    buttons.append(
+        [InlineKeyboardButton("ℹ️ Cara Mengatur / Info", callback_data="gofile_info")]
+    )
+    
+    # Hanya tampilkan tombol "Clear" jika ada sesuatu untuk dihapus
+    if api_key_exists or folder_id_exists:
+        buttons.append(
+            [InlineKeyboardButton("🗑️ Hapus Pengaturan Gofile", callback_data="gofile_clear")]
+        )
+    
+    buttons.append([InlineKeyboardButton("Kembali", callback_data="uset_back")])
+    
+    return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
+
+
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
     
-    # --- TAMBAHAN: Tombol Pengaturan Gofile ---
+    # --- MODIFIKASI: Pindahkan Gofile ke atas agar lebih terlihat ---
     buttons.append([InlineKeyboardButton(text="Gofile Settings", callback_data="uset_gofile")])
-    # --- BATAS TAMBAHAN ---
+    # --- BATAS MODIFIKASI ---
     
     if tidal_manager and tidal_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Tidal Quality", callback_data=f"uset_tidal")])
