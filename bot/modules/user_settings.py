@@ -30,19 +30,16 @@ try:
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor kkbox_manager.")
     kkbox_manager = None
-
-# --- TAMBAHAN: Impor Manajer Beatsource ---
 try:
     from ..helpers.beatsource.manager import beatsource_manager
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor beatsource_manager.")
     beatsource_manager = None
-# --- BATAS TAMBAHAN ---
 
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
-    bs_button # --- TAMBAHAN ---
+    bs_button
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -50,27 +47,27 @@ from ..settings import bot_set
 from ..helpers.message import send_message, edit_message, check_user, fetch_user_details
 
 
-# --- TAMBAHAN: Perintah /setgofile ---
 @Client.on_message(filters.command("setgofile"))
 async def set_gofile_creds(client: Client, m: Message):
-    """
-    Menangani perintah /setgofile untuk menyimpan atau menghapus kredensial Gofile pengguna.
-    """
     if not await check_user(msg=m):
         return
     
     user_id = m.from_user.id
     
     try:
-        # Perintah diharapkan: /setgofile <api_key> <folder_id>
-        # atau /setgofile clear
         parts = m.text.split()
         if len(parts) == 2 and parts[1].lower() == "clear":
-            # Hapus kredensial
-            await database.save_user_settings(user_id, {
+            data_to_save = {
                 'gofile_api_key': None,
                 'gofile_folder_id': None
-            })
+            }
+            # Simpan ke DB
+            await database.save_user_settings(user_id, data_to_save)
+            # Perbarui cache
+            if user_id not in bot_set.user_data:
+                bot_set.user_data[user_id] = {}
+            bot_set.user_data[user_id].update(data_to_save)
+            
             await m.reply("Pengaturan Gofile Anda telah dihapus.", reply_to_message_id=m.id)
             return
         
@@ -86,11 +83,16 @@ async def set_gofile_creds(client: Client, m: Message):
         api_key = parts[1]
         folder_id = parts[2]
         
-        # Simpan ke database
-        await database.save_user_settings(user_id, {
+        data_to_save = {
             'gofile_api_key': api_key,
             'gofile_folder_id': folder_id
-        })
+        }
+        # Simpan ke DB
+        await database.save_user_settings(user_id, data_to_save)
+        # Perbarui cache
+        if user_id not in bot_set.user_data:
+            bot_set.user_data[user_id] = {}
+        bot_set.user_data[user_id].update(data_to_save)
         
         await m.reply(
             "Pengaturan Gofile Anda telah disimpan!\n"
@@ -101,7 +103,6 @@ async def set_gofile_creds(client: Client, m: Message):
         
     except Exception as e:
         await m.reply(f"Gagal menyimpan pengaturan: {e}", reply_to_message_id=m.id)
-# --- BATAS TAMBAHAN ---
 
 
 @Client.on_message(filters.command(cmd.USETTING))
@@ -136,7 +137,6 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-# --- MODIFIKASI: Tambahkan 'gofile' ke regex ---
 @Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|gofile)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
@@ -150,9 +150,12 @@ async def uset_cb(client, query, datatype=""):
     if data[1] == "close":
         await query.message.delete()
 
-    # --- TAMBAHAN: Handler Tombol Gofile ---
     if data[1] == "gofile":
-        user_settings = await database.get_user(user_id)
+        # --- PERBAIKAN DI SINI ---
+        # Ganti `database.get_user(user_id)` dengan `bot_set.user_data.get(user_id, {})`
+        user_settings = bot_set.user_data.get(user_id, {})
+        # --- BATAS PERBAIKAN ---
+        
         api_key = user_settings.get('gofile_api_key')
         folder_id = user_settings.get('gofile_folder_id')
 
@@ -169,12 +172,9 @@ async def uset_cb(client, query, datatype=""):
         text += "1. `/setgofile API_KEY FOLDER_ID`\n"
         text += "2. `/setgofile clear` (untuk menghapus)"
         
-        # Kirim sebagai pesan baru atau edit? Edit lebih bersih.
         await edit_message(query.message, text, markup=None)
-        # Beri tahu callback query bahwa kita sudah menanganinya
         await query.answer() 
         return
-    # --- BATAS TAMBAHAN ---
         
     if data[1] == "tidal" or datatype == "tidal":
         if not tidal_manager or not tidal_manager.clients:
@@ -444,7 +444,7 @@ async def uset_zip(self, query):
     if data == "playlist":
         user_dict = bot_set.user_data.get(user_id, {})
         playlist_zip = user_dict.get("playlist_zip", False)
-        data_saved = {"PLAYLIST_ZIP".lower(): not playlist_zip}
+        data_saved = {"playlist_zip": not playlist_zip}
         if user_id not in bot_set.user_data:
             bot_set.user_data.setdefault(user_id, {})
         bot_set.user_data[user_id].update(data_saved)
@@ -454,7 +454,7 @@ async def uset_zip(self, query):
     if data == "album":
         user_dict = bot_set.user_data.get(user_id, {})
         album_zip = user_dict.get("album_zip", False)
-        data_saved = {"ALBUM_ZIP".lower(): not album_zip}
+        data_saved = {"album_zip": not album_zip}
         if user_id not in bot_set.user_data:
             bot_set.user_data.setdefault(user_id, {})
         bot_set.user_data[user_id].update(data_saved)
@@ -464,7 +464,7 @@ async def uset_zip(self, query):
     if data == "artist":
         user_dict = bot_set.user_data.get(user_id, {})
         artist_zip = user_dict.get("artist_zip", False)
-        data_saved = {"ARTIST_ZIP".lower(): not artist_zip}
+        data_saved = {"artist_zip": not artist_zip}
         if user_id not in bot_set.user_data:
             bot_set.user_data.setdefault(user_id, {})
         bot_set.user_data[user_id].update(data_saved)
@@ -538,4 +538,4 @@ async def debug(c, m): # debugger
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
     zips += f"\n\n{user_dict}"
-    await m.reply(dt_qb + dt_bp + dt_bs + dt_dz + dt_td + dt_kk + zips, True) # Tambahkan dt_bs
+    await m.reply(dt_qb + dt_bp + dt_bs + dt_dz + dt_td + dt_kk + zips, True)
