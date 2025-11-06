@@ -216,18 +216,16 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     }
     await run_concurrent_tasks(tasks, update_details)
     
-    _, __, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Ambil 'album_zip' dengan benar ---
+    _, album_zip, __ = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
     if album_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
-        # --- PERBAIKAN: Simpan path zip di key baru, jangan timpa folderpath ---
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
 
     # Upload
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
-        # album_upload akan memeriksa 'zip_path' dan 'folderpath'
-        # dan memanggil cleanup yang akan menggunakan 'folderpath' asli
         await album_upload(album_meta, user)
 
 
@@ -301,18 +299,22 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
     }
     await run_concurrent_tasks(tasks, update_details)
     
-    _, __, album_zip = fetch_zip_settings(user) # Gunakan pengaturan zip album untuk playlist
-    if album_zip:
+    # --- PERBAIKAN: Ambil 'playlist_zip' (indeks 0) ---
+    playlist_zip, _, __ = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
+
+    # --- PERBAIKAN: Gunakan 'playlist_zip' ---
+    if playlist_zip:
+    # --- AKHIR PERBAIKAN ---
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
-        # --- PERBAIKAN: Simpan path zip di key baru, jangan timpa folderpath ---
         playlist_meta['zip_path'] = await zip_handler(playlist_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
 
     # Upload
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
-        # album_upload akan memeriksa 'zip_path' dan 'folderpath'
-        await album_upload(playlist_meta, user)
+        # --- PERBAIKAN: Panggil 'playlist_upload' ---
+        await playlist_upload(playlist_meta, user)
+        # --- AKHIR PERBAIKAN ---
 # --- AKHIR TAMBAHAN ---
 
 
@@ -354,12 +356,12 @@ async def start_artist(artist_id:int, user:dict):
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        if bot_set.artist_zip:
+        # --- PERBAIKAN: Ambil 'artist_zip' dengan benar ---
+        _, __, artist_zip = fetch_zip_settings(user)
+        # --- AKHIR PERBAIKAN ---
+        if artist_zip: # <-- Perbaikan: gunakan variabel yang benar
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
-            # --- PERBAIKAN: Simpan path zip di key baru, jangan timpa folderpath ---
             artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
-            # --- AKHIR PERBAIKAN ---
         
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
-        # Asumsi artist_upload juga memeriksa 'zip_path' dan memanggil cleanup
         await artist_upload(artist_meta, user)
