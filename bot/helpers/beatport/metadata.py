@@ -249,13 +249,15 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     album_data = await client.get_release(album_id)
     
-    # --- PERBAIKAN: Ubah per_page dari 100 menjadi 50 ---
-    tracks_data = await client.get_release_tracks(album_id, per_page=50)
+    # --- PERBAIKAN: Ubah per_page dari 50 menjadi 20 ---
+    per_page = 20
+    tracks_data = await client.get_release_tracks(album_id, per_page=per_page)
+    # --- AKHIR PERBAIKAN ---
+    
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
     
-    # --- PERBAIKAN: Ubah logika loop dari 100 menjadi 50 ---
-    per_page = 50
+    # --- PERBAIKAN: Ubah logika loop dari 50 menjadi 20 ---
     for page in range(2, (total_tracks - 1) // per_page + 2):
         tracks_page = await client.get_release_tracks(album_id, page=page, per_page=per_page)
         tracks.extend(tracks_page.get("results", []))
@@ -310,8 +312,8 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     client: BeatportAPI = user['beatport_api']
     is_chart = extra.get("is_chart", False)
     
-    # --- PERBAIKAN: Ubah per_page dari 100 menjadi 50 ---
-    per_page = 50
+    # --- PERBAIKAN: Ubah per_page dari 50 menjadi 20 ---
+    per_page = 20
     if is_chart:
         playlist_data = await client.get_chart(playlist_id)
         tracks_data = await client.get_chart_tracks(playlist_id, per_page=per_page)
@@ -323,7 +325,7 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
 
-    # --- PERBAIKAN: Ubah logika loop dari 100 menjadi 50 ---
+    # --- PERBAIKAN: Ubah logika loop dari 50 menjadi 20 ---
     for page in range(2, (total_tracks - 1) // per_page + 2):
         if is_chart:
             tracks_page = await client.get_chart_tracks(playlist_id, page=page, per_page=per_page)
