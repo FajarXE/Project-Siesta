@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/beatsource/metadata.py]
+# [GANTI FILE: bot/helpers/beatsource/metadata.py]
 
 import re
 import traceback
@@ -24,7 +24,6 @@ def custom_url_parse(url: str):
     item_id = match.group("id")
     extra = {}
 
-    # Map tipe URL ke tipe internal bot
     if media_type_str == "track":
         media_type = "track"
     elif media_type_str == "release":
@@ -33,7 +32,6 @@ def custom_url_parse(url: str):
         media_type = "artist"
     elif media_type_str in ["playlist", "playlists", "chart"]:
         media_type = "playlist"
-        # Catat jika ini adalah chart, mungkin berguna nanti
         if media_type_str == "chart":
             extra["is_chart"] = True
     else:
@@ -58,33 +56,26 @@ async def process_track_metadata(item_id: str, r_id: str, user: dict):
         track_data = await client.get_track(item_id)
         release_data = await client.get_release(track_data['release']['id'])
         
-        # --- Logika Kualitas & Langganan (dari interface.py) ---
-        
+        # --- Logika Kualitas & Langganan ---
         user_qual = beatsource_manager.get_user_quality(user['user_id'])
-        
-        # Tentukan kualitas API yang akan diminta
         api_qual_request = user_qual
-        
-        # Paksa downgrade jika langganan tidak Pro
         has_pro_sub = (sub_status == "pro")
+        
         if not has_pro_sub and (api_qual_request == "lossless" or api_qual_request == "high"):
             LOGGER.warning(f"Beatsource: Akun tidak Pro. Kualitas {api_qual_request} di-downgrade ke 'medium'.")
             api_qual_request = "medium"
         
-        # Coba dapatkan URL unduhan
         quality_priority = {
             "lossless": ["lossless", "high", "medium"],
             "high": ["high", "medium"],
             "medium": ["medium"]
         }.get(api_qual_request, ["medium"])
         
-        # Hanya gunakan prioritas yang diizinkan oleh langganan
         if not has_pro_sub:
             quality_priority = ["medium"]
 
         dl_url = None
         final_quality = None
-
         for qual in quality_priority:
             try:
                 dl_data = await client.get_track_download(item_id, qual)
@@ -97,7 +88,6 @@ async def process_track_metadata(item_id: str, r_id: str, user: dict):
         
         if not dl_url:
             raise BeatsourceError(f"Tidak dapat mengambil URL unduhan untuk track {item_id} dalam kualitas apa pun.")
-
         # --- Akhir Logika Kualitas ---
 
         track_artists = track_data.get("artists", [])
@@ -128,7 +118,7 @@ async def process_track_metadata(item_id: str, r_id: str, user: dict):
         meta['duration'] = track_data.get('length_ms', 0) // 1000
         
         meta['quality'] = final_quality.capitalize()
-        meta['extension'] = 'flac' if final_quality == 'lossless' else 'm4a' # Beatsource/Beatport menggunakan AAC (m4a)
+        meta['extension'] = 'flac' if final_quality == 'lossless' else 'm4a'
         
         meta['cover'] = await create_cover_file(
             release_data.get('image', {}).get('dynamic_uri', '').format(w=1400, h=1400), meta
@@ -151,6 +141,11 @@ async def process_album_metadata(item_id: str, r_id: str, user: dict):
     meta['itemid'] = item_id
     meta['tempfolder'] = f"{meta['tempfolder']}{r_id}/Beatsource/{item_id}_ALBUM"
     meta['type'] = 'album'
+    
+    # --- PERBAIKAN: Tambahkan nilai default ---
+    meta['volume'] = 1
+    meta['totalvolume'] = 1
+    # --- AKHIR PERBAIKAN ---
 
     client, _ = beatsource_manager.get_client_and_sub()
     if not client:
@@ -159,7 +154,6 @@ async def process_album_metadata(item_id: str, r_id: str, user: dict):
     try:
         release_data = await client.get_release(item_id)
         
-        # Paginasi untuk mendapatkan semua track
         tracks_list = []
         page = 1
         while True:
@@ -168,7 +162,7 @@ async def process_album_metadata(item_id: str, r_id: str, user: dict):
             if not tracks_data.get('next'):
                 break
             page += 1
-            if page > 10: # Pengaman
+            if page > 10: 
                 LOGGER.warning(f"Beatsource: Album {item_id} memiliki lebih dari 10 halaman, mungkin error?")
                 break
 
@@ -190,22 +184,33 @@ async def process_album_metadata(item_id: str, r_id: str, user: dict):
         )
         meta['thumbnail'] = meta['cover']
 
-        # Proses semua track dalam album
+        # --- PERBAIKAN: Lacak status eksplisit ---
+        album_is_explicit = False
+        # --- AKHIR PERBAIKAN ---
+
         tracks_meta_list = []
         for i, track_data in enumerate(tracks_list):
             try:
                 track_meta = await process_track_metadata(track_data['id'], r_id, user)
-                # Override beberapa metadata dengan info album
                 track_meta['tracknumber'] = i + 1
                 track_meta['totaltracks'] = meta['totaltracks']
                 tracks_meta_list.append(track_meta)
+                
+                # --- PERBAIKAN: Perbarui status jika ada track eksplisit ---
+                if track_meta['explicit']:
+                    album_is_explicit = True
+                # --- AKHIR PERBAIKAN ---
+                
             except Exception as e:
                 LOGGER.warning(f"Gagal memproses track {track_data['id']} di album Beatsource {item_id}: {e}")
         
         meta['tracks'] = tracks_meta_list
         meta['totaltracks'] = len(tracks_meta_list)
         
-        # Ambil kualitas dari track pertama sebagai representasi
+        # --- PERBAIKAN: Tetapkan status eksplisit album ---
+        meta['explicit'] = album_is_explicit
+        # --- AKHIR PERBAIKAN ---
+        
         if tracks_meta_list:
             meta['quality'] = tracks_meta_list[0]['quality']
 
@@ -222,18 +227,22 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
     meta['itemid'] = item_id
     meta['tempfolder'] = f"{meta['tempfolder']}{r_id}/Beatsource/{item_id}_PLAYLIST"
     meta['type'] = 'playlist'
+    
+    # --- PERBAIKAN: Tambahkan nilai default ---
+    meta['volume'] = 1
+    meta['totalvolume'] = 1
+    # --- AKHIR PERBAIKAN ---
 
     client, _ = beatsource_manager.get_client_and_sub()
     if not client:
         raise BeatsourceError("Tidak ada klien Beatsource yang login dan tersedia.")
 
     try:
-        # --- Logika Fallback Playlist/Chart (dari interface.py) ---
+        # --- Logika Fallback Playlist/Chart ---
         playlist_data = None
         tracks_endpoint = None
         
         try:
-            # Coba sebagai playlist biasa dulu
             playlist_data = await client.get_playlist(item_id)
             tracks_endpoint = client.get_playlist_tracks
             LOGGER.debug(f"Beatsource: {item_id} ditemukan sebagai Playlist.")
@@ -241,19 +250,18 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
             if "404" in str(e) or "Item tidak ditemukan" in str(e):
                 LOGGER.debug(f"Beatsource: Gagal sebagai playlist (404), mencoba sebagai Chart... {item_id}")
                 try:
-                    # Fallback ke chart
                     playlist_data = await client.get_chart(item_id)
                     tracks_endpoint = client.get_chart_tracks
                     LOGGER.debug(f"Beatsource: {item_id} ditemukan sebagai Chart.")
                 except BeatsourceError as e_chart:
                     raise BeatsourceError(f"Gagal mengambil {item_id} sebagai Playlist maupun Chart: {e_chart}")
             else:
-                raise e # Lemparkan error asli jika bukan 404
+                raise e
 
         if not playlist_data or not tracks_endpoint:
             raise BeatsourceError("Gagal menginisialisasi data playlist/chart.")
 
-        # Paginasi untuk mendapatkan semua track
+        # Paginasi
         tracks_list_raw = []
         page = 1
         while True:
@@ -262,12 +270,10 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
             if not tracks_data.get('next'):
                 break
             page += 1
-            if page > 20: # Pengaman
+            if page > 20: 
                 LOGGER.warning(f"Beatsource: Playlist {item_id} memiliki lebih dari 20 halaman, mungkin error?")
                 break
         
-        # Response /playlist/tracks membungkus track di { 'track': ... }
-        # Response /chart/tracks tidak
         tracks_list = []
         if tracks_endpoint == client.get_playlist_tracks:
             for item in tracks_list_raw:
@@ -284,7 +290,7 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
         meta['totaltracks'] = len(tracks_list)
         
         cover_uri = playlist_data.get('image', {}).get('dynamic_uri', '')
-        if not cover_uri: # Fallback untuk playlist (bukan chart)
+        if not cover_uri:
              release_images = playlist_data.get("release_images")
              if release_images and isinstance(release_images, list) and len(release_images) > 0:
                  cover_uri = release_images[0].get("dynamic_uri", "")
@@ -294,7 +300,10 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
         )
         meta['thumbnail'] = meta['cover']
 
-        # Proses semua track dalam playlist
+        # --- PERBAIKAN: Lacak status eksplisit ---
+        playlist_is_explicit = False
+        # --- AKHIR PERBAIKAN ---
+
         tracks_meta_list = []
         for i, track_data in enumerate(tracks_list):
             try:
@@ -302,11 +311,21 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
                 track_meta['tracknumber'] = i + 1
                 track_meta['totaltracks'] = meta['totaltracks']
                 tracks_meta_list.append(track_meta)
+                
+                # --- PERBAIKAN: Perbarui status jika ada track eksplisit ---
+                if track_meta['explicit']:
+                    playlist_is_explicit = True
+                # --- AKHIR PERBAIKAN ---
+                
             except Exception as e:
                 LOGGER.warning(f"Gagal memproses track {track_data['id']} di playlist Beatsource {item_id}: {e}")
         
         meta['tracks'] = tracks_meta_list
         meta['totaltracks'] = len(tracks_meta_list)
+        
+        # --- PERBAIKAN: Tetapkan status eksplisit playlist ---
+        meta['explicit'] = playlist_is_explicit
+        # --- AKHIR PERBAIKAN ---
         
         if tracks_meta_list:
             meta['quality'] = tracks_meta_list[0]['quality']
