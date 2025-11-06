@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/beatport/api.py]
+# [GANTI SELURUH FILE: bot/helpers/beatport/api.py]
 
 import aiohttp
 import asyncio
@@ -153,26 +153,31 @@ class BeatportAPI:
     async def get_release(self, release_id: str):
         return await self._get(f'catalog/releases/{release_id}')
 
-    async def get_release_tracks(self, release_id: str, page: int = 1, per_page: int = 100):
+    # --- PERBAIKAN: Ubah default per_page dari 100 menjadi 50 ---
+    async def get_release_tracks(self, release_id: str, page: int = 1, per_page: int = 50):
         return await self._get(f'catalog/releases/{release_id}/tracks', params={'page': page, 'per_page': per_page})
 
     async def get_playlist(self, playlist_id: str):
         return await self._get(f'catalog/playlists/{playlist_id}')
 
-    async def get_playlist_tracks(self, playlist_id: str, page: int = 1, per_page: int = 100):
+    # --- PERBAIKAN: Ubah default per_page dari 100 menjadi 50 ---
+    async def get_playlist_tracks(self, playlist_id: str, page: int = 1, per_page: int = 50):
         return await self._get(f'catalog/playlists/{playlist_id}/tracks', params={'page': page, 'per_page': per_page})
 
     async def get_chart(self, chart_id: str):
         return await self._get(f'catalog/charts/{chart_id}')
 
-    async def get_chart_tracks(self, chart_id: str, page: int = 1, per_page: int = 100):
+    # --- PERBAIKAN: Ubah default per_page dari 100 menjadi 50 ---
+    async def get_chart_tracks(self, chart_id: str, page: int = 1, per_page: int = 50):
         return await self._get(f'catalog/charts/{chart_id}/tracks', params={'page': page, 'per_page': per_page})
 
     async def get_artist(self, artist_id: str):
         return await self._get(f'catalog/artists/{artist_id}')
 
-    async def get_artist_tracks(self, artist_id: str, page: int = 1, per_page: int = 100):
+    # --- PERBAIKAN: Ubah default per_page dari 100 menjadi 50 ---
+    async def get_artist_tracks(self, artist_id: str, page: int = 1, per_page: int = 50):
         return await self._get(f'catalog/artists/{artist_id}/tracks', params={'page': page, 'per_page': per_page})
+    # --- AKHIR PERBAIKAN ---
 
     async def get_track_download(self, track_id: str, quality: str):
         # 'quality' bisa "medium", "high", atau "lossless"
