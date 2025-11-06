@@ -208,5 +208,3 @@ class Config:
 # CONCURRENT
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
-
-}
