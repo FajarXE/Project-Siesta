@@ -219,15 +219,14 @@ def split_zip_folder(folderpath) -> list:
         if part_num == 1:
             zip_path = f"{zip_name}.zip"
         else:
-            # --- PERBAIKAN: Format penomoran file split ---
             zip_path = f"{zip_name}.z{part_num:02d}"
-            # --- AKHIR PERBAIKAN ---
 
-        # --- MODIFIKASI: Diubah ke ZIP_STORED agar lebih cepat ---
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
             for file_path, arcname in files_to_add:
                 zipf.write(file_path, arcname)
-                os.remove(file_path)  # Delete the file after zipping
+                # --- PERBAIKAN: JANGAN HAPUS FILE DI SINI ---
+                # os.remove(file_path)  
+                # --- AKHIR PERBAIKAN ---
         return zip_path
 
     for root, dirs, files in os.walk(folderpath):
@@ -260,13 +259,14 @@ def zip_folder(folderpath) -> str:
     """
     zip_path = f"{folderpath}.zip"
     
-    # --- MODIFIKASI: Diubah ke ZIP_STORED agar lebih cepat ---
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
         for root, dirs, files in os.walk(folderpath):
             for file in files:
                 file_path = os.path.join(root, file)
                 zipf.write(file_path, os.path.relpath(file_path, folderpath))
-                os.remove(file_path)
+                # --- PERBAIKAN: JANGAN HAPUS FILE DI SINI ---
+                # os.remove(file_path)
+                # --- AKHIR PERBAIKAN ---
     
     return zip_path
 
@@ -304,7 +304,7 @@ async def post_art_poster(user:dict, meta:dict):
     photo = meta['cover']
     if meta['type'] == 'album':
         caption = await format_string(lang.s.ALBUM_TEMPLATE, meta, user)
-    elif meta['type'] == 'artist': # <-- PERBAIKAN: Menambahkan tipe artist
+    elif meta['type'] == 'artist':
         caption = await format_string(lang.s.ARTIST_TEMPLATE, meta, user)
     else:
         caption = await format_string(lang.s.PLAYLIST_TEMPLATE, meta, user)
@@ -412,11 +412,19 @@ async def cleanup(user=None, metadata=None, user_dict: dict=None):
     if metadata:
         # --- PERBAIKAN: Logika cleanup disederhanakan ---
         try:
-            # 1. Selalu hapus folderpath, karena itu SELALU direktori.
-            if metadata.get('folderpath') and os.path.isdir(metadata['folderpath']):
-                 shutil.rmtree(metadata['folderpath'])
+            # 1. Hapus 'folderpath'. Cek apakah itu string (logika baru) atau list (logika Qobuz lama)
+            folder_path = metadata.get('folderpath')
+            if isinstance(folder_path, str) and os.path.isdir(folder_path):
+                # Ini adalah path direktori (logika baru), hapus direktorinya
+                shutil.rmtree(folder_path)
+            elif isinstance(folder_path, list):
+                # Ini adalah list file zip (logika Qobuz lama), hapus setiap file
+                LOGGER.debug("Cleanup: 'folderpath' adalah list (logika lama). Menghapus file di list.")
+                for i in folder_path:
+                    if os.path.exists(i):
+                        os.remove(i)
 
-            # 2. Jika 'zip_path' ada, hapus file zip-nya juga.
+            # 2. Jika 'zip_path' ada (logika baru), hapus file-file zip itu juga.
             if metadata.get('zip_path'):
                 zip_files = metadata['zip_path']
                 if isinstance(zip_files, str):
