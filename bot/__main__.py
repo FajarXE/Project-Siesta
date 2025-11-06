@@ -47,11 +47,19 @@ except ImportError:
     sys.exit(1)
 # --- Batas Impor ---
 
-# --- TAMBAHAN: Impor Manajer KKBox ---
+# --- Impor Manajer KKBox ---
 try:
     from .helpers.kkbox.manager import kkbox_manager
 except ImportError:
     logging.critical("Gagal mengimpor 'kkbox_manager'!")
+    sys.exit(1)
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN: Impor Manajer Beatsource ---
+try:
+    from .helpers.beatsource.manager import beatsource_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'beatsource_manager'!")
     sys.exit(1)
 # --- BATAS TAMBAHAN ---
 
@@ -73,12 +81,10 @@ async def login_single_client(creds: dict):
         
         # 2. Muat Kualitas Default Bot dari DB
         try:
-            # --- PERBAIKAN: Gunakan get_variable() tanpa argumen ---
             db_settings = await database.get_variable()
             if not db_settings:
                 db_settings = {}
             db_default_q = db_settings.get('QOBUZ_QUALITY')
-            # --- PERBAIKAN SELESAI ---
             client.quality = int(db_default_q) if db_default_q else 6 # Default 6 (Lossless) jika tidak ada
             logging.debug(f"Berhasil memuat Kualitas Default Qobuz '{client.quality}' untuk Akun #{account_id}.")
         except Exception as e:
@@ -172,14 +178,22 @@ async def main():
     else:
         logging.warning("PERINGATAN: Tidak ada akun Tidal yang berhasil login! (Gunakan /settings untuk login)")
 
-    # --- TAMBAHAN: Login KKBox ---
+    # 5. Login KKBox
     logging.info("Memulai inisialisasi Manajer KKBox...")
     await kkbox_manager.initialize_clients()
     if kkbox_manager.clients:
-        # Anda mungkin ingin menambahkan: bot_set.kkbox = True 
         logging.info(f"Manajer KKBox berhasil diinisialisasi dengan {len(kkbox_manager.clients)} klien.")
     else:
         logging.warning("PERINGATAN: Tidak ada akun KKBox yang berhasil login!")
+        
+    # --- TAMBAHAN: Login Beatsource ---
+    logging.info("Memulai inisialisasi Manajer Beatsource...")
+    await beatsource_manager.initialize_clients()
+    if beatsource_manager.clients:
+        # Anda mungkin ingin menambahkan: bot_set.beatsource = True 
+        logging.info(f"Manajer Beatsource berhasil diinisialisasi dengan {len(beatsource_manager.clients)} klien.")
+    else:
+        logging.warning("PERINGATAN: Tidak ada akun Beatsource yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
     logging.info("Menginisialisasi data pengguna...")
@@ -199,3 +213,5 @@ if __name__ == "__main__":
     except Exception:
         logging.error(traceback.format_exc())
         sys.exit(1)
+
+}
