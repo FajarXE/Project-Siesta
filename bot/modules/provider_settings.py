@@ -352,5 +352,3 @@ async def kkbox_quality_cb(c, cb:CallbackQuery):
         kkbox_manager.quality = to_set
         await database.set_variable('KKBOX_QUALITY', to_set)
         await kkbox_cb(c, cb)
-
-}
