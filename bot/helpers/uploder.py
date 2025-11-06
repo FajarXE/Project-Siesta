@@ -9,7 +9,7 @@ from .message import send_message, edit_message
 from .utils import *
 from bot.logger import LOGGER 
 
-# --- TAMBAHAN: Impor Gofile Uploader dan Database ---
+# --- TAMBAHAN: Impor Gofile Uploader ---
 try:
     from ..helpers.gofile_api import gofile_batch_upload
 except ImportError:
@@ -17,15 +17,6 @@ except ImportError:
     LOGGER.warning("Uploader: Gagal mengimpor 'gofile_batch_upload'. Unggahan Gofile pribadi tidak akan berfungsi.")
     async def gofile_batch_upload(*args, **kwargs):
         raise NotImplementedError("Modul gofile_api.py tidak ditemukan.")
-        
-try:
-    from ..helpers.database.mongo_async import database
-except ImportError:
-    LOGGER.critical("Uploader: Gagal mengimpor 'database'. Unggahan Gofile pribadi akan gagal.")
-    # Buat database tiruan agar bot tidak crash, tapi log error
-    class DummyDatabase:
-        async def get_user(self, *args, **kwargs): return {}
-    database = DummyDatabase()
 # --- BATAS TAMBAHAN ---
 
 #
@@ -37,8 +28,8 @@ except ImportError:
 
 async def track_upload(metadata, user, disable_link=False):
     
-    # --- PERUBAHAN: Periksa Gofile Pribadi ---
-    user_settings = await database.get_user(user['user_id'])
+    # --- PERBAIKAN: Ganti 'database.get_user' dengan 'bot_set.user_data.get' ---
+    user_settings = bot_set.user_data.get(user['user_id'], {})
     gofile_key = user_settings.get('gofile_api_key')
     gofile_folder = user_settings.get('gofile_folder_id')
 
@@ -46,7 +37,7 @@ async def track_upload(metadata, user, disable_link=False):
         await edit_message(user['bot_msg'], f"Mengunggah 1 lagu ke Gofile pribadi Anda...")
         file_list = [{
             'filepath': metadata['filepath'],
-            'filename': os.path.basename(metadata['filepath']) # Gunakan nama file yang sudah di-sanitize
+            'filename': os.path.basename(metadata['filepath'])
         }]
         
         try:
@@ -60,10 +51,9 @@ async def track_upload(metadata, user, disable_link=False):
             os.remove(metadata['filepath'])
         except FileNotFoundError:
             pass
-        return # Selesai, jangan jalankan logika di bawah
-    # --- AKHIR PERUBAHAN ---
+        return 
+    # --- AKHIR PERBAIKAN ---
 
-    # Logika fallback jika Gofile pribadi tidak diatur
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -83,8 +73,8 @@ async def track_upload(metadata, user, disable_link=False):
 async def album_upload(metadata, user):
     user_dict = user.copy()
 
-    # --- PERUBAHAN: Periksa Gofile Pribadi ---
-    user_settings = await database.get_user(user['user_id'])
+    # --- PERBAIKAN: Ganti 'database.get_user' dengan 'bot_set.user_data.get' ---
+    user_settings = bot_set.user_data.get(user['user_id'], {})
     gofile_key = user_settings.get('gofile_api_key')
     gofile_folder = user_settings.get('gofile_folder_id')
 
@@ -101,10 +91,8 @@ async def album_upload(metadata, user):
         try:
             links = await gofile_batch_upload(file_list, gofile_key, gofile_folder, user['bot_msg'])
             
-            # Kirim link sebagai file teks jika terlalu banyak
             if len(links) > 10:
                 link_file_path = f"{metadata['folderpath']}/gofile_links.txt"
-                # Pastikan direktori ada
                 os.makedirs(os.path.dirname(link_file_path), exist_ok=True)
                 with open(link_file_path, 'w') as f:
                     f.write("\n".join(links))
@@ -115,8 +103,8 @@ async def album_upload(metadata, user):
             await send_message(user, f"Gagal mengunggah ke Gofile pribadi: {e}")
 
         await cleanup(None, metadata, user_dict)
-        return # Selesai
-    # --- AKHIR PERUBAHAN ---
+        return
+    # --- AKHIR PERBAIKAN ---
 
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
@@ -149,9 +137,6 @@ async def album_upload(metadata, user):
 async def artist_upload(metadata, user):
     user_dict = user.copy()
     
-    # (Logika Gofile bisa ditambahkan di sini juga, tapi kita lewati untuk artis karena kompleks)
-    # (Silakan tambahkan jika Anda butuh, polanya sama dengan album_upload)
-
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -183,8 +168,8 @@ async def artist_upload(metadata, user):
 
 async def playlist_upload(metadata, user):
 
-    # --- PERUBAHAN: Periksa Gofile Pribadi ---
-    user_settings = await database.get_user(user['user_id'])
+    # --- PERBAIKAN: Ganti 'database.get_user' dengan 'bot_set.user_data.get' ---
+    user_settings = bot_set.user_data.get(user['user_id'], {})
     gofile_key = user_settings.get('gofile_api_key')
     gofile_folder = user_settings.get('gofile_folder_id')
 
@@ -203,7 +188,6 @@ async def playlist_upload(metadata, user):
             
             if len(links) > 10:
                 link_file_path = f"{metadata['folderpath']}/gofile_links.txt"
-                # Pastikan direktori ada
                 os.makedirs(os.path.dirname(link_file_path), exist_ok=True)
                 with open(link_file_path, 'w') as f:
                     f.write("\n".join(links))
@@ -214,8 +198,8 @@ async def playlist_upload(metadata, user):
             await send_message(user, f"Gagal mengunggah ke Gofile pribadi: {e}")
 
         await cleanup(None, metadata, user)
-        return # Selesai
-    # --- AKHIR PERUBAHAN ---
+        return
+    # --- AKHIR PERBAIKAN ---
 
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
