@@ -198,6 +198,14 @@ async def _download_cover_with_headers(url: str, destination: str):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
+    # --- PERBAIKAN: Pastikan direktori tujuan ada ---
+    try:
+        dir_path = os.path.dirname(destination)
+        os.makedirs(dir_path, exist_ok=True)
+    except Exception as e:
+        return f"Gagal membuat direktori {dir_path}: {e}"
+    # --- AKHIR PERBAIKAN ---
+
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url, timeout=60) as response:
