@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/tidal/metadata.py]
+
 import copy
 
 from datetime import datetime
@@ -114,7 +116,11 @@ async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
 
     metadata['totaltracks'] = p_meta['numberOfTracks']
     metadata['duration'] = p_meta['duration']
-    metadata['copyright'] = None # Playlist tidak memiliki info copyright
+    
+    # --- PERBAIKAN: Ubah None menjadi string kosong ---
+    metadata['copyright'] = "" # Playlist tidak memiliki info copyright
+    # --- PERBAIKAN SELESAI ---
+    
     metadata['explicit'] = p_meta.get('explicit', False)
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'playlist' # Set tipe sebagai playlist
@@ -155,7 +161,7 @@ async def get_artist_metadata(a_meta:dict, r_id):
     metadata['title'] = a_meta['name']
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'artist'
-    metadata['cover'] = await get_cover(a_meta.get('picture'), metadata)
+    metadata['cover'] = await get_cover(a_a_meta.get('picture'), metadata)
     metadata['thumbnail'] = await get_cover(a_meta.get('picture'), metadata, True)
     return metadata
 
