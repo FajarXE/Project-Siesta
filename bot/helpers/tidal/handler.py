@@ -188,7 +188,7 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
         album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
     
     album_folder = sanitize_filepath(album_folder)
-    album_meta['folderpath'] = album_folder
+    album_meta['folderpath'] = album_folder # Path direktori asli (string)
 
     # get a track to get quality
     track_id = tracks_data['items'][0]['id']
@@ -219,11 +219,15 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     _, __, album_zip = fetch_zip_settings(user)
     if album_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
-        album_meta['folderpath'] = await zip_handler(album_meta['folderpath'])
+        # --- PERBAIKAN: Simpan path zip di key baru, jangan timpa folderpath ---
+        album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     # Upload
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
+        # album_upload akan memeriksa 'zip_path' dan 'folderpath'
+        # dan memanggil cleanup yang akan menggunakan 'folderpath' asli
         await album_upload(album_meta, user)
 
 
@@ -243,12 +247,9 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         # --- MODIFIKASI SELESAI ---
         
     # --- MODIFIKASI: Gunakan klien untuk get_playlist_tracks dengan PAGINATION ---
-    # Dapatkan total_tracks dari playlist_data yang sudah diambil
     total_tracks = playlist_data.get('numberOfTracks', 0)
     if total_tracks == 0:
-        # Ini bisa terjadi jika playlist baru atau benar-benar kosong
         LOGGER.warning(f"Playlist {playlist_id} terdaftar sebagai kosong (0 tracks).")
-        # Kita akan biarkan get_playlist_metadata yang menanganinya
         
     tracks_data = await client.get_playlist_tracks(playlist_id, total_tracks)
     # --- MODIFIKASI SELESAI ---
@@ -266,10 +267,9 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
     playlist_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{playlist_meta['provider']}/{playlist_meta['artist']}/{playlist_meta['title']}"
     
     playlist_folder = sanitize_filepath(playlist_folder)
-    playlist_meta['folderpath'] = playlist_folder
+    playlist_meta['folderpath'] = playlist_folder # Path direktori asli (string)
 
     # get a track to get quality
-    # Ambil track pertama dari respons API, bukan dari metadata yg sudah diproses
     first_track_raw = None
     for item in tracks_data['items']:
         if item.get('type') == 'track' and item.get('item'):
@@ -279,7 +279,6 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
     if not first_track_raw:
         raise Exception("Playlist tidak berisi track valid untuk menentukan kualitas.")
 
-    # Kita sudah punya data track mentah, tidak perlu client.get_track()
     session, quality = await get_stream_session(first_track_raw, user)
     stream_data = await client.get_stream_url(first_track_raw['id'], quality, session)
     # --- MODIFIKASI SELESAI ---
@@ -292,28 +291,27 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
     # concurrent
     tasks = []
     for track in playlist_meta['tracks']:
-        # Penting: 'track' di sini adalah metadata yang sudah diproses dari get_playlist_metadata
-        # Ini akan berisi info album/artis ASLI dari track tsb, BUKAN info playlist
-        # Kita teruskan 'session' dan 'quality' dari track pertama untuk konsistensi (mengikuti pola start_album)
         tasks.append(start_track(track['itemid'], user, track, False, playlist_folder, session, quality))
 
     update_details = {
         'text': lang.s.DOWNLOAD_PROGRESS,
         'msg': user['bot_msg'],
         'title': playlist_meta['title'],
-        'type': playlist_meta['type'] # Ini akan menjadi 'playlist'
+        'type': playlist_meta['type']
     }
     await run_concurrent_tasks(tasks, update_details)
     
     _, __, album_zip = fetch_zip_settings(user) # Gunakan pengaturan zip album untuk playlist
     if album_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
-        playlist_meta['folderpath'] = await zip_handler(playlist_meta['folderpath'])
+        # --- PERBAIKAN: Simpan path zip di key baru, jangan timpa folderpath ---
+        playlist_meta['zip_path'] = await zip_handler(playlist_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     # Upload
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
-        # Kita bisa menggunakan kembali 'album_upload' karena fungsinya generik
+        # album_upload akan memeriksa 'zip_path' dan 'folderpath'
         await album_upload(playlist_meta, user)
 # --- AKHIR TAMBAHAN ---
 
@@ -327,7 +325,7 @@ async def start_artist(artist_id:int, user:dict):
     artist_data = await client.get_artist(artist_id)
     artist_meta = await get_artist_metadata(artist_data, user['r_id'])
     artist_meta['folderpath'] = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{artist_meta['provider']}/{artist_meta['artist']}"
-    artist_meta['folderpath'] = sanitize_filepath(artist_meta['folderpath'])
+    artist_meta['folderpath'] = sanitize_filepath(artist_meta['folderpath']) # Path direktori asli (string)
     
     try:
         artist_albums = await client.get_artist_albums(artist_id)
@@ -348,7 +346,6 @@ async def start_artist(artist_id:int, user:dict):
     upload_album = True
     
     if bot_set.artist_batch:
-        # for telegram, batch upload is not needed
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
     if bot_set.artist_zip:
         upload_album = False # final decision
@@ -359,7 +356,10 @@ async def start_artist(artist_id:int, user:dict):
     if not upload_album:
         if bot_set.artist_zip:
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
-            artist_meta['folderpath'] = await zip_handler(artist_meta['folderpath'])
+            # --- PERBAIKAN: Simpan path zip di key baru, jangan timpa folderpath ---
+            artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
+            # --- AKHIR PERBAIKAN ---
         
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
+        # Asumsi artist_upload juga memeriksa 'zip_path' dan memanggil cleanup
         await artist_upload(artist_meta, user)
