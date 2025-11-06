@@ -242,8 +242,15 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         raise e
         # --- MODIFIKASI SELESAI ---
         
-    # --- MODIFIKASI: Gunakan klien untuk get_playlist_tracks ---
-    tracks_data = await client.get_playlist_tracks(playlist_id)
+    # --- MODIFIKASI: Gunakan klien untuk get_playlist_tracks dengan PAGINATION ---
+    # Dapatkan total_tracks dari playlist_data yang sudah diambil
+    total_tracks = playlist_data.get('numberOfTracks', 0)
+    if total_tracks == 0:
+        # Ini bisa terjadi jika playlist baru atau benar-benar kosong
+        LOGGER.warning(f"Playlist {playlist_id} terdaftar sebagai kosong (0 tracks).")
+        # Kita akan biarkan get_playlist_metadata yang menanganinya
+        
+    tracks_data = await client.get_playlist_tracks(playlist_id, total_tracks)
     # --- MODIFIKASI SELESAI ---
     
     # --- MODIFIKASI: Gunakan get_playlist_metadata ---
