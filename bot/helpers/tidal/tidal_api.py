@@ -91,6 +91,14 @@ class TidalApi:
     async def get_album_tracks(self, album_id):
         return await self._get('albums/' + str(album_id) + '/tracks')
 
+    # --- TAMBAHAN BARU UNTUK PLAYLIST ---
+    async def get_playlist(self, playlist_id):
+        return await self._get('playlists/' + str(playlist_id))
+
+    async def get_playlist_tracks(self, playlist_id):
+        # Playlist menggunakan 'items' bukan 'tracks' untuk kontennya
+        return await self._get('playlists/' + str(playlist_id) + '/items')
+    # --- AKHIR TAMBAHAN ---
 
     async def get_artist(self, artist_id):
         return await self._get('artists/' + str(artist_id))
