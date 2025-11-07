@@ -21,6 +21,14 @@ from bot.helpers.kkbox.manager import kkbox_manager
 # --- TAMBAHAN: Impor Manajer Beatsource ---
 from bot.helpers.beatsource.manager import beatsource_manager
 # --- BATAS TAMBAHAN ---
+# --- TAMBAHAN: Impor Manajer & Handler Soundcloud ---
+from bot.helpers.soundcloud.manager import soundcloud_manager
+try:
+    from ..helpers.soundcloud.handler import start_soundcloud
+except ImportError:
+    async def start_soundcloud(*args, **kwargs):
+        raise NotImplementedError("Modul Soundcloud ('handler.py') belum diimplementasikan.")
+# --- BATAS TAMBAHAN ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -113,6 +121,9 @@ async def start_link(link: str, user: dict) -> None:
     # --- TAMBAHAN: URL Beatsource ---
     beatsource = ["https://www.beatsource.com", "beatsource.com"]
     # --- BATAS TAMBAHAN ---
+    # --- TAMBAHAN: URL Soundcloud ---
+    soundcloud = ["https://soundcloud.com", "soundcloud.com"]
+    # --- BATAS TAMBAHAN ---
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
     if link.startswith(tuple(tidal)):
@@ -151,7 +162,7 @@ async def start_link(link: str, user: dict) -> None:
         user['provider'] = 'Deezer'
         
         if not deezer_manager.clients:
-            raise Exception("Maaf, tidak ada akun Deezer bot yang aktif saat ini.")
+            raise Exception("Maaf, tidak ada akun Deezer bot yangaktif saat ini.")
         
         clients_list = random.sample(deezer_manager.clients, len(deezer_manager.clients))
         last_error = None
@@ -260,6 +271,26 @@ async def start_link(link: str, user: dict) -> None:
         else:
             raise Exception("Gagal mengunduh Beatsource karena alasan yang tidak diketahui setelah mencoba semua akun.")
     # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN: Blok Logika Soundcloud ---
+    elif link.startswith(tuple(soundcloud)):
+        user['provider'] = 'Soundcloud'
+        
+        client = soundcloud_manager.get_client()
+        if not client:
+            raise Exception("Maaf, modul Soundcloud bot tidak aktif saat ini (Token salah atau hilang).")
+
+        # Tidak perlu loop retry, karena kita pakai token tunggal
+        try:
+            user['soundcloud_api'] = client
+            await start_soundcloud(link, user)
+            LOGGER.info(f"Soundcloud: Unduhan berhasil.") 
+            return 
+            
+        except Exception as e:
+            LOGGER.error(f"Soundcloud: Tugas gagal (Fatal): {e}")
+            raise e 
+    # --- BATAS TAMBAHAN ---
 
     elif link.startswith(tuple(kkbox)):
         user['provider'] = 'KKBox'
@@ -292,3 +323,4 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun KKBox yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
+
