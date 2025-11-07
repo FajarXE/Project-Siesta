@@ -11,6 +11,13 @@ except (ImportError, ModuleNotFoundError):
     LOGGER.critical("Beatsource Manager: Gagal mengimpor 'database'. Fungsi pemuatan kualitas mungkin gagal.")
     class DummyDatabase:
         async def get_variable(self, *args, **kwargs): return {}
+        # Tambahkan mock client untuk menghindari error saat startup
+        class MockClient:
+            class MockUsers:
+                async def find(self, *args, **kwargs): return self
+                async def to_list(self, *args, **kwargs): return []
+            users = MockUsers()
+        client = MockClient()
     database = DummyDatabase()
 
 try:
@@ -42,7 +49,7 @@ class BeatsourceLoginManager:
     async def initialize_clients(self):
         """
         Mencoba login ke semua akun Beatsource dari Config
-        dan memuat pengaturan kualitas default.
+        dan memuat pengaturan kualitas default DAN PENGGUNA.
         """
         
         try:
@@ -50,7 +57,7 @@ class BeatsourceLoginManager:
             if not all_settings:
                 all_settings = {}
 
-            # Baca BEATSOURCE_QUALITY dari DB
+            # 1. Muat Kualitas DEFAULT Bot dari DB
             db_quality = all_settings.get('BEATSOURCE_QUALITY')
             
             if db_quality in ["lossless", "high", "medium"]:
@@ -60,6 +67,28 @@ class BeatsourceLoginManager:
                 LOGGER.info(f"Beatsource Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
         except Exception as e:
             LOGGER.error(f"Beatsource Manager: Gagal memuat kualitas dari DB: {e}. Menggunakan default: {self.quality}")
+
+        # --- PERBAIKAN: Muat Pengaturan Kualitas PENGGUNA dari DB ---
+        try:
+            LOGGER.debug("Beatsource Manager: Memuat pengaturan Beatsource pengguna dari DB...")
+            # Ambil semua dokumen pengguna dari koleksi 'users'
+            all_users_from_db = await database.client.users.find({}).to_list(None)
+            
+            count = 0
+            for user_doc in all_users_from_db:
+                user_id = user_doc.get('_id')
+                # Cari key 'beatsource_qual'
+                beatsource_qual = user_doc.get('beatsource_qual') 
+                
+                if user_id and beatsource_qual:
+                    # Panggil setup_quality untuk memuatnya ke cache (self.user_data)
+                    await self.setup_quality(user_id, beatsource_qual)
+                    count += 1
+            LOGGER.info(f"Beatsource Manager: Berhasil memuat {count} pengaturan kualitas pengguna.")
+        except Exception as e:
+            LOGGER.error(f"Beatsource Manager: Gagal memuat pengaturan pengguna dari DB: {e}")
+            LOGGER.warning("Pengaturan kualitas pengguna mungkin tidak akan persisten.")
+        # --- AKHIR PERBAIKAN ---
 
         if not self.account_configs:
             LOGGER.warning("Beatsource Manager: Tidak ada akun untuk diinisialisasi.")
@@ -107,13 +136,10 @@ class BeatsourceLoginManager:
                 account_data = await client.get_account()
                 sub = account_data.get("subscription")
                 
-                # Baris ini akan memberitahu Anda nama langganan yang sebenarnya di log
                 LOGGER.info(f"Beatsource Manager: Ditemukan status langganan: '{sub}'")
 
-                # --- PERBAIKAN BUG UTAMA ---
-                # Mengganti "bs_link_pro" dengan "bsrc_link_pro_plus" sesuai log Anda
+                # Cek berdasarkan nama langganan Pro Anda
                 if sub == "bsrc_link_pro_plus":
-                # --- AKHIR PERBAIKAN ---
                     self.subscription_cache[client] = "pro"
                     LOGGER.info(" -> Ditemukan langganan 'Pro'. Kualitas Lossless/High diaktifkan.")
                 else:
