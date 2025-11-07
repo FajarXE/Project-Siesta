@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/soundcloud/handler.py]
+# [FILE LENGKAP: bot/helpers/soundcloud/handler.py]
 
 import aiohttp
 import aiofiles
@@ -16,7 +16,7 @@ from .manager import soundcloud_manager
 
 # Impor fungsi metadata yang baru kita buat
 from .metadata import (
-    process_track_metadata, 
+    process_track_metadata,
     process_playlist_or_album,
     custom_url_parse
 )
@@ -95,7 +95,10 @@ async def download_soundcloud_track(download_url: str, download_type: str, filep
 
 async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=True, \
     filepath=None, disable_link=False):
-    """Memulai alur kerja untuk satu track Soundcloud."""
+    """
+    Memulai alur kerja untuk satu track Soundcloud.
+    (Versi ini memunculkan Exception, bukan 'return False')
+    """
     
     track_meta = None
     try:
@@ -108,14 +111,14 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album'] or track_meta['title']}"
             filepath = sanitize_filepath(filepath)
     except Exception as e:
-        LOGGER.warning(f"Soundcloud track {item_id} tidak tersedia: {e}")
-        return False
+        LOGGER.error(f"Soundcloud track {item_id} tidak tersedia: {e}")
+        raise SoundcloudError(f"Gagal memproses metadata track {item_id}: {e}")
             
     download_url = track_meta.get('download_url')
     download_type = track_meta.get('download_type')
     if not download_url or not download_type:
         LOGGER.error(f"Tidak ada URL/Tipe download ditemukan untuk track SC {item_id}")
-        return False
+        raise SoundcloudError(f"Tidak ada URL download ditemukan untuk track {item_id}")
 
     track_meta['folderpath'] = filepath
     
@@ -133,18 +136,18 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
     )
     if err:
         LOGGER.error(f"Soundcloud dl_track gagal untuk {item_id}: {err}")
-        return False
+        raise SoundcloudError(f"Gagal mengunduh track: {err}")
 
     try:
         await set_metadata(track_meta)
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download SC: {filepath}")
-        return False
+        raise SoundcloudError(f"File tidak ditemukan setelah diunduh (path: {filepath})")
     except Exception as e:
         LOGGER.error(f"Gagal memproses metadata SC: {filepath} -> {e}")
         try: os.remove(filepath)
         except: pass
-        return False
+        raise SoundcloudError(f"Gagal menulis metadata: {e}")
 
     if upload:
         await track_upload(track_meta, user, disable_link)
@@ -243,4 +246,4 @@ async def start_soundcloud(link: str, user: dict):
         
     except Exception as e:
         LOGGER.error(f"Error fatal di Soundcloud handler: {e}\n{traceback.format_exc()}")
-        raise e 
+        raise e
