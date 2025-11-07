@@ -9,15 +9,29 @@ from .message import send_message, edit_message
 from .utils import *
 from bot.logger import LOGGER 
 
-# --- TAMBAHAN: Impor Gofile Uploader ---
+# --- Impor Uploader ---
 try:
     from ..helpers.gofile_api import gofile_batch_upload
 except ImportError:
-    # Fallback jika file gofile_api.py belum ada
     LOGGER.warning("Uploader: Gagal mengimpor 'gofile_batch_upload'. Unggahan Gofile pribadi tidak akan berfungsi.")
     async def gofile_batch_upload(*args, **kwargs):
         raise NotImplementedError("Modul gofile_api.py tidak ditemukan.")
-# --- BATAS TAMBAHAN ---
+        
+try:
+    from ..helpers.buzzheavier_api import buzzheavier_batch_upload
+except ImportError:
+    LOGGER.warning("Uploader: Gagal mengimpor 'buzzheavier_batch_upload'. Unggahan Buzzheavier pribadi tidak akan berfungsi.")
+    async def buzzheavier_batch_upload(*args, **kwargs):
+        raise NotImplementedError("Modul buzzheavier_api.py tidak ditemukan.")
+
+try:
+    from ..helpers.database.mongo_async import database
+except ImportError:
+    LOGGER.critical("Uploader: Gagal mengimpor 'database'. Unggahan pribadi akan gagal.")
+    class DummyDatabase:
+        async def get_user(self, *args, **kwargs): return {}
+    database = DummyDatabase()
+# --- BATAS Impor ---
 
 #
 #
@@ -28,30 +42,45 @@ except ImportError:
 
 async def track_upload(metadata, user, disable_link=False):
     
-    # --- PERBAIKAN: Ganti 'database.get_user' dengan 'bot_set.user_data.get' ---
+    # --- PERBAIKAN: Periksa Gofile & Buzzheavier ---
     user_settings = bot_set.user_data.get(user['user_id'], {})
     gofile_key = user_settings.get('gofile_api_key')
     gofile_folder = user_settings.get('gofile_folder_id')
+    buzz_key = user_settings.get('buzzheavier_api_key')
+    buzz_folder = user_settings.get('buzzheavier_folder_id')
 
+    file_list = [{
+        'filepath': metadata['filepath'],
+        'filename': os.path.basename(metadata['filepath'])
+    }]
+
+    upload_service = None
+    upload_args = ()
+    
     if gofile_key and gofile_folder:
-        await edit_message(user['bot_msg'], f"Mengunggah 1 lagu ke Gofile pribadi Anda...")
-        file_list = [{
-            'filepath': metadata['filepath'],
-            'filename': os.path.basename(metadata['filepath'])
-        }]
-        
+        upload_service = "Gofile"
+        upload_args = (file_list, gofile_key, gofile_folder, user['bot_msg'])
+        batch_uploader = gofile_batch_upload
+    
+    elif buzz_key and buzz_folder:
+        upload_service = "Buzzheavier"
+        upload_args = (file_list, buzz_key, buzz_folder, user['bot_msg'])
+        batch_uploader = buzzheavier_batch_upload
+
+    if upload_service:
+        await edit_message(user['bot_msg'], f"Mengunggah 1 lagu ke {upload_service} pribadi Anda...")
         try:
-            links = await gofile_batch_upload(file_list, gofile_key, gofile_folder, user['bot_msg'])
+            links = await batch_uploader(*upload_args)
             link_text = "\n".join(links)
-            await send_message(user, f"Unggahan Gofile Selesai:\n{link_text}")
+            await send_message(user, f"Unggahan {upload_service} Selesai:\n{link_text}")
         except Exception as e:
-            await send_message(user, f"Gagal mengunggah ke Gofile pribadi: {e}")
+            await send_message(user, f"Gagal mengunggah ke {upload_service} pribadi: {e}")
         
         try:
             os.remove(metadata['filepath'])
         except FileNotFoundError:
             pass
-        return 
+        return
     # --- AKHIR PERBAIKAN ---
 
     if bot_set.upload_mode == 'Local':
@@ -73,13 +102,28 @@ async def track_upload(metadata, user, disable_link=False):
 async def album_upload(metadata, user):
     user_dict = user.copy()
 
-    # --- PERBAIKAN: Ganti 'database.get_user' dengan 'bot_set.user_data.get' ---
+    # --- PERBAIKAN: Periksa Gofile & Buzzheavier ---
     user_settings = bot_set.user_data.get(user['user_id'], {})
     gofile_key = user_settings.get('gofile_api_key')
     gofile_folder = user_settings.get('gofile_folder_id')
-
+    buzz_key = user_settings.get('buzzheavier_api_key')
+    buzz_folder = user_settings.get('buzzheavier_folder_id')
+    
+    upload_service = None
+    upload_args = ()
+    
     if gofile_key and gofile_folder:
-        await edit_message(user['bot_msg'], f"Mengunggah {metadata['totaltracks']} lagu ke Gofile pribadi Anda...")
+        upload_service = "Gofile"
+        batch_uploader = gofile_batch_upload
+        upload_args = (gofile_key, gofile_folder)
+    
+    elif buzz_key and buzz_folder:
+        upload_service = "Buzzheavier"
+        batch_uploader = buzzheavier_batch_upload
+        upload_args = (buzz_key, buzz_folder)
+
+    if upload_service:
+        await edit_message(user['bot_msg'], f"Mengunggah {metadata['totaltracks']} lagu ke {upload_service} pribadi Anda...")
         
         file_list = []
         for track in metadata['tracks']:
@@ -89,18 +133,18 @@ async def album_upload(metadata, user):
             })
             
         try:
-            links = await gofile_batch_upload(file_list, gofile_key, gofile_folder, user['bot_msg'])
+            links = await batch_uploader(file_list, *upload_args, user['bot_msg'])
             
             if len(links) > 10:
-                link_file_path = f"{metadata['folderpath']}/gofile_links.txt"
+                link_file_path = f"{metadata['folderpath']}/links_{upload_service.lower()}.txt"
                 os.makedirs(os.path.dirname(link_file_path), exist_ok=True)
                 with open(link_file_path, 'w') as f:
                     f.write("\n".join(links))
-                await send_message(user, link_file_path, 'doc', caption=f"Link Gofile untuk {metadata['title']}")
+                await send_message(user, link_file_path, 'doc', caption=f"Link {upload_service} untuk {metadata['title']}")
             else:
-                await send_message(user, f"Unggahan Gofile Selesai untuk {metadata['title']}:\n" + "\n".join(links))
+                await send_message(user, f"Unggahan {upload_service} Selesai untuk {metadata['title']}:\n" + "\n".join(links))
         except Exception as e:
-            await send_message(user, f"Gagal mengunggah ke Gofile pribadi: {e}")
+            await send_message(user, f"Gagal mengunggah ke {upload_service} pribadi: {e}")
 
         await cleanup(None, metadata, user_dict)
         return
@@ -151,7 +195,7 @@ async def artist_upload(metadata, user):
                     meta=metadata
                 )
         else:
-            pass 
+            pass
     else:
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata['poster_msg']:
@@ -168,13 +212,28 @@ async def artist_upload(metadata, user):
 
 async def playlist_upload(metadata, user):
 
-    # --- PERBAIKAN: Ganti 'database.get_user' dengan 'bot_set.user_data.get' ---
+    # --- PERBAIKAN: Periksa Gofile & Buzzheavier ---
     user_settings = bot_set.user_data.get(user['user_id'], {})
     gofile_key = user_settings.get('gofile_api_key')
     gofile_folder = user_settings.get('gofile_folder_id')
+    buzz_key = user_settings.get('buzzheavier_api_key')
+    buzz_folder = user_settings.get('buzzheavier_folder_id')
 
+    upload_service = None
+    upload_args = ()
+    
     if gofile_key and gofile_folder:
-        await edit_message(user['bot_msg'], f"Mengunggah {metadata['totaltracks']} lagu ke Gofile pribadi Anda...")
+        upload_service = "Gofile"
+        batch_uploader = gofile_batch_upload
+        upload_args = (gofile_key, gofile_folder)
+    
+    elif buzz_key and buzz_folder:
+        upload_service = "Buzzheavier"
+        batch_uploader = buzzheavier_batch_upload
+        upload_args = (buzz_key, buzz_folder)
+
+    if upload_service:
+        await edit_message(user['bot_msg'], f"Mengunggah {metadata['totaltracks']} lagu ke {upload_service} pribadi Anda...")
         
         file_list = []
         for track in metadata['tracks']:
@@ -184,18 +243,18 @@ async def playlist_upload(metadata, user):
             })
             
         try:
-            links = await gofile_batch_upload(file_list, gofile_key, gofile_folder, user['bot_msg'])
+            links = await batch_uploader(file_list, *upload_args, user['bot_msg'])
             
             if len(links) > 10:
-                link_file_path = f"{metadata['folderpath']}/gofile_links.txt"
+                link_file_path = f"{metadata['folderpath']}/links_{upload_service.lower()}.txt"
                 os.makedirs(os.path.dirname(link_file_path), exist_ok=True)
                 with open(link_file_path, 'w') as f:
                     f.write("\n".join(links))
-                await send_message(user, link_file_path, 'doc', caption=f"Link Gofile untuk {metadata['title']}")
+                await send_message(user, link_file_path, 'doc', caption=f"Link {upload_service} untuk {metadata['title']}")
             else:
-                await send_message(user, f"Unggahan Gofile Selesai untuk {metadata['title']}:\n" + "\n".join(links))
+                await send_message(user, f"Unggahan {upload_service} Selesai untuk {metadata['title']}:\n" + "\n".join(links))
         except Exception as e:
-            await send_message(user, f"Gagal mengunggah ke Gofile pribadi: {e}")
+            await send_message(user, f"Gagal mengunggah ke {upload_service} pribadi: {e}")
 
         await cleanup(None, metadata, user)
         return
@@ -296,7 +355,7 @@ async def batch_telegram_upload(metadata, user):
     tasks = []
     if metadata['type'] == 'album' or metadata['type'] == 'playlist':
         for track in metadata['tracks']:
-            tasks.append(telegram_upload(track, user, batch_mode=True)) 
+            tasks.append(telegram_upload(track, user, batch_mode=True))
     elif metadata['type'] == 'artist':
         for album in metadata['albums']:
             for track in album['tracks']:
@@ -308,7 +367,7 @@ async def batch_telegram_upload(metadata, user):
     async def sem_task(task):
         async with semaphore:
             try:
-                await task 
+                await task
             except FileNotFoundError:
                 LOGGER.warning(f"File not found during batch upload, skipping.")
             except Exception as e:
