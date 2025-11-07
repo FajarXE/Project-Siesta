@@ -5,12 +5,11 @@ import logging, asyncio
 from traceback import format_exc
 
 from pyrogram import Client, filters
-# --- MODIFIKASI: Impor InlineKeyboardMarkup & InlineKeyboardButton ---
+# Impor Pyrogram Types
 from pyrogram.types import (
     CallbackQuery, Message, 
     InlineKeyboardMarkup, InlineKeyboardButton
 )
-# --- BATAS MODIFIKASI ---
 
 from config import Config
 from bot import cmd
@@ -45,7 +44,8 @@ from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
     bs_button, 
-    gofile_settings_buttons
+    gofile_settings_buttons,
+    buzzheavier_settings_buttons # --- IMPOR TOMBOL BUZZHEAVIER ---
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -97,6 +97,57 @@ async def set_gofile_creds(client: Client, m: Message):
     except Exception as e:
         await m.reply(f"Gagal menyimpan pengaturan: {e}", reply_to_message_id=m.id)
 
+# --- TAMBAHAN BARU: Perintah /setbuzzheavier ---
+@Client.on_message(filters.command("setbuzzheavier"))
+async def set_buzzheavier_creds(client: Client, m: Message):
+    """
+    Menangani perintah /setbuzzheavier untuk menyimpan atau menghapus kredensial Buzzheavier pengguna.
+    """
+    if not await check_user(msg=m):
+        return
+    
+    user_id = m.from_user.id
+    
+    try:
+        parts = m.text.split()
+        if len(parts) == 2 and parts[1].lower() == "clear":
+             await m.reply("Perintah ini usang. Silakan gunakan tombol 'Hapus Pengaturan' di /usetting > Buzzheavier Settings.", reply_to_message_id=m.id)
+             return
+        
+        if len(parts) != 3:
+            await m.reply(
+                "Format salah. Gunakan:\n"
+                "`/setbuzzheavier API_KEY FOLDER_ID`\n\n"
+                "Anda bisa mendapatkan API Key dari profil Buzzheavier Anda.\n"
+                "Folder ID adalah ID folder root atau kustom Anda.",
+                reply_to_message_id=m.id
+            )
+            return
+
+        api_key = parts[1]
+        folder_id = parts[2]
+        
+        data_to_save = {
+            'buzzheavier_api_key': api_key,
+            'buzzheavier_folder_id': folder_id
+        }
+        # Simpan ke DB
+        await database.save_user_settings(user_id, data_to_save)
+        # Perbarui cache
+        if user_id not in bot_set.user_data:
+            bot_set.user_data[user_id] = {}
+        bot_set.user_data[user_id].update(data_to_save)
+        
+        await m.reply(
+            "✅ Pengaturan Buzzheavier Anda telah disimpan!\n"
+            "Bot sekarang akan mengunggah file Anda ke akun Buzzheavier ini.",
+            reply_to_message_id=m.id
+        )
+        
+    except Exception as e:
+        await m.reply(f"Gagal menyimpan pengaturan: {e}", reply_to_message_id=m.id)
+# --- BATAS TAMBAHAN ---
+
 
 @Client.on_message(filters.command(cmd.USETTING))
 async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
@@ -130,7 +181,8 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|gofile)"))
+# --- MODIFIKASI: Tambahkan 'buzzheavier' ke regex ---
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|gofile|buzzheavier)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -148,10 +200,8 @@ async def uset_cb(client, query, datatype=""):
         user_settings = bot_set.user_data.get(user_id, {})
         api_key_exists = bool(user_settings.get('gofile_api_key'))
         folder_id_exists = bool(user_settings.get('gofile_folder_id'))
-
         text = "Pengaturan Unggahan Gofile Pribadi\n\n"
         text += "Gunakan tombol di bawah untuk melihat info atau menghapus pengaturan Anda."
-        
         await edit_message(
             query.message, 
             text, 
@@ -160,6 +210,23 @@ async def uset_cb(client, query, datatype=""):
         if datatype != "gofile_refresh":
             await query.answer() 
         return
+        
+    # --- TAMBAHAN: Handler Tombol Buzzheavier ---
+    if data[1] == "buzzheavier" or datatype == "buzzheavier_refresh":
+        user_settings = bot_set.user_data.get(user_id, {})
+        api_key_exists = bool(user_settings.get('buzzheavier_api_key'))
+        folder_id_exists = bool(user_settings.get('buzzheavier_folder_id'))
+        text = "Pengaturan Unggahan Buzzheavier Pribadi\n\n"
+        text += "Gunakan tombol di bawah untuk melihat info atau menghapus pengaturan Anda."
+        await edit_message(
+            query.message, 
+            text, 
+            markup=buzzheavier_settings_buttons(api_key_exists, folder_id_exists)
+        )
+        if datatype != "buzzheavier_refresh":
+            await query.answer() 
+        return
+    # --- BATAS TAMBAHAN ---
         
     if data[1] == "tidal" or datatype == "tidal":
         if not tidal_manager or not tidal_manager.clients:
@@ -257,6 +324,53 @@ async def uset_cb(client, query, datatype=""):
         return await edit_message(query.message, text, markup=kk_button(quality, user_id))
 
 
+# --- TAMBAHAN: Handler untuk tombol Buzzheavier Info & Clear ---
+@Client.on_callback_query(filters.regex("^buzzheavier_(info|clear)"))
+async def buzzheavier_buttons_cb(client: Client, query: CallbackQuery):
+    if not await check_user(msg=query.message):
+        return
+
+    user_id = query.from_user.id
+    data = query.data.split("_")[1] # info atau clear
+
+    if data == "info":
+        user_settings = bot_set.user_data.get(user_id, {})
+        api_key = user_settings.get('buzzheavier_api_key')
+        folder_id = user_settings.get('buzzheavier_folder_id')
+
+        text = "Info Pengaturan Buzzheavier\n\n"
+        if api_key and folder_id:
+            text += f"**API Key:** `...{api_key[-5:]}` (Disimpan)\n"
+            text += f"**Folder ID:** `{folder_id}` (Disimpan)\n\n"
+            text += "Bot akan mengunggah ke akun Buzzheavier ini."
+        else:
+            text += "Anda belum mengatur Buzzheavier pribadi.\n"
+            text += "Bot akan menggunakan mode unggahan default.\n\n"
+        
+        text += "Gunakan perintah ini untuk mengatur (kirim sebagai pesan biasa):\n"
+        text += "` /setbuzzheavier API_KEY FOLDER_ID`"
+        
+        back_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Kembali", callback_data="uset_buzzheavier")]]
+        )
+        await edit_message(query.message, text, markup=back_markup)
+        await query.answer()
+        return
+
+    if data == "clear":
+        data_to_save = {'buzzheavier_api_key': None, 'buzzheavier_folder_id': None}
+        # Hapus dari DB
+        await database.save_user_settings(user_id, data_to_save)
+        # Hapus dari cache
+        if user_id in bot_set.user_data:
+            bot_set.user_data[user_id].update(data_to_save)
+        
+        await query.answer("Pengaturan Buzzheavier telah dihapus!")
+        # Panggil kembali handler uset_cb untuk me-refresh menu
+        return await uset_cb(client, query, datatype="buzzheavier_refresh")
+# --- BATAS TAMBAHAN ---
+
+
 @Client.on_callback_query(filters.regex("^gofile_(info|clear)"))
 async def gofile_buttons_cb(client: Client, query: CallbackQuery):
     if not await check_user(msg=query.message):
@@ -282,14 +396,11 @@ async def gofile_buttons_cb(client: Client, query: CallbackQuery):
         text += "Gunakan perintah ini untuk mengatur (kirim sebagai pesan biasa):\n"
         text += "` /setgofile API_KEY FOLDER_ID`"
         
-        # --- PERBAIKAN ---
-        # Ganti query.answer(show_alert=True) dengan edit_message
         back_markup = InlineKeyboardMarkup(
             [[InlineKeyboardButton("Kembali", callback_data="uset_gofile")]]
         )
         await edit_message(query.message, text, markup=back_markup)
-        await query.answer() # Jawab query secara diam-diam
-        # --- BATAS PERBAIKAN ---
+        await query.answer()
         return
 
     if data == "clear":
@@ -304,6 +415,7 @@ async def gofile_buttons_cb(client: Client, query: CallbackQuery):
 
 @Client.on_callback_query(filters.regex("^utdqs"))
 async def uset_tidal(client, query):
+    # (Fungsi ini tetap sama)
     m = query.message
     if not await check_user(msg=m):
         return
@@ -339,6 +451,7 @@ async def uset_tidal(client, query):
 
 @Client.on_callback_query(filters.regex("^uqbs"))
 async def uset_qobuz(client, query):
+    # (Fungsi ini tetap sama)
     m = query.message
     if not await check_user(msg=m):
         return
@@ -359,6 +472,7 @@ async def uset_qobuz(client, query):
 
 @Client.on_callback_query(filters.regex("^ubps")) # User BeatPort Set
 async def uset_beatport(client, query):
+    # (Fungsi ini tetap sama)
     m = query.message
     if not await check_user(msg=m):
         return
@@ -383,6 +497,7 @@ async def uset_beatport(client, query):
 
 @Client.on_callback_query(filters.regex("^usbs")) # User BeatSource Set
 async def uset_beatsource(client, query):
+    # (Fungsi ini tetap sama)
     m = query.message
     if not await check_user(msg=m):
         return
@@ -414,6 +529,7 @@ async def uset_beatsource(client, query):
 
 @Client.on_callback_query(filters.regex("^udzs")) # User DeeZer Set
 async def uset_deezer(client, query):
+    # (Fungsi ini tetap sama)
     m = query.message
     if not await check_user(msg=m):
         return
@@ -439,6 +555,7 @@ async def uset_deezer(client, query):
 
 @Client.on_callback_query(filters.regex("^ukks")) # User KKBox Set
 async def uset_kkbox(client, query):
+    # (Fungsi ini tetap sama)
     m = query.message
     if not await check_user(msg=m):
         return
