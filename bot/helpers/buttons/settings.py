@@ -9,6 +9,10 @@ from bot import BOT_QOBUZ_CLIENTS
 class _DummyManager:
     def __init__(self):
         self.clients = []
+    
+    # Tambahkan method 'get_client' agar pemeriksaan 'if' berfungsi
+    def get_client(self):
+        return None
 
 # Impor manager Beatport
 try:
@@ -39,6 +43,13 @@ try:
     from bot.helpers.beatsource.manager import beatsource_manager
 except ImportError:
     beatsource_manager = _DummyManager()
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN: Impor Manajer Soundcloud ---
+try:
+    from bot.helpers.soundcloud.manager import soundcloud_manager
+except ImportError:
+    soundcloud_manager = _DummyManager()
 # --- BATAS TAMBAHAN ---
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -122,6 +133,18 @@ def providers_button():
                 InlineKeyboardButton(
                     text="BEATSOURCE", 
                     callback_data='bsP' # Beatsource Panel
+                )
+            ]
+        )
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN: Tombol Admin Soundcloud ---
+    if soundcloud_manager and soundcloud_manager.get_client():
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="SOUNDCLOUD", 
+                    callback_data='scP' # Soundcloud Panel
                 )
             ]
         )
@@ -420,6 +443,36 @@ def bs_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN: Tombol Soundcloud ---
+def sc_button(quality: dict, user_id: int = None):
+    """Membuat tombol untuk pengaturan kualitas Soundcloud."""
+    buttons = []
+    usetting = user_id is not None
+    prefix = "scQ" if not usetting else f"uscs" # Soundcloud Quality / User Soundcloud Set
+    
+    # Peta Kualitas Soundcloud
+    display_text_map = {
+        "original": "Original (Jika Ada)",
+        "stream": "Stream (Default AAC/MP3)"
+    }
+    for key, value in quality.items():
+        callback_text = display_text_map.get(key)
+        if callback_text:
+            buttons.append([InlineKeyboardButton(value, callback_data=f"{prefix}_{callback_text}")])
+
+    if usetting:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+        
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
+
 # Deezer Button
 def dz_button(quality: dict, user_id: int = None):
     buttons = []
@@ -497,6 +550,11 @@ def usetting_button() -> InlineKeyboardMarkup:
     # --- TAMBAHAN: Tombol Pengguna Beatsource ---
     if beatsource_manager and beatsource_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Beatsource Quality", callback_data=f"uset_beatsource")])
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN: Tombol Pengguna Soundcloud ---
+    if soundcloud_manager and soundcloud_manager.get_client():
+        buttons.append([InlineKeyboardButton(text=f"Soundcloud Quality", callback_data=f"uset_soundcloud")])
     # --- BATAS TAMBAHAN ---
     
     if deezer_manager and deezer_manager.clients:
