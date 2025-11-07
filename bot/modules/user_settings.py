@@ -39,10 +39,18 @@ except ImportError:
     beatsource_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN: Impor Manajer Soundcloud ---
+try:
+    from ..helpers.soundcloud.manager import soundcloud_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor soundcloud_manager.")
+    soundcloud_manager = None
+# --- BATAS TAMBAHAN ---
+
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
-    bs_button # --- TAMBAHAN ---
+    bs_button, sc_button # --- TAMBAHAN: Impor bs_button dan sc_button ---
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -82,8 +90,8 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-# --- MODIFIKASI: Tambahkan 'beatsource' ke regex ---
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource)"))
+# --- MODIFIKASI: Tambahkan 'beatsource' dan 'soundcloud' ke regex ---
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -115,7 +123,7 @@ async def uset_cb(client, query, datatype=""):
         text = f"Choose Qobuz Audio Quality bellow:"
         quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
         if not BOT_QOBUZ_CLIENTS:
-            return await edit_message(query.message, "Layanan Qobuz tidakaktif (tidak ada klien yang login).")
+            return await edit_message(query.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
         client_to_check = BOT_QOBUZ_CLIENTS.get(1) or list(BOT_QOBUZ_CLIENTS.values())[0]
         user_dict = client_to_check.user_data.get(user_id, {})
         current = user_dict.get("qobuz_qual", client_to_check.quality) 
@@ -158,6 +166,29 @@ async def uset_cb(client, query, datatype=""):
             query.message,
             text + "\n(Kualitas tergantung langganan akun bot)",
             markup=bs_button(quality, user_id)
+        )
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN: Panel Pengguna Soundcloud ---
+    if data[1] == "soundcloud" or datatype == "soundcloud":
+        text = f"Choose Soundcloud Audio Quality bellow:"
+        quality = {
+            "original": "Original (Jika Ada)",
+            "stream": "Stream (Default AAC/MP3)"
+        }
+        if not soundcloud_manager or not soundcloud_manager.get_client():
+            return await edit_message(query.message, "Layanan Soundcloud tidak aktif.")
+        
+        user_dict = soundcloud_manager.user_data.get(user_id, {})
+        current = user_dict.get("soundcloud_qual", soundcloud_manager.quality) 
+        
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        return await edit_message(
+            query.message,
+            text,
+            markup=sc_button(quality, user_id)
         )
     # --- BATAS TAMBAHAN ---
 
@@ -309,6 +340,38 @@ async def uset_beatsource(client, query):
     await uset_cb(client, query, "beatsource")
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN: Handler Pengguna Soundcloud ---
+@Client.on_callback_query(filters.regex("^uscs")) # User SoundCloud Set
+async def uset_soundcloud(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    
+    qual_map_display = {
+        "Original (Jika Ada)": "original",
+        "Stream (Default AAC/MP3)": "stream"
+    }
+    to_set_display = query.data.split('_')[1]
+    to_set = qual_map_display.get(to_set_display)
+    
+    if not to_set:
+        return await query.answer("Kualitas tidak valid.", True)
+
+    if not soundcloud_manager or not soundcloud_manager.get_client():
+        await query.answer("Layanan Soundcloud tidak aktif!", show_alert=True)
+        return
+
+    user_id = query.from_user.id
+    
+    await soundcloud_manager.setup_quality(user_id, to_set)
+    user_data_to_save = soundcloud_manager.user_data.get(user_id, {})
+
+    if user_data_to_save:
+        await database.save_user_settings(user_id, user_data_to_save)
+    
+    await uset_cb(client, query, "soundcloud")
+# --- BATAS TAMBAHAN ---
+
 @Client.on_callback_query(filters.regex("^udzs")) # User DeeZer Set
 async def uset_deezer(client, query):
     m = query.message
@@ -439,6 +502,16 @@ async def debug(c, m): # debugger
     else:
         dt_bs += "Tidak ada klien Beatsource yang aktif."
     # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN: Info Debug Soundcloud ---
+    dt_sc = "\n\nSOUNDCLOUD:\n"
+    if soundcloud_manager and soundcloud_manager.get_client():
+        dt_sc += f"Klien Soundcloud aktif (Token diatur).\n"
+        dt_sc += f"Kualitas Default: {soundcloud_manager.quality}\n"
+        dt_sc += f"Cache User: {len(soundcloud_manager.user_data)} pengguna"
+    else:
+        dt_sc += "Tidak ada klien Soundcloud yang aktif (Token hilang)."
+    # --- BATAS TAMBAHAN ---
 
     dt_dz = "\n\nDEEZER:\n"
     if deezer_manager and deezer_manager.clients:
@@ -467,4 +540,6 @@ async def debug(c, m): # debugger
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
     zips += f"\n\n{user_dict}"
-    await m.reply(dt_qb + dt_bp + dt_bs + dt_dz + dt_td + dt_kk + zips, True) # Tambahkan dt_bs
+    
+    # Tambahkan dt_sc ke pesan balasan
+    await m.reply(dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + zips, True)
