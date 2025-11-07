@@ -146,8 +146,6 @@ class Config:
         logging.warning("Tidak ada kredensial Beatport (BEATPORT_EMAIL_1, dll.) ditemukan di .env")
 #--------------------    
 
-# --- TAMBAHAN: Blok Beatsource ---
-#--------------------    
 # BEATSOURCE
 #--------------------
     BEATSOURCE_ACCOUNTS = []
@@ -168,6 +166,16 @@ class Config:
 
     if not BEATSOURCE_ACCOUNTS:
         logging.warning("Tidak ada kredensial Beatsource (BEATSOURCE_EMAIL_1, dll.) ditemukan di .env")
+#--------------------
+
+# --- TAMBAHAN BARU: Blok Soundcloud ---
+#--------------------    
+# SOUNDCLOUD
+#--------------------
+    # Ini adalah 'client_id' atau 'access_token' dari API v2
+    SOUNDCLOUD_ACCESS_TOKEN = getenv("SOUNDCLOUD_ACCESS_TOKEN", None)
+    if not SOUNDCLOUD_ACCESS_TOKEN:
+        logging.warning("SOUNDCLOUD_ACCESS_TOKEN tidak diatur di .env! Modul Soundcloud akan gagal.")
 #--------------------
 # --- BATAS TAMBAHAN ---
 
@@ -208,3 +216,4 @@ class Config:
 # CONCURRENT
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
+
