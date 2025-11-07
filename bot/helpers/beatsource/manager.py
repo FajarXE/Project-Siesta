@@ -107,14 +107,12 @@ class BeatsourceLoginManager:
                 account_data = await client.get_account()
                 sub = account_data.get("subscription")
                 
-                # --- PERBAIKAN LOGGING ---
                 # Baris ini akan memberitahu Anda nama langganan yang sebenarnya di log
                 LOGGER.info(f"Beatsource Manager: Ditemukan status langganan: '{sub}'")
-                # --- AKHIR PERBAIKAN ---
 
                 # --- PERBAIKAN BUG UTAMA ---
-                # Mengganti "bp_link_pro" (Beatport) dengan "bs_link_pro" (Beatsource)
-                if sub == "bs_link_pro":
+                # Mengganti "bs_link_pro" dengan "bsrc_link_pro_plus" sesuai log Anda
+                if sub == "bsrc_link_pro_plus":
                 # --- AKHIR PERBAIKAN ---
                     self.subscription_cache[client] = "pro"
                     LOGGER.info(" -> Ditemukan langganan 'Pro'. Kualitas Lossless/High diaktifkan.")
