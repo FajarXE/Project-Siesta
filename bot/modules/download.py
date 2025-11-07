@@ -135,11 +135,11 @@ async def start_link(link: str, user: dict) -> None:
     beatport = ["https://www.beatport.com", "beatport.com"]
     beatsource = ["https://www.beatsource.com", "beatsource.com"]
     
-    # --- PERBAIKAN: Tambahkan 'm.soundcloud.com' ---
+    # --- PERBAIKAN: Perbaiki typo 'https_' menjadi 'https://' ---
     soundcloud = [
         "https://soundcloud.com", "soundcloud.com", 
         "https://on.soundcloud.com", "on.soundcloud.com",
-        "https_//m.soundcloud.com", "m.soundcloud.com" # <-- TAMBAHAN BARU
+        "https://m.soundcloud.com", "m.soundcloud.com" # <-- TYPO DIPERBAIKI
     ]
     # --- AKHIR PERBAIKAN ---
     
