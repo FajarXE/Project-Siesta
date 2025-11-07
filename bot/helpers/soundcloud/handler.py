@@ -251,11 +251,9 @@ async def start_soundcloud(link: str, user: dict):
         LOGGER.debug(f"Soundcloud: Link pendek terdeteksi: {link}. Mengambil URL asli...")
         try:
             async with aiohttp.ClientSession() as session:
-                # Cukup 'head' request dengan allow_redirects=False
                 async with session.head(link, allow_redirects=False, timeout=10) as r:
                     if r.status in (301, 302, 307, 308) and 'Location' in r.headers:
                         original_link = r.headers['Location']
-                        # Pastikan URL lengkap
                         if original_link.startswith('/'):
                             original_link = "https://soundcloud.com" + original_link
                             
@@ -266,10 +264,16 @@ async def start_soundcloud(link: str, user: dict):
         except Exception as e:
             LOGGER.error(f"Gagal un-shorten link Soundcloud: {e}")
             raise SoundcloudError(f"Gagal me-resolve link pendek: {e}")
-    # --- AKHIR PERBAIKAN ---
+    
+    # --- TAMBAHAN BARU: Normalisasi link mobile (m.soundcloud.com) ---
+    elif "m.soundcloud.com" in link:
+        LOGGER.debug(f"Soundcloud: Link mobile terdeteksi: {link}. Normalisasi...")
+        link = link.replace("m.soundcloud.com", "soundcloud.com")
+        LOGGER.debug(f"Soundcloud: URL dinormalisasi: {link}")
+    # --- AKHIR TAMBAHAN ---
 
     try:
-        # custom_url_parse sekarang menerima link yang 'panjang'
+        # custom_url_parse sekarang menerima link yang 'panjang' dan 'normal'
         media_type, item_id, extra = await custom_url_parse(link, client)
 
         if media_type == 'artist':
