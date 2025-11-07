@@ -1,4 +1,4 @@
-# [FILE LENGKAP: bot/modules/download.py]
+# [GANTI FILE: bot/modules/download.py]
 
 from pyrogram.types import Message
 from pyrogram import Client, filters
@@ -132,9 +132,11 @@ async def start_link(link: str, user: dict) -> None:
     # --- TAMBAHAN: URL Beatsource ---
     beatsource = ["https://www.beatsource.com", "beatsource.com"]
     # --- BATAS TAMBAHAN ---
-    # --- TAMBAHAN: URL Soundcloud ---
-    soundcloud = ["https://soundcloud.com", "soundcloud.com"]
-    # --- BATAS TAMBAHAN ---
+    
+    # --- PERBAIKAN: Tambahkan 'on.soundcloud.com' ---
+    soundcloud = ["https://soundcloud.com", "soundcloud.com", "https://on.soundcloud.com", "on.soundcloud.com"]
+    # --- AKHIR PERBAIKAN ---
+    
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
     if link.startswith(tuple(tidal)):
