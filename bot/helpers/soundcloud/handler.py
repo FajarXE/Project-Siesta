@@ -1,4 +1,4 @@
-# [FILE LENGKAP: bot/helpers/soundcloud/handler.py]
+# [GANTI FILE: bot/helpers/soundcloud/handler.py]
 
 import aiohttp
 import aiofiles
@@ -102,16 +102,32 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
     
     track_meta = None
     try:
-        if not pre_data: # pre_data hanya ada jika dipanggil dari album/playlist
-            track_meta = await process_track_metadata(item_id, user['r_id'], user)
+        # ----- PERBAIKAN LOGIKA DIMULAI -----
+        # Cek apakah pre_data adalah metadata yang sudah diproses (dari album/playlist)
+        # atau data API mentah (dari resolve URL tunggal).
+        if pre_data and pre_data.get('provider') == 'Soundcloud':
+            # Ini adalah metadata yang sudah diproses dari start_album_or_playlist
+            LOGGER.debug(f"SC start_track: Menggunakan pre_data yang sudah diproses.")
+            track_meta = pre_data
         else:
-            track_meta = pre_data # pre_data SUDAH track_meta lengkap dari process_playlist
-            
+            # Ini adalah data API mentah dari resolve (atau tidak ada pre_data)
+            # Kita HARUS memanggil process_track_metadata untuk mem-parsingnya.
+            LOGGER.debug(f"SC start_track: Memanggil process_track_metadata.")
+            track_meta = await process_track_metadata(
+                item_id, 
+                user['r_id'], 
+                user, 
+                pre_data=pre_data # Berikan data mentah (jika ada) untuk di-parse
+            )
+        # ----- PERBAIKAN LOGIKA SELESAI -----
+
         if not filepath:
+            # Sekarang track_meta dijamin memiliki key 'provider'
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album'] or track_meta['title']}"
             filepath = sanitize_filepath(filepath)
+            
     except Exception as e:
-        LOGGER.error(f"Soundcloud track {item_id} tidak tersedia: {e}")
+        LOGGER.error(f"Soundcloud track {item_id} tidak tersedia: {e}", exc_info=True)
         raise SoundcloudError(f"Gagal memproses metadata track {item_id}: {e}")
             
     download_url = track_meta.get('download_url')
