@@ -6,7 +6,11 @@ from bot.logger import LOGGER
 import os
 from urllib.parse import quote
 import aiofiles
-import re # --- PERBAIKAN: Impor 're' untuk regex ---
+import re
+
+# --- PERBAIKAN: Tentukan batas percobaan ---
+MAX_RENAME_ATTEMPTS = 10
+# --- BATAS PERBAIKAN ---
 
 class BuzzheavierUploader:
     def __init__(self, token: str, folder_id: str):
@@ -15,17 +19,18 @@ class BuzzheavierUploader:
         self.api_url = "https://w.buzzheavier.com" 
         self.headers = {"Authorization": f"Bearer {self.token}"}
 
-    async def upload_file(self, file_path: str, file_name: str = None):
+    # --- PERBAIKAN: Tambahkan parameter retry_count ---
+    async def upload_file(self, file_path: str, file_name: str = None, retry_count: int = 0):
         """
         Mengunggah satu file ke Buzzheavier menggunakan PUT.
         Akan secara otomatis mengganti nama jika file sudah ada.
         """
+        # --- BATAS PERBAIKAN ---
+        
         if not file_name:
             file_name = os.path.basename(file_path)
         
-        # URL encode nama file
         safe_file_name = quote(file_name)
-        
         upload_url = f"{self.api_url}/{self.folder_id}/{safe_file_name}"
         
         try:
@@ -39,26 +44,29 @@ class BuzzheavierUploader:
                             LOGGER.error(f"Buzzheavier: Respons bukan JSON. Status: {resp.status}, Teks: {await resp.text()}")
                             raise Exception(f"Respons server tidak valid (Status {resp.status}).")
 
-                        # --- PERBAIKAN: Logika Ganti Nama Otomatis ---
+                        # --- PERBAIKAN: Logika Ganti Nama Otomatis dengan Jeda & Batas ---
                         if result.get("code") == 400:
-                            LOGGER.warning(f"Buzzheavier: File {file_name} sudah ada. Mencoba mengganti nama...")
+                            LOGGER.warning(f"Buzzheavier: File {file_name} sudah ada. (Percobaan ke-{retry_count+1})")
                             
-                            # Pisahkan nama file dan ekstensi
-                            # Regex ini menangani "file.flac" dan "file (1).flac"
+                            # Periksa jika kita sudah melewati batas
+                            if retry_count >= MAX_RENAME_ATTEMPTS:
+                                raise Exception(f"File {file_name} sudah ada dan gagal diunggah setelah {MAX_RENAME_ATTEMPTS} kali ganti nama.")
+                            
+                            # Tambahkan jeda 1 detik agar tidak dianggap spam
+                            await asyncio.sleep(1)
+
                             match = re.search(r"(.+?)(?: \((\d+)\))?(\.[^.]+)$", file_name)
                             
                             if match:
                                 base_name, num, ext = match.groups()
-                                # Jika sudah ada angka (misal "file (1).flac"), tambahkan 1
                                 num = int(num) + 1 if num else 2
                                 new_file_name = f"{base_name} ({num}){ext}"
                             else:
-                                # Jika tidak ada ekstensi (misal, hanya "file")
                                 base_name = file_name
                                 new_file_name = f"{base_name} (2)"
                             
-                            # Panggil ulang fungsi ini secara rekursif dengan nama file baru
-                            return await self.upload_file(file_path, new_file_name)
+                            # Panggil ulang fungsi dengan nama baru DAN tambahkan hitungan percobaan
+                            return await self.upload_file(file_path, new_file_name, retry_count + 1)
                         # --- BATAS PERBAIKAN ---
 
                         if result.get("code") != 201:
@@ -77,7 +85,10 @@ class BuzzheavierUploader:
              LOGGER.error(f"Buzzheavier: Error HTTP saat mengunggah {file_name}: {e.status} - {e.message}")
              raise Exception(f"HTTP {e.status} saat mengunggah: {e.message}")
         except Exception as e:
-            LOGGER.error(f"Buzzheavier: Error saat mengunggah {file_name}: {e}")
+            # --- PERBAIKAN: Jangan log error jaringan yang diharapkan ---
+            if "Connection reset by peer" not in str(e):
+                LOGGER.error(f"Buzzheavier: Error saat mengunggah {file_name}: {e}")
+            # --- BATAS PERBAIKAN ---
             raise e
 
 # Fungsi helper untuk mengunggah banyak file (batch)
@@ -98,18 +109,16 @@ async def buzzheavier_batch_upload(file_list: list, token: str, folder_id: str, 
 
         if user_message:
             try:
-                # Perbarui status progres
                 await user_message.edit(f"Mengunggah ke Buzzheavier...\nLagu {i+1} dari {total}\n`{filename}`")
             except:
                 pass 
         
         try:
+            # Panggil upload_file tanpa retry_count (defaultnya 0)
             link = await uploader.upload_file(filepath, filename)
             links.append(link)
         except Exception as e:
             LOGGER.error(f"Buzzheavier: Gagal mengunggah batch file {filename}: {e}")
-            # --- PERBAIKAN: Jangan hentikan seluruh batch karena satu error ---
             links.append(f"Gagal: {filename} (Error: {e})")
-            # --- BATAS PERBAIKAN ---
             
     return links
