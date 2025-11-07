@@ -134,7 +134,15 @@ async def start_link(link: str, user: dict) -> None:
     spotify = ["https://open.spotify.com"]
     beatport = ["https://www.beatport.com", "beatport.com"]
     beatsource = ["https://www.beatsource.com", "beatsource.com"]
-    soundcloud = ["https://soundcloud.com", "soundcloud.com", "https://on.soundcloud.com", "on.soundcloud.com"]
+    
+    # --- PERBAIKAN: Tambahkan 'm.soundcloud.com' ---
+    soundcloud = [
+        "https://soundcloud.com", "soundcloud.com", 
+        "https://on.soundcloud.com", "on.soundcloud.com",
+        "https_//m.soundcloud.com", "m.soundcloud.com" # <-- TAMBAHAN BARU
+    ]
+    # --- AKHIR PERBAIKAN ---
+    
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
     if link.startswith(tuple(tidal)):
