@@ -1,9 +1,10 @@
-# [FILE BARU: bot/helpers/gofile_api.py]
+# [GANTI FILE: bot/helpers/gofile_api.py]
 
 import aiohttp
 import asyncio
 from bot.logger import LOGGER
 import os
+import random # --- PERBAIKAN: Impor 'random' ---
 
 class GofileUploader:
     def __init__(self, token: str, folder_id: str):
@@ -20,7 +21,10 @@ class GofileUploader:
                     resp.raise_for_status()
                     data = await resp.json()
                     if data.get("status") == "ok":
-                        self.upload_server = data["data"]["servers"][0]["name"]
+                        # --- PERBAIKAN: Pilih server secara acak, bukan yang pertama ---
+                        servers_list = data["data"]["servers"]
+                        self.upload_server = random.choice(servers_list)["name"]
+                        # --- BATAS PERBAIKAN ---
                         LOGGER.info(f"Gofile: Mendapat server unggahan: {self.upload_server}")
                         return True
                     else:
@@ -49,7 +53,13 @@ class GofileUploader:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(upload_url, data=data) as resp:
+                # Tambahkan timeout untuk menghindari hang
+                async with session.post(upload_url, data=data, timeout=aiohttp.ClientTimeout(total=600)) as resp:
+                    
+                    if resp.status == 500:
+                        LOGGER.error(f"Gofile: Server {self.upload_server} mengembalikan 500 Internal Server Error.")
+                        raise Exception(f"Gofile server error (500) pada {self.upload_server}")
+
                     resp.raise_for_status()
                     result = await resp.json()
                     
@@ -61,6 +71,8 @@ class GofileUploader:
                         raise Exception(f"Gagal mengunggah file: {result.get('status')}")
         except Exception as e:
             LOGGER.error(f"Gofile: Error saat mengunggah {file_name}: {e}")
+            # Reset server jika gagal, agar percobaan berikutnya mendapat server baru
+            self.upload_server = None
             raise e
 
 # Fungsi helper untuk mengunggah banyak file (batch)
