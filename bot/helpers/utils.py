@@ -79,7 +79,7 @@ async def download_file(url, path, retries=3, timeout=30):
             return str(e)
 
 
-# --- FUNGSI YANG DIPERBAIKI ---
+# --- FUNGSI YANG DIPERBAIKI (LOGIKA AMAN) ---
 async def format_string(text:str, data:dict, user=None):
     """
     Args:
@@ -89,25 +89,35 @@ async def format_string(text:str, data:dict, user=None):
     Returns:
         str
     """
-    # Ambil semua data dengan aman, berikan string kosong ('') jika None
-    title = data.get('title') or ''
-    album = data.get('album') or ''
-    artist = data.get('artist') or ''
-    albumartist = data.get('albumartist') or ''
-    tracknumber = str(data.get('tracknumber') or '')
-    date = str(data.get('date') or '')
-    upc = str(data.get('upc') or '')
-    isrc = str(data.get('isrc') or '')
-    totaltracks = str(data.get('totaltracks') or '')
-    volume = str(data.get('volume') or '')
-    totalvolume = str(data.get('totalvolume') or '')
-    extension = data.get('extension') or ''
-    duration = str(data.get('duration') or '')
-    copyright = data.get('copyright') or ''
-    genre = data.get('genre') or ''
-    provider = (data.get('provider') or '').title() # .title() aman pada string kosong
-    quality = data.get('quality') or ''
-    explicit = str(data.get('explicit') or '') # 'False' or ''
+    
+    # Fungsi helper internal untuk menangani None vs False
+    def safe_get(key):
+        val = data.get(key)
+        # Jika nilainya None (tidak ada), kembalikan string kosong
+        if val is None:
+            return ''
+        # Jika nilainya ada (termasuk True atau False), konversi ke string
+        return str(val)
+
+    # Ambil semua data dengan aman
+    title = safe_get('title')
+    album = safe_get('album')
+    artist = safe_get('artist')
+    albumartist = safe_get('albumartist')
+    tracknumber = safe_get('tracknumber')
+    date = safe_get('date')
+    upc = safe_get('upc')
+    isrc = safe_get('isrc')
+    totaltracks = safe_get('totaltracks')
+    volume = safe_get('volume')
+    totalvolume = safe_get('totalvolume')
+    extension = safe_get('extension')
+    duration = safe_get('duration')
+    copyright = safe_get('copyright')
+    genre = safe_get('genre')
+    provider = (data.get('provider') or '').title() # .title() aman
+    quality = safe_get('quality')
+    explicit = safe_get('explicit') # <-- PERBAIKAN UTAMA
     
     # Lakukan penggantian dengan nilai yang aman
     text = text.replace(R'{title}', title)
