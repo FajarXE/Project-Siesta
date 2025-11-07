@@ -246,8 +246,30 @@ async def start_soundcloud(link: str, user: dict):
         
     user['soundcloud_api'] = client
     
+    # --- PERBAIKAN: Buka link pendek (on.soundcloud.com) ---
+    if "on.soundcloud.com" in link:
+        LOGGER.debug(f"Soundcloud: Link pendek terdeteksi: {link}. Mengambil URL asli...")
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Cukup 'head' request dengan allow_redirects=False
+                async with session.head(link, allow_redirects=False, timeout=10) as r:
+                    if r.status in (301, 302, 307, 308) and 'Location' in r.headers:
+                        original_link = r.headers['Location']
+                        # Pastikan URL lengkap
+                        if original_link.startswith('/'):
+                            original_link = "https://soundcloud.com" + original_link
+                            
+                        LOGGER.debug(f"Soundcloud: URL asli ditemukan: {original_link}")
+                        link = original_link # Ganti link lama dengan link asli
+                    else:
+                        raise SoundcloudError(f"Gagal me-resolve link pendek (status: {r.status})")
+        except Exception as e:
+            LOGGER.error(f"Gagal un-shorten link Soundcloud: {e}")
+            raise SoundcloudError(f"Gagal me-resolve link pendek: {e}")
+    # --- AKHIR PERBAIKAN ---
+
     try:
-        # custom_url_parse Soundcloud bersifat async dan memanggil 'resolve'
+        # custom_url_parse sekarang menerima link yang 'panjang'
         media_type, item_id, extra = await custom_url_parse(link, client)
 
         if media_type == 'artist':
