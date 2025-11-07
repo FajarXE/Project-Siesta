@@ -63,6 +63,14 @@ except ImportError:
     sys.exit(1)
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN: Impor Manajer Soundcloud ---
+try:
+    from .helpers.soundcloud.manager import soundcloud_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'soundcloud_manager'!")
+    sys.exit(1)
+# --- BATAS TAMBAHAN ---
+
 
 # --- Fungsi Login Qobuz ---
 async def login_single_client(creds: dict):
@@ -194,6 +202,16 @@ async def main():
         logging.info(f"Manajer Beatsource berhasil diinisialisasi dengan {len(beatsource_manager.clients)} klien.")
     else:
         logging.warning("PERINGATAN: Tidak ada akun Beatsource yang berhasil login!")
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN: Login Soundcloud ---
+    logging.info("Memulai inisialisasi Manajer Soundcloud...")
+    await soundcloud_manager.initialize_clients()
+    if soundcloud_manager.get_client():
+        # Anda mungkin ingin menambahkan: bot_set.soundcloud = True 
+        logging.info(f"Manajer Soundcloud berhasil diinisialisasi.")
+    else:
+        logging.warning("PERINGATAN: Manajer Soundcloud gagal diinisialisasi (Token mungkin hilang)!")
     # --- BATAS TAMBAHAN ---
 
     logging.info("Menginisialisasi data pengguna...")
