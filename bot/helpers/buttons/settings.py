@@ -34,11 +34,12 @@ try:
 except ImportError:
     kkbox_manager = _DummyManager()
 
-# Impor Manajer Beatsource
+# --- TAMBAHAN: Impor Manajer Beatsource ---
 try:
     from bot.helpers.beatsource.manager import beatsource_manager
 except ImportError:
     beatsource_manager = _DummyManager()
+# --- BATAS TAMBAHAN ---
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -114,6 +115,7 @@ def providers_button():
             ]
         )
         
+    # --- TAMBAHAN: Tombol Admin Beatsource ---
     if beatsource_manager and beatsource_manager.clients:
         inline_keyboard.append(
             [
@@ -123,6 +125,7 @@ def providers_button():
                 )
             ]
         )
+    # --- BATAS TAMBAHAN ---
         
     if kkbox_manager and kkbox_manager.clients:
         inline_keyboard.append(
@@ -385,12 +388,14 @@ def bp_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# Beatsource Button
+# --- TAMBAHAN: Tombol Beatsource (Salinan dari Beatport) ---
 def bs_button(quality: dict, user_id: int = None):
+    """Membuat tombol untuk pengaturan kualitas Beatsource."""
     buttons = []
     usetting = user_id is not None
-    prefix = "bsQ" if not usetting else f"usbs"
+    prefix = "bsQ" if not usetting else f"usbs" # Beatsource Quality / User Beatsource Set
     row = []
+    # Peta ini sama dengan Beatport
     display_text_map = {
         "lossless": "Lossless (FLAC)",
         "high": "High (AAC 256)",
@@ -413,6 +418,7 @@ def bs_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
 
 # Deezer Button
 def dz_button(quality: dict, user_id: int = None):
@@ -476,69 +482,8 @@ def kk_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 
 
-def gofile_settings_buttons(api_key_exists: bool, folder_id_exists: bool) -> InlineKeyboardMarkup:
-    """Membuat tombol untuk panel pengaturan Gofile."""
-    buttons = []
-    
-    key_status = "✅ Disimpan" if api_key_exists else "❌ Kosong"
-    folder_status = "✅ Disimpan" if folder_id_exists else "❌ Kosong"
-
-    buttons.append(
-        [InlineKeyboardButton(f"API Key: {key_status}", callback_data="gofile_info")]
-    )
-    buttons.append(
-        [InlineKeyboardButton(f"Folder ID: {folder_status}", callback_data="gofile_info")]
-    )
-    buttons.append(
-        [InlineKeyboardButton("ℹ️ Cara Mengatur / Info", callback_data="gofile_info")]
-    )
-    
-    if api_key_exists or folder_id_exists:
-        buttons.append(
-            [InlineKeyboardButton("🗑️ Hapus Pengaturan Gofile", callback_data="gofile_clear")]
-        )
-    
-    buttons.append([InlineKeyboardButton("Kembali", callback_data="uset_back")])
-    
-    return InlineKeyboardMarkup(buttons)
-
-# --- TAMBAHAN BARU: Tombol Menu Pengaturan Buzzheavier ---
-def buzzheavier_settings_buttons(api_key_exists: bool, folder_id_exists: bool) -> InlineKeyboardMarkup:
-    """Membuat tombol untuk panel pengaturan Buzzheavier."""
-    buttons = []
-    
-    key_status = "✅ Disimpan" if api_key_exists else "❌ Kosong"
-    folder_status = "✅ Disimpan" if folder_id_exists else "❌ Kosong"
-
-    buttons.append(
-        [InlineKeyboardButton(f"API Key: {key_status}", callback_data="buzzheavier_info")]
-    )
-    buttons.append(
-        [InlineKeyboardButton(f"Folder ID: {folder_status}", callback_data="buzzheavier_info")]
-    )
-    buttons.append(
-        [InlineKeyboardButton("ℹ️ Cara Mengatur / Info", callback_data="buzzheavier_info")]
-    )
-    
-    if api_key_exists or folder_id_exists:
-        buttons.append(
-            [InlineKeyboardButton("🗑️ Hapus Pengaturan Buzzheavier", callback_data="buzzheavier_clear")]
-        )
-    
-    buttons.append([InlineKeyboardButton("Kembali", callback_data="uset_back")])
-    
-    return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
-
-
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
-    
-    buttons.append([InlineKeyboardButton(text="Gofile Settings", callback_data="uset_gofile")])
-    
-    # --- TAMBAHAN: Tombol Pengaturan Buzzheavier ---
-    buttons.append([InlineKeyboardButton(text="Buzzheavier Settings", callback_data="uset_buzzheavier")])
-    # --- BATAS TAMBAHAN ---
     
     if tidal_manager and tidal_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Tidal Quality", callback_data=f"uset_tidal")])
@@ -549,8 +494,10 @@ def usetting_button() -> InlineKeyboardMarkup:
     if beatport_manager and beatport_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Beatport Quality", callback_data=f"uset_beatport")])
 
+    # --- TAMBAHAN: Tombol Pengguna Beatsource ---
     if beatsource_manager and beatsource_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Beatsource Quality", callback_data=f"uset_beatsource")])
+    # --- BATAS TAMBAHAN ---
     
     if deezer_manager and deezer_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Deezer Quality", callback_data=f"uset_deezer")])
