@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/beatsource/manager.py]
+# [GANTI FILE: bot/helpers/beatsource/manager.py]
 
 import asyncio
 import itertools
@@ -37,7 +37,7 @@ class BeatsourceLoginManager:
         self.quality = "medium" 
         self.user_data = {} 
         # Cache untuk status langganan agar tidak dicek setiap unduhan
-        self.subscription_cache = {} # { client_hash: "bp_link_pro" / "basic" }
+        self.subscription_cache = {} # { client_hash: "pro" / "basic" }
 
     async def initialize_clients(self):
         """
@@ -106,12 +106,21 @@ class BeatsourceLoginManager:
             try:
                 account_data = await client.get_account()
                 sub = account_data.get("subscription")
-                if sub == "bp_link_pro":
+                
+                # --- PERBAIKAN LOGGING ---
+                # Baris ini akan memberitahu Anda nama langganan yang sebenarnya di log
+                LOGGER.info(f"Beatsource Manager: Ditemukan status langganan: '{sub}'")
+                # --- AKHIR PERBAIKAN ---
+
+                # --- PERBAIKAN BUG UTAMA ---
+                # Mengganti "bp_link_pro" (Beatport) dengan "bs_link_pro" (Beatsource)
+                if sub == "bs_link_pro":
+                # --- AKHIR PERBAIKAN ---
                     self.subscription_cache[client] = "pro"
                     LOGGER.info(" -> Ditemukan langganan 'Pro'. Kualitas Lossless/High diaktifkan.")
                 else:
                     self.subscription_cache[client] = "basic"
-                    LOGGER.info(" -> Ditemukan langganan 'Basic'. Kualitas dibatasi ke 'Medium' (128k AAC).")
+                    LOGGER.info(f" -> Langganan '{sub}' bukan 'Pro'. Kualitas dibatasi ke 'Medium' (128k AAC).")
             except Exception as e:
                 LOGGER.warning(f"Beatsource Manager: Gagal memeriksa langganan untuk satu klien: {e}")
                 self.subscription_cache[client] = "basic" # Asumsikan basic jika gagal
