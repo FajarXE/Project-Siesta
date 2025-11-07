@@ -1,10 +1,11 @@
-# [FILE BARU: bot/helpers/buzzheavier_api.py]
+# [GANTI FILE: bot/helpers/buzzheavier_api.py]
 
 import aiohttp
 import asyncio
 from bot.logger import LOGGER
 import os
 from urllib.parse import quote
+import aiofiles # --- PERBAIKAN: Impor aiofiles ---
 
 class BuzzheavierUploader:
     def __init__(self, token: str, folder_id: str):
@@ -28,17 +29,27 @@ class BuzzheavierUploader:
         try:
             # Buka file dan stream-upload
             async with aiohttp.ClientSession(headers=self.headers) as session:
-                async with open(file_path, 'rb') as f:
+                
+                # --- PERBAIKAN: Gunakan aiofiles.open ---
+                async with aiofiles.open(file_path, 'rb') as f:
+                # --- BATAS PERBAIKAN ---
+                
                     # Menggunakan PUT seperti yang diimplikasikan oleh logika pycurl
                     async with session.put(upload_url, data=f) as resp:
                         
-                        result = await resp.json()
-                        
+                        try:
+                            result = await resp.json()
+                        except aiohttp.ContentTypeError:
+                            # Jika respons bukan JSON (misal, HTML error)
+                            LOGGER.error(f"Buzzheavier: Respons bukan JSON. Status: {resp.status}, Teks: {await resp.text()}")
+                            raise Exception(f"Respons server tidak valid (Status {resp.status}).")
+
                         # Periksa kode status dari respons JSON
                         if result.get("code") == 400:
                             raise Exception(f"File {file_name} sudah ada di akun (Error 400).")
                         if result.get("code") != 201:
-                            resp.raise_for_status() # Lemparkan error HTTP jika bukan 201
+                            # Lemparkan error HTTP jika bukan 201
+                            resp.raise_for_status() 
                             
                         data = result.get("data")
                         if not data:
@@ -52,7 +63,7 @@ class BuzzheavierUploader:
 
         except aiohttp.ClientResponseError as e:
              # Tangani error HTTP
-             LOGGER.error(f"Buzzheavier: Error HTTP saat mengunggah {file_name}: {e.status} - {e.message} - {await resp.text()}")
+             LOGGER.error(f"Buzzheavier: Error HTTP saat mengunggah {file_name}: {e.status} - {e.message}")
              raise Exception(f"HTTP {e.status} saat mengunggah: {e.message}")
         except Exception as e:
             LOGGER.error(f"Buzzheavier: Error saat mengunggah {file_name}: {e}")
