@@ -18,22 +18,9 @@ from bot.helpers.deezer.manager import deezer_manager
 from bot.helpers.beatport.manager import beatport_manager
 from bot.helpers.tidal.manager import tidal_manager
 from bot.helpers.kkbox.manager import kkbox_manager
-# --- TAMBAHAN: Impor Manajer Beatsource ---
 from bot.helpers.beatsource.manager import beatsource_manager
-# --- BATAS TAMBAHAN ---
-# --- TAMBAHAN: Impor Manajer & Handler Soundcloud ---
 from bot.helpers.soundcloud.manager import soundcloud_manager
-
-# --- PERBAIKAN: Hapus try/except untuk melihat error impor yang sebenarnya ---
-# Blok 'try...except' di sekitar impor ini dihapus agar kita
-# bisa melihat error yang sebenarnya jika 'handler.py' gagal diimpor.
 from ..helpers.soundcloud.handler import start_soundcloud
-#except ImportError as e:
-#    LOGGER.critical(f"GAGAL MENGIMPOR SOUNDCLOUD HANDLER: {e}") # Tambahkan log
-#    async def start_soundcloud(*args, **kwargs):
-#        raise NotImplementedError(f"Modul Soundcloud ('handler.py') GAGAL DIIMPOR: {e}")
-# --- BATAS PERBAIKAN ---
-
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
 from ..helpers.tidal.handler import start_tidal
@@ -46,13 +33,11 @@ except ImportError:
     async def start_kkbox(*args, **kwargs):
         raise NotImplementedError("Modul KKBox ('handler.py') belum diimplementasikan.")
         
-# --- TAMBAHAN: Impor Handler Beatsource ---
 try:
     from ..helpers.beatsource.handler import start_beatsource
 except ImportError:
     async def start_beatsource(*args, **kwargs):
         raise NotImplementedError("Modul Beatsource ('handler.py') belum diimplementasikan.")
-# --- BATAS TAMBAHAN ---
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
@@ -90,17 +75,13 @@ async def run_download_task(link: str, user: dict):
             await edit_message(user['bot_msg'], error_message)
         except:
             pass 
-        
-        # task_successful tetap False
             
     finally:
         await cleanup(user) # Hapus file
         
         try:
             if task_successful:
-                # Hanya hapus pesan jika tugas SUKSES
                 await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
-            # Jika tugas gagal, pesan error akan TETAP TAMPIL
         except:
             pass
 
@@ -108,15 +89,34 @@ async def run_download_task(link: str, user: dict):
 @Client.on_message(filters.command(CMD.DOWNLOAD))
 async def download_track(c, msg:Message):
     if await check_user(msg=msg):
+        
+        # --- PERBAIKAN LOGIKA PARSING LINK ---
+        text_content = ""
+        reply = False
+        
+        if msg.reply_to_message:
+            text_content = msg.reply_to_message.text
+            reply = True
+        else:
+            text_content = msg.text
+            reply = False
+
+        link = ""
         try:
-            if msg.reply_to_message:
-                link = msg.reply_to_message.text
-                reply = True
-            else:
-                link = msg.text.split(" ", maxsplit=1)[1]
-                reply = False
+            # Pecah pesan berdasarkan spasi dan cari link
+            parts = text_content.split()
+            for part in parts:
+                if part.startswith("http://") or part.startswith("https://"):
+                    link = part # Ambil link pertama yang ditemukan
+                    break # Hentikan pencarian
+
+            if not link:
+                # Jika tidak ada link (mungkin /dl tanpa link), picu error
+                raise IndexError
+                
         except IndexError:
             return await send_message(msg, lang.s.ERR_NO_LINK)
+        # --- AKHIR PERBAIKAN LOGIKA ---
 
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
@@ -133,14 +133,8 @@ async def start_link(link: str, user: dict) -> None:
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
     beatport = ["https://www.beatport.com", "beatport.com"]
-    # --- TAMBAHAN: URL Beatsource ---
     beatsource = ["https://www.beatsource.com", "beatsource.com"]
-    # --- BATAS TAMBAHAN ---
-    
-    # --- PERBAIKAN: Tambahkan 'on.soundcloud.com' ---
     soundcloud = ["https://soundcloud.com", "soundcloud.com", "https://on.soundcloud.com", "on.soundcloud.com"]
-    # --- AKHIR PERBAIKAN ---
-    
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
     if link.startswith(tuple(tidal)):
@@ -248,14 +242,12 @@ async def start_link(link: str, user: dict) -> None:
         else:
             raise Exception("Gagal mengunduh Beatport karena alasan yang tidak diketahui setelah mencoba semua akun.")
 
-    # --- TAMBAHAN: Blok Logika Beatsource ---
     elif link.startswith(tuple(beatsource)):
         user['provider'] = 'Beatsource'
         
         if not beatsource_manager.clients:
             raise Exception("Maaf, tidak ada akun Beatsource bot yang aktif saat ini.")
 
-        # Logika retry mirip dengan Beatport/Deezer
         clients_list = random.sample(beatsource_manager.clients, len(beatsource_manager.clients))
         last_error = None
 
@@ -269,7 +261,6 @@ async def start_link(link: str, user: dict) -> None:
                 
             except Exception as e:
                 error_str = str(e).lower()
-                # Tangani error spesifik Beatsource (mirip Beatport)
                 if "not available in your country" in error_str or \
                    "subscription" in error_str or \
                    "region locked" in error_str or \
@@ -287,9 +278,7 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Beatsource yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh Beatsource karena alasan yang tidak diketahui setelah mencoba semua akun.")
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN: Blok Logika Soundcloud ---
     elif link.startswith(tuple(soundcloud)):
         user['provider'] = 'Soundcloud'
         
@@ -297,7 +286,6 @@ async def start_link(link: str, user: dict) -> None:
         if not client:
             raise Exception("Maaf, modul Soundcloud bot tidak aktif saat ini (Token salah atau hilang).")
 
-        # Tidak perlu loop retry, karena kita pakai token tunggal
         try:
             user['soundcloud_api'] = client
             await start_soundcloud(link, user)
@@ -307,8 +295,7 @@ async def start_link(link: str, user: dict) -> None:
         except Exception as e:
             LOGGER.error(f"Soundcloud: Tugas gagal (Fatal): {e}")
             raise e 
-    # --- BATAS TAMBAHAN ---
-
+    
     elif link.startswith(tuple(kkbox)):
         user['provider'] = 'KKBox'
         
@@ -341,7 +328,6 @@ async def start_link(link: str, user: dict) -> None:
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
 
-    # ----- PERBAIKAN: Jika tidak ada provider yang cocok -----
     else:
         LOGGER.warning(f"Link tidak dikenali: {link}")
         raise Exception(f"Link tidak dikenali. Bot tidak tahu cara mengunduh dari: {link}")
