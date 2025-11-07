@@ -476,16 +476,13 @@ def kk_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 
 
-# --- TAMBAHAN BARU: Tombol Menu Pengaturan Gofile ---
 def gofile_settings_buttons(api_key_exists: bool, folder_id_exists: bool) -> InlineKeyboardMarkup:
     """Membuat tombol untuk panel pengaturan Gofile."""
     buttons = []
     
-    # Tampilkan status saat ini
     key_status = "✅ Disimpan" if api_key_exists else "❌ Kosong"
     folder_status = "✅ Disimpan" if folder_id_exists else "❌ Kosong"
 
-    # Tombol info/status
     buttons.append(
         [InlineKeyboardButton(f"API Key: {key_status}", callback_data="gofile_info")]
     )
@@ -496,10 +493,36 @@ def gofile_settings_buttons(api_key_exists: bool, folder_id_exists: bool) -> Inl
         [InlineKeyboardButton("ℹ️ Cara Mengatur / Info", callback_data="gofile_info")]
     )
     
-    # Hanya tampilkan tombol "Clear" jika ada sesuatu untuk dihapus
     if api_key_exists or folder_id_exists:
         buttons.append(
             [InlineKeyboardButton("🗑️ Hapus Pengaturan Gofile", callback_data="gofile_clear")]
+        )
+    
+    buttons.append([InlineKeyboardButton("Kembali", callback_data="uset_back")])
+    
+    return InlineKeyboardMarkup(buttons)
+
+# --- TAMBAHAN BARU: Tombol Menu Pengaturan Buzzheavier ---
+def buzzheavier_settings_buttons(api_key_exists: bool, folder_id_exists: bool) -> InlineKeyboardMarkup:
+    """Membuat tombol untuk panel pengaturan Buzzheavier."""
+    buttons = []
+    
+    key_status = "✅ Disimpan" if api_key_exists else "❌ Kosong"
+    folder_status = "✅ Disimpan" if folder_id_exists else "❌ Kosong"
+
+    buttons.append(
+        [InlineKeyboardButton(f"API Key: {key_status}", callback_data="buzzheavier_info")]
+    )
+    buttons.append(
+        [InlineKeyboardButton(f"Folder ID: {folder_status}", callback_data="buzzheavier_info")]
+    )
+    buttons.append(
+        [InlineKeyboardButton("ℹ️ Cara Mengatur / Info", callback_data="buzzheavier_info")]
+    )
+    
+    if api_key_exists or folder_id_exists:
+        buttons.append(
+            [InlineKeyboardButton("🗑️ Hapus Pengaturan Buzzheavier", callback_data="buzzheavier_clear")]
         )
     
     buttons.append([InlineKeyboardButton("Kembali", callback_data="uset_back")])
@@ -511,9 +534,11 @@ def gofile_settings_buttons(api_key_exists: bool, folder_id_exists: bool) -> Inl
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
     
-    # --- MODIFIKASI: Pindahkan Gofile ke atas agar lebih terlihat ---
     buttons.append([InlineKeyboardButton(text="Gofile Settings", callback_data="uset_gofile")])
-    # --- BATAS MODIFIKASI ---
+    
+    # --- TAMBAHAN: Tombol Pengaturan Buzzheavier ---
+    buttons.append([InlineKeyboardButton(text="Buzzheavier Settings", callback_data="uset_buzzheavier")])
+    # --- BATAS TAMBAHAN ---
     
     if tidal_manager and tidal_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Tidal Quality", callback_data=f"uset_tidal")])
