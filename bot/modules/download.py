@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/modules/download.py]
+# [FILE LENGKAP: bot/modules/download.py]
 
 from pyrogram.types import Message
 from pyrogram import Client, filters
@@ -57,11 +57,17 @@ async def run_download_task(link: str, user: dict):
     """
     Fungsi ini berjalan di latar belakang.
     Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup.
+    (Versi ini menggunakan 'task_successful' untuk mencegah penghapusan pesan error)
     """
+    
+    task_successful = False
+    
     try:
         user['bot_msg'] = await send_message(user, 'Memulai tugas...')
         
         await start_link(link, user)
+        
+        task_successful = True # Jika start_link selesai tanpa error, tandai sukses
         
         await asyncio.sleep(5) 
         
@@ -80,12 +86,17 @@ async def run_download_task(link: str, user: dict):
             await edit_message(user['bot_msg'], error_message)
         except:
             pass 
+        
+        # task_successful tetap False
             
     finally:
         await cleanup(user) # Hapus file
         
         try:
-            await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
+            if task_successful:
+                # Hanya hapus pesan jika tugas SUKSES
+                await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
+            # Jika tugas gagal, pesan error akan TETAP TAMPIL
         except:
             pass
 
@@ -162,7 +173,7 @@ async def start_link(link: str, user: dict) -> None:
         user['provider'] = 'Deezer'
         
         if not deezer_manager.clients:
-            raise Exception("Maaf, tidak ada akun Deezer bot yangaktif saat ini.")
+            raise Exception("Maaf, tidak ada akun Deezer bot yang aktif saat ini.")
         
         clients_list = random.sample(deezer_manager.clients, len(deezer_manager.clients))
         last_error = None
@@ -323,4 +334,3 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun KKBox yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
-
