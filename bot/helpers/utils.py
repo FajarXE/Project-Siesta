@@ -79,7 +79,7 @@ async def download_file(url, path, retries=3, timeout=30):
             return str(e)
 
 
-
+# --- FUNGSI YANG DIPERBAIKI ---
 async def format_string(text:str, data:dict, user=None):
     """
     Args:
@@ -89,28 +89,51 @@ async def format_string(text:str, data:dict, user=None):
     Returns:
         str
     """
-    text = text.replace(R'{title}', data['title'])
-    text = text.replace(R'{album}', data['album'])
-    text = text.replace(R'{artist}', data['artist'])
-    text = text.replace(R'{albumartist}', data['albumartist'])
-    text = text.replace(R'{tracknumber}', str(data['tracknumber']))
-    text = text.replace(R'{date}', str(data['date']))
-    text = text.replace(R'{upc}', str(data['upc']))
-    text = text.replace(R'{isrc}', str(data['isrc']))
-    text = text.replace(R'{totaltracks}', str(data['totaltracks']))
-    text = text.replace(R'{volume}', str(data['volume']))
-    text = text.replace(R'{totalvolume}', str(data['totalvolume']))
-    text = text.replace(R'{extension}', data['extension'])
-    text = text.replace(R'{duration}', str(data['duration']))
-    text = text.replace(R'{copyright}', data['copyright'])
-    text = text.replace(R'{genre}', data['genre'])
-    text = text.replace(R'{provider}', data['provider'].title())
-    text = text.replace(R'{quality}', data['quality'])
-    text = text.replace(R'{explicit}', str(data['explicit']))
+    # Ambil semua data dengan aman, berikan string kosong ('') jika None
+    title = data.get('title') or ''
+    album = data.get('album') or ''
+    artist = data.get('artist') or ''
+    albumartist = data.get('albumartist') or ''
+    tracknumber = str(data.get('tracknumber') or '')
+    date = str(data.get('date') or '')
+    upc = str(data.get('upc') or '')
+    isrc = str(data.get('isrc') or '')
+    totaltracks = str(data.get('totaltracks') or '')
+    volume = str(data.get('volume') or '')
+    totalvolume = str(data.get('totalvolume') or '')
+    extension = data.get('extension') or ''
+    duration = str(data.get('duration') or '')
+    copyright = data.get('copyright') or ''
+    genre = data.get('genre') or ''
+    provider = (data.get('provider') or '').title() # .title() aman pada string kosong
+    quality = data.get('quality') or ''
+    explicit = str(data.get('explicit') or '') # 'False' or ''
+    
+    # Lakukan penggantian dengan nilai yang aman
+    text = text.replace(R'{title}', title)
+    text = text.replace(R'{album}', album)
+    text = text.replace(R'{artist}', artist)
+    text = text.replace(R'{albumartist}', albumartist)
+    text = text.replace(R'{tracknumber}', tracknumber)
+    text = text.replace(R'{date}', date)
+    text = text.replace(R'{upc}', upc)
+    text = text.replace(R'{isrc}', isrc)
+    text = text.replace(R'{totaltracks}', totaltracks)
+    text = text.replace(R'{volume}', volume)
+    text = text.replace(R'{totalvolume}', totalvolume)
+    text = text.replace(R'{extension}', extension)
+    text = text.replace(R'{duration}', duration)
+    text = text.replace(R'{copyright}', copyright)
+    text = text.replace(R'{genre}', genre)
+    text = text.replace(R'{provider}', provider)
+    text = text.replace(R'{quality}', quality)
+    text = text.replace(R'{explicit}', explicit)
+
     if user:
-        text = text.replace(R'{user}', user['name'])
-        text = text.replace(R'{username}', user['user_name'])
+        text = text.replace(R'{user}', user.get('name') or '')
+        text = text.replace(R'{username}', user.get('user_name') or '')
     return text
+# --- AKHIR PERBAIKAN ---
 
 
 async def run_concurrent_tasks(tasks, progress_details=None):
