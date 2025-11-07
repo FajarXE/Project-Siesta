@@ -83,15 +83,63 @@ async def custom_url_parse(link: str, client: SoundcloudAPI):
     return media_type, media_id, {"pre_data": data}
 
 
-async def _process_cover(metadata: dict, artwork_url: str | None):
-    """Helper untuk mengambil dan memproses sampul."""
-    final_cover_path_or_url = artwork_url
+# --- FUNGSI YANG DIPERBAIKI (LOGIKA BARU) ---
+async def _process_cover(metadata: dict, art_url_base: str | None):
+    """
+    Helper untuk mengambil dan memproses sampul.
+    Mencoba '-original', lalu fallback ke URL dasar (misal: '-large' atau '-t500x500')
+    jika '-original' gagal (404).
+    """
     
-    if not final_cover_path_or_url:
-        LOGGER.warning(f"Soundcloud: Tidak ada sampul ditemukan untuk {metadata.get('title')}.")
-        pass 
+    # Daftar URL untuk dicoba, berdasarkan prioritas
+    urls_to_try = []
+    
+    if art_url_base:
+        # 1. Coba URL '-original' (kualitas terbaik)
+        url_original = artwork_url_format(art_url_base)
+        urls_to_try.append(url_original)
         
-    return await create_cover_file(final_cover_path_or_url, metadata)
+        # 2. Tambahkan URL dasar sebagai fallback (misal: -large, -t500x500)
+        #    Hanya jika berbeda dari URL original
+        if url_original != art_url_base:
+            urls_to_try.append(art_url_base)
+    
+    # 3. (Jalur Fallback Lokal)
+    #    Kita gunakan Config.WORK_DIR (dari config.py) sebagai path dasar
+    fallback_image_path = os.path.join(Config.WORK_DIR, "project-siesta.png")
+    if os.path.exists(fallback_image_path):
+         urls_to_try.append(fallback_image_path)
+    else:
+        # Peringatan ini akan muncul jika fallback tidak ada
+        LOGGER.warning(f"Cover art fallback tidak ditemukan di {fallback_image_path}")
+
+    
+    # Loop melalui URL yang akan dicoba
+    for url in urls_to_try:
+        if not url: # Lewati jika URL None
+            continue
+            
+        LOGGER.debug(f"Mencoba mengunduh cover art: {url}")
+        try:
+            # create_cover_file adalah fungsi yang mengunduh
+            # (Diasumsikan berasal dari ..metadata dan memunculkan Exception jika gagal)
+            cover_path = await create_cover_file(url, metadata)
+            
+            # Jika berhasil (tidak ada exception), kembalikan path
+            LOGGER.debug(f"Berhasil mengunduh cover art dari: {url}")
+            return cover_path
+        
+        except Exception as e:
+            # Log error (misal 404) tapi jangan hentikan loop
+            LOGGER.warning(f"Gagal mengunduh cover art dari {url}: {e}")
+            continue # Coba URL berikutnya
+
+    # Jika semua gagal
+    LOGGER.error(f"Gagal mengunduh semua opsi cover art untuk {metadata.get('title')}.")
+    # Kembalikan path ke fallback (bahkan jika tidak ada), 
+    # create_cover_file akan menanganinya
+    return fallback_image_path
+# --- AKHIR FUNGSI YANG DIPERBAIKI ---
 
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None):
@@ -111,19 +159,17 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     # --- Info Dasar (dari get_track_info) ---
     publisher_meta = track_data.get('publisher_metadata', {}) or {}
     
-    # ----- PERBAIKAN: Pastikan tidak ada nilai None -----
+    # ----- Pastikan tidak ada nilai None -----
     metadata['title'] = track_data.get('title') or 'N/A'
     
-    # Artis utama adalah pemilik track
     artist_str = track_data.get('user', {}).get('username')
-    # Jika ada artis di metadata, gunakan itu
     if publisher_meta.get('artist'):
          artist_str = publisher_meta.get('artist')
          
     metadata['artist'] = ", ".join(artists_split(artist_str)) or ''
     
     metadata['album'] = publisher_meta.get('album_title') or ''
-    metadata['albumartist'] = metadata['artist'] # Asumsi sederhana
+    metadata['albumartist'] = metadata['artist']
     
     metadata['date'] = (track_data.get('created_at') or '').split('T')[0]
     metadata['year'] = get_release_year(track_data)
@@ -131,22 +177,22 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['tracknumber'] = str(track_data.get('track_number') or 1)
     metadata['totaltracks'] = str(track_data.get('full_duration', 0) // track_data.get('duration', 1) or 1)
     
-    metadata['genre'] = track_data.get('genre') or '' # <-- INI PERBAIKAN UTAMA
+    metadata['genre'] = track_data.get('genre') or ''
     metadata['isrc'] = publisher_meta.get('isrc') or ''
     metadata['copyright'] = publisher_meta.get('p_line') or ''
     metadata['duration'] = track_data.get('duration', 0) // 1000
-    # ----- AKHIR PERBAIKAN -----
     
     metadata['provider'] = 'Soundcloud'
     metadata['type'] = 'track'
     
-    # --- Sampul ---
+    # --- Sampul (MODIFIKASI) ---
     art_url_base = track_data.get('artwork_url') or track_data.get('user', {}).get('avatar_url')
-    art_url = artwork_url_format(art_url_base)
-    metadata['cover'] = await _process_cover(metadata, art_url)
     
-    # Buat thumbnail dari URL dasar (sebelum diubah ke '-original')
-    thumb_url = (art_url_base or '').replace('-large', '-t300x300') # Gunakan ukuran sedang untuk thumbnail
+    # MODIFIKASI: Panggil _process_cover yang baru dengan URL dasar
+    metadata['cover'] = await _process_cover(metadata, art_url_base)
+    
+    # Buat thumbnail (ini bisa pakai -large atau -t300x300, yang GANTI)
+    thumb_url = (art_url_base or '').replace('-original', '-t300x300').replace('-large', '-t300x300')
     metadata['thumbnail'] = await create_cover_file(thumb_url, metadata, True)
 
     
@@ -235,12 +281,14 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
     metadata['date'] = (data.get('created_at') or '').split('T')[0]
     metadata['year'] = get_release_year(data)
     
+    # --- Sampul (MODIFIKASI) ---
     art_url_base = data.get('artwork_url') or data.get('user', {}).get('avatar_url')
-    art_url = artwork_url_format(art_url_base)
-    metadata['cover'] = await _process_cover(metadata, art_url)
-    thumb_url = (art_url_base or '').replace('-large', '-t300x300')
+    
+    # MODIFIKASI: Panggil _process_cover yang baru dengan URL dasar
+    metadata['cover'] = await _process_cover(metadata, art_url_base)
+    
+    thumb_url = (art_url_base or '').replace('-original', '-t300x300').replace('-large', '-t300x300')
     metadata['thumbnail'] = await create_cover_file(thumb_url, metadata, True)
-
 
     # --- Ambil Tracks ---
     tracks_list = data.get('tracks', [])
