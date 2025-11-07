@@ -5,7 +5,12 @@ import logging, asyncio
 from traceback import format_exc
 
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery, Message
+# --- MODIFIKASI: Impor InlineKeyboardMarkup & InlineKeyboardButton ---
+from pyrogram.types import (
+    CallbackQuery, Message, 
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
+# --- BATAS MODIFIKASI ---
 
 from config import Config
 from bot import cmd
@@ -39,8 +44,8 @@ except ImportError:
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
-    bs_button,
-    gofile_settings_buttons # Impor tombol Gofile
+    bs_button, 
+    gofile_settings_buttons
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -50,9 +55,6 @@ from ..helpers.message import send_message, edit_message, check_user, fetch_user
 
 @Client.on_message(filters.command("setgofile"))
 async def set_gofile_creds(client: Client, m: Message):
-    """
-    Menangani perintah /setgofile untuk menyimpan atau menghapus kredensial Gofile pengguna.
-    """
     if not await check_user(msg=m):
         return
     
@@ -61,7 +63,6 @@ async def set_gofile_creds(client: Client, m: Message):
     try:
         parts = m.text.split()
         if len(parts) == 2 and parts[1].lower() == "clear":
-            # (Logika /setgofile clear dipindahkan ke handler tombol)
              await m.reply("Perintah ini usang. Silakan gunakan tombol 'Hapus Pengaturan' di /usetting > Gofile Settings.", reply_to_message_id=m.id)
              return
         
@@ -82,9 +83,7 @@ async def set_gofile_creds(client: Client, m: Message):
             'gofile_api_key': api_key,
             'gofile_folder_id': folder_id
         }
-        # Simpan ke DB
         await database.save_user_settings(user_id, data_to_save)
-        # Perbarui cache
         if user_id not in bot_set.user_data:
             bot_set.user_data[user_id] = {}
         bot_set.user_data[user_id].update(data_to_save)
@@ -146,10 +145,7 @@ async def uset_cb(client, query, datatype=""):
         return
 
     if data[1] == "gofile" or datatype == "gofile_refresh":
-        # --- PERBAIKAN: Gunakan bot_set.user_data ---
         user_settings = bot_set.user_data.get(user_id, {})
-        # --- BATAS PERBAIKAN ---
-        
         api_key_exists = bool(user_settings.get('gofile_api_key'))
         folder_id_exists = bool(user_settings.get('gofile_folder_id'))
 
@@ -270,9 +266,7 @@ async def gofile_buttons_cb(client: Client, query: CallbackQuery):
     data = query.data.split("_")[1] # info atau clear
 
     if data == "info":
-        # --- PERBAIKAN: Gunakan bot_set.user_data ---
         user_settings = bot_set.user_data.get(user_id, {})
-        # --- BATAS PERBAIKAN ---
         api_key = user_settings.get('gofile_api_key')
         folder_id = user_settings.get('gofile_folder_id')
 
@@ -288,19 +282,23 @@ async def gofile_buttons_cb(client: Client, query: CallbackQuery):
         text += "Gunakan perintah ini untuk mengatur (kirim sebagai pesan biasa):\n"
         text += "` /setgofile API_KEY FOLDER_ID`"
         
-        await query.answer(text, show_alert=True) # Tampilkan sebagai pop-up
+        # --- PERBAIKAN ---
+        # Ganti query.answer(show_alert=True) dengan edit_message
+        back_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Kembali", callback_data="uset_gofile")]]
+        )
+        await edit_message(query.message, text, markup=back_markup)
+        await query.answer() # Jawab query secara diam-diam
+        # --- BATAS PERBAIKAN ---
         return
 
     if data == "clear":
         data_to_save = {'gofile_api_key': None, 'gofile_folder_id': None}
-        # Hapus dari DB
         await database.save_user_settings(user_id, data_to_save)
-        # Hapus dari cache
         if user_id in bot_set.user_data:
             bot_set.user_data[user_id].update(data_to_save)
         
         await query.answer("Pengaturan Gofile telah dihapus!")
-        # Panggil kembali handler uset_cb untuk me-refresh menu
         return await uset_cb(client, query, datatype="gofile_refresh")
 
 
