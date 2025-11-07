@@ -23,12 +23,16 @@ from bot.helpers.beatsource.manager import beatsource_manager
 # --- BATAS TAMBAHAN ---
 # --- TAMBAHAN: Impor Manajer & Handler Soundcloud ---
 from bot.helpers.soundcloud.manager import soundcloud_manager
-try:
-    from ..helpers.soundcloud.handler import start_soundcloud
-except ImportError:
-    async def start_soundcloud(*args, **kwargs):
-        raise NotImplementedError("Modul Soundcloud ('handler.py') belum diimplementasikan.")
-# --- BATAS TAMBAHAN ---
+
+# --- PERBAIKAN: Hapus try/except untuk melihat error impor yang sebenarnya ---
+# Blok 'try...except' di sekitar impor ini dihapus agar kita
+# bisa melihat error yang sebenarnya jika 'handler.py' gagal diimpor.
+from ..helpers.soundcloud.handler import start_soundcloud
+#except ImportError as e:
+#    LOGGER.critical(f"GAGAL MENGIMPOR SOUNDCLOUD HANDLER: {e}") # Tambahkan log
+#    async def start_soundcloud(*args, **kwargs):
+#        raise NotImplementedError(f"Modul Soundcloud ('handler.py') GAGAL DIIMPOR: {e}")
+# --- BATAS PERBAIKAN ---
 
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -336,3 +340,8 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun KKBox yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
+
+    # ----- PERBAIKAN: Jika tidak ada provider yang cocok -----
+    else:
+        LOGGER.warning(f"Link tidak dikenali: {link}")
+        raise Exception(f"Link tidak dikenali. Bot tidak tahu cara mengunduh dari: {link}")
