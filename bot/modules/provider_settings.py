@@ -10,7 +10,7 @@ from config import Config
 
 from ..logger import LOGGER
 from ..settings import bot_set
-from ..helpers.buttons.settings import * # Ini sekarang akan mengimpor bs_button juga
+from ..helpers.buttons.settings import * # Ini sekarang akan mengimpor bs_button & sc_button juga
 from ..helpers.database.mongo_async import database
 from ..helpers.tidal.tidal_api import TidalApi
 from ..helpers.message import edit_message, check_user
@@ -43,6 +43,14 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor beatsource_manager.")
     beatsource_manager = None
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN: Impor Manajer Soundcloud ---
+try:
+    from ..helpers.soundcloud.manager import soundcloud_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor soundcloud_manager.")
+    soundcloud_manager = None
 # --- BATAS TAMBAHAN ---
 
 
@@ -275,6 +283,50 @@ async def beatsource_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('BEATSOURCE_QUALITY', to_set) # Simpan ke DB
         
         await beatsource_cb(c, cb)
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN: Handler Admin Soundcloud ---
+#----------------
+# SOUNDCLOUD
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^scP")) # Soundcloud Panel
+async def soundcloud_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "original": "Original (Jika Ada)",
+            "stream": "Stream (Default AAC/MP3)"
+        }
+        if not soundcloud_manager or not soundcloud_manager.get_client():
+            return await edit_message(cb.message, "Layanan Soundcloud tidak aktif (Token salah/hilang).")
+        
+        current = soundcloud_manager.quality 
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(
+            cb.message,
+            "Pilih kualitas default untuk Soundcloud:",
+            markup=sc_button(quality) 
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^scQ")) # Soundcloud Quality Set
+async def soundcloud_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qual_map_display = {
+            "Original (Jika Ada)": "original",
+            "Stream (Default AAC/MP3)": "stream"
+        }
+        to_set_display = cb.data.split('_')[1]
+        to_set = qual_map_display.get(to_set_display)
+        if not to_set:
+            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
+        if not soundcloud_manager or not soundcloud_manager.get_client():
+            return await edit_message(cb.message, "Layanan Soundcloud tidak aktif.")
+        
+        soundcloud_manager.quality = to_set
+        await database.set_variable('SOUNDCLOUD_QUALITY', to_set) # Simpan ke DB
+        
+        await soundcloud_cb(c, cb)
 # --- BATAS TAMBAHAN ---
 
 #----------------
