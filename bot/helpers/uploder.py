@@ -9,30 +9,6 @@ from .message import send_message, edit_message
 from .utils import *
 from bot.logger import LOGGER 
 
-# --- Impor Uploader ---
-try:
-    from ..helpers.gofile_api import gofile_batch_upload
-except ImportError:
-    LOGGER.warning("Uploader: Gagal mengimpor 'gofile_batch_upload'. Unggahan Gofile pribadi tidak akan berfungsi.")
-    async def gofile_batch_upload(*args, **kwargs):
-        raise NotImplementedError("Modul gofile_api.py tidak ditemukan.")
-        
-try:
-    from ..helpers.buzzheavier_api import buzzheavier_batch_upload
-except ImportError:
-    LOGGER.warning("Uploader: Gagal mengimpor 'buzzheavier_batch_upload'. Unggahan Buzzheavier pribadi tidak akan berfungsi.")
-    async def buzzheavier_batch_upload(*args, **kwargs):
-        raise NotImplementedError("Modul buzzheavier_api.py tidak ditemukan.")
-
-try:
-    from ..helpers.database.mongo_async import database
-except ImportError:
-    LOGGER.critical("Uploader: Gagal mengimpor 'database'. Unggahan pribadi akan gagal.")
-    class DummyDatabase:
-        async def get_user(self, *args, **kwargs): return {}
-    database = DummyDatabase()
-# --- BATAS Impor ---
-
 #
 #
 #  TASK HANDLER
@@ -41,48 +17,6 @@ except ImportError:
 #
 
 async def track_upload(metadata, user, disable_link=False):
-    
-    # --- PERBAIKAN: Periksa Gofile & Buzzheavier ---
-    user_settings = bot_set.user_data.get(user['user_id'], {})
-    gofile_key = user_settings.get('gofile_api_key')
-    gofile_folder = user_settings.get('gofile_folder_id')
-    buzz_key = user_settings.get('buzzheavier_api_key')
-    buzz_folder = user_settings.get('buzzheavier_folder_id')
-
-    file_list = [{
-        'filepath': metadata['filepath'],
-        'filename': os.path.basename(metadata['filepath'])
-    }]
-
-    upload_service = None
-    upload_args = ()
-    
-    if gofile_key and gofile_folder:
-        upload_service = "Gofile"
-        upload_args = (file_list, gofile_key, gofile_folder, user['bot_msg'])
-        batch_uploader = gofile_batch_upload
-    
-    elif buzz_key and buzz_folder:
-        upload_service = "Buzzheavier"
-        upload_args = (file_list, buzz_key, buzz_folder, user['bot_msg'])
-        batch_uploader = buzzheavier_batch_upload
-
-    if upload_service:
-        await edit_message(user['bot_msg'], f"Mengunggah 1 lagu ke {upload_service} pribadi Anda...")
-        try:
-            links = await batch_uploader(*upload_args)
-            link_text = "\n".join(links)
-            await send_message(user, f"Unggahan {upload_service} Selesai:\n{link_text}")
-        except Exception as e:
-            await send_message(user, f"Gagal mengunggah ke {upload_service} pribadi: {e}")
-        
-        try:
-            os.remove(metadata['filepath'])
-        except FileNotFoundError:
-            pass
-        return
-    # --- AKHIR PERBAIKAN ---
-
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -101,71 +35,27 @@ async def track_upload(metadata, user, disable_link=False):
 
 async def album_upload(metadata, user):
     user_dict = user.copy()
-
-    # --- PERBAIKAN: Periksa Gofile & Buzzheavier ---
-    user_settings = bot_set.user_data.get(user['user_id'], {})
-    gofile_key = user_settings.get('gofile_api_key')
-    gofile_folder = user_settings.get('gofile_folder_id')
-    buzz_key = user_settings.get('buzzheavier_api_key')
-    buzz_folder = user_settings.get('buzzheavier_folder_id')
-    
-    upload_service = None
-    upload_args = ()
-    
-    if gofile_key and gofile_folder:
-        upload_service = "Gofile"
-        batch_uploader = gofile_batch_upload
-        upload_args = (gofile_key, gofile_folder)
-    
-    elif buzz_key and buzz_folder:
-        upload_service = "Buzzheavier"
-        batch_uploader = buzzheavier_batch_upload
-        upload_args = (buzz_key, buzz_folder)
-
-    if upload_service:
-        await edit_message(user['bot_msg'], f"Mengunggah {metadata['totaltracks']} lagu ke {upload_service} pribadi Anda...")
-        
-        file_list = []
-        for track in metadata['tracks']:
-            file_list.append({
-                'filepath': track['filepath'],
-                'filename': os.path.basename(track['filepath'])
-            })
-            
-        try:
-            links = await batch_uploader(file_list, *upload_args, user['bot_msg'])
-            
-            if len(links) > 10:
-                link_file_path = f"{metadata['folderpath']}/links_{upload_service.lower()}.txt"
-                os.makedirs(os.path.dirname(link_file_path), exist_ok=True)
-                with open(link_file_path, 'w') as f:
-                    f.write("\n".join(links))
-                await send_message(user, link_file_path, 'doc', caption=f"Link {upload_service} untuk {metadata['title']}")
-            else:
-                await send_message(user, f"Unggahan {upload_service} Selesai untuk {metadata['title']}:\n" + "\n".join(links))
-        except Exception as e:
-            await send_message(user, f"Gagal mengunggah ke {upload_service} pribadi: {e}")
-
-        await cleanup(None, metadata, user_dict)
-        return
-    # --- AKHIR PERBAIKAN ---
-
+    # --- MODIFIKASI: Hapus flag zip lokal, kita gunakan metadata['zip_path'] ---
+    # __, _, album_zip = fetch_zip_settings(user_dict) 
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
+        # --- PERBAIKAN: Cek metadata['zip_path'] dan pastikan itu list ---
         if metadata.get('zip_path'):
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str):
-                zip_files = [zip_files]
+                zip_files = [zip_files] # Ubah string tunggal menjadi list
             
-            for item in zip_files:
+            for item in zip_files: # Loop ini sekarang aman
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
                     meta=metadata
                 )
+        # --- AKHIR PERBAIKAN ---
         else:
-            await batch_telegram_upload(metadata, user)
+            await batch_telegram_upload(metadata, user) # <-- Sekarang akan cepat
     else:
+        # (Logika Rclone tetap sama)
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata['poster_msg']:
             try:
@@ -175,28 +65,31 @@ async def album_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
+    # Cleanup akan menggunakan metadata['folderpath'] asli (string)
     await cleanup(None, metadata, user_dict)
 
 
 async def artist_upload(metadata, user):
     user_dict = user.copy()
-    
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if metadata.get('zip_path'):
+        # --- PERBAIKAN: Cek metadata['zip_path'] dan pastikan itu list ---
+        if metadata.get('zip_path'): # Menggantikan 'if bot_set.artist_zip:'
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str):
-                zip_files = [zip_files]
+                zip_files = [zip_files] # Ubah string tunggal menjadi list
 
-            for item in zip_files:
+            for item in zip_files: # Loop ini sekarang aman
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
                     meta=metadata
                 )
+        # --- AKHIR PERBAIKAN ---
         else:
-            pass
+            pass # artist telegram uploads are handled by album fucntion
     else:
+        # (Logika Rclone tetap sama)
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata['poster_msg']:
             try:
@@ -206,76 +99,34 @@ async def artist_upload(metadata, user):
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
+    # Cleanup akan menggunakan metadata['folderpath'] asli (string)
     await cleanup(None, metadata, user_dict)
 
 
 
 async def playlist_upload(metadata, user):
-
-    # --- PERBAIKAN: Periksa Gofile & Buzzheavier ---
-    user_settings = bot_set.user_data.get(user['user_id'], {})
-    gofile_key = user_settings.get('gofile_api_key')
-    gofile_folder = user_settings.get('gofile_folder_id')
-    buzz_key = user_settings.get('buzzheavier_api_key')
-    buzz_folder = user_settings.get('buzzheavier_folder_id')
-
-    upload_service = None
-    upload_args = ()
-    
-    if gofile_key and gofile_folder:
-        upload_service = "Gofile"
-        batch_uploader = gofile_batch_upload
-        upload_args = (gofile_key, gofile_folder)
-    
-    elif buzz_key and buzz_folder:
-        upload_service = "Buzzheavier"
-        batch_uploader = buzzheavier_batch_upload
-        upload_args = (buzz_key, buzz_folder)
-
-    if upload_service:
-        await edit_message(user['bot_msg'], f"Mengunggah {metadata['totaltracks']} lagu ke {upload_service} pribadi Anda...")
-        
-        file_list = []
-        for track in metadata['tracks']:
-            file_list.append({
-                'filepath': track['filepath'],
-                'filename': os.path.basename(track['filepath'])
-            })
-            
-        try:
-            links = await batch_uploader(file_list, *upload_args, user['bot_msg'])
-            
-            if len(links) > 10:
-                link_file_path = f"{metadata['folderpath']}/links_{upload_service.lower()}.txt"
-                os.makedirs(os.path.dirname(link_file_path), exist_ok=True)
-                with open(link_file_path, 'w') as f:
-                    f.write("\n".join(links))
-                await send_message(user, link_file_path, 'doc', caption=f"Link {upload_service} untuk {metadata['title']}")
-            else:
-                await send_message(user, f"Unggahan {upload_service} Selesai untuk {metadata['title']}:\n" + "\n".join(links))
-        except Exception as e:
-            await send_message(user, f"Gagal mengunggah ke {upload_service} pribadi: {e}")
-
-        await cleanup(None, metadata, user)
-        return
-    # --- AKHIR PERBAIKAN ---
-
+    # --- MODIFIKASI: Hapus flag zip lokal ---
+    # playlist_zip, _, __ = fetch_zip_settings(user)
+    # is_owner = playlist_zip == bot_set.playlist_zip
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if metadata.get('zip_path'):
+        # --- PERBAIKAN: Cek metadata['zip_path'] dan pastikan itu list ---
+        if metadata.get('zip_path'): # Menggantikan 'if playlist_zip:'
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str):
-                zip_files = [zip_files]
-            for item in zip_files:
+                zip_files = [zip_files] # Ubah string tunggal menjadi list
+                
+            for item in zip_files: # Loop ini sekarang aman
                 await send_message(user,item,'doc', 
                     caption=await create_simple_text(metadata, user),
                     meta=metadata
                 )
+        # --- AKHIR PERBAIKAN ---
         else:
-            await batch_telegram_upload(metadata, user)
+            await batch_telegram_upload(metadata, user) # <-- Sekarang akan cepat
     else:
-        playlist_zip, _, __ = fetch_zip_settings(user)
+        playlist_zip, _, __ = fetch_zip_settings(user) # <-- Dibutuhkan untuk logika rclone
         if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
                 await rclone_upload(user, f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
@@ -288,6 +139,7 @@ async def playlist_upload(metadata, user):
                     except ValueError:
                         pass
         else:
+            # (Logika Rclone tetap sama)
             rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
             if metadata['poster_msg']:
                 try:
@@ -297,7 +149,8 @@ async def playlist_upload(metadata, user):
             else:
                 await post_simple_message(user, metadata, rclone_link, index_link)
 
-    await cleanup(None, metadata, user)
+    # Cleanup akan menggunakan metadata['folderpath'] asli (string)
+    await cleanup(None, metadata, user) # <-- Perbaikan: user, bukan user_dict
 
 
 #
@@ -308,29 +161,58 @@ async def playlist_upload(metadata, user):
 #
 
 async def rclone_upload(user, realpath):
+    """
+    Args:
+        user: user details
+        realpath: full real path to (not used for uploading)
+    Returns:
+        rclone_link, index_link
+    """
+    # --- PERBAIKAN: Rclone harus mengunggah file zip atau folder ---
     path_to_upload = realpath
     base_path = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/"
+
+    # Jika realpath adalah list (dari zip split), unggah base path
     if isinstance(realpath, list):
         path_to_upload = base_path
+    # Jika realpath adalah file zip tunggal
     elif isinstance(realpath, str) and realpath.endswith('.zip'):
         path_to_upload = realpath
+    # Jika ini adalah folder (tidak di-zip)
     else:
-        path_to_upload = realpath
+        path_to_upload = realpath # Ini sudah benar (path ke folder)
+
+    # Jika path_to_upload adalah file, kita perlu mengunggah ke direktori tujuan
+    # Jika path_to_upload adalah direktori, rclone akan menyalin isinya
+    
+    # Logika rclone copy yang disederhanakan:
+    # Selalu salin seluruh folder unduhan pengguna
     path = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/"
     cmd = f'rclone copy --config ./rclone.conf "{path}" "{Config.RCLONE_DEST}"'
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
+    
+    # Buat link berdasarkan path asli (bisa berupa folder atau file zip)
     r_link, i_link = await create_link(realpath, base_path)
+    # --- AKHIR PERBAIKAN ---
     return r_link, i_link
 
 
 async def local_upload(metadata, user):
+    """
+    Copies directory to local storage and merges contents if the destination exists.
+    Args:
+        metadata: metadata dict of item
+        user: user details
+    """
     to_move = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}"
     destination = os.path.join(Config.LOCAL_STORAGE, os.path.basename(to_move))
+
     if os.path.exists(destination):
         for item in os.listdir(to_move):
             src_item = os.path.join(to_move, item)
             dest_item = os.path.join(destination, item)
+
             if os.path.isdir(src_item):
                 if not os.path.exists(dest_item):
                     shutil.copytree(src_item, dest_item)
@@ -338,38 +220,68 @@ async def local_upload(metadata, user):
                 shutil.copy2(src_item, dest_item)
     else:
         shutil.copytree(to_move, destination)
+    
     shutil.rmtree(to_move)
 
 
-async def telegram_upload(track, user, batch_mode=False):
+async def telegram_upload(track, user, batch_mode=False): # <-- MODIFIKASI: Menambahkan batch_mode
+    """
+    Only upload a single track
+    Args:
+        track: track metadata
+        batch_mode: (bool) If True, disables individual progress bar in send_message
+    """
+    # --- MODIFIKASI: Salin 'meta' dan tambahkan 'batch_mode' ---
     meta = track.copy()
     meta['batch_mode'] = batch_mode
+    
+    # Hapus bot_msg dari user jika dalam mode batch (agar tidak mengedit status)
     user_copy = user
     if batch_mode and 'bot_msg' in user:
         user_copy = user.copy()
         del user_copy['bot_msg']
+    # --- BATAS MODIFIKASI ---
+
     await send_message(user_copy, track['filepath'], 'audio', meta=meta)
 
 
 async def batch_telegram_upload(metadata, user):
+    """
+    Args:
+        metadata: full metadata
+        user: user details
+    """
+    
+    # --- MODIFIKASI DIMULAI (Upload Konkuren/Paralel) ---
+    
     tasks = []
     if metadata['type'] == 'album' or metadata['type'] == 'playlist':
         for track in metadata['tracks']:
-            tasks.append(telegram_upload(track, user, batch_mode=True))
+            # Beri tahu telegram_upload ini adalah mode batch
+            tasks.append(telegram_upload(track, user, batch_mode=True)) 
     elif metadata['type'] == 'artist':
         for album in metadata['albums']:
             for track in album['tracks']:
                 tasks.append(telegram_upload(track, user, batch_mode=True))
+    
     if not tasks:
         return
+
+    # Perbarui pesan status sebelum memulai batch upload
     await edit_message(user['bot_msg'], f"Mengunggah {len(tasks)} lagu secara paralel...")
+
+    # Buat Semaphore (Sama seperti di utils.py)
     semaphore = asyncio.Semaphore(Config.MAX_WORKERS)
+    
     async def sem_task(task):
         async with semaphore:
             try:
-                await task
+                await task 
             except FileNotFoundError:
                 LOGGER.warning(f"File not found during batch upload, skipping.")
             except Exception as e:
                 LOGGER.error(f"Failed to upload one track during batch: {e}")
+
+    # Jalankan semua tugas unggah secara bersamaan (dibatasi oleh MAX_WORKERS)
     await asyncio.gather(*(sem_task(task) for task in tasks))
+    # --- MODIFIKASI SELESAI ---
