@@ -29,7 +29,7 @@ QUALITY_MAP = {
 }
 
 # --- FUNGSI HELPER BARU UNTUK MEMOTONG NAMA ---
-def truncate_artist_list(artist_str: str, max_len: int = 50) -> str:
+def truncate_artist_list(artist_str: str, max_len: int = 200) -> str: # <-- DIUBAH KE 200
     """Memotong daftar artis agar tidak terlalu panjang untuk nama file."""
     if len(artist_str) > max_len:
         return artist_str[:max_len] + "..."
