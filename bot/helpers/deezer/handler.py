@@ -4,6 +4,7 @@ from pathvalidate import sanitize_filepath
 from config import Config
 import traceback
 import os 
+import aiohttp # <-- Impor aiohttp
 
 from .metadata import *
 from ..utils import *
@@ -25,6 +26,22 @@ async def start_deezer(url:str, user: dict):
         return
 
     try:
+        # --- PERBAIKAN: Buka link pendek (/s/) ---
+        if "/s/" in url:
+            LOGGER.debug(f"Deezer: Link pendek terdeteksi: {url}. Mengambil URL asli...")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.head(url, allow_redirects=False, timeout=10) as r:
+                        if r.status in (301, 302, 307, 308) and 'Location' in r.headers:
+                            url = r.headers['Location'] # Ganti link dengan URL asli
+                            LOGGER.debug(f"Deezer: URL asli ditemukan: {url}")
+                        else:
+                            raise DeezerError(f"Gagal me-resolve link pendek (status: {r.status})")
+            except Exception as e:
+                LOGGER.error(f"Gagal un-shorten link Deezer: {e}")
+                raise DeezerError(f"Gagal me-resolve link pendek: {e}")
+        # --- AKHIR PERBAIKAN ---
+
         media_type, item_id, _ = custom_url_parse(url)
 
         if media_type == 'artist':
@@ -83,9 +100,7 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
-    # --- PERBAIKAN: Kembalikan ke panggilan 3-argumen asli ---
     err = await deezerapi.dl_track(item_id, url, track_meta['filepath'])
-    # --- AKHIR PERBAIKAN ---
     
     if err:
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
