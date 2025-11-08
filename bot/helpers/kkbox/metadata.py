@@ -120,6 +120,17 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     # --- BATAS TAMBAHAN ---
     
     metadata['genre'] = track_data.get('genre_name')
+
+    # --- TAMBAHAN BARU: Mengambil Composer ---
+    composer_list = []
+    # Periksa apakah 'composer_list' ada di data 'artist_role'
+    if 'composer_list' in track_data['artist_role']:
+         composer_list.extend(track_data['artist_role']['composer_list']['composer'])
+    
+    if composer_list:
+         metadata['composer'] = ", ".join(composer_list)
+    # --- BATAS TAMBAHAN BARU ---
+    
     metadata['explicit'] = bool(track_data['song_is_explicit'])
     metadata['provider'] = 'KKBox'
     metadata['type'] = 'track'
@@ -171,7 +182,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     try:
         # Panggil API di thread terpisah
-        album_resp = await asyncio.to_thread(client.get_album, album_id)
+        album_resp = await asyncio.to_thread(client..get_album, album_id)
         raw_id = album_resp['album']['album_id']
         
         album_data_more = await asyncio.to_thread(client.get_album_more, raw_id)
