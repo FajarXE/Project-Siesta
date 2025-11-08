@@ -58,12 +58,12 @@ async def run_download_task(link: str, user: dict):
         
         task_successful = True # Jika start_link selesai tanpa error, tandai sukses
         
-        await asyncio.sleep(5) 
+        # await asyncio.sleep(5) # <-- PERBAIKAN: Jeda 5 detik dihapus
         
     except asyncio.CancelledError:
         LOGGER.info(f"Tugas untuk {user['user_id']} dibatalkan (mungkin shutdown).")
         await send_message(user, "Tugas dibatalkan.")
-        await asyncio.sleep(5) 
+        await asyncio.sleep(5) # Jeda di sini tidak apa-apa
             
     except Exception as e:
         error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
@@ -135,13 +135,11 @@ async def start_link(link: str, user: dict) -> None:
     beatport = ["https://www.beatport.com", "beatport.com"]
     beatsource = ["https://www.beatsource.com", "beatsource.com"]
     
-    # --- PERBAIKAN: Perbaiki typo 'https_' menjadi 'https://' ---
     soundcloud = [
         "https://soundcloud.com", "soundcloud.com", 
         "https://on.soundcloud.com", "on.soundcloud.com",
-        "https://m.soundcloud.com", "m.soundcloud.com" # <-- TYPO DIPERBAIKI
+        "https://m.soundcloud.com", "m.soundcloud.com"
     ]
-    # --- AKHIR PERBAIKAN ---
     
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
