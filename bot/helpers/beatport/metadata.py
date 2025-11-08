@@ -239,7 +239,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         # Fallback jika 'tracks' tidak ada: coba panggil API (mungkin hanya rusak untuk beberapa rilis)
         LOGGER.warning(f"Beatport: Daftar track tidak ada di get_release untuk {album_id}. Mencoba fallback ke get_release_tracks...")
         try:
-             # Coba dengan paginasi aman (per_page=25)
              tracks_data = await client.get_release_tracks(album_id, per_page=25)
              track_links = tracks_data.get("results", [])
              if not track_links:
@@ -271,18 +270,18 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['tracks'] = []
     total_duration_ms = 0
 
-    # --- PERBAIKAN: Hapus 'try...except' di dalam loop ---
-    # Biarkan error dari process_track_metadata muncul agar bisa ditangkap
-    # oleh handler dan dilaporkan ke pengguna.
-    
     for i, track_item in enumerate(track_links):
-        # try: <-- DIHAPUS
+        try:
             track_data_full = None
             track_id_str = None
             
             if isinstance(track_item, str):
                 # METODE UTAMA (DARI get_release): track_item adalah string link
-                track_id_str = track_item.split('/')[-1]
+                
+                # --- PERBAIKAN: Gunakan [-2] untuk ID, bukan [-1] ---
+                track_id_str = track_item.split('/')[-2]
+                # --- AKHIR PERBAIKAN ---
+                
                 if not track_id_str.isdigit():
                     LOGGER.warning(f"Beatport: Melewatkan link track tidak valid: {track_item}")
                     continue 
@@ -299,7 +298,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
             total_duration_ms += track_data_full.get("length_ms", 0)
             
-            # Panggil process_track_metadata (ini bisa memunculkan error)
             track_meta = await process_track_metadata(track_id_str, r_id, user, track_data_full)
             
             track_meta['tracknumber'] = i + 1 
@@ -308,16 +306,13 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             track_meta['thumbnail'] = metadata['thumbnail']
             metadata['tracks'].append(track_meta)
             
-        # except Exception as e: <-- DIHAPUS
-        #    LOGGER.warning(f"Beatport: Gagal memproses track (Item: {track_item}) di album: {e}")
-        #    continue
-    # --- AKHIR PERBAIKAN ---
+        except Exception as e:
+           LOGGER.warning(f"Beatport: Gagal memproses track (Item: {track_item}) di album: {e}", exc_info=True)
+           continue
 
     metadata['duration'] = total_duration_ms // 1000
 
     if not metadata['tracks']:
-        # Error ini sekarang akan terpicu jika 'track_links' awalnya kosong
-        # ATAU jika semua track gagal diproses (misal, tidak streamable)
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
     metadata['quality'] = metadata['tracks'][0]['quality']
@@ -372,15 +367,13 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
     metadata['tracks'] = []
-    # --- PERBAIKAN: Hapus try/except di dalam loop ---
     for i, track_data in enumerate(tracks):
-        # try: <-- DIHAPUS
+        try:
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
             metadata['tracks'].append(track_meta)
-        # except Exception as e: <-- DIHAPUS
-        #    LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di playlist: {e}")
-        #    continue
-    # --- AKHIR PERBAIKAN ---
+        except Exception as e:
+           LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di playlist: {e}", exc_info=True)
+           continue
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk playlist {metadata['title']}")
