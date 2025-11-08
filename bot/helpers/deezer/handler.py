@@ -3,13 +3,9 @@
 from pathvalidate import sanitize_filepath
 from config import Config
 import traceback
-import os # <--- Impor os
+import os 
 
 from .metadata import *
-# --- MODIFIKASI: Hapus impor global ---
-# from .dzapi import deezerapi 
-# --- BATAS MODIFIKASI ---
-
 from ..utils import *
 from ..uploder import *
 from ..metadata import set_metadata, get_audio_extension
@@ -23,12 +19,10 @@ from ..message import edit_message
 
 
 async def start_deezer(url:str, user: dict):
-    # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
     deezerapi = user.get('deezer_api')
     if not deezerapi:
         await edit_message(user['bot_msg'], "Error: Sesi login Deezer tidak ditemukan untuk pengguna ini.")
         return
-    # --- BATAS MODIFIKASI ---
 
     try:
         media_type, item_id, _ = custom_url_parse(url)
@@ -36,20 +30,16 @@ async def start_deezer(url:str, user: dict):
         if media_type == 'artist':
             await start_artist(item_id, user)
         elif media_type == 'track':
-            # --- MODIFIKASI: Kirim 'user' ke start_track ---
             success = await start_track(item_id, user, None)
             if not success:
                 raise Exception("Gagal mengunduh atau memproses track.")
         elif media_type == 'album':
-            # --- MODIFIKASI: Kirim 'user' ke start_album ---
             await start_album(item_id, user)
         elif media_type == 'playlist':
-            # --- MODIFIKASI: Kirim 'user' ke start_playlist ---
             await start_playlist(item_id, user)
         
     except Exception as e:
         LOGGER.error(f"Error fatal di Deezer handler: {e}\n{traceback.format_exc()}")
-        # Jika ini adalah DeezerError, tampilkan pesan yang bersih
         if isinstance(e, DeezerError):
              await edit_message(user['bot_msg'], f"Tugas Gagal: {e}")
         else:
@@ -59,17 +49,13 @@ async def start_deezer(url:str, user: dict):
 async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
 
-    # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
     deezerapi = user['deezer_api']
-    # --- BATAS MODIFIKASI ---
 
     if not track_meta:
         try:
-            # --- MODIFIKASI: Teruskan 'user' ke process_track_metadata ---
             track_meta = await process_track_metadata(item_id, user['r_id'], user=user)
         except Exception as e:
             LOGGER.warning(f"Deezer track {item_id} tidak tersedia: {e}")
-            # Lempar error agar retry ARL tahu
             if "not available" in str(e).lower():
                 raise DeezerError(f"Track {item_id} tidak tersedia: {e}")
             return False
@@ -78,10 +64,13 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         filepath = sanitize_filepath(filepath)
 
     try:
-        # --- PERBAIKAN: Gunakan 'get_track_url' yang baru ---
+        # --- PERBAIKAN: Kembalikan ke panggilan 4-argumen asli ---
         url = await deezerapi.get_track_url(
-            track_meta, # Berikan seluruh track_meta
+            item_id, 
+            track_meta['token'], 
+            track_meta['token_expiry'], 
             track_meta['quality'])
+        # --- AKHIR PERBAIKAN ---
     except Exception as e:
         LOGGER.warning(f"Gagal mendapatkan URL unduhan Deezer untuk track {item_id}: {e}")
         return False
@@ -96,7 +85,6 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
-    # --- MODIFIKASI: Panggil dl_track dari instans pengguna ---
     err = await deezerapi.dl_track(url, track_meta['filepath'])
     if err:
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
@@ -125,21 +113,15 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     deezerapi = user['deezer_api']
 
     try:
-        # Ambil data album DAN track dalam satu panggilan API
         album_data = await deezerapi.get_album(album_id)
-        # --- PERBAIKAN: Gunakan get_album_tracks ---
         tracklist_raw_data = await deezerapi.get_album_tracks(album_id)
-        # --- AKHIR PERBAIKAN ---
         
     except Exception as e:
-        # Jika ini adalah error 'not available', lempar untuk retry ARL
         if "not available" in str(e).lower():
              raise DeezerError(f"Album {album_id} tidak tersedia: {e}")
         raise Exception(f"Gagal mendapatkan metadata album Deezer: {e}")
 
-    # --- PERBAIKAN: Gunakan 'tracklist_raw_data' ---
     songs_dict = tracklist_raw_data
-    # --- AKHIR PERBAIKAN ---
 
     if not songs_dict or not songs_dict.get('data'):
         album_title = album_data.get('TITLE', f'(ID: {album_id})')
@@ -202,7 +184,6 @@ async def start_artist(artist_id, user):
     
     try:
         artist_data = await deezerapi.get_artist(artist_id)
-        # Fallback sederhana jika fungsi process_artist_metadata tidak ada:
         artist_meta = {
             "provider": "Deezer",
             "artist": artist_data.get("name", "Unknown Artist"),
@@ -212,9 +193,7 @@ async def start_artist(artist_id, user):
     except Exception as e:
         raise Exception(f"Gagal mendapatkan metadata artist Deezer: {e}")
 
-    # --- PERBAIKAN: Gunakan 'get_artist_albums' ---
-    album_ids = await deezerapi.get_artist_albums(artist_id) # Asumsikan ini mengambil ID
-    # --- AKHIR PERBAIKAN ---
+    album_ids = await deezerapi.get_artist_albums(artist_id) 
     
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
     artist_zip = bot_set.user_data.get(user.get("user_id", 0), {}).get("artist_zip", bot_set.artist_zip)
@@ -226,7 +205,7 @@ async def start_artist(artist_id, user):
             await start_album(album_id, user, upload_album, basefolder=artist_meta['folderpath'])
         except Exception as e:
             LOGGER.warning(f"Gagal mengunduh album {album_id} untuk artis {artist_id}: {e}")
-            continue # Lanjutkan ke album berikutnya
+            continue 
 
     if artist_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
@@ -242,9 +221,9 @@ async def start_playlist(playlist_id, user):
     deezerapi = user['deezer_api']
     
     try:
-        # --- PERBAIKAN: Gunakan panggilan API yang benar ---
+        # Panggil dengan 3 argumen seperti yang diharapkan
         raw_data = await deezerapi.get_playlist(playlist_id, -1, 0)
-        # --- AKHIR PERBAIKAN ---
+        
         if not raw_data.get('SONGS') or not raw_data.get('SONGS').get('data'):
              raise DeezerError(f"Playlist {playlist_id} tidak tersedia atau kosong (mungkin terkunci regional?).")
     except Exception as e:
