@@ -231,20 +231,20 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # 1. Ambil data album utama (ini berfungsi)
+    # 1. Ambil data album utama
     album_data = await client.get_release(album_id)
     
     # 2. Ambil daftar link track (string) dari data album
-    # Ini menghindari panggilan ke endpoint /tracks yang rusak
     track_links = album_data.get("tracks", [])
-    if not track_links or not isinstance(track_links[0], str):
+    if not track_links:
         # Fallback jika 'tracks' tidak ada: coba panggil API (mungkin hanya rusak untuk beberapa rilis)
         LOGGER.warning(f"Beatport: Daftar track tidak ada di get_release untuk {album_id}. Mencoba fallback ke get_release_tracks...")
         try:
-             tracks_data = await client.get_release_tracks(album_id, per_page=100)
+             # Coba dengan paginasi aman (per_page=25)
+             tracks_data = await client.get_release_tracks(album_id, per_page=25)
              track_links = tracks_data.get("results", [])
              if not track_links:
-                 raise BeatportError("Fallback get_release_tracks juga gagal.")
+                 raise BeatportError("Fallback get_release_tracks juga gagal (hasil kosong).")
         except Exception as e:
              LOGGER.error(f"Beatport: Gagal total mendapatkan daftar track untuk {album_id}: {e}")
              raise BeatportError(f"Album {album_id} tidak memiliki track atau API gagal.")
@@ -272,9 +272,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['tracks'] = []
     total_duration_ms = 0
 
-    # 3. Loop melalui link track (string) atau kamus (dari fallback)
+    # --- PERBAIKAN: Hapus try/except di dalam loop ---
+    # Biarkan error dari process_track_metadata muncul agar bisa ditangkap
+    # oleh handler dan dilaporkan ke pengguna.
+    
     for i, track_item in enumerate(track_links):
-        try:
+        # try: <-- DIHAPUS
             track_data_full = None
             track_id_str = None
             
@@ -294,25 +297,25 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             if not track_data_full or not track_id_str:
                 continue
 
-            # 4. Tambahkan durasi
             total_duration_ms += track_data_full.get("length_ms", 0)
             
-            # 5. Proses track (pass 'track_data_full' sebagai pre_data)
             track_meta = await process_track_metadata(track_id_str, r_id, user, track_data_full)
             
-            track_meta['tracknumber'] = i + 1 # Setel nomor track secara manual
+            track_meta['tracknumber'] = i + 1 
             track_meta['totaltracks'] = str(total_tracks)
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
             metadata['tracks'].append(track_meta)
             
-        except Exception as e:
-            LOGGER.warning(f"Beatport: Gagal memproses track (Item: {track_item}) di album: {e}")
-            continue
+        # except Exception as e: <-- DIHAPUS
+        #    LOGGER.warning(f"Beatport: Gagal memproses track (Item: {track_item}) di album: {e}")
+        #    continue
+    # --- AKHIR PERBAIKAN ---
 
     metadata['duration'] = total_duration_ms // 1000
 
     if not metadata['tracks']:
+        # Error ini sekarang akan terpicu jika 'track_links' awalnya kosong
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
     metadata['quality'] = metadata['tracks'][0]['quality']
@@ -367,14 +370,15 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
     metadata['tracks'] = []
+    # --- PERBAIKAN: Hapus try/except di dalam loop ---
     for i, track_data in enumerate(tracks):
-        try:
-            # track_data["number"] = i + 1 
+        # try: <-- DIHAPUS
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
             metadata['tracks'].append(track_meta)
-        except Exception as e:
-            LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di playlist: {e}")
-            continue
+        # except Exception as e: <-- DIHAPUS
+        #    LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di playlist: {e}")
+        #    continue
+    # --- AKHIR PERBAIKAN ---
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk playlist {metadata['title']}")
