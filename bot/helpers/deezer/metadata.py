@@ -6,13 +6,12 @@ import aiohttp
 import urllib.parse
 import logging
 import os 
+import re # <-- TAMBAHAN BARU
 from config import Config 
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-# --- PERBAIKAN: Hapus impor DeezerError ---
 from .dzapi import DeezerAPI 
-# --- AKHIR PERBAIKAN ---
 from bot.logger import LOGGER
 
 # --- PERBAIKAN: Definisikan DeezerError di sini ---
@@ -25,6 +24,26 @@ class DeezerError(Exception):
 from .manager import deezer_manager
 
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
+
+# --- TAMBAHAN BARU: Regex & Fungsi Parsing URL ---
+DEEZER_URL_REGEX = re.compile(
+    r"https://(www\.)?deezer\.com/(?P<country>[a-z]{2}/)?(?P<type>track|album|playlist|artist)/(?P<id>\d+)"
+)
+
+def custom_url_parse(link: str):
+    """Mengekstrak Tipe dan ID dari URL Deezer."""
+    match = DEEZER_URL_REGEX.search(link)
+    if not match:
+        raise DeezerError("URL Deezer tidak valid atau tidak dikenali.")
+
+    media_type = match.group("type")
+    item_id = match.group("id")
+
+    if media_type == "release": # 'release' adalah alias untuk 'album'
+        media_type = "album"
+        
+    return media_type, item_id, {}
+# --- AKHIR TAMBAHAN BARU ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
@@ -236,7 +255,6 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
         
     metadata['tracks'] = []
     for track in t_meta['data']:
-        # --- PERBAIKAN: Tangkap DeezerError secara spesifik ---
         try:
             track_meta = await process_track_metadata(
                 track['SNG_ID'], 
@@ -251,16 +269,12 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
             metadata['tracks'].append(track_meta)
         
         except DeezerError as e:
-            # Ini adalah error 'not available' yang kita harapkan
-            # Kita harus melemparnya lagi agar 'start_link' (download.py) tahu ARL ini gagal
             LOGGER.warning(f"Deezer: Track {track.get('SNG_ID')} gagal (region-lock?), membatalkan album untuk ARL ini.")
-            raise e # Lempar lagi error ini
+            raise e 
         
         except Exception as e:
-            # Ini adalah error lain yang tidak terduga
             LOGGER.warning(f"Gagal memproses metadata untuk track ID {track.get('SNG_ID')}: {e}")
-            continue # Lewati lagu ini, lanjutkan album
-        # --- AKHIR PERBAIKAN ---
+            continue 
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
@@ -287,7 +301,6 @@ async def process_playlist_meta(raw_meta, r_id, user: dict = None):
     if raw_meta['DATA'].get('CREATOR') and raw_meta['DATA']['CREATOR'].get('NAME'):
         metadata['artist'] = raw_meta['DATA']['CREATOR']['NAME']
     for track in raw_meta['SONGS']['data']:
-        # --- PERBAIKAN: Tangkap DeezerError secara spesifik ---
         try:
             track_meta = await process_track_metadata(
                 track['SNG_ID'], 
@@ -298,19 +311,16 @@ async def process_playlist_meta(raw_meta, r_id, user: dict = None):
             metadata['tracks'].append(track_meta)
         
         except DeezerError as e:
-            # Ini adalah error 'not available'
             LOGGER.warning(f"Deezer: Track {track.get('SNG_ID')} di playlist gagal (region-lock?). Melewatkan lagu ini.")
-            continue # Lewati lagu ini, lanjutkan playlist
+            continue 
 
         except Exception as e:
             LOGGER.warning(f"Gagal memproses metadata untuk track ID {track.get('SNG_ID')}: {e}")
             continue
-        # --- AKHIR PERBAIKAN ---
             
     if metadata['tracks']:
         metadata['quality'] = metadata['tracks'][0]['quality']
     else:
-        # Jika playlist kosong setelah disaring, ini bukan error, tapi mungkin tidak ada yang bisa diunduh
         LOGGER.warning(f"Tidak ada track yang valid/tersedia ditemukan untuk playlist {metadata['title']}")
         metadata['quality'] = "N/A"
         
