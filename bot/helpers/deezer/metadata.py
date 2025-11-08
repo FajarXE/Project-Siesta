@@ -5,21 +5,19 @@ from datetime import datetime
 import aiohttp
 import urllib.parse
 import logging
-import os # <-- Impor OS
-from config import Config # <-- Impor Config
+import os 
+from config import Config 
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-from .dzapi import DeezerAPI 
+# --- PERBAIKAN: Impor DeezerError ---
+from .dzapi import DeezerAPI, DeezerError 
+# --- AKHIR PERBAIKAN ---
 from bot.logger import LOGGER
 
-# --- MODIFIKASI: Impor manager Deezer ---
 from .manager import deezer_manager
-# --- MODIFIKASI SELESAI ---
 
-# --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
-# --- BATAS MODIFIKASI ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
@@ -27,7 +25,6 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
     Mencoba mengambil URL sampul resolusi tinggi dari iTunes menggunakan UPC atau pencarian Teks.
     """
     try:
-        # 1. Coba cari via UPC (Paling Akurat)
         if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
             upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
             async with session.get(upc_url) as resp:
@@ -38,7 +35,6 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                         if artwork_url:
                             return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
 
-        # 2. Jika UPC gagal/tidak ada, coba cari via Teks (Album Artist + Album Title)
         if metadata.get('albumartist') and metadata.get('album'):
             search_term = urllib.parse.quote(f"{metadata['albumartist']} {metadata['album']}")
             search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
@@ -87,7 +83,9 @@ async def process_track_metadata(track_id, r_id, cover=None,
         t_meta_page = t_meta_page.get('FALLBACK', t_meta_page) 
     except Exception as e:
         LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
-        raise Exception(f"Deezer : Track not available (pageTrack API failed)")
+        # --- PERBAIKAN: Gunakan DeezerError ---
+        raise DeezerError(f"Deezer : Track not available (pageTrack API failed)")
+        # --- AKHIR PERBAIKAN ---
     
     metadata['itemid'] = track_id
     metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
@@ -170,9 +168,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['token'] = t_meta_page['TRACK_TOKEN']
     metadata['token_expiry'] = t_meta_page['TRACK_TOKEN_EXPIRE']
     
-    # --- MODIFIKASI: Teruskan user_id ke get_quality ---
     metadata['quality'] = await get_quality(t_meta_page, deezerapi, user['user_id'])
-    # --- MODIFIKASI SELESAI ---
     return metadata
             
 
@@ -235,6 +231,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
         
     metadata['tracks'] = []
     for track in t_meta['data']:
+        # --- PERBAIKAN: Tangkap DeezerError secara spesifik ---
         try:
             track_meta = await process_track_metadata(
                 track['SNG_ID'], 
@@ -247,9 +244,18 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
                 user=user
             )
             metadata['tracks'].append(track_meta)
+        
+        except DeezerError as e:
+            # Ini adalah error 'not available' yang kita harapkan
+            # Kita harus melemparnya lagi agar 'start_link' (download.py) tahu ARL ini gagal
+            LOGGER.warning(f"Deezer: Track {track.get('SNG_ID')} gagal (region-lock?), membatalkan album untuk ARL ini.")
+            raise e # Lempar lagi error ini
+        
         except Exception as e:
+            # Ini adalah error lain yang tidak terduga
             LOGGER.warning(f"Gagal memproses metadata untuk track ID {track.get('SNG_ID')}: {e}")
-            continue
+            continue # Lewati lagu ini, lanjutkan album
+        # --- AKHIR PERBAIKAN ---
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
@@ -276,6 +282,7 @@ async def process_playlist_meta(raw_meta, r_id, user: dict = None):
     if raw_meta['DATA'].get('CREATOR') and raw_meta['DATA']['CREATOR'].get('NAME'):
         metadata['artist'] = raw_meta['DATA']['CREATOR']['NAME']
     for track in raw_meta['SONGS']['data']:
+        # --- PERBAIKAN: Tangkap DeezerError secara spesifik ---
         try:
             track_meta = await process_track_metadata(
                 track['SNG_ID'], 
@@ -283,13 +290,25 @@ async def process_playlist_meta(raw_meta, r_id, user: dict = None):
                 total_tracks=metadata['totaltracks'],
                 user=user 
             )
-        except:
+            metadata['tracks'].append(track_meta)
+        
+        except DeezerError as e:
+            # Ini adalah error 'not available'
+            LOGGER.warning(f"Deezer: Track {track.get('SNG_ID')} di playlist gagal (region-lock?). Melewatkan lagu ini.")
+            continue # Lewati lagu ini, lanjutkan playlist
+
+        except Exception as e:
+            LOGGER.warning(f"Gagal memproses metadata untuk track ID {track.get('SNG_ID')}: {e}")
             continue
-        metadata['tracks'].append(track_meta)
+        # --- AKHIR PERBAIKAN ---
+            
     if metadata['tracks']:
         metadata['quality'] = metadata['tracks'][0]['quality']
     else:
+        # Jika playlist kosong setelah disaring, ini bukan error, tapi mungkin tidak ada yang bisa diunduh
+        LOGGER.warning(f"Tidak ada track yang valid/tersedia ditemukan untuk playlist {metadata['title']}")
         metadata['quality'] = "N/A"
+        
     return metadata
 
 
@@ -314,19 +333,20 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
     return await create_cover_file(url, meta, thumbnail)
 
 
-# --- MODIFIKASI: Fungsi get_quality diubah total ---
 async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
     if not countries:
-        raise Exception("Deezer : Track not available")
+        # --- PERBAIKAN: Gunakan DeezerError ---
+        raise DeezerError("Deezer : Track not available (no available countries)")
+        # --- AKHIR PERBAIKAN ---
     elif deezerapi.country not in countries:
-        raise Exception("Deezer : Track not available in your country")
+        # --- PERBAIKAN: Gunakan DeezerError ---
+        raise DeezerError("Deezer : Track not available in your country")
+        # --- AKHIR PERBAIKAN ---
     
-    # Dapatkan preferensi pengguna
     preferred_quality = deezer_manager.get_user_quality(user_id)
     LOGGER.debug(f"Deezer: Menggunakan preferensi kualitas '{preferred_quality}' for user {user_id}")
 
-    # Buat daftar format untuk dicoba, berdasarkan preferensi
     formats_to_check = []
     if preferred_quality == "FLAC":
         formats_to_check = ['FLAC', 'MP3_320', 'MP3_128']
@@ -337,25 +357,20 @@ async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
 
     final_format = None
     
-    # Loop melalui format yang disukai
     for f in formats_to_check:
-        # Periksa apakah format didukung oleh langganan ARL INI
         if f not in deezerapi.available_formats:
-            continue # Coba format berikutnya yang lebih rendah
+            continue 
             
-        # Periksa apakah lagu tersedia dalam format ini
         if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
             final_format = f
-            break # Format ditemukan, keluar dari loop
+            break 
 
     if final_format is None:
-        # Ini terjadi jika langganan ARL hanya gratis (MP3_128)
-        # tetapi pengguna meminta FLAC, dan loop di atas gagal
-        # Kita coba paksa MP3_128 sebagai upaya terakhir
         if 'MP3_128' in deezerapi.available_formats and f'FILESIZE_MP3_128' in meta and meta[f'FILESIZE_MP3_128'] != '0':
             final_format = 'MP3_128'
         else:
-             raise Exception(f"Deezer: Format yang diminta ({preferred_quality}) atau fallback (MP3_128) tidak tersedia untuk lagu ini atau oleh langganan ARL ini.")
+             # --- PERBAIKAN: Gunakan DeezerError ---
+             raise DeezerError(f"Deezer: Format yang diminta ({preferred_quality}) atau fallback (MP3_128) tidak tersedia untuk lagu ini atau oleh langganan ARL ini.")
+             # --- AKHIR PERBAIKAN ---
 
     return final_format
-# --- MODIFIKASI SELESAI ---
