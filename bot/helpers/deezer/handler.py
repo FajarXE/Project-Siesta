@@ -4,7 +4,7 @@ from pathvalidate import sanitize_filepath
 from config import Config
 import traceback
 import os 
-import aiohttp # <-- Impor aiohttp
+import aiohttp # <-- TAMBAHAN BARU: Impor aiohttp
 
 from .metadata import *
 from ..utils import *
@@ -31,6 +31,7 @@ async def start_deezer(url:str, user: dict):
             LOGGER.debug(f"Deezer: Link pendek terdeteksi: {url}. Mengambil URL asli...")
             try:
                 async with aiohttp.ClientSession() as session:
+                    # Cukup 'head' request dengan allow_redirects=False
                     async with session.head(url, allow_redirects=False, timeout=10) as r:
                         if r.status in (301, 302, 307, 308) and 'Location' in r.headers:
                             url = r.headers['Location'] # Ganti link dengan URL asli
@@ -42,7 +43,7 @@ async def start_deezer(url:str, user: dict):
                 raise DeezerError(f"Gagal me-resolve link pendek: {e}")
         # --- AKHIR PERBAIKAN ---
 
-        media_type, item_id, _ = custom_url_parse(url)
+        media_type, item_id, _ = custom_url_parse(url) # Sekarang 'url' sudah yang asli
 
         if media_type == 'artist':
             await start_artist(item_id, user)
