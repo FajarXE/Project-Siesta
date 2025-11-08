@@ -12,7 +12,7 @@ from config import Config
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .manager import kkbox_manager, KKBoxError
-from bot.logger import LOGGER # Pastikan LOGGER diimpor
+from bot.logger import LOGGER
 
 # Kualitas dari interface.py
 QUALITY_MAP_DISPLAY = {
@@ -113,6 +113,12 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['date'] = alb_info['album_date']
     metadata['tracknumber'] = str(track_data['song_idx'])
     metadata['totaltracks'] = str(alb_info['num_tracks'])
+    
+    # --- TAMBAHAN: Mengambil Total Volume (Disk) ---
+    # Kita asumsikan API key-nya adalah 'num_volumes', default ke 1
+    metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
+    # --- BATAS TAMBAHAN ---
+    
     metadata['genre'] = track_data.get('genre_name')
     metadata['explicit'] = bool(track_data['song_is_explicit'])
     metadata['provider'] = 'KKBox'
@@ -184,6 +190,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['albumartist'] = alb_info['artist_name']
     metadata['date'] = alb_info['album_date']
     metadata['totaltracks'] = str(alb_info['num_tracks'])
+    
+    # --- TAMBAHAN: Mengambil Total Volume (Disk) ---
+    # Kita asumsikan API key-nya adalah 'num_volumes', default ke 1
+    metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
+    # --- BATAS TAMBAHAN ---
+    
     metadata['explicit'] = bool(alb_info['album_is_explicit'])
     metadata['provider'] = 'KKBox'
     metadata['type'] = 'album'
