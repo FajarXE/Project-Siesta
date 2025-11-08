@@ -12,7 +12,7 @@ from config import Config
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .manager import kkbox_manager, KKBoxError
-from bot.logger import LOGGER
+from bot.logger import LOGGER # Pastikan LOGGER diimpor
 
 # Kualitas dari interface.py
 QUALITY_MAP_DISPLAY = {
@@ -96,8 +96,19 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     if 'featuredartist_list' in track_data['artist_role']:
         artists.extend(track_data['artist_role']['featuredartist_list']['featuredartist'])
     
-    metadata['artist'] = ", ".join(artists)
+    # --- MODIFIKASI DIMULAI (PERBAIKAN ARTIS TIDAK DIKETAHUI) ---
+    # Ambil artis album TERLEBIH DAHULU
     metadata['albumartist'] = alb_info['artist_name']
+    
+    # Cek jika daftar 'artists' (artis lagu) kosong
+    if not artists:
+        # Jika kosong, gunakan 'albumartist' sebagai fallback
+        LOGGER.debug(f"KKBox: Artis lagu tidak ditemukan untuk '{metadata['title']}', menggunakan artis album: {metadata['albumartist']}")
+        artists = [metadata['albumartist']]
+    
+    metadata['artist'] = ", ".join(artists) # Sekarang dijamin memiliki nilai
+    # --- MODIFIKASI SELESAI ---
+    
     metadata['album'] = alb_info['album_name']
     metadata['date'] = alb_info['album_date']
     metadata['tracknumber'] = str(track_data['song_idx'])
