@@ -29,8 +29,7 @@ QUALITY_MAP = {
 }
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
-    # ... (Salin fungsi 'get_itunes_cover_url' yang sama persis
-    # dari 'bot/helpers/deezer/metadata.py' ke sini) ...
+    # ... (Fungsi 'get_itunes_cover_url' Anda tetap di sini) ...
     try:
         if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
             upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
@@ -65,7 +64,6 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
 
 def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL Beatport."""
-    # Regex dari interface.py
     match = re.search(r"https?://(www.)?beatport.com/(?:[a-z]{2}/)?.*?"
                       r"(?P<type>track|release|artist|playlists|chart)/.*?/?(?P<id>\d+)", link)
     
@@ -75,7 +73,6 @@ def custom_url_parse(link: str):
     media_type_str = match.group("type")
     media_id = match.group("id")
 
-    # Konversi ke tipe bot
     if media_type_str == "track":
         media_type = "track"
     elif media_type_str == "release":
@@ -90,7 +87,6 @@ def custom_url_parse(link: str):
 
 async def _generate_artwork_url(dynamic_uri: str, size: int = 1400):
     """Membuat URL sampul resolusi tinggi dari URL dinamis Beatport."""
-    # Logika dari interface.py
     res_pattern = re.compile(r"\d{3,4}x\d{3,4}")
     match = re.search(res_pattern, dynamic_uri)
     if match:
@@ -103,18 +99,15 @@ async def _process_cover(metadata: dict, beatport_url: str):
     cover_url = None
     try:
         async with aiohttp.ClientSession() as session:
-            # 1. Coba iTunes
             logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
             cover_url = await get_itunes_cover_url(metadata, session)
     except Exception as e:
         logging.warning(f"Sesi pencarian sampul iTunes gagal: {e}")
 
-    # 2. Coba Beatport (jika iTunes gagal)
     if not cover_url and beatport_url:
         logging.debug(f"iTunes gagal, menggunakan sampul Beatport.")
         cover_url = beatport_url
 
-    # 3. Cek Final & Fallback Lokal
     final_cover_path_or_url = cover_url
     if not cover_url:
         if os.path.exists(FALLBACK_IMAGE_PATH):
@@ -132,7 +125,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # Dapatkan data lagu
     try:
         track_data = pre_data if pre_data else await client.get_track(track_id)
         if not track_data.get("is_available_for_streaming"):
@@ -143,16 +135,14 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         LOGGER.error(f"Beatport: Gagal mendapatkan metadata track {track_id}: {e}")
         raise e
 
-    # Dapatkan data album terkait
     album_id = track_data.get("release").get("id")
     try:
         album_data = await client.get_release(album_id)
     except Exception:
-        album_data = {} # Lanjutkan meskipun album gagal (misal region locked)
+        album_data = {} 
     
     metadata['itemid'] = track_id
     
-    # Info dasar
     title = track_data.get("name")
     if track_data.get("mix_name"):
         title += f" ({track_data.get('mix_name')})"
@@ -166,18 +156,14 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['tracknumber'] = str(track_data.get("number", 1))
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
-    # --- PERBAIKAN DIMULAI (Tambahkan Volume & Explicit) ---
     metadata['volume'] = "1"
     metadata['totalvolume'] = "1"
     metadata['explicit'] = track_data.get("explicit", False) 
-    # --- PERBAIKAN SELESAI ---
     
-    # Info teknis
     metadata['isrc'] = track_data.get("isrc")
     metadata['upc'] = album_data.get("upc")
     metadata['duration'] = track_data.get("length_ms", 0) // 1000
     
-    # Info label & genre
     release_year = track_data.get("publish_date", "N/A")[:4]
     label_name = track_data.get("release", {}).get("label", {}).get("name", "N/A")
     metadata['copyright'] = f"© {release_year} {label_name}"
@@ -190,13 +176,10 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['provider'] = 'Beatport'
     metadata['type'] = 'track'
     
-    # Sampul
     bp_cover_url = await _generate_artwork_url(track_data.get("release").get("image").get("dynamic_uri"))
     metadata['cover'] = await _process_cover(metadata, bp_cover_url)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
-    # --- LOGIKA KUALITAS YANG DIPERBARUI ---
-    
     user_id = user.get('user_id')
     if not user_id:
         LOGGER.warning(f"Beatport: user_id tidak ditemukan untuk track {track_id}, menggunakan kualitas default.")
@@ -248,46 +231,25 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
+    # 1. Ambil data album utama (ini berfungsi)
     album_data = await client.get_release(album_id)
     
-    # --- PERBAIKAN: Implementasi Paginasi (Untuk menghindari Error 500) ---
-    tracks = []
-    page = 1
-    per_page = 25 # Minta dalam chunk yang lebih kecil dan aman
-
-    while True:
+    # 2. Ambil daftar link track (string) dari data album
+    # Ini menghindari panggilan ke endpoint /tracks yang rusak
+    track_links = album_data.get("tracks", [])
+    if not track_links or not isinstance(track_links[0], str):
+        # Fallback jika 'tracks' tidak ada: coba panggil API (mungkin hanya rusak untuk beberapa rilis)
+        LOGGER.warning(f"Beatport: Daftar track tidak ada di get_release untuk {album_id}. Mencoba fallback ke get_release_tracks...")
         try:
-            # Minta satu halaman
-            tracks_data_page = await client.get_release_tracks(album_id, page=page, per_page=per_page)
-            
-            page_results = tracks_data_page.get('results', [])
-            if not page_results:
-                break 
-            
-            tracks.extend(page_results)
-            
-            if not tracks_data_page.get('next'):
-                break
-                
-            page += 1
-            
-            if page > 20: # Batas aman (25 * 20 = 500 lagu)
-                LOGGER.warning(f"Beatport: Album {album_id} memiliki lebih dari 20 halaman, mungkin error?")
-                break
-                
+             tracks_data = await client.get_release_tracks(album_id, per_page=100)
+             track_links = tracks_data.get("results", [])
+             if not track_links:
+                 raise BeatportError("Fallback get_release_tracks juga gagal.")
         except Exception as e:
-            # Jika satu halaman gagal (misal 500), hentikan
-            LOGGER.error(f"Beatport: Gagal mengambil halaman {page} untuk album {album_id}: {e}")
-            # Jika kita sudah punya beberapa lagu, lanjutkan saja
-            if tracks:
-                LOGGER.warning(f"Melanjutkan dengan {len(tracks)} lagu yang sudah didapat...")
-                break
-            else:
-                raise e # Lemparkan error jika kita tidak mendapatkan apa-apa
-    # --- AKHIR PERBAIKAN ---
-
-    if not tracks:
-        raise BeatportError(f"Album {album_id} tidak memiliki track (atau gagal paginasi).")
+             LOGGER.error(f"Beatport: Gagal total mendapatkan daftar track untuk {album_id}: {e}")
+             raise BeatportError(f"Album {album_id} tidak memiliki track atau API gagal.")
+    
+    total_tracks = len(track_links)
 
     metadata['itemid'] = album_id
     metadata['title'] = album_data.get("name")
@@ -296,11 +258,9 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['artist'] = metadata['albumartist'] 
     metadata['upc'] = album_data.get("upc")
     metadata['date'] = album_data.get("publish_date")
-    metadata['totaltracks'] = str(len(tracks)) # Gunakan panjang daftar yang kita buat
-    metadata['duration'] = sum([t.get("length_ms", 0) for t in tracks]) // 1000 # <-- Baris 268 sekarang aman
+    metadata['totaltracks'] = str(total_tracks)
     metadata['provider'] = 'Beatport'
     metadata['type'] = 'album'
-    
     metadata['volume'] = "1"
     metadata['totalvolume'] = "1"
     metadata['explicit'] = album_data.get("explicit", False)
@@ -310,17 +270,47 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
     metadata['tracks'] = []
-    for i, track_data in enumerate(tracks):
+    total_duration_ms = 0
+
+    # 3. Loop melalui link track (string) atau kamus (dari fallback)
+    for i, track_item in enumerate(track_links):
         try:
-            # 'track_data' di sini SUDAH berupa kamus lengkap
-            track_data["number"] = i + 1
-            track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
+            track_data_full = None
+            track_id_str = None
+            
+            if isinstance(track_item, str):
+                # METODE UTAMA (DARI get_release): track_item adalah string link
+                track_id_str = track_item.split('/')[-1]
+                if not track_id_str.isdigit():
+                    continue
+                # Ambil data track lengkap (kamus)
+                track_data_full = await client.get_track(track_id_str)
+            
+            elif isinstance(track_item, dict):
+                # METODE FALLBACK (DARI get_release_tracks): track_item sudah berupa kamus
+                track_data_full = track_item
+                track_id_str = track_data_full.get('id')
+            
+            if not track_data_full or not track_id_str:
+                continue
+
+            # 4. Tambahkan durasi
+            total_duration_ms += track_data_full.get("length_ms", 0)
+            
+            # 5. Proses track (pass 'track_data_full' sebagai pre_data)
+            track_meta = await process_track_metadata(track_id_str, r_id, user, track_data_full)
+            
+            track_meta['tracknumber'] = i + 1 # Setel nomor track secara manual
+            track_meta['totaltracks'] = str(total_tracks)
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
             metadata['tracks'].append(track_meta)
+            
         except Exception as e:
-            LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di album: {e}")
+            LOGGER.warning(f"Beatport: Gagal memproses track (Item: {track_item}) di album: {e}")
             continue
+
+    metadata['duration'] = total_duration_ms // 1000
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
@@ -344,9 +334,7 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
 
-    # --- PERBAIKAN: Gunakan 'total_tracks' (bukan 'count') untuk paginasi ---
     for page in range(2, (total_tracks - 1) // 100 + 2):
-    # --- AKHIR PERBAIKAN ---
         if is_chart:
             tracks_page = await client.get_chart_tracks(playlist_id, page=page, per_page=100)
         else:
