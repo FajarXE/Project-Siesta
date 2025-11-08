@@ -23,13 +23,14 @@ from .manager import deezer_manager
 
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
 
-# --- PERBAIKAN: Regex yang jauh lebih fleksibel ---
+# --- PERBAIKAN: Regex diperbarui untuk 'link.deezer.com' DAN query parameters ---
 DEEZER_URL_REGEX = re.compile(
     # (http:// atau https:// (opsional)) + (www. atau link. (opsional)) + deezer.com
     r"(https?://)?(www\.|link\.)?deezer\.com/"
     r"(?P<country>[a-z]{2}/)?"
     r"(?P<type>track|album|playlist|artist)/"
     r"(?P<id>\d+)"
+    r"(?:\?.*)?" # <-- TAMBAHAN: Izinkan query parameters (seperti ?utm_source=...)
 )
 # --- AKHIR PERBAIKAN ---
 
