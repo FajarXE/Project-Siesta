@@ -182,7 +182,11 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     try:
         # Panggil API di thread terpisah
-        album_resp = await asyncio.to_thread(client..get_album, album_id)
+        
+        # --- PERBAIKAN SYNTAXERROR DI SINI ---
+        album_resp = await asyncio.to_thread(client.get_album, album_id)
+        # --- BATAS PERBAIKAN ---
+        
         raw_id = album_resp['album']['album_id']
         
         album_data_more = await asyncio.to_thread(client.get_album_more, raw_id)
