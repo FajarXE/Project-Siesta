@@ -6,7 +6,7 @@ import aiohttp
 import urllib.parse
 import logging
 import os 
-import re # <-- TAMBAHAN BARU
+import re # <-- Impor re
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -14,21 +14,20 @@ from ..metadata import create_cover_file
 from .dzapi import DeezerAPI 
 from bot.logger import LOGGER
 
-# --- PERBAIKAN: Definisikan DeezerError di sini ---
 class DeezerError(Exception):
     def __init__(self, message):
         self.message = message
         super(DeezerError, self).__init__(message)
-# --- AKHIR PERBAIKAN ---
 
 from .manager import deezer_manager
 
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
 
-# --- TAMBAHAN BARU: Regex & Fungsi Parsing URL ---
+# --- PERBAIKAN: Regex diperbarui untuk 'link.deezer.com' ---
 DEEZER_URL_REGEX = re.compile(
-    r"https://(www\.)?deezer\.com/(?P<country>[a-z]{2}/)?(?P<type>track|album|playlist|artist)/(?P<id>\d+)"
+    r"https://(www\.|link\.)?deezer\.com/(?P<country>[a-z]{2}/)?(?P<type>track|album|playlist|artist)/(?P<id>\d+)"
 )
+# --- AKHIR PERBAIKAN ---
 
 def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL Deezer."""
@@ -43,7 +42,6 @@ def custom_url_parse(link: str):
         media_type = "album"
         
     return media_type, item_id, {}
-# --- AKHIR TAMBAHAN BARU ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
