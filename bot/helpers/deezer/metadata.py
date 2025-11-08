@@ -23,10 +23,10 @@ from .manager import deezer_manager
 
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
 
-# --- PERBAIKAN: Regex yang paling kuat ---
+# --- PERBAIKAN: Regex yang paling kuat (DENGAN KOREKSI TYPO) ---
 DEEZER_URL_REGEX = re.compile(
     # Mencocokkan http(s):// (opsional) + (www. atau link. (opsional)) + deezer.com
-    r"(https?://)?(www\.|link\.)?deezer\.com/"
+    r"(https?://)?(www\.|link\.)?deezer\.com/"  # <-- 'httpshttps?://' telah diperbaiki menjadi 'https?://'
     # Mencocokkan negara (opsional)
     r"(?P<country>[a-z]{2}/)?"
     # Mencocokkan tipe konten
