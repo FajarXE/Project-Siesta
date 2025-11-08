@@ -64,13 +64,11 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         filepath = sanitize_filepath(filepath)
 
     try:
-        # --- PERBAIKAN: Kembalikan ke panggilan 4-argumen asli ---
         url = await deezerapi.get_track_url(
             item_id, 
             track_meta['token'], 
             track_meta['token_expiry'], 
             track_meta['quality'])
-        # --- AKHIR PERBAIKAN ---
     except Exception as e:
         LOGGER.warning(f"Gagal mendapatkan URL unduhan Deezer untuk track {item_id}: {e}")
         return False
@@ -85,7 +83,10 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
-    err = await deezerapi.dl_track(url, track_meta['filepath'])
+    # --- PERBAIKAN: Kembalikan ke panggilan 3-argumen asli ---
+    err = await deezerapi.dl_track(item_id, url, track_meta['filepath'])
+    # --- AKHIR PERBAIKAN ---
+    
     if err:
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
         return False
@@ -221,7 +222,6 @@ async def start_playlist(playlist_id, user):
     deezerapi = user['deezer_api']
     
     try:
-        # Panggil dengan 3 argumen seperti yang diharapkan
         raw_data = await deezerapi.get_playlist(playlist_id, -1, 0)
         
         if not raw_data.get('SONGS') or not raw_data.get('SONGS').get('data'):
