@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/deezer/metadata.py]
+# [GANTI SELURUH FILE: bot/helpers/deezer/metadata.py]
 
 import copy
 from datetime import datetime
@@ -10,10 +10,17 @@ from config import Config
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-# --- PERBAIKAN: Impor DeezerError ---
-from .dzapi import DeezerAPI, DeezerError 
+# --- PERBAIKAN: Hapus impor DeezerError ---
+from .dzapi import DeezerAPI 
 # --- AKHIR PERBAIKAN ---
 from bot.logger import LOGGER
+
+# --- PERBAIKAN: Definisikan DeezerError di sini ---
+class DeezerError(Exception):
+    def __init__(self, message):
+        self.message = message
+        super(DeezerError, self).__init__(message)
+# --- AKHIR PERBAIKAN ---
 
 from .manager import deezer_manager
 
@@ -83,9 +90,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
         t_meta_page = t_meta_page.get('FALLBACK', t_meta_page) 
     except Exception as e:
         LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
-        # --- PERBAIKAN: Gunakan DeezerError ---
         raise DeezerError(f"Deezer : Track not available (pageTrack API failed)")
-        # --- AKHIR PERBAIKAN ---
     
     metadata['itemid'] = track_id
     metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
@@ -336,13 +341,9 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
 async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
     if not countries:
-        # --- PERBAIKAN: Gunakan DeezerError ---
         raise DeezerError("Deezer : Track not available (no available countries)")
-        # --- AKHIR PERBAIKAN ---
     elif deezerapi.country not in countries:
-        # --- PERBAIKAN: Gunakan DeezerError ---
         raise DeezerError("Deezer : Track not available in your country")
-        # --- AKHIR PERBAIKAN ---
     
     preferred_quality = deezer_manager.get_user_quality(user_id)
     LOGGER.debug(f"Deezer: Menggunakan preferensi kualitas '{preferred_quality}' for user {user_id}")
@@ -369,8 +370,6 @@ async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
         if 'MP3_128' in deezerapi.available_formats and f'FILESIZE_MP3_128' in meta and meta[f'FILESIZE_MP3_128'] != '0':
             final_format = 'MP3_128'
         else:
-             # --- PERBAIKAN: Gunakan DeezerError ---
              raise DeezerError(f"Deezer: Format yang diminta ({preferred_quality}) atau fallback (MP3_128) tidak tersedia untuk lagu ini atau oleh langganan ARL ini.")
-             # --- AKHIR PERBAIKAN ---
 
     return final_format
