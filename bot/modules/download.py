@@ -46,7 +46,6 @@ async def run_download_task(link: str, user: dict):
     """
     Fungsi ini berjalan di latar belakang.
     Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup.
-    (Versi ini menggunakan 'task_successful' untuk mencegah penghapusan pesan error)
     """
     
     task_successful = False
@@ -56,18 +55,16 @@ async def run_download_task(link: str, user: dict):
         
         await start_link(link, user)
         
-        task_successful = True # Jika start_link selesai tanpa error, tandai sukses
-        
-        # await asyncio.sleep(5) # <-- PERBAIKAN: Jeda 5 detik dihapus
+        task_successful = True 
         
     except asyncio.CancelledError:
         LOGGER.info(f"Tugas untuk {user['user_id']} dibatalkan (mungkin shutdown).")
         await send_message(user, "Tugas dibatalkan.")
-        await asyncio.sleep(5) # Jeda di sini tidak apa-apa
+        await asyncio.sleep(5) 
             
     except Exception as e:
         error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
-        if "not available in any" in str(e) or "Maaf, tidak ada akun" in str(e) or "NotImplementedError" in str(e):
+        if "not available in any" in str(e) or "Maaf, tidak ada akun" in str(e) or "NotImplementedError" in str(e) or "URL Deezer tidak valid" in str(e):
             error_message = f"Tugas Gagal: {e}"
             
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
@@ -90,7 +87,6 @@ async def run_download_task(link: str, user: dict):
 async def download_track(c, msg:Message):
     if await check_user(msg=msg):
         
-        # --- PERBAIKAN LOGIKA PARSING LINK ---
         text_content = ""
         reply = False
         
@@ -103,20 +99,17 @@ async def download_track(c, msg:Message):
 
         link = ""
         try:
-            # Pecah pesan berdasarkan spasi dan cari link
             parts = text_content.split()
             for part in parts:
                 if part.startswith("http://") or part.startswith("https://"):
-                    link = part # Ambil link pertama yang ditemukan
-                    break # Hentikan pencarian
+                    link = part 
+                    break 
 
             if not link:
-                # Jika tidak ada link (mungkin /dl tanpa link), picu error
                 raise IndexError
                 
         except IndexError:
             return await send_message(msg, lang.s.ERR_NO_LINK)
-        # --- AKHIR PERBAIKAN LOGIKA ---
 
         if not link:
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
@@ -191,18 +184,24 @@ async def start_link(link: str, user: dict) -> None:
                 return 
             except Exception as e:
                 error_str = str(e).lower()
+                # --- PERBAIKAN: Hapus "url deezer tidak valid" ---
+                # Biarkan error "URL tidak valid" menjadi fatal dan menghentikan tugas.
                 if "not available in your country" in error_str or \
                    "not available by your subscription" in error_str or \
                    "track not available" in error_str:
+                # --- AKHIR PERBAIKAN ---
                     LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Region/Sub Lock): {e}. Mencoba ARL berikutnya...")
                     last_error = e 
                     continue 
                 else:
                     LOGGER.error(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Fatal): {e}")
-                    raise e 
+                    raise e # Lempar error (seperti "URL tidak valid") sebagai fatal
         if last_error:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Deezer yang dicoba. Error terakhir: {last_error}")
         else:
+            # Jika loop selesai tanpa 'return', tetapi 'last_error' tidak ada,
+            # itu berarti 'raise e' terakhir (error fatal) seharusnya terlempar.
+            # Bagian ini seharusnya tidak tercapai jika ada error fatal.
             raise Exception("Gagal mengunduh Deezer karena alasan yang tidak diketahui setelah mencoba semua akun.")
         
     elif link.startswith(tuple(qobuz)):
