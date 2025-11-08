@@ -234,20 +234,44 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     album_data = await client.get_release(album_id)
     
     # 2. Ambil daftar link track (string) dari data album
-    track_links = album_data.get("tracks", [])
-    if not track_links:
-        # Fallback jika 'tracks' tidak ada: coba panggil API (mungkin hanya rusak untuk beberapa rilis)
+    track_links_or_dicts = album_data.get("tracks", [])
+    
+    # --- PERBAIKAN: Tambahkan loop paginasi ke fallback ---
+    if not track_links_or_dicts:
         LOGGER.warning(f"Beatport: Daftar track tidak ada di get_release untuk {album_id}. Mencoba fallback ke get_release_tracks...")
         try:
-             tracks_data = await client.get_release_tracks(album_id, per_page=25)
-             track_links = tracks_data.get("results", [])
-             if not track_links:
+             tracks_list_from_fallback = []
+             page = 1
+             per_page = 25 # Tetap aman
+
+             while True:
+                 LOGGER.debug(f"Beatport: Mengambil fallback halaman {page} (per_page=25)...")
+                 tracks_data_page = await client.get_release_tracks(album_id, page=page, per_page=per_page)
+                 
+                 page_results = tracks_data_page.get("results", [])
+                 if not page_results:
+                     break # Halaman kosong, selesai
+                 
+                 tracks_list_from_fallback.extend(page_results)
+                 
+                 if not tracks_data_page.get("next"):
+                     break # Tidak ada halaman 'next', selesai
+                     
+                 page += 1
+                 if page > 20: # Batas aman (25 * 20 = 500 lagu)
+                     LOGGER.warning(f"Beatport: Album {album_id} memiliki lebih dari 20 halaman, berhenti.")
+                     break
+             
+             track_links_or_dicts = tracks_list_from_fallback # Ganti 'track_links' dengan hasil fallback
+             
+             if not track_links_or_dicts:
                  raise BeatportError("Fallback get_release_tracks juga gagal (hasil kosong).")
         except Exception as e:
              LOGGER.error(f"Beatport: Gagal total mendapatkan daftar track untuk {album_id}: {e}")
              raise BeatportError(f"Album {album_id} tidak memiliki track atau API gagal.")
+    # --- AKHIR PERBAIKAN ---
     
-    total_tracks = len(track_links)
+    total_tracks = len(track_links_or_dicts)
 
     metadata['itemid'] = album_id
     metadata['title'] = album_data.get("name")
@@ -270,18 +294,14 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['tracks'] = []
     total_duration_ms = 0
 
-    for i, track_item in enumerate(track_links):
+    for i, track_item in enumerate(track_links_or_dicts):
         try:
             track_data_full = None
             track_id_str = None
             
             if isinstance(track_item, str):
                 # METODE UTAMA (DARI get_release): track_item adalah string link
-                
-                # --- PERBAIKAN: Gunakan [-2] untuk ID, bukan [-1] ---
                 track_id_str = track_item.split('/')[-2]
-                # --- AKHIR PERBAIKAN ---
-                
                 if not track_id_str.isdigit():
                     LOGGER.warning(f"Beatport: Melewatkan link track tidak valid: {track_item}")
                     continue 
