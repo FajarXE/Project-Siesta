@@ -6,7 +6,7 @@ import aiohttp
 import urllib.parse
 import logging
 import os 
-import traceback # <-- Impor traceback
+import traceback 
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -29,7 +29,6 @@ QUALITY_MAP = {
 }
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
-    # ... (Fungsi 'get_itunes_cover_url' Anda tetap di sini) ...
     try:
         if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
             upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
@@ -272,7 +271,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['tracks'] = []
     total_duration_ms = 0
 
-    # --- PERBAIKAN: Hapus try/except di dalam loop ---
+    # --- PERBAIKAN: Hapus 'try...except' di dalam loop ---
     # Biarkan error dari process_track_metadata muncul agar bisa ditangkap
     # oleh handler dan dilaporkan ke pengguna.
     
@@ -285,8 +284,8 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 # METODE UTAMA (DARI get_release): track_item adalah string link
                 track_id_str = track_item.split('/')[-1]
                 if not track_id_str.isdigit():
-                    continue
-                # Ambil data track lengkap (kamus)
+                    LOGGER.warning(f"Beatport: Melewatkan link track tidak valid: {track_item}")
+                    continue 
                 track_data_full = await client.get_track(track_id_str)
             
             elif isinstance(track_item, dict):
@@ -295,10 +294,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 track_id_str = track_data_full.get('id')
             
             if not track_data_full or not track_id_str:
+                LOGGER.warning(f"Beatport: Gagal mendapatkan data track untuk item: {track_item}")
                 continue
 
             total_duration_ms += track_data_full.get("length_ms", 0)
             
+            # Panggil process_track_metadata (ini bisa memunculkan error)
             track_meta = await process_track_metadata(track_id_str, r_id, user, track_data_full)
             
             track_meta['tracknumber'] = i + 1 
@@ -316,6 +317,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
     if not metadata['tracks']:
         # Error ini sekarang akan terpicu jika 'track_links' awalnya kosong
+        # ATAU jika semua track gagal diproses (misal, tidak streamable)
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
     metadata['quality'] = metadata['tracks'][0]['quality']
