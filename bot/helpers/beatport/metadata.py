@@ -28,8 +28,7 @@ QUALITY_MAP = {
 }
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
-    # ... (Salin fungsi 'get_itunes_cover_url' yang sama persis
-    # dari 'bot/helpers/deezer/metadata.py' ke sini) ...
+    # ... (Fungsi 'get_itunes_cover_url' Anda tetap di sini) ...
     try:
         if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
             upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
@@ -64,7 +63,6 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
 
 def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL Beatport."""
-    # Regex dari interface.py
     match = re.search(r"https?://(www.)?beatport.com/(?:[a-z]{2}/)?.*?"
                       r"(?P<type>track|release|artist|playlists|chart)/.*?/?(?P<id>\d+)", link)
     
@@ -74,7 +72,6 @@ def custom_url_parse(link: str):
     media_type_str = match.group("type")
     media_id = match.group("id")
 
-    # Konversi ke tipe bot
     if media_type_str == "track":
         media_type = "track"
     elif media_type_str == "release":
@@ -89,7 +86,6 @@ def custom_url_parse(link: str):
 
 async def _generate_artwork_url(dynamic_uri: str, size: int = 1400):
     """Membuat URL sampul resolusi tinggi dari URL dinamis Beatport."""
-    # Logika dari interface.py
     res_pattern = re.compile(r"\d{3,4}x\d{3,4}")
     match = re.search(res_pattern, dynamic_uri)
     if match:
@@ -147,7 +143,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     try:
         album_data = await client.get_release(album_id)
     except Exception:
-        album_data = {} # Lanjutkan meskipun album gagal (misal region locked)
+        album_data = {} 
     
     metadata['itemid'] = track_id
     
@@ -165,15 +161,9 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['tracknumber'] = str(track_data.get("number", 1))
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
-    # --- PERBAIKAN DIMULAI (Tambahkan Volume & Explicit) ---
-    # 1. Hardcode TOTAL VOLUMES (Nomor Disk)
-    # API Beatport tidak menyediakan ini; rilis digital hampir selalu 1 disk.
     metadata['volume'] = "1"
     metadata['totalvolume'] = "1"
-    
-    # 2. Ambil status EXPLICIT
     metadata['explicit'] = track_data.get("explicit", False) 
-    # --- PERBAIKAN SELESAI ---
     
     # Info teknis
     metadata['isrc'] = track_data.get("isrc")
@@ -253,13 +243,16 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     album_data = await client.get_release(album_id)
     
-    tracks_data = await client.get_release_tracks(album_id, per_page=100)
-    tracks = tracks_data.get("results", [])
-    total_tracks = tracks_data.get("count", len(tracks))
+    # --- PERBAIKAN: Hapus panggilan ke get_release_tracks ---
+    # Alih-alih memanggil endpoint /tracks yang rusak (Error 500),
+    # kita langsung ambil daftar 'tracks' dari 'album_data' yang sudah kita miliki.
     
-    for page in range(2, (total_tracks - 1) // 100 + 2):
-        tracks_page = await client.get_release_tracks(album_id, page=page, per_page=100)
-        tracks.extend(tracks_page.get("results", []))
+    tracks = album_data.get("tracks", [])
+    total_tracks = len(tracks)
+    
+    # Baris 255-261 (logika paginasi) telah dihapus karena tidak diperlukan
+    # dan menyebabkan crash Error 500 pada beberapa rilis.
+    # --- AKHIR PERBAIKAN ---
 
     if not tracks:
         raise BeatportError(f"Album {album_id} tidak memiliki track.")
@@ -276,11 +269,9 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['provider'] = 'Beatport'
     metadata['type'] = 'album'
     
-    # --- PERBAIKAN: Tambahkan Volume & Explicit ke Album ---
     metadata['volume'] = "1"
     metadata['totalvolume'] = "1"
     metadata['explicit'] = album_data.get("explicit", False)
-    # --- PERBAIKAN SELESAI ---
     
     bp_cover_url = await _generate_artwork_url(album_data.get("image").get("dynamic_uri"))
     metadata['cover'] = await _process_cover(metadata, bp_cover_url)
@@ -289,8 +280,13 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['tracks'] = []
     for i, track_data in enumerate(tracks):
         try:
-            track_data["number"] = i + 1
+            # Data track dari album_data mungkin tidak lengkap
+            # Jadi kita panggil process_track_metadata untuk mendapatkan data lengkap (termasuk ISRC, dll)
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
+            
+            # (Pembaruan: kita tidak perlu mengatur 'number' karena pre_data sudah di-pass)
+            # track_data["number"] = i + 1 
+            
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
             metadata['tracks'].append(track_meta)
@@ -320,7 +316,10 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
 
+    # --- PERBAIKAN: Gunakan 'total_tracks' (bukan 'count') untuk paginasi ---
+    # Logika paginasi Anda sebelumnya menggunakan 'count' yang tidak ada di loop
     for page in range(2, (total_tracks - 1) // 100 + 2):
+    # --- AKHIR PERBAIKAN ---
         if is_chart:
             tracks_page = await client.get_chart_tracks(playlist_id, page=page, per_page=100)
         else:
@@ -355,7 +354,7 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['tracks'] = []
     for i, track_data in enumerate(tracks):
         try:
-            track_data["number"] = i + 1 
+            # track_data["number"] = i + 1 # (Dihapus, process_track_metadata menangani ini)
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
             metadata['tracks'].append(track_meta)
         except Exception as e:
