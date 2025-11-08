@@ -174,7 +174,7 @@ class DeezerAPI:
     async def custom_url_parse(self, link) -> (str, int):
         url = urlparse(link)
         if url.hostname == 'link.deezer.com':
-            async with self.ratelimit:
+            async with self.ratelmatelimit:
                 # Pastikan self.session sudah ada
                 if not self.session:
                     await self.login_via_arl(Config.DEEZER_ARL) # Fallback? Atau pastikan login terjadi
@@ -240,7 +240,7 @@ class DeezerAPI:
         try:
             res = await self._api_call('deezer.pageAlbum', {'alb_id': id, 'lang': self.language})
         except APIError as e:
-            if e.payload and e.payload.get('FALLBACK') and e.payload['FALLBACK'].get('ALB_ID'):
+            if e.payload and e.payload.get('FALLBACK') and e.payload['FALLBACK']['ALB_ID']:
                 LOGGER.warning(f"Deezer: get_album_tracks gagal, mencoba fallback ID {e.payload['FALLBACK']['ALB_ID']}")
                 res = await self._api_call('deezer.pageAlbum', {'alb_id': e.payload['FALLBACK']['ALB_ID'], 'lang': self.language})
             else:
