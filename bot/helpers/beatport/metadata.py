@@ -28,6 +28,14 @@ QUALITY_MAP = {
     "medium": "medium"    # 128k AAC
 }
 
+# --- FUNGSI HELPER BARU UNTUK MEMOTONG NAMA ---
+def truncate_artist_list(artist_str: str, max_len: int = 50) -> str:
+    """Memotong daftar artis agar tidak terlalu panjang untuk nama file."""
+    if len(artist_str) > max_len:
+        return artist_str[:max_len] + "..."
+    return artist_str
+# --- AKHIR FUNGSI HELPER ---
+
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
     try:
         if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
@@ -40,7 +48,9 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                         if artwork_url:
                             return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
         if metadata.get('albumartist') and metadata.get('album'):
-            search_term = urllib.parse.quote(f"{metadata['albumartist']} {metadata['album']}")
+            # Gunakan 'artist_raw' jika ada (nama yang belum dipotong)
+            artist_to_search = metadata.get('artist_raw', metadata.get('albumartist'))
+            search_term = urllib.parse.quote(f"{artist_to_search} {metadata['album']}")
             search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
             async with session.get(search_url) as resp:
                 if resp.status == 200:
@@ -50,7 +60,7 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                             itunes_album = result.get('collectionName', '').lower()
                             itunes_artist = result.get('artistName', '').lower()
                             local_album = metadata['album'].lower()
-                            local_artist = metadata['albumartist'].lower()
+                            local_artist = artist_to_search.lower() # Cari menggunakan nama mentah
                             if (local_album in itunes_album or itunes_album in local_album) and \
                                (local_artist in itunes_artist):
                                 artwork_url = result.get('artworkUrl100')
@@ -147,8 +157,14 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         title += f" ({track_data.get('mix_name')})"
     metadata['title'] = title
     
-    metadata['artist'] = ", ".join([a.get("name") for a in track_data.get("artists", [])])
-    metadata['albumartist'] = ", ".join([a.get("name") for a in album_data.get("artists", [])])
+    # --- PERBAIKAN: Potong nama artis yang panjang ---
+    artist_raw = ", ".join([a.get("name") for a in track_data.get("artists", [])])
+    albumartist_raw = ", ".join([a.get("name") for a in album_data.get("artists", [])])
+
+    metadata['artist'] = truncate_artist_list(artist_raw)
+    metadata['albumartist'] = truncate_artist_list(albumartist_raw)
+    metadata['artist_raw'] = artist_raw # Simpan nama asli untuk pencarian iTunes
+    # --- AKHIR PERBAIKAN ---
     
     metadata['album'] = album_data.get("name")
     metadata['date'] = track_data.get("publish_date")
@@ -236,13 +252,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     # 2. Ambil daftar link track (string) dari data album
     track_links_or_dicts = album_data.get("tracks", [])
     
-    # --- PERBAIKAN: Tambahkan loop paginasi ke fallback ---
     if not track_links_or_dicts:
         LOGGER.warning(f"Beatport: Daftar track tidak ada di get_release untuk {album_id}. Mencoba fallback ke get_release_tracks...")
         try:
              tracks_list_from_fallback = []
              page = 1
-             per_page = 25 # Tetap aman
+             per_page = 25 
 
              while True:
                  LOGGER.debug(f"Beatport: Mengambil fallback halaman {page} (per_page=25)...")
@@ -250,34 +265,39 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                  
                  page_results = tracks_data_page.get("results", [])
                  if not page_results:
-                     break # Halaman kosong, selesai
+                     break 
                  
                  tracks_list_from_fallback.extend(page_results)
                  
                  if not tracks_data_page.get("next"):
-                     break # Tidak ada halaman 'next', selesai
+                     break
                      
                  page += 1
-                 if page > 20: # Batas aman (25 * 20 = 500 lagu)
+                 if page > 20: 
                      LOGGER.warning(f"Beatport: Album {album_id} memiliki lebih dari 20 halaman, berhenti.")
                      break
              
-             track_links_or_dicts = tracks_list_from_fallback # Ganti 'track_links' dengan hasil fallback
+             track_links_or_dicts = tracks_list_from_fallback 
              
              if not track_links_or_dicts:
                  raise BeatportError("Fallback get_release_tracks juga gagal (hasil kosong).")
         except Exception as e:
              LOGGER.error(f"Beatport: Gagal total mendapatkan daftar track untuk {album_id}: {e}")
              raise BeatportError(f"Album {album_id} tidak memiliki track atau API gagal.")
-    # --- AKHIR PERBAIKAN ---
     
     total_tracks = len(track_links_or_dicts)
 
     metadata['itemid'] = album_id
     metadata['title'] = album_data.get("name")
     metadata['album'] = album_data.get("name")
-    metadata['albumartist'] = ", ".join([a.get("name") for a in album_data.get("artists", [])])
-    metadata['artist'] = metadata['albumartist'] 
+    
+    # --- PERBAIKAN: Potong nama artis yang panjang ---
+    albumartist_raw = ", ".join([a.get("name") for a in album_data.get("artists", [])])
+    metadata['albumartist'] = truncate_artist_list(albumartist_raw)
+    metadata['artist'] = metadata['albumartist'] # Gunakan nama yang sudah dipotong
+    metadata['artist_raw'] = albumartist_raw # Simpan nama asli untuk pencarian iTunes
+    # --- AKHIR PERBAIKAN ---
+
     metadata['upc'] = album_data.get("upc")
     metadata['date'] = album_data.get("publish_date")
     metadata['totaltracks'] = str(total_tracks)
@@ -300,7 +320,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             track_id_str = None
             
             if isinstance(track_item, str):
-                # METODE UTAMA (DARI get_release): track_item adalah string link
                 track_id_str = track_item.split('/')[-2]
                 if not track_id_str.isdigit():
                     LOGGER.warning(f"Beatport: Melewatkan link track tidak valid: {track_item}")
@@ -308,7 +327,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 track_data_full = await client.get_track(track_id_str)
             
             elif isinstance(track_item, dict):
-                # METODE FALLBACK (DARI get_release_tracks): track_item sudah berupa kamus
                 track_data_full = track_item
                 track_id_str = track_data_full.get('id')
             
@@ -377,7 +395,9 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['type'] = 'playlist'
     
     if is_chart:
-        metadata['artist'] = playlist_data.get("person", {}).get("owner_name", "Beatport")
+        artist_raw = playlist_data.get("person", {}).get("owner_name", "Beatport")
+        metadata['artist'] = truncate_artist_list(artist_raw)
+        metadata['artist_raw'] = artist_raw
         bp_cover_url = await _generate_artwork_url(playlist_data.get("image").get("dynamic_uri"))
     else:
         metadata['artist'] = "User Playlist" 
