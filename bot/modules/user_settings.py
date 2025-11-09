@@ -47,10 +47,18 @@ except ImportError:
     soundcloud_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Napster ---
+try:
+    from ..helpers.napster.manager import napster_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor napster_manager.")
+    napster_manager = None
+# --- BATAS TAMBAHAN ---
+
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
-    bs_button, sc_button 
+    bs_button, sc_button, np_button # <-- TAMBAHKAN NP_BUTTON
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -90,7 +98,8 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud)"))
+# --- MODIFIKASI: Tambahkan 'napster' ke regex ---
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -248,6 +257,28 @@ async def uset_cb(client, query, datatype=""):
         if current in quality:
             quality[current] = quality[current] + '✅'
         return await edit_message(query.message, text, markup=kk_button(quality, user_id))
+
+    # --- TAMBAHAN BARU: Blok Napster ---
+    if data[1] == "napster" or datatype == "napster":
+        text = f"Choose Napster Audio Quality bellow:"
+        quality = {
+            "FLAC": "FLAC (HiRes/Lossless)",
+            "MP3_320": "AAC 320k",
+            "MP3_192": "AAC 192k",
+            "MP3_128": "AAC 128k",
+            "MP3_64": "HE-AAC 64k"
+        }
+        if not napster_manager or not napster_manager.clients:
+            return await edit_message(query.message, "Layanan Napster tidak aktif (tidak ada klien yang login).")
+        
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        current = main_user_dict.get("napster_qual", napster_manager.quality) 
+        await napster_manager.setup_quality(user_id, current) # Sinkronkan ke cache lokal
+        
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        return await edit_message(query.message, text + "\n(Kualitas akhir tergantung langganan akun bot)", markup=np_button(quality, user_id))
+    # --- BATAS TAMBAHAN ---
 
 
 @Client.on_callback_query(filters.regex("^utdqs"))
@@ -464,6 +495,35 @@ async def uset_kkbox(client, query):
 
     await uset_cb(client, query, "kkbox")
 
+# --- TAMBAHAN BARU: Fungsi Napster ---
+@Client.on_callback_query(filters.regex("^unps")) # User Napster Set
+async def uset_napster(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    qual_map_display = {
+        "FLAC (HiRes/Lossless)": "FLAC",
+        "AAC 320k": "MP3_320",
+        "AAC 192k": "MP3_192",
+        "AAC 128k": "MP3_128",
+        "HE-AAC 64k": "MP3_64"
+    }
+    to_set_display = query.data.split('_')[1]
+    to_set = qual_map_display.get(to_set_display)
+    if not to_set:
+        return await query.answer("Kualitas tidak valid.", True)
+    if not napster_manager or not napster_manager.clients:
+        await query.answer("Layanan Napster tidak aktif!", show_alert=True)
+        return
+    user_id = query.from_user.id
+    
+    await napster_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
+    bot_set.user_data.setdefault(user_id, {})['napster_qual'] = to_set # Simpan ke cache utama
+    await database.set_variable(user_id, 'napster_qual', to_set, True) # Simpan ke DB
+
+    await uset_cb(client, query, "napster")
+# --- BATAS TAMBAJAN ---
+
 
 @Client.on_callback_query(filters.regex("^zip"))
 async def uset_zip(self, query):
@@ -586,8 +646,18 @@ async def debug(c, m): # debugger
     else:
         dt_kk += "Tidak ada klien KKBox yang aktif."
 
+    # --- TAMBAHAN BARU: Debug Napster ---
+    dt_np = "\n\nNAPSTER:\n"
+    if napster_manager and napster_manager.clients:
+        dt_np += f"{len(napster_manager.clients)} klien Napster aktif.\n"
+        dt_np += f"Kualitas Default: {napster_manager.quality}\n"
+        dt_np += f"Cache User (Global): {len([u for u in bot_set.user_data if 'napster_qual' in bot_set.user_data[u]])} pengguna"
+    else:
+        dt_np += "Tidak ada klien Napster yang aktif."
+    # --- BATAS TAMBAHAN ---
+
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
     zips += f"\n\n{user_dict}"
     
-    await m.reply(dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + zips, True)
+    await m.reply(dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + zips, True)
