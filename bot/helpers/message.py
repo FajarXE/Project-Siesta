@@ -4,10 +4,12 @@ import os
 import asyncio
 import time
 import math
-import traceback # <-- TAMBAHKAN IMPOR INI
+import traceback 
 
 from pyrogram.types import Message
-from pyrogram.errors import MessageNotModified, FloodWait
+# --- PERBAIKAN: Tambahkan MessageIdInvalid ke impor ---
+from pyrogram.errors import MessageNotModified, FloodWait, MessageIdInvalid
+# --- BATAS PERBAIKAN ---
 
 from bot.tgclient import aio
 from bot.settings import bot_set
@@ -258,10 +260,15 @@ async def edit_message(msg: Message, text, markup=None, antiflood=True):
             return await edit_message(msg, text, markup, antiflood)
         else:
             return None
-    # --- PERBAIKAN DI SINI ---
+    
+    # --- PERBAIKAN: Tangani 'MessageIdInvalid' secara diam-diam ---
+    except MessageIdInvalid:
+        # Ini terjadi jika pesan dihapus (misal, menu ditutup) sebelum diedit.
+        # Ini BUKAN error kritis, jadi kita abaikan (pass) secara diam-diam.
+        LOGGER.debug(f"Gagal mengedit pesan: MessageIdInvalid (pesan mungkin sudah dihapus).")
+        pass
     except Exception as e:
-        # Mengubah logging untuk menyertakan error (e) yang sebenarnya
-        # dan traceback lengkap
+        # Tangkap semua error *lainnya* dan catat sebagai ERROR
         LOGGER.error(f"Gagal mengedit pesan (Tipe msg: {type(msg)}). Error: {e}\n{traceback.format_exc()}")
         pass
     # --- BATAS PERBAIKAN ---
