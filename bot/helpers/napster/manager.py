@@ -6,7 +6,7 @@ from time import time
 from bot.logger import LOGGER
 from config import Config
 
-from ..settings import bot_set 
+from ...settings import bot_set 
 
 try:
     from ..database.mongo_async import database
