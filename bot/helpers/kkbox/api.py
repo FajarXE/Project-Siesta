@@ -20,9 +20,7 @@ class KkboxAPI:
             raise self.exception("secret_key is invalid, change it in settings")
 
         self.kc1_key = kc1_key.encode('ascii')
-        # --- PERBAIKAN: Menambahkan ')' yang hilang ---
         self.secret_key = secret_key.encode('ascii')
-        # --- BATAS PERBAIKAN ---
         
         self.s = requests.Session() 
         self.s.headers.update({
@@ -116,10 +114,12 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
+        # --- PERBAIKAN: Menambahkan key composer/lyricist/arranger ke 'fields' ---
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
-            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
+            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,composer_list,lyricist_list,arranger_list'
         })
+        # --- BATAS PERBAIKAN ---
         if resp['status']['type'] != 'OK':
             raise self.exception('Track not found')
         return resp['data']['songs']
