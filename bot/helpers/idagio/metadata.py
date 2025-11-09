@@ -1,10 +1,11 @@
-# [BUAT FILE BARU: bot/helpers/idagio/metadata.py]
+# [GANTI FILE: bot/helpers/idagio/metadata.py]
 
 import copy
 import re
 import aiohttp
 import asyncio
 import os 
+import traceback # <-- TAMBAHKAN IMPOR INI
 from urllib.parse import urlparse
 from config import Config 
 
@@ -83,7 +84,9 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             album_data = await asyncio.to_thread(client.get_album, album_id)
 
     except Exception as e:
-        LOGGER.error(f"Idagio: Gagal mendapatkan metadata track {track_id}: {e}")
+        # --- PERBAIKAN: Tambahkan logging traceback ---
+        LOGGER.error(f"Idagio: Gagal mendapatkan metadata track {track_id}: {e}\n{traceback.format_exc()}")
+        # --- BATAS PERBAIKAN ---
         raise e
 
     if track_data.get('geoblocked'):
@@ -197,7 +200,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     try:
         album_data = await asyncio.to_thread(client.get_album, album_id)
     except Exception as e:
-        LOGGER.error(f"Idagio: Gagal mendapatkan metadata album {album_id}: {e}")
+        LOGGER.error(f"Idagio: Gagal mendapatkan metadata album {album_id}: {e}\n{traceback.format_exc()}")
         raise e
 
     # Coba temukan 'albumartist' (composer album)
@@ -235,7 +238,9 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             track_meta['thumbnail'] = metadata['thumbnail']
             metadata['tracks'].append(track_meta)
         except Exception as e:
-            LOGGER.warning(f"Idagio: Gagal memproses track {recording_id} di album: {e}")
+            # --- PERBAIKAN: Ubah WARNING menjadi ERROR dan tambahkan traceback ---
+            LOGGER.error(f"Idagio: Gagal memproses track {recording_id} di album: {e}\n{traceback.format_exc()}")
+            # --- BATAS PERBAIKAN ---
             continue
 
     if not metadata['tracks']:
