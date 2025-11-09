@@ -117,30 +117,51 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     metadata['genre'] = track_data.get('genre_name')
 
-    # --- PERBAIKAN COMPOSER (Membaca dari 'track_data' level atas) ---
+    # --- PERBAIKAN COMPOSER (Tebakan Komprehensif Terakhir) ---
     all_composers = []
+
+    # Fungsi helper untuk menambahkan data dengan aman
+    def add_composer_data(data):
+        if not data:
+            return
+        if isinstance(data, str):
+            all_composers.append(data)
+        elif isinstance(data, list):
+            all_composers.extend(data)
+
+    # Memeriksa semua kemungkinan 'key' yang kita minta di api.py
+    # Ini akan memeriksa 'track_data' level atas
     
-    # Sekarang kita cari di 'track_data' (level atas), BUKAN 'track_data['artist_role']'
-    if 'composer_list' in track_data:
-        try:
-            all_composers.extend(track_data['composer_list']['composer'])
-        except Exception: pass 
+    # 1. Tebakan key berbentuk list (misal: "composer_list": {"composer": [...]})
+    try:
+        add_composer_data(track_data.get('composer_list', {}).get('composer'))
+    except Exception: pass 
+    try:
+        add_composer_data(track_data.get('lyricist_list', {}).get('lyricist'))
+    except Exception: pass
+    try:
+        add_composer_data(track_data.get('arranger_list', {}).get('arranger'))
+    except Exception: pass
+    try:
+        add_composer_data(track_data.get('writer_list', {}).get('writer'))
+    except Exception: pass
 
-    if 'lyricist_list' in track_data:
-        try:
-            all_composers.extend(track_data['lyricist_list']['lyricist'])
-        except Exception: pass
-
-    if 'arranger_list' in track_data:
-        try:
-            all_composers.extend(track_data['arranger_list']['arranger'])
-        except Exception: pass
+    # 2. Tebakan key berbentuk string/list simpel (misal: "composer": "Nama")
+    try:
+        add_composer_data(track_data.get('composer'))
+    except Exception: pass
+    try:
+        add_composer_data(track_data.get('lyricist'))
+    except Exception: pass
+    try:
+        add_composer_data(track_data.get('arranger'))
+    except Exception: pass
 
     # Hapus duplikat jika ada
     if all_composers:
-        unique_composers = list(dict.fromkeys(all_composers)) # Cara cepat menjaga urutan & hapus duplikat
+        unique_composers = list(dict.fromkeys(all_composers)) 
         metadata['composer'] = ", ".join(unique_composers)
-        LOGGER.debug(f"KKBox: Menemukan composer: {metadata['composer']}")
+        LOGGER.debug(f"KKBox: Menemukan composer (Tebakan Terakhir): {metadata['composer']}")
     # --- BATAS PERBAIKAN ---
     
     metadata['explicit'] = bool(track_data['song_is_explicit'])
@@ -247,8 +268,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
-    # --- PERBAIKAN: Mengambil kualitas dari 'tracks' (bukan 'tracks_list') ---
     metadata['quality'] = metadata['tracks'][0]['quality']
-    # --- BATAS PERBAIKAN ---
     return metadata
 # --- BATAS FUNGSI BARU ---
