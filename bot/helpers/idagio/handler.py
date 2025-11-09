@@ -59,7 +59,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             # item_id di sini adalah 'recording_id'
             track_meta = await process_track_metadata(item_id, user['r_id'], user)
         except Exception as e:
-            LOGGER.warning(f"Idagio track {item_id} tidak tersedia: {e}")
+            # --- PERBAIKAN: Tambahkan logging traceback lengkap ---
+            LOGGER.error(f"Idagio track {item_id} gagal di process_track_metadata: {e}\n{traceback.format_exc()}")
+            # --- BATAS PERBAIKAN ---
             return False
             
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
@@ -69,7 +71,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     stream_track_id = track_meta.get('download_track_id') # ID untuk stream
     
     if not quality_tier or not stream_track_id:
-        LOGGER.error(f"Metadata tidak lengkap untuk unduhan Idagio track {item_id}")
+        LOGGER.error(f"Metadata tidak lengkap untuk unduhan Idagio track {item_id} (Tier: {quality_tier}, StreamID: {stream_track_id})")
         return False
 
     track_meta['folderpath'] = filepath
@@ -77,9 +79,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
     safe_filename = sanitize_filepath(raw_filename)
 
-    # --- PERBAIKAN: Potong nama file (safe_filename) agar tidak terlalu panjang ---
-    # Batasi nama file (sebelum ekstensi) menjadi misal 150 karakter
-    # untuk menghindari error batas path sistem file (MAX_PATH)
+    # --- Potong nama file (safe_filename) agar tidak terlalu panjang ---
     max_len = 150
     if len(safe_filename) > max_len:
         safe_filename = safe_filename[:max_len].strip() # Potong dan hapus spasi
@@ -103,7 +103,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         )
 
     except Exception as e:
+        # --- PERBAIKAN: Tambahkan logging traceback lengkap ---
         LOGGER.error(f"Idagio dl_track gagal untuk {item_id}: {e}\n{traceback.format_exc()}")
+        # --- BATAS PERBAIKAN ---
         return False
     # --- BATAS LOGIKA UNDUH ---
 
@@ -113,7 +115,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         LOGGER.error(f"[Errno 2] File not found setelah download Idagio: {filepath}")
         return False
     except Exception as e:
-        LOGGER.error(f"Gagal memproses metadata Idagio: {filepath} -> {e}")
+        # --- PERBAIKAN: Tambahkan logging traceback lengkap ---
+        LOGGER.error(f"Gagal memproses metadata Idagio: {filepath} -> {e}\n{traceback.format_exc()}")
+        # --- BATAS PERBAIKAN ---
         try:
             os.remove(filepath)
         except:
@@ -212,7 +216,9 @@ async def start_album(album_id: str, user: dict, upload=True):
     # --- Implementasi Semaphore manual ---
     
     # 1. Tentukan batas unduhan bersamaan (concurrent)
-    sem = asyncio.Semaphore(3) # Batas 3 unduhan simultan
+    # --- PERBAIKAN: Turunkan limit ke 1 untuk diagnosis ---
+    sem = asyncio.Semaphore(1) # Batas 1 unduhan simultan
+    # --- BATAS PERBAIKAN ---
     total_tracks = len(album_meta['tracks'])
     completed_count = 0
     
@@ -225,7 +231,9 @@ async def start_album(album_id: str, user: dict, upload=True):
             
             # Update progres
             completed_count += 1
-            if completed_count % 5 == 0 or completed_count == total_tracks: # Update setiap 5 lagu
+            # --- PERBAIKAN: Update setiap 1 lagu karena limit=1 ---
+            if completed_count % 1 == 0 or completed_count == total_tracks: # Update setiap 1 lagu
+            # --- BATAS PERBAIKAN ---
                 try:
                     await edit_message(
                         user['bot_msg'],
