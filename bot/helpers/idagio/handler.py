@@ -200,26 +200,56 @@ async def start_album(album_id: str, user: dict, upload=True):
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
-    tasks = []
-    for track in album_meta['tracks']:
-        # Kirim track_meta (pre_data) ke start_track agar tidak perlu fetch ulang
-        # 'itemid' di sini adalah recording_id
-        tasks.append(start_track(track['itemid'], user, track, False, album_folder))
+    # --- PERBAIKAN: Implementasi Semaphore manual ---
+    
+    # 1. Tentukan batas unduhan bersamaan (concurrent)
+    sem = asyncio.Semaphore(3)
+    total_tracks = len(album_meta['tracks'])
+    completed_count = 0
+    
+    # 2. Buat fungsi wrapper untuk menjalankan tugas dengan batasan semaphore
+    async def run_task_with_limit(task_coro, track_meta):
+        nonlocal completed_count
+        async with sem:
+            # 'task_coro' adalah 'start_track(...)'
+            result = await task_coro
+            
+            # Update progres
+            completed_count += 1
+            if completed_count % 5 == 0 or completed_count == total_tracks: # Update setiap 5 lagu
+                try:
+                    await edit_message(
+                        user['bot_msg'],
+                        lang.s.DOWNLOAD_PROGRESS.format(
+                            completed_count,
+                            total_tracks,
+                            album_meta['title'],
+                            f"{int((completed_count/total_tracks)*100)}%"
+                        )
+                    )
+                except:
+                    pass # Jangan gagalkan semua jika edit pesan gagal
+            
+            return result, track_meta # Kembalikan hasil dan meta
 
-    update_details = {
-        'text': lang.s.DOWNLOAD_PROGRESS,
-        'msg': user['bot_msg'],
-        'title': album_meta['title'],
-        'type': album_meta['type']
-    }
+    # 3. Siapkan semua tugas (coroutines)
+    task_coroutines = []
+    for track in album_meta['tracks']:
+        # 'itemid' di sini adalah recording_id
+        task_coro = start_track(track['itemid'], user, track, False, album_folder)
+        task_coroutines.append(run_task_with_limit(task_coro, track))
+
+    # 4. Jalankan semua tugas (dibatasi oleh semaphore)
+    task_results_with_meta = await asyncio.gather(*task_coroutines)
     
-    # --- PERBAIKAN: Tambahkan batas 'limit' ---
-    # Ini akan membatasi bot untuk hanya menjalankan 3 tugas unduhan thread
-    # secara bersamaan, mencegah 'Connection pool is full'.
-    task_results = await run_concurrent_tasks(tasks, update_details, limit=3)
     # --- BATAS PERBAIKAN ---
-    
-    successful_tracks = [album_meta['tracks'][i] for i, result in enumerate(task_results) if result]
+
+    # 5. Filter hasil
+    successful_tracks = []
+    for result, track_meta in task_results_with_meta:
+        if result: # 'result' adalah boolean True/False dari start_track
+            successful_tracks.append(track_meta)
+            
     album_meta['tracks'] = successful_tracks
     album_meta['totaltracks'] = len(successful_tracks)
 
