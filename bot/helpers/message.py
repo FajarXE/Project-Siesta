@@ -4,6 +4,7 @@ import os
 import asyncio
 import time
 import math
+import traceback # <-- TAMBAHKAN IMPOR INI
 
 from pyrogram.types import Message
 from pyrogram.errors import MessageNotModified, FloodWait
@@ -45,10 +46,7 @@ async def fetch_user_details(msg: Message, reply=False) -> dict:
     details['r_id'] = msg.reply_to_message.id if reply else msg.id
     details['chat_id'] = msg.chat.id
     try:
-        # --- PERBAIKAN DI SINI ---
-        # Simpan seluruh obyek 'msg', bukan hanya 'msg.id'
         details['bot_msg'] = msg
-        # --- BATAS PERBAIKAN ---
     except:
         pass
     return details
@@ -182,10 +180,8 @@ async def send_message(user, item, itype='text',
 
         elif itype == 'audio':
             
-            # --- MODIFIKASI DIMULAI (Nonaktifkan progres untuk batch) ---
-            progress_callback = None # Default ke None
+            progress_callback = None 
             
-            # Hanya buat callback jika BUKAN mode batch DAN 'bot_msg' ada
             if meta and not meta.get('batch_mode', False) and user.get('bot_msg'):
                 last_update_time = [0]
 
@@ -217,9 +213,8 @@ async def send_message(user, item, itype='text',
                     except Exception:
                         pass
                 
-                progress_callback = internal_progress_callback # Tetapkan callback
-            # --- MODIFIKASI SELESAI ---
-
+                progress_callback = internal_progress_callback 
+            
             msg = await aio.send_audio(
                 chat_id=chat_id,
                 audio=item,
@@ -229,7 +224,7 @@ async def send_message(user, item, itype='text',
                 title=meta['title'],
                 thumb=meta['thumbnail'],
                 reply_to_message_id=user['r_id'],
-                progress=progress_callback # Ini akan menjadi None jika mode batch
+                progress=progress_callback
             )
 
         elif itype == 'pic':
@@ -263,8 +258,10 @@ async def edit_message(msg: Message, text, markup=None, antiflood=True):
             return await edit_message(msg, text, markup, antiflood)
         else:
             return None
-    except Exception:
-        # Menambahkan 'catch' untuk error lain seperti AttributeError
-        # agar tidak menghentikan task
-        LOGGER.error(f"Gagal mengedit pesan. Tipe 'msg' adalah: {type(msg)}")
+    # --- PERBAIKAN DI SINI ---
+    except Exception as e:
+        # Mengubah logging untuk menyertakan error (e) yang sebenarnya
+        # dan traceback lengkap
+        LOGGER.error(f"Gagal mengedit pesan (Tipe msg: {type(msg)}). Error: {e}\n{traceback.format_exc()}")
         pass
+    # --- BATAS PERBAIKAN ---
