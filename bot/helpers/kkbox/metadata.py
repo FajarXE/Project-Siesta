@@ -6,6 +6,7 @@ import aiohttp
 import asyncio
 import logging
 import os 
+import json # <-- Ditambahkan untuk debug
 from urllib.parse import urlparse
 from config import Config 
 
@@ -73,6 +74,17 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             songs_list = await asyncio.to_thread(client.get_songs, [track_id])
             track_data = songs_list[0]
             
+            # --- KODE DEBUG (TAMBAHKAN INI SEMENTARA) ---
+            # import json (sudah diimpor di atas)
+            LOGGER.info(f"===== DEBUG DATA LAGU KKBOX (Mulai) =====")
+            try:
+                # Kita mencetak 'track_data' mentah untuk melihat semua field
+                LOGGER.info(json.dumps(track_data, indent=2, ensure_ascii=False))
+            except Exception as e:
+                LOGGER.error(f"Gagal mencetak data debug: {e}")
+            LOGGER.info(f"===== DEBUG DATA LAGU KKBOX (Selesai) =====")
+            # --- BATAS KODE DEBUG ---
+
         # Dapatkan info album
         if alb_info_pre:
             alb_info = alb_info_pre
