@@ -13,7 +13,7 @@ from urllib.parse import quote
 from aiohttp import ClientTimeout
 from pyrogram.errors import MessageNotModified
 from concurrent.futures import ThreadPoolExecutor
-from pyrogram.errors import FloodWait
+from pyrogram.errors import FloodWait, MessageIdInvalid # <-- Import yang saya tambahkan terakhir
 
 from config import Config
 import bot.helpers.translations as lang
@@ -110,14 +110,18 @@ async def format_string(text:str, data:dict, user=None):
     isrc = safe_get('isrc')
     totaltracks = safe_get('totaltracks')
     volume = safe_get('volume')
-    totalvolume = safe_get('totalvolume')
+    
+    # --- PERBAIKAN: Periksa 'totalvolumes' (plural) DAHULU, lalu 'totalvolume' (singular) ---
+    totalvolume = safe_get('totalvolumes') or safe_get('totalvolume')
+    # --- BATAS PERBAIKAN ---
+
     extension = safe_get('extension')
     duration = safe_get('duration')
     copyright = safe_get('copyright')
     genre = safe_get('genre')
     provider = (data.get('provider') or '').title() # .title() aman
     quality = safe_get('quality')
-    explicit = safe_get('explicit') # <-- PERBAIKAN UTAMA
+    explicit = safe_get('explicit') 
     
     # Lakukan penggantian dengan nilai yang aman
     text = text.replace(R'{title}', title)
@@ -130,7 +134,11 @@ async def format_string(text:str, data:dict, user=None):
     text = text.replace(R'{isrc}', isrc)
     text = text.replace(R'{totaltracks}', totaltracks)
     text = text.replace(R'{volume}', volume)
+    
+    # --- PERBAIKAN: Gunakan 'totalvolume' (singular) untuk placeholder template ---
     text = text.replace(R'{totalvolume}', totalvolume)
+    # --- BATAS PERBAIKAN ---
+
     text = text.replace(R'{extension}', extension)
     text = text.replace(R'{duration}', duration)
     text = text.replace(R'{copyright}', copyright)
