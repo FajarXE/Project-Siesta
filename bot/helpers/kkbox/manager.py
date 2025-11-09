@@ -5,8 +5,8 @@ import itertools
 from bot.logger import LOGGER
 from config import Config
 
-# --- MODIFIKASI: Impor bot_set ---
-from ..settings import bot_set 
+# --- MODIFIKASI: Hapus impor 'bot_set' untuk memutus impor melingkar ---
+# from ..settings import bot_set 
 # --- BATAS MODIFIKASI ---
 
 try:
@@ -53,8 +53,9 @@ class KKBoxLoginManager:
             self.secret_key = Config.KKBOX_SECRET_KEY
         
         self.quality = "hifi" 
-        # --- MODIFIKASI: Hapus cache self.user_data, kita akan gunakan bot_set ---
-        # self.user_data = {} 
+        # --- MODIFIKASI: Kita masih butuh cache lokal ini ---
+        # Cache ini akan diisi oleh bot_set di file user_settings.py
+        self.user_data = {} 
         # --- BATAS MODIFIKASI ---
 
     async def initialize_clients(self):
@@ -63,9 +64,8 @@ class KKBoxLoginManager:
         dan memuat pengaturan kualitas default.
         """
         
-        # --- MODIFIKASI: Hanya muat pengaturan default. bot_set memuat pengaturan pengguna. ---
+        # --- MODIFIKASI: Hanya muat pengaturan default. ---
         try:
-            # 1. Muat pengaturan default
             all_settings = await database.get_variable() 
             if not all_settings: all_settings = {}
             db_quality = all_settings.get('KKBOX_QUALITY') 
@@ -75,9 +75,8 @@ class KKBoxLoginManager:
             else:
                 LOGGER.info(f"KKBox Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
 
-            # 2. Hapus pemuatan user_data (ini menyebabkan error)
-            # bot_set sudah menangani ini saat startup
-            LOGGER.info(f"KKBox Manager: Pengaturan kualitas pengguna akan dibaca dari bot_set.")
+            # Pengaturan pengguna akan dimuat oleh 'bot_set' dan disinkronkan oleh 'user_settings.py'
+            LOGGER.info(f"KKBox Manager: Pengaturan kualitas pengguna akan dimuat nanti.")
 
         except Exception as e:
             LOGGER.error(f"KKBox Manager: Gagal memuat kualitas default dari DB: {e}. Menggunakan default: {self.quality}")
@@ -147,27 +146,19 @@ class KKBoxLoginManager:
             LOGGER.error("KKBox Manager: Kumpulan klien kosong.")
             return None
     
-    # --- MODIFIKASI: Simpan ke DB dan perbarui cache bot_set ---
+    # --- MODIFIKASI: setup_quality HANYA menyimpan ke RAM LOKAL ---
+    # File user_settings.py akan bertanggung jawab memanggil ini DAN menyimpan ke DB
     async def setup_quality(self, user_id: int, qual: str = None):
         if qual in ["128k", "192k", "320k", "hifi", "hires"]:
-            # 1. Simpan ke Database
-            try:
-                await database.set_variable(user_id, 'kkbox_qual', qual, True)
-                LOGGER.debug(f"KKBox Manager: Berhasil menyimpan kualitas user {user_id} ke DB.")
-            except Exception as e:
-                LOGGER.error(f"KKBox Manager: Gagal menyimpan kualitas user {user_id} ke DB: {e}")
-                return # Gagal menyimpan, jangan update RAM
-
-            # 2. Perbarui cache RAM di bot_set secara real-time
-            # setdefault memastikan key user_id ada
-            bot_set.user_data.setdefault(user_id, {})['kkbox_qual'] = qual
-            LOGGER.debug(f"KKBox Manager: Memperbarui cache bot_set untuk user {user_id} ke {qual} (RAM)")
+            self.user_data.setdefault(user_id, {})['kkbox_qual'] = qual
+            LOGGER.debug(f"KKBox Manager: Memperbarui cache RAM lokal untuk user {user_id} ke {qual}")
             
     # --- BATAS MODIFIKASI ---
 
     def get_user_quality(self, user_id: int) -> str:
-        # --- MODIFIKASI: Baca dari cache bot_set ---
-        user_qual = bot_set.user_data.get(user_id, {}).get('kkbox_qual') 
+        # --- MODIFIKASI: Baca dari cache RAM LOKAL ---
+        # (user_settings.py akan bertanggung jawab mengisi cache ini)
+        user_qual = self.user_data.get(user_id, {}).get('kkbox_qual') 
         # --- BATAS MODIFIKASI ---
         
         if user_qual in ["128k", "192k", "320k", "hifi", "hires"]:
