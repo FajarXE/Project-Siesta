@@ -11,6 +11,8 @@ except (ImportError, ModuleNotFoundError):
     LOGGER.critical("KKBox Manager: Gagal mengimpor 'database'. Fungsi pemuatan kualitas mungkin gagal.")
     class DummyDatabase:
         async def get_variable(self, *args, **kwargs): return {}
+        async def set_variable(self, *args, **kwargs): pass
+        async def get_user_data(self, *args, **kwargs): return [] # <-- Tambahan
     database = DummyDatabase()
 
 try:
@@ -56,7 +58,9 @@ class KKBoxLoginManager:
         dan memuat pengaturan kualitas default.
         """
         
+        # --- MODIFIKASI: Muat pengaturan default DAN pengaturan pengguna ---
         try:
+            # 1. Muat pengaturan default
             all_settings = await database.get_variable() 
             if not all_settings: all_settings = {}
             db_quality = all_settings.get('KKBOX_QUALITY') 
@@ -65,8 +69,22 @@ class KKBoxLoginManager:
                 LOGGER.info(f"KKBox Manager: Kualitas default dimuat dari DB: {self.quality}")
             else:
                 LOGGER.info(f"KKBox Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
+
+            # 2. Muat semua pengaturan pengguna ke RAM (self.user_data)
+            all_user_settings = await database.get_user_data()
+            for user in all_user_settings:
+                user_id = user.get('user_id')
+                user_kkbox_qual = user.get('kkbox_qual')
+                if user_id and user_kkbox_qual:
+                    if user_id not in self.user_data:
+                        self.user_data[user_id] = {}
+                    self.user_data[user_id]['kkbox_qual'] = user_kkbox_qual
+            
+            LOGGER.info(f"KKBox Manager: Berhasil memuat {len(self.user_data)} pengaturan kualitas pengguna dari DB.")
+
         except Exception as e:
             LOGGER.error(f"KKBox Manager: Gagal memuat kualitas dari DB: {e}. Menggunakan default: {self.quality}")
+        # --- BATAS MODIFIKASI ---
 
         if not self.account_configs:
             LOGGER.warning("KKBox Manager: Tidak ada akun untuk diinisialisasi.")
@@ -97,20 +115,17 @@ class KKBoxLoginManager:
             secret_key=self.secret_key
         )
         
-        # --- MODIFIKASI: Baca proxy dari dict 'account' ---
-        proxy_url = account.get("proxy") # Dapatkan proxy spesifik akun
+        proxy_url = account.get("proxy") 
         if proxy_url:
             try:
                 proxies = {
                     'http': proxy_url,
                     'https': proxy_url
                 }
-                # Terapkan proxy ke objek sesi 's' milik klien
                 client.s.proxies.update(proxies) 
                 LOGGER.info(f"KKBox Akun #{account['id']}: Berhasil menerapkan proxy spesifik.")
             except Exception as e:
                 LOGGER.error(f"KKBox Akun #{account['id']}: Gagal mengatur proxy: {e}")
-        # --- BATAS MODIFIKASI ---
         
         try:
             await asyncio.to_thread(
@@ -135,14 +150,26 @@ class KKBoxLoginManager:
             LOGGER.error("KKBox Manager: Kumpulan klien kosong.")
             return None
     
+    # --- MODIFIKASI: Simpan ke DB dan RAM ---
     async def setup_quality(self, user_id: int, qual: str = None):
         if user_id not in self.user_data:
             self.user_data[user_id] = {}
+            
         if qual in ["128k", "192k", "320k", "hifi", "hires"]:
+            # 1. Simpan ke RAM
             self.user_data[user_id]['kkbox_qual'] = qual 
-            LOGGER.debug(f"KKBox Manager: Mengatur kualitas user {user_id} ke {qual}")
+            LOGGER.debug(f"KKBox Manager: Mengatur kualitas user {user_id} ke {qual} (RAM)")
+            
+            # 2. Simpan ke Database
+            try:
+                await database.set_variable(user_id, 'kkbox_qual', qual, True)
+                LOGGER.debug(f"KKBox Manager: Berhasil menyimpan kualitas user {user_id} ke DB.")
+            except Exception as e:
+                LOGGER.error(f"KKBox Manager: Gagal menyimpan kualitas user {user_id} ke DB: {e}")
+    # --- BATAS MODIFIKASI ---
 
     def get_user_quality(self, user_id: int) -> str:
+        # Logika ini tetap sama, karena self.user_data sekarang dimuat saat startup
         user_qual = self.user_data.get(user_id, {}).get('kkbox_qual') 
         if user_qual in ["128k", "192k", "320k", "hifi", "hires"]:
             return user_qual
