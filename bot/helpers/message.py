@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/message.py]
+
 import os
 import asyncio
 import time
@@ -43,7 +45,10 @@ async def fetch_user_details(msg: Message, reply=False) -> dict:
     details['r_id'] = msg.reply_to_message.id if reply else msg.id
     details['chat_id'] = msg.chat.id
     try:
-        details['bot_msg'] = msg.id
+        # --- PERBAIKAN DI SINI ---
+        # Simpan seluruh obyek 'msg', bukan hanya 'msg.id'
+        details['bot_msg'] = msg
+        # --- BATAS PERBAIKAN ---
     except:
         pass
     return details
@@ -258,3 +263,8 @@ async def edit_message(msg: Message, text, markup=None, antiflood=True):
             return await edit_message(msg, text, markup, antiflood)
         else:
             return None
+    except Exception:
+        # Menambahkan 'catch' untuk error lain seperti AttributeError
+        # agar tidak menghentikan task
+        LOGGER.error(f"Gagal mengedit pesan. Tipe 'msg' adalah: {type(msg)}")
+        pass
