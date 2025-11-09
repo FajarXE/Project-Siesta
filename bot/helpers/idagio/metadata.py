@@ -5,7 +5,7 @@ import re
 import aiohttp
 import asyncio
 import os 
-import traceback # Impor ini sudah ada dari sebelumnya
+import traceback 
 from urllib.parse import urlparse
 from config import Config 
 
@@ -65,7 +65,6 @@ async def _process_cover(metadata: dict, url: str):
     return await create_cover_file(url, metadata)
 
 
-# --- PERBAIKAN: Tambahkan 'track_num_pre' sebagai argumen ---
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, alb_info_pre: dict = None, track_num_pre: int = None):
     """Memproses metadata untuk satu lagu (recording)."""
     client = user['idagio_api']
@@ -109,24 +108,44 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['artist'] = track_data.get('summary') #
     # --- Batas Logika Artis ---
 
-    # --- PERBAIKAN: Gunakan 'track_num_pre' yang diteruskan ---
-    download_track_id = None
     try:
-        # Kita masih perlu 'download_track_id' untuk stream
-        download_track_id = track_data.get('tracks')[0].get('id') 
+        metadata['duration'] = int(track_data.get('duration')) # Ambil durasi dalam detik
+    except (TypeError, ValueError):
+        LOGGER.warning(f"Idagio: Gagal mendapatkan durasi untuk {track_id}")
+        metadata['duration'] = 0
+
+    # --- Temukan Track Number & Disc Number ---
+    download_track_id = None
+    track_obj_list = track_data.get('tracks', [])
+    
+    try:
+        if track_obj_list:
+            track_obj = track_obj_list[0]
+            # Kita masih perlu 'download_track_id' untuk stream
+            download_track_id = track_obj.get('id') 
+            
+            metadata['discnumber'] = str(track_obj.get('discNumber', 1))
+            metadata['totaldiscs'] = str(album_data.get('discCount', 1))
+            # Ganti nama 'totaldiscs' menjadi 'totalvolumes' agar sesuai caption
+            metadata['totalvolumes'] = metadata['totaldiscs']
+
     except (IndexError, AttributeError):
-        LOGGER.warning(f"Idagio: Gagal menemukan stream ID untuk {track_id}")
+        LOGGER.warning(f"Idagio: Gagal menemukan stream ID/Disc untuk {track_id}")
     
     # Gunakan nomor trek yang diteruskan dari 'process_album_metadata'
     metadata['tracknumber'] = str(track_num_pre) if track_num_pre else "1"
     metadata['totaltracks'] = str(len(album_data.get('tracks')))
-    # --- BATAS PERBAIKAN ---
+    # --- Batas Perbaikan ---
 
     metadata['date'] = album_data.get('publishDate', '1900')[:4] #
     metadata['copyright'] = f'©℗ {album_data.get("copyright")}' #
     metadata['upc'] = album_data.get('upc')
     metadata['provider'] = 'Idagio'
     metadata['type'] = 'track'
+    
+    # --- PERBAIKAN: Atur 'explicit' ke False ---
+    metadata['explicit'] = False # Idagio tidak memiliki data eksplisit
+    # --- BATAS PERBAIKAN ---
 
     # --- Logika Genre ---
     genres = []
@@ -197,25 +216,27 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['provider'] = 'Idagio'
     metadata['type'] = 'album'
     
+    # --- PERBAIKAN: Ambil total disk dan atur explicit ke False ---
+    metadata['totalvolumes'] = str(album_data.get('discCount', 1))
+    metadata['explicit'] = False # Atur ke False
+    # --- BATAS PERBAIKAN ---
+
     # Sampul
     metadata['cover'] = await _process_cover(metadata, album_data.get("imageUrl"))
     metadata['thumbnail'] = metadata['cover']
 
     metadata['tracks'] = []
     
-    # --- PERBAIKAN: Gunakan 'enumerate' untuk mendapatkan nomor trek (i) ---
     for i, track in enumerate(album_data.get('tracks')):
         try:
             recording_id = track.get('recording').get('id')
             
-            # --- PERBAIKAN: Teruskan 'i + 1' sebagai 'track_num_pre' ---
             track_meta = await process_track_metadata(
                 recording_id, r_id, user, 
                 pre_data=None, 
                 alb_info_pre=album_data,
                 track_num_pre=i + 1
             )
-            # --- BATAS PERBAIKAN ---
 
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
@@ -223,7 +244,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         except Exception as e:
             LOGGER.error(f"Idagio: Gagal memproses track {recording_id} di album: {e}\n{traceback.format_exc()}")
             continue
-    # --- BATAS PERBAIKAN ---
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
