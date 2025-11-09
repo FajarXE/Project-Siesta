@@ -115,16 +115,18 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     try:
         if track_obj_list:
             track_obj = track_obj_list[0]
-            # Kita masih perlu 'download_track_id' untuk stream
             download_track_id = track_obj.get('id') 
             
-            metadata['discnumber'] = str(track_obj.get('discNumber', 1))
-            metadata['totaldiscs'] = str(album_data.get('discCount', 1))
+            # --- PERBAIKAN: Logika default yang lebih kuat ---
+            disc_num = track_obj.get('discNumber')
+            metadata['discnumber'] = str(disc_num if disc_num else 1)
+            
+            total_discs = album_data.get('discCount')
+            metadata['totaldiscs'] = str(total_discs if total_discs else 1)
             metadata['totalvolumes'] = metadata['totaldiscs']
             
-            # --- PERBAIKAN: Pindahkan logika Durasi ke sini ---
             try:
-                metadata['duration'] = int(track_obj.get('duration')) # Ambil durasi dari track_obj
+                metadata['duration'] = int(track_obj.get('duration')) 
             except (TypeError, ValueError):
                 LOGGER.warning(f"Idagio: Gagal mendapatkan durasi untuk {track_id}")
                 metadata['duration'] = 0
@@ -133,7 +135,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     except (IndexError, AttributeError):
         LOGGER.warning(f"Idagio: Gagal menemukan stream ID/Disc/Durasi untuk {track_id}")
     
-    # Gunakan nomor trek yang diteruskan dari 'process_album_metadata'
     metadata['tracknumber'] = str(track_num_pre) if track_num_pre else "1"
     metadata['totaltracks'] = str(len(album_data.get('tracks')))
     # --- Batas Perbaikan ---
@@ -143,7 +144,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['upc'] = album_data.get('upc')
     metadata['provider'] = 'Idagio'
     metadata['type'] = 'track'
-    metadata['explicit'] = False # Idagio tidak memiliki data eksplisit
+    metadata['explicit'] = False 
 
     # --- Logika Genre ---
     genres = []
@@ -213,8 +214,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['totaltracks'] = str(len(album_data.get('tracks')))
     metadata['provider'] = 'Idagio'
     metadata['type'] = 'album'
-    metadata['totalvolumes'] = str(album_data.get('discCount', 1))
-    metadata['explicit'] = False # Atur ke False
+    
+    # --- PERBAIKAN: Logika default yang lebih kuat ---
+    total_discs = album_data.get('discCount')
+    metadata['totalvolumes'] = str(total_discs if total_discs else 1)
+    metadata['explicit'] = False 
+    # --- BATAS PERBAIKAN ---
 
     # Sampul
     metadata['cover'] = await _process_cover(metadata, album_data.get("imageUrl"))
