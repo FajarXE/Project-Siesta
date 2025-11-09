@@ -212,8 +212,37 @@ class Config:
     if not KKBOX_KC1_KEY or not KKBOX_SECRET_KEY:
         logging.warning("KKBOX_KC1_KEY atau KKBOX_SECRET_KEY tidak diatur! Modul KKBox akan gagal.")
 #-------------------- 
+
+# --- TAMBAHAN BARU: Blok Napster ---
+#--------------------    
+# NAPSTER
+#--------------------
+    NAPSTER_API_KEY = getenv("NAPSTER_API_KEY", None)
+    NAPSTER_CUSTOMER_SECRET = getenv("NAPSTER_CUSTOMER_SECRET", None)
+    
+    NAPSTER_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"NAPSTER_EMAIL_{i}")
+        password = getenv(f"NAPSTER_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan Napster Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password, "id": i}
+            NAPSTER_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun Napster.")
+            break
+
+    if not NAPSTER_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Napster (NAPSTER_EMAIL_1, dll.) ditemukan di .env")
+    if not NAPSTER_API_KEY or not NAPSTER_CUSTOMER_SECRET:
+        logging.warning("NAPSTER_API_KEY atau NAPSTER_CUSTOMER_SECRET tidak diatur! Modul Napster akan gagal.")
+#-------------------- 
+# --- BATAS TAMBAHAN ---
     
 # CONCURRENT
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
-
