@@ -79,6 +79,14 @@ except ImportError:
     napster_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Idagio ---
+try:
+    from .helpers.idagio.manager import idagio_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'idagio_manager'!")
+    idagio_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 # --- Fungsi Login Qobuz ---
 async def login_single_client(creds: dict):
@@ -230,6 +238,16 @@ async def main():
             logging.info(f"Manajer Napster berhasil diinisialisasi dengan {len(napster_manager.clients)} klien.")
         else:
             logging.warning("PERINGATAN: Tidak ada akun Napster yang berhasil login!")
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: Login Idagio ---
+    if idagio_manager:
+        logging.info("Memulai inisialisasi Manajer Idagio...")
+        await idagio_manager.initialize_clients()
+        if idagio_manager.clients:
+            logging.info(f"Manajer Idagio berhasil diinisialisasi dengan {len(idagio_manager.clients)} klien.")
+        else:
+            logging.warning("PERINGATAN: Tidak ada akun Idagio yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
     logging.info("Menginisialisasi data pengguna...")
