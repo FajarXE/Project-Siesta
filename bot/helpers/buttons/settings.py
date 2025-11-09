@@ -52,6 +52,13 @@ except ImportError:
     soundcloud_manager = _DummyManager()
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Napster ---
+try:
+    from bot.helpers.napster.manager import napster_manager
+except ImportError:
+    napster_manager = _DummyManager()
+# --- BATAS TAMBAHAN ---
+
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def fetch_base_buttons():
@@ -159,6 +166,18 @@ def providers_button():
                 )
             ]
         )
+    
+    # --- TAMBAHAN BARU: Tombol Admin Napster ---
+    if napster_manager and napster_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="NAPSTER", 
+                    callback_data='npP' # Napster Panel
+                )
+            ]
+        )
+    # --- BATAS TAMBAHAN ---
         
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
@@ -534,6 +553,39 @@ def kk_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
+# --- TAMBAHAN BARU: Tombol Napster ---
+def np_button(quality: dict, user_id: int = None):
+    """Membuat tombol untuk pengaturan kualitas Napster."""
+    buttons = []
+    usetting = user_id is not None
+    prefix = "npQ" if not usetting else f"unps" # Napster Quality / User Napster Set
+    row = []
+    display_text_map = {
+        "FLAC": "FLAC (HiRes/Lossless)",
+        "MP3_320": "AAC 320k",
+        "MP3_192": "AAC 192k",
+        "MP3_128": "AAC 128k",
+        "MP3_64": "HE-AAC 64k"
+    }
+    for i, (key, value) in enumerate(quality.items()):
+        callback_text = display_text_map.get(key)
+        if callback_text:
+            row.append(InlineKeyboardButton(value, callback_data=f"{prefix}_{callback_text}"))
+        if (i + 1) % 2 == 0 or i == len(quality) - 1:
+            buttons.append(row)
+            row = []
+    if usetting:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
+
 
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
@@ -562,6 +614,11 @@ def usetting_button() -> InlineKeyboardMarkup:
     
     if kkbox_manager and kkbox_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"KKBox Quality", callback_data=f"uset_kkbox")])
+    
+    # --- TAMBAHAN BARU: Tombol Pengguna Napster ---
+    if napster_manager and napster_manager.clients:
+        buttons.append([InlineKeyboardButton(text=f"Napster Quality", callback_data=f"uset_napster")])
+    # --- BATAS TAMBAHAN ---
     
     buttons.append([InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")])
     buttons.append([InlineKeyboardButton(text="ALBUM_ZIP", callback_data="zip_album")])
