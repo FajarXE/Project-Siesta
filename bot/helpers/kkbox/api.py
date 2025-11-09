@@ -114,10 +114,10 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        # --- PERBAIKAN: Menambahkan LEBIH BANYAK tebakan 'fields' ---
+        # --- PERBAIKAN: Menghapus 'fields' composer yang tidak berguna ---
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
-            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,composer_list,lyricist_list,arranger_list,writer_list,composer,lyricist,arranger'
+            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
         })
         # --- BATAS PERBAIKAN ---
         if resp['status']['type'] != 'OK':
