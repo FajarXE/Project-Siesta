@@ -1,0 +1,233 @@
+# [BUAT FILE BARU: bot/helpers/idagio/handler.py]
+
+import aiohttp
+import aiofiles
+import os
+import traceback
+import asyncio
+import requests # Diperlukan untuk unduhan sinkron
+
+from pathvalidate import sanitize_filepath
+from config import Config
+from Cryptodome.Cipher import AES
+from Cryptodome.Hash import SHA256
+
+from .metadata import (
+    process_track_metadata, 
+    process_album_metadata,
+    custom_url_parse
+)
+from .manager import IdagioError
+
+# Impor yang diperlukan
+from ..uploder import *
+from ..metadata import set_metadata
+from ..message import edit_message
+from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
+from ...settings import bot_set 
+import bot.helpers.translations as lang
+from bot.logger import LOGGER
+
+async def start_idagio(url: str, user: dict):
+    """Handler utama untuk link Idagio."""
+    try:
+        media_type, item_id, extra_kwargs = custom_url_parse(url)
+        
+        if media_type == 'track':
+            success = await start_track(item_id, user, None)
+            if not success:
+                raise Exception("Gagal mengunduh atau memproses track.")
+        
+        elif media_type == 'album':
+            await start_album(item_id, user)
+            
+        else:
+            raise NotImplementedError(f"Tipe media Idagio '{media_type}' belum didukung.")
+        
+    except Exception as e:
+        LOGGER.error(f"Error fatal di Idagio handler: {e}\n{traceback.format_exc()}")
+        raise e 
+
+
+async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
+    filepath=None, disable_link=False):
+
+    client = user['idagio_api']
+
+    if not track_meta:
+        try:
+            # item_id di sini adalah 'recording_id'
+            track_meta = await process_track_metadata(item_id, user['r_id'], user)
+        except Exception as e:
+            LOGGER.warning(f"Idagio track {item_id} tidak tersedia: {e}")
+            return False
+            
+        filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
+        filepath = sanitize_filepath(filepath)
+
+    quality_tier = track_meta.get('download_quality_tier') # 90, 70, 50
+    stream_track_id = track_meta.get('download_track_id') # ID untuk stream
+    
+    if not quality_tier or not stream_track_id:
+        LOGGER.error(f"Metadata tidak lengkap untuk unduhan Idagio track {item_id}")
+        return False
+
+    track_meta['folderpath'] = filepath
+    
+    raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
+    safe_filename = sanitize_filepath(raw_filename)
+
+    filepath += f"/{safe_filename}.{track_meta['extension']}"
+    track_meta['filepath'] = filepath
+
+    # --- LOGIKA UNDUH IDAGIO (Dekripsi) ---
+    try:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # Jalankan unduhan + dekripsi sinkron di thread terpisah
+        await asyncio.to_thread(
+            download_track_encrypted,
+            client, # Objek IdagioApi (dengan sesi requests)
+            stream_track_id,
+            quality_tier,
+            track_meta['filepath']
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Idagio dl_track gagal untuk {item_id}: {e}\n{traceback.format_exc()}")
+        return False
+    # --- BATAS LOGIKA UNDUH ---
+
+    try:
+        await set_metadata(track_meta)
+    except FileNotFoundError:
+        LOGGER.error(f"[Errno 2] File not found setelah download Idagio: {filepath}")
+        return False
+    except Exception as e:
+        LOGGER.error(f"Gagal memproses metadata Idagio: {filepath} -> {e}")
+        try:
+            os.remove(filepath)
+        except:
+            pass
+        return False
+
+    if upload:
+        await track_upload(track_meta, user, disable_link)
+
+    return True
+
+
+def download_track_encrypted(client, track_id, quality_tier, temp_location):
+    """
+    Fungsi SINKRON untuk mengunduh dan mendekripsi file Idagio.
+    Dijalankan di ThreadPoolExecutor oleh asyncio.to_thread.
+    Logika diadaptasi dari interface.py
+    """
+    
+    # 1. Dapatkan stream data (ini menggunakan 'requests' dari 'client.s')
+    stream_data_list = client.get_track_stream(track_id, quality=quality_tier)
+    
+    if not stream_data_list:
+        # Coba fallback ke endpoint Sonos (hanya FLAC)
+        if quality_tier == 90:
+            LOGGER.debug(f"Idagio: Gagal mendapatkan stream, mencoba fallback Sonos...")
+            stream_data_list = client.get_track_stream_2(track_id, quality=quality_tier)
+        if not stream_data_list:
+            raise IdagioError(f"Tidak bisa mendapatkan data stream untuk track {track_id}")
+
+    stream_data = stream_data_list[0]
+    
+    # 2. Mulai streaming unduhan
+    r = client.s.get(stream_data.get('url'), stream=True)
+    r.raise_for_status()
+
+    # 3. Cek enkripsi dan siapkan cipher
+    is_encrypted = False
+    cipher = None
+    
+    if r.headers.get('X-X'):
+        is_encrypted = True
+        base_key, iv = r.headers['X-X'].split(' ')
+
+        secret = 'mola*jbaf^*`*V^fG^lkf4fb_bba2'
+        offset = 3
+        extended_key = ''.join(map(chr, [(ord(char) + offset + 65536) % 65536 for char in secret]))
+
+        key = base_key + extended_key
+        key_checksum = SHA256.new(key.encode('utf-8')).hexdigest()[:16].encode('utf-8')
+        iv = iv.encode('utf-8')
+
+        cipher = AES.new(key_checksum, AES.MODE_CTR, initial_value=iv, nonce=b'')
+        LOGGER.debug(f"Idagio: Mendeteksi stream terenkripsi. Menggunakan AES-CTR.")
+    else:
+        LOGGER.debug(f"Idagio: Mendeteksi stream tidak terenkripsi.")
+
+    # 4. Unduh, Dekripsi (jika perlu), dan Tulis
+    try:
+        with open(temp_location, 'wb') as f:
+            if is_encrypted:
+                for chunk in r.iter_content(chunk_size=4096):
+                    if chunk:
+                        f.write(cipher.decrypt(chunk))
+            else:
+                # Tidak terenkripsi (misal fallback Sonos)
+                for chunk in r.iter_content(chunk_size=4096):
+                    if chunk:
+                        f.write(chunk)
+    except Exception as e:
+        # Hapus file parsial jika gagal
+        if os.path.isfile(temp_location):
+            os.remove(temp_location)
+        raise e
+    
+    LOGGER.info(f"Idagio: Berhasil mengunduh dan mendekripsi ke {temp_location}")
+
+
+async def start_album(album_id: str, user: dict, upload=True):
+    """
+    Handler untuk unduhan album.
+    """
+    try:
+        album_meta = await process_album_metadata(album_id, user['r_id'], user)
+    except Exception as e:
+        raise Exception(f"Gagal mendapatkan metadata album Idagio: {e}")
+
+    album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
+    
+    album_folder = sanitize_filepath(album_folder)
+    album_meta['folderpath'] = album_folder 
+
+    if upload:
+        album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+
+    tasks = []
+    for track in album_meta['tracks']:
+        # Kirim track_meta (pre_data) ke start_track agar tidak perlu fetch ulang
+        # 'itemid' di sini adalah recording_id
+        tasks.append(start_track(track['itemid'], user, track, False, album_folder))
+
+    update_details = {
+        'text': lang.s.DOWNLOAD_PROGRESS,
+        'msg': user['bot_msg'],
+        'title': album_meta['title'],
+        'type': album_meta['type']
+    }
+    
+    task_results = await run_concurrent_tasks(tasks, update_details)
+    
+    successful_tracks = [album_meta['tracks'][i] for i, result in enumerate(task_results) if result]
+    album_meta['tracks'] = successful_tracks
+    album_meta['totaltracks'] = len(successful_tracks)
+
+    if not successful_tracks:
+        raise Exception(f"Tidak ada lagu Idagio yang berhasil diunduh untuk album {album_meta['title']}.")
+
+    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+
+    if album_zip: 
+        await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
+        album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+
+    if upload:
+        await edit_message(user['bot_msg'], lang.s.UPLOADING)
+        await album_upload(album_meta, user)
