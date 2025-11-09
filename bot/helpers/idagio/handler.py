@@ -77,6 +77,15 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
     safe_filename = sanitize_filepath(raw_filename)
 
+    # --- PERBAIKAN: Potong nama file (safe_filename) agar tidak terlalu panjang ---
+    # Batasi nama file (sebelum ekstensi) menjadi misal 150 karakter
+    # untuk menghindari error batas path sistem file (MAX_PATH)
+    max_len = 150
+    if len(safe_filename) > max_len:
+        safe_filename = safe_filename[:max_len].strip() # Potong dan hapus spasi
+        LOGGER.warning(f"Idagio: Nama file dipotong menjadi: {safe_filename}")
+    # --- BATAS PERBAIKAN ---
+
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
@@ -200,10 +209,10 @@ async def start_album(album_id: str, user: dict, upload=True):
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
-    # --- PERBAIKAN: Implementasi Semaphore manual ---
+    # --- Implementasi Semaphore manual ---
     
     # 1. Tentukan batas unduhan bersamaan (concurrent)
-    sem = asyncio.Semaphore(3)
+    sem = asyncio.Semaphore(3) # Batas 3 unduhan simultan
     total_tracks = len(album_meta['tracks'])
     completed_count = 0
     
