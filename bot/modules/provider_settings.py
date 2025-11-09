@@ -53,6 +53,14 @@ except ImportError:
     soundcloud_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Napster ---
+try:
+    from ..helpers.napster.manager import napster_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor napster_manager.")
+    napster_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 @Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
 async def provider_cb(c, cb:CallbackQuery):
@@ -404,3 +412,53 @@ async def kkbox_quality_cb(c, cb:CallbackQuery):
         kkbox_manager.quality = to_set
         await database.set_variable('KKBOX_QUALITY', to_set)
         await kkbox_cb(c, cb)
+
+# --- TAMBAHAN BARU: Handler Admin Napster ---
+#----------------
+# NAPSTER
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^npP")) # Napster Panel
+async def napster_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "FLAC": "FLAC (HiRes/Lossless)",
+            "MP3_320": "AAC 320k",
+            "MP3_192": "AAC 192k",
+            "MP3_128": "AAC 128k",
+            "MP3_64": "HE-AAC 64k"
+        }
+        if not napster_manager or not napster_manager.clients:
+            return await edit_message(cb.message, "Layanan Napster tidak aktif (tidak ada klien yang login).")
+        
+        current = napster_manager.quality 
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(
+            cb.message,
+            "Pilih kualitas default untuk Napster:\n(Kualitas akhir tergantung langganan akun bot)",
+            markup=np_button(quality) # Anda perlu membuat np_button
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^npQ")) # Napster Quality Set
+async def napster_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qual_map_display = {
+            "FLAC (HiRes/Lossless)": "FLAC",
+            "AAC 320k": "MP3_320",
+            "AAC 192k": "MP3_192",
+            "AAC 128k": "MP3_128",
+            "HE-AAC 64k": "MP3_64"
+        }
+        to_set_display = cb.data.split('_')[1]
+        to_set = qual_map_display.get(to_set_display)
+        if not to_set:
+            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
+        if not napster_manager or not napster_manager.clients:
+            return await edit_message(cb.message, "Layanan Napster tidak aktif.")
+        
+        napster_manager.quality = to_set
+        await database.set_variable('NAPSTER_QUALITY', to_set) # Simpan ke DB
+        
+        await napster_cb(c, cb)
+# --- BATAS TAMBAHAN ---
