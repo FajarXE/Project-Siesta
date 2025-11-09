@@ -5,7 +5,7 @@ import re
 import aiohttp
 import logging
 import os 
-import urllib.parse # <-- TAMBAHAN BARU
+import urllib.parse 
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -237,6 +237,12 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['provider'] = 'Soundcloud'
     metadata['type'] = 'track'
     
+    # --- PERBAIKAN: Tambahkan Explicit & TotalVolumes ---
+    metadata['explicit'] = track_data.get('explicit', False)
+    metadata['totalvolumes'] = "1" # SoundCloud tidak punya data disk
+    metadata['discnumber'] = "1"
+    # --- BATAS PERBAIKAN ---
+
     # --- Sampul (MODIFIKASI) ---
     art_url_base = track_data.get('artwork_url') or track_data.get('user', {}).get('avatar_url')
     
@@ -323,6 +329,11 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
     metadata['itemid'] = str(item_id)
     metadata['type'] = media_type 
     metadata['provider'] = 'Soundcloud'
+    
+    # --- PERBAIKAN: Tambahkan Explicit & TotalVolumes ---
+    metadata['explicit'] = data.get('explicit', False)
+    metadata['totalvolumes'] = "1" # SoundCloud tidak punya data disk
+    # --- BATAS PERBAIKAN ---
 
     metadata['title'] = data.get('title') or 'N/A'
     metadata['artist'] = data.get('user', {}).get('username') or ''
