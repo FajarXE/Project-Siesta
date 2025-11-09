@@ -96,40 +96,52 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     if 'featuredartist_list' in track_data['artist_role']:
         artists.extend(track_data['artist_role']['featuredartist_list']['featuredartist'])
     
-    # --- MODIFIKASI DIMULAI (PERBAIKAN ARTIS TIDAK DIKETAHUI) ---
-    # Ambil artis album TERLEBIH DAHULU
+    # --- PERBAIKAN ARTIS TIDAK DIKETAHUI ---
     metadata['albumartist'] = alb_info['artist_name']
     
-    # Cek jika daftar 'artists' (artis lagu) kosong
     if not artists:
-        # Jika kosong, gunakan 'albumartist' sebagai fallback
         LOGGER.debug(f"KKBox: Artis lagu tidak ditemukan untuk '{metadata['title']}', menggunakan artis album: {metadata['albumartist']}")
         artists = [metadata['albumartist']]
     
-    metadata['artist'] = ", ".join(artists) # Sekarang dijamin memiliki nilai
-    # --- MODIFIKASI SELESAI ---
+    metadata['artist'] = ", ".join(artists)
+    # --- BATAS PERBAIKAN ---
     
     metadata['album'] = alb_info['album_name']
     metadata['date'] = alb_info['album_date']
     metadata['tracknumber'] = str(track_data['song_idx'])
     metadata['totaltracks'] = str(alb_info['num_tracks'])
     
-    # --- TAMBAHAN: Mengambil Total Volume (Disk) ---
-    # Kita asumsikan API key-nya adalah 'num_volumes', default ke 1
+    # --- PERBAIKAN TOTAL VOLUME ---
     metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
-    # --- BATAS TAMBAHAN ---
+    # --- BATAS PERBAIKAN ---
     
     metadata['genre'] = track_data.get('genre_name')
 
-    # --- TAMBAHAN BARU: Mengambil Composer ---
-    composer_list = []
-    # Periksa apakah 'composer_list' ada di data 'artist_role'
-    if 'composer_list' in track_data['artist_role']:
-         composer_list.extend(track_data['artist_role']['composer_list']['composer'])
+    # --- PERBAIKAN COMPOSER (Membaca dari 'track_data' level atas) ---
+    all_composers = []
     
-    if composer_list:
-         metadata['composer'] = ", ".join(composer_list)
-    # --- BATAS TAMBAHAN BARU ---
+    # Sekarang kita cari di 'track_data' (level atas), BUKAN 'track_data['artist_role']'
+    if 'composer_list' in track_data:
+        try:
+            all_composers.extend(track_data['composer_list']['composer'])
+        except Exception: pass 
+
+    if 'lyricist_list' in track_data:
+        try:
+            all_composers.extend(track_data['lyricist_list']['lyricist'])
+        except Exception: pass
+
+    if 'arranger_list' in track_data:
+        try:
+            all_composers.extend(track_data['arranger_list']['arranger'])
+        except Exception: pass
+
+    # Hapus duplikat jika ada
+    if all_composers:
+        unique_composers = list(dict.fromkeys(all_composers)) # Cara cepat menjaga urutan & hapus duplikat
+        metadata['composer'] = ", ".join(unique_composers)
+        LOGGER.debug(f"KKBox: Menemukan composer: {metadata['composer']}")
+    # --- BATAS PERBAIKAN ---
     
     metadata['explicit'] = bool(track_data['song_is_explicit'])
     metadata['provider'] = 'KKBox'
@@ -182,11 +194,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     try:
         # Panggil API di thread terpisah
-        
-        # --- PERBAIKAN SYNTAXERROR DI SINI ---
         album_resp = await asyncio.to_thread(client.get_album, album_id)
-        # --- BATAS PERBAIKAN ---
-        
         raw_id = album_resp['album']['album_id']
         
         album_data_more = await asyncio.to_thread(client.get_album_more, raw_id)
@@ -206,10 +214,9 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['date'] = alb_info['album_date']
     metadata['totaltracks'] = str(alb_info['num_tracks'])
     
-    # --- TAMBAHAN: Mengambil Total Volume (Disk) ---
-    # Kita asumsikan API key-nya adalah 'num_volumes', default ke 1
+    # --- PERBAIKAN TOTAL VOLUME ---
     metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
-    # --- BATAS TAMBAHAN ---
+    # --- BATAS PERBAIKAN ---
     
     metadata['explicit'] = bool(alb_info['album_is_explicit'])
     metadata['provider'] = 'KKBox'
@@ -240,6 +247,8 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
+    # --- PERBAIKAN: Mengambil kualitas dari 'tracks' (bukan 'tracks_list') ---
     metadata['quality'] = metadata['tracks'][0]['quality']
+    # --- BATAS PERBAIKAN ---
     return metadata
 # --- BATAS FUNGSI BARU ---
