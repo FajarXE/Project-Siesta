@@ -6,7 +6,7 @@ import aiohttp
 import asyncio
 import logging
 import os 
-import json # <-- Ditambahkan untuk debug
+# Hapus 'import json' yang tidak perlu lagi
 from urllib.parse import urlparse
 from config import Config 
 
@@ -74,16 +74,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             songs_list = await asyncio.to_thread(client.get_songs, [track_id])
             track_data = songs_list[0]
             
-            # --- KODE DEBUG (TAMBAHKAN INI SEMENTARA) ---
-            # import json (sudah diimpor di atas)
-            LOGGER.info(f"===== DEBUG DATA LAGU KKBOX (Mulai) =====")
-            try:
-                # Kita mencetak 'track_data' mentah untuk melihat semua field
-                LOGGER.info(json.dumps(track_data, indent=2, ensure_ascii=False))
-            except Exception as e:
-                LOGGER.error(f"Gagal mencetak data debug: {e}")
-            LOGGER.info(f"===== DEBUG DATA LAGU KKBOX (Selesai) =====")
-            # --- BATAS KODE DEBUG ---
+            # --- KODE DEBUG DIHAPUS ---
 
         # Dapatkan info album
         if alb_info_pre:
@@ -129,52 +120,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     metadata['genre'] = track_data.get('genre_name')
 
-    # --- PERBAIKAN COMPOSER (Tebakan Komprehensif Terakhir) ---
-    all_composers = []
-
-    # Fungsi helper untuk menambahkan data dengan aman
-    def add_composer_data(data):
-        if not data:
-            return
-        if isinstance(data, str):
-            all_composers.append(data)
-        elif isinstance(data, list):
-            all_composers.extend(data)
-
-    # Memeriksa semua kemungkinan 'key' yang kita minta di api.py
-    # Ini akan memeriksa 'track_data' level atas
-    
-    # 1. Tebakan key berbentuk list (misal: "composer_list": {"composer": [...]})
-    try:
-        add_composer_data(track_data.get('composer_list', {}).get('composer'))
-    except Exception: pass 
-    try:
-        add_composer_data(track_data.get('lyricist_list', {}).get('lyricist'))
-    except Exception: pass
-    try:
-        add_composer_data(track_data.get('arranger_list', {}).get('arranger'))
-    except Exception: pass
-    try:
-        add_composer_data(track_data.get('writer_list', {}).get('writer'))
-    except Exception: pass
-
-    # 2. Tebakan key berbentuk string/list simpel (misal: "composer": "Nama")
-    try:
-        add_composer_data(track_data.get('composer'))
-    except Exception: pass
-    try:
-        add_composer_data(track_data.get('lyricist'))
-    except Exception: pass
-    try:
-        add_composer_data(track_data.get('arranger'))
-    except Exception: pass
-
-    # Hapus duplikat jika ada
-    if all_composers:
-        unique_composers = list(dict.fromkeys(all_composers)) 
-        metadata['composer'] = ", ".join(unique_composers)
-        LOGGER.debug(f"KKBox: Menemukan composer (Tebakan Terakhir): {metadata['composer']}")
-    # --- BATAS PERBAIKAN ---
+    # --- BLOK COMPOSER DIHAPUS KARENA DATA TIDAK TERSEDIA ---
     
     metadata['explicit'] = bool(track_data['song_is_explicit'])
     metadata['provider'] = 'KKBox'
