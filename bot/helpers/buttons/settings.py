@@ -59,6 +59,13 @@ except ImportError:
     napster_manager = _DummyManager()
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Idagio ---
+try:
+    from bot.helpers.idagio.manager import idagio_manager
+except ImportError:
+    idagio_manager = _DummyManager()
+# --- BATAS TAMBAHAN ---
+
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def fetch_base_buttons():
@@ -174,6 +181,18 @@ def providers_button():
                 InlineKeyboardButton(
                     text="NAPSTER", 
                     callback_data='npP' # Napster Panel
+                )
+            ]
+        )
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: Tombol Admin Idagio ---
+    if idagio_manager and idagio_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="IDAGIO", 
+                    callback_data='idP' # Idagio Panel
                 )
             ]
         )
@@ -586,6 +605,37 @@ def np_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Tombol Idagio ---
+def id_button(quality: dict, user_id: int = None):
+    """Membuat tombol untuk pengaturan kualitas Idagio."""
+    buttons = []
+    usetting = user_id is not None
+    prefix = "idQ" if not usetting else f"uids" # Idagio Quality / User Idagio Set
+    row = []
+    display_text_map = {
+        "FLAC": "FLAC",
+        "MP3_320": "AAC 320k",
+        "MP3_160": "AAC 160k"
+    }
+    for i, (key, value) in enumerate(quality.items()):
+        callback_text = display_text_map.get(key)
+        if callback_text:
+            row.append(InlineKeyboardButton(value, callback_data=f"{prefix}_{callback_text}"))
+        if (i + 1) % 2 == 0 or i == len(quality) - 1:
+            buttons.append(row)
+            row = []
+    if usetting:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
+
 
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
@@ -618,6 +668,11 @@ def usetting_button() -> InlineKeyboardMarkup:
     # --- TAMBAHAN BARU: Tombol Pengguna Napster ---
     if napster_manager and napster_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Napster Quality", callback_data=f"uset_napster")])
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: Tombol Pengguna Idagio ---
+    if idagio_manager and idagio_manager.clients:
+        buttons.append([InlineKeyboardButton(text=f"Idagio Quality", callback_data=f"uset_idagio")])
     # --- BATAS TAMBAHAN ---
     
     buttons.append([InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")])
