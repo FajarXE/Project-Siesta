@@ -27,6 +27,13 @@ except ImportError:
     napster_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Idagio ---
+try:
+    from bot.helpers.idagio.manager import idagio_manager
+except ImportError:
+    idagio_manager = None
+# --- BATAS TAMBAHAN ---
+
 from ..helpers.soundcloud.handler import start_soundcloud
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -52,6 +59,14 @@ try:
 except ImportError:
     async def start_napster(*args, **kwargs):
         raise NotImplementedError("Modul Napster ('handler.py') belum diimplementasikan.")
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Impor Handler Idagio ---
+try:
+    from ..helpers.idagio.handler import start_idagio
+except ImportError:
+    async def start_idagio(*args, **kwargs):
+        raise NotImplementedError("Modul Idagio ('handler.py') belum diimplementasikan.")
 # --- BATAS TAMBAHAN ---
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
@@ -153,6 +168,10 @@ async def start_link(link: str, user: dict) -> None:
     
     # --- TAMBAHAN BARU: URL Napster ---
     napster = ["https://app.napster.com", "napster.com", "http://app.napster.com"]
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: URL Idagio ---
+    idagio = ["https://www.idagio.com", "idagio.com", "https://app.idagio.com"]
     # --- BATAS TAMBAHAN ---
     
     if link.startswith(tuple(tidal)):
@@ -372,6 +391,27 @@ async def start_link(link: str, user: dict) -> None:
             # Napster API tampaknya tidak terlalu rentan region-lock,
             # tapi Anda bisa menambahkan logika 'try/except' di sini jika perlu.
             LOGGER.error(f"Napster: Tugas gagal (Fatal): {e}")
+            raise e
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Blok Idagio ---
+    elif link.startswith(tuple(idagio)):
+        user['provider'] = 'Idagio'
+        
+        if not idagio_manager or not idagio_manager.clients:
+            raise Exception("Maaf, tidak ada akun Idagio bot yang aktif saat ini.")
+
+        client = idagio_manager.get_client()
+        if not client:
+             raise Exception("Tidak ada klien Idagio yang tersedia (semua gagal login?).")
+
+        try:
+            user['idagio_api'] = client
+            await start_idagio(link, user)
+            LOGGER.info(f"Idagio: Unduhan berhasil menggunakan akun.")
+            return
+        except Exception as e:
+            LOGGER.error(f"Idagio: Tugas gagal (Fatal): {e}")
             raise e
     # --- BATAS TAMBAHAN ---
 
