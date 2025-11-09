@@ -114,10 +114,10 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        # --- PERBAIKAN: Menambahkan key composer/lyricist/arranger ke 'fields' ---
+        # --- PERBAIKAN: Menambahkan LEBIH BANYAK tebakan 'fields' ---
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
-            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,composer_list,lyricist_list,arranger_list'
+            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,composer_list,lyricist_list,arranger_list,writer_list,composer,lyricist,arranger'
         })
         # --- BATAS PERBAIKAN ---
         if resp['status']['type'] != 'OK':
@@ -217,14 +217,8 @@ class KkboxAPI:
         resp = self.s.get(url, stream=True, headers={'range': 'bytes=1024-'})
         resp.raise_for_status()
 
-        # size = int(resp.headers['content-length']) # Dihapus
-        # bar = tqdm(total=size, unit='B', unit_scale=True) # Dihapus
-
         rc4 = ARC4.new(self.lic_content_key, drop=512)
 
         with open(path, 'wb') as f:
             for chunk in resp.iter_content(chunk_size=4096):
                 f.write(rc4.decrypt(chunk))
-                # bar.update(len(chunk)) # Dihapus
-
-        # bar.close() # Dihapus
