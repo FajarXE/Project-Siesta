@@ -20,6 +20,13 @@ from bot.helpers.tidal.manager import tidal_manager
 from bot.helpers.kkbox.manager import kkbox_manager
 from bot.helpers.beatsource.manager import beatsource_manager
 from bot.helpers.soundcloud.manager import soundcloud_manager
+# --- TAMBAHAN BARU: Impor Manajer Napster ---
+try:
+    from bot.helpers.napster.manager import napster_manager
+except ImportError:
+    napster_manager = None
+# --- BATAS TAMBAHAN ---
+
 from ..helpers.soundcloud.handler import start_soundcloud
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -38,6 +45,14 @@ try:
 except ImportError:
     async def start_beatsource(*args, **kwargs):
         raise NotImplementedError("Modul Beatsource ('handler.py') belum diimplementasikan.")
+
+# --- TAMBAHAN BARU: Impor Handler Napster ---
+try:
+    from ..helpers.napster.handler import start_napster
+except ImportError:
+    async def start_napster(*args, **kwargs):
+        raise NotImplementedError("Modul Napster ('handler.py') belum diimplementasikan.")
+# --- BATAS TAMBAHAN ---
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
@@ -135,6 +150,10 @@ async def start_link(link: str, user: dict) -> None:
     ]
     
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
+    
+    # --- TAMBAHAN BARU: URL Napster ---
+    napster = ["https://app.napster.com", "napster.com", "http://app.napster.com"]
+    # --- BATAS TAMBAHAN ---
     
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
@@ -332,6 +351,29 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun KKBox yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
+
+    # --- TAMBAHAN BARU: Blok Napster ---
+    elif link.startswith(tuple(napster)):
+        user['provider'] = 'Napster'
+        
+        if not napster_manager or not napster_manager.clients:
+            raise Exception("Maaf, tidak ada akun Napster bot yang aktif saat ini.")
+
+        client = napster_manager.get_client()
+        if not client:
+             raise Exception("Tidak ada klien Napster yang tersedia (semua gagal login?).")
+
+        try:
+            user['napster_api'] = client
+            await start_napster(link, user)
+            LOGGER.info(f"Napster: Unduhan berhasil menggunakan akun.")
+            return
+        except Exception as e:
+            # Napster API tampaknya tidak terlalu rentan region-lock,
+            # tapi Anda bisa menambahkan logika 'try/except' di sini jika perlu.
+            LOGGER.error(f"Napster: Tugas gagal (Fatal): {e}")
+            raise e
+    # --- BATAS TAMBAHAN ---
 
     else:
         LOGGER.warning(f"Link tidak dikenali: {link}")
