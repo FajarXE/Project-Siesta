@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/idagio/handler.py]
+# [GANTI FILE: bot/helpers/idagio/handler.py]
 
 import aiohttp
 import aiofiles
@@ -213,7 +213,11 @@ async def start_album(album_id: str, user: dict, upload=True):
         'type': album_meta['type']
     }
     
-    task_results = await run_concurrent_tasks(tasks, update_details)
+    # --- PERBAIKAN: Tambahkan batas 'limit' ---
+    # Ini akan membatasi bot untuk hanya menjalankan 3 tugas unduhan thread
+    # secara bersamaan, mencegah 'Connection pool is full'.
+    task_results = await run_concurrent_tasks(tasks, update_details, limit=3)
+    # --- BATAS PERBAIKAN ---
     
     successful_tracks = [album_meta['tracks'][i] for i, result in enumerate(task_results) if result]
     album_meta['tracks'] = successful_tracks
