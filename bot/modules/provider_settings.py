@@ -10,7 +10,7 @@ from config import Config
 
 from ..logger import LOGGER
 from ..settings import bot_set
-from ..helpers.buttons.settings import * # Ini sekarang akan mengimpor bs_button & sc_button juga
+from ..helpers.buttons.settings import * # Ini sekarang akan mengimpor id_button juga
 from ..helpers.database.mongo_async import database
 from ..helpers.tidal.tidal_api import TidalApi
 from ..helpers.message import edit_message, check_user
@@ -59,6 +59,14 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor napster_manager.")
     napster_manager = None
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Impor Manajer Idagio ---
+try:
+    from ..helpers.idagio.manager import idagio_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor idagio_manager.")
+    idagio_manager = None
 # --- BATAS TAMBAHAN ---
 
 
@@ -461,4 +469,50 @@ async def napster_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('NAPSTER_QUALITY', to_set) # Simpan ke DB
         
         await napster_cb(c, cb)
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Handler Admin Idagio ---
+#----------------
+# IDAGIO
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^idP")) # Idagio Panel
+async def idagio_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "FLAC": "FLAC",
+            "MP3_320": "AAC 320k",
+            "MP3_160": "AAC 160k"
+        }
+        if not idagio_manager or not idagio_manager.clients:
+            return await edit_message(cb.message, "Layanan Idagio tidak aktif (tidak ada klien yang login).")
+        
+        current = idagio_manager.quality 
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(
+            cb.message,
+            "Pilih kualitas default untuk Idagio:\n(Semua akun bot diasumsikan Premium+)",
+            markup=id_button(quality)
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^idQ")) # Idagio Quality Set
+async def idagio_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qual_map_display = {
+            "FLAC": "FLAC",
+            "AAC 320k": "MP3_320",
+            "AAC 160k": "MP3_160"
+        }
+        to_set_display = cb.data.split('_')[1]
+        to_set = qual_map_display.get(to_set_display)
+        if not to_set:
+            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
+        if not idagio_manager or not idagio_manager.clients:
+            return await edit_message(cb.message, "Layanan Idagio tidak aktif.")
+        
+        idagio_manager.quality = to_set
+        await database.set_variable('IDAGIO_QUALITY', to_set) # Simpan ke DB
+        
+        await idagio_cb(c, cb)
 # --- BATAS TAMBAHAN ---
