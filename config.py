@@ -242,6 +242,31 @@ class Config:
         logging.warning("NAPSTER_API_KEY atau NAPSTER_CUSTOMER_SECRET tidak diatur! Modul Napster akan gagal.")
 #-------------------- 
 # --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Blok Idagio ---
+#--------------------    
+# IDAGIO
+#--------------------
+    IDAGIO_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"IDAGIO_EMAIL_{i}")
+        password = getenv(f"IDAGIO_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan Idagio Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password, "id": i}
+            IDAGIO_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun Idagio.")
+            break
+
+    if not IDAGIO_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Idagio (IDAGIO_EMAIL_1, dll.) ditemukan di .env")
+#-------------------- 
+# --- BATAS TAMBAHAN ---
     
 # CONCURRENT
 #--------------------
