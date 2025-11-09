@@ -55,10 +55,18 @@ except ImportError:
     napster_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Idagio ---
+try:
+    from ..helpers.idagio.manager import idagio_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor idagio_manager.")
+    idagio_manager = None
+# --- BATAS TAMBAHAN ---
+
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
-    bs_button, sc_button, np_button # <-- TAMBAHKAN NP_BUTTON
+    bs_button, sc_button, np_button, id_button # <-- TAMBAHKAN ID_BUTTON
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -98,8 +106,8 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-# --- MODIFIKASI: Tambahkan 'napster' ke regex ---
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster)"))
+# --- MODIFIKASI: Tambahkan 'idagio' ke regex ---
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -278,6 +286,26 @@ async def uset_cb(client, query, datatype=""):
         if current in quality:
             quality[current] = quality[current] + '✅'
         return await edit_message(query.message, text + "\n(Kualitas akhir tergantung langganan akun bot)", markup=np_button(quality, user_id))
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Blok Idagio ---
+    if data[1] == "idagio" or datatype == "idagio":
+        text = f"Choose Idagio Audio Quality bellow:"
+        quality = {
+            "FLAC": "FLAC",
+            "MP3_320": "AAC 320k",
+            "MP3_160": "AAC 160k"
+        }
+        if not idagio_manager or not idagio_manager.clients:
+            return await edit_message(query.message, "Layanan Idagio tidak aktif (tidak ada klien yang login).")
+        
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        current = main_user_dict.get("idagio_qual", idagio_manager.quality) 
+        await idagio_manager.setup_quality(user_id, current) # Sinkronkan ke cache lokal
+        
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        return await edit_message(query.message, text, markup=id_button(quality, user_id))
     # --- BATAS TAMBAHAN ---
 
 
@@ -524,6 +552,33 @@ async def uset_napster(client, query):
     await uset_cb(client, query, "napster")
 # --- BATAS TAMBAJAN ---
 
+# --- TAMBAHAN BARU: Fungsi Idagio ---
+@Client.on_callback_query(filters.regex("^uids")) # User Idagio Set
+async def uset_idagio(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    qual_map_display = {
+        "FLAC": "FLAC",
+        "AAC 320k": "MP3_320",
+        "AAC 160k": "MP3_160"
+    }
+    to_set_display = query.data.split('_')[1]
+    to_set = qual_map_display.get(to_set_display)
+    if not to_set:
+        return await query.answer("Kualitas tidak valid.", True)
+    if not idagio_manager or not idagio_manager.clients:
+        await query.answer("Layanan Idagio tidak aktif!", show_alert=True)
+        return
+    user_id = query.from_user.id
+    
+    await idagio_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
+    bot_set.user_data.setdefault(user_id, {})['idagio_qual'] = to_set # Simpan ke cache utama
+    await database.set_variable(user_id, 'idagio_qual', to_set, True) # Simpan ke DB
+
+    await uset_cb(client, query, "idagio")
+# --- BATAS TAMBAJAN ---
+
 
 @Client.on_callback_query(filters.regex("^zip"))
 async def uset_zip(self, query):
@@ -655,9 +710,19 @@ async def debug(c, m): # debugger
     else:
         dt_np += "Tidak ada klien Napster yang aktif."
     # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: Debug Idagio ---
+    dt_id = "\n\nIDAGIO:\n"
+    if idagio_manager and idagio_manager.clients:
+        dt_id += f"{len(idagio_manager.clients)} klien Idagio aktif.\n"
+        dt_id += f"Kualitas Default: {idagio_manager.quality}\n"
+        dt_id += f"Cache User (Global): {len([u for u in bot_set.user_data if 'idagio_qual' in bot_set.user_data[u]])} pengguna"
+    else:
+        dt_id += "Tidak ada klien Idagio yang aktif."
+    # --- BATAS TAMBAHAN ---
 
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
     zips += f"\n\n{user_dict}"
     
-    await m.reply(dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + zips, True)
+    await m.reply(dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + zips, True)
