@@ -71,6 +71,14 @@ except ImportError:
     sys.exit(1)
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Napster ---
+try:
+    from .helpers.napster.manager import napster_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'napster_manager'!")
+    napster_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 # --- Fungsi Login Qobuz ---
 async def login_single_client(creds: dict):
@@ -212,6 +220,16 @@ async def main():
         logging.info(f"Manajer Soundcloud berhasil diinisialisasi.")
     else:
         logging.warning("PERINGATAN: Manajer Soundcloud gagal diinisialisasi (Token mungkin hilang)!")
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Login Napster ---
+    if napster_manager:
+        logging.info("Memulai inisialisasi Manajer Napster...")
+        await napster_manager.initialize_clients()
+        if napster_manager.clients:
+            logging.info(f"Manajer Napster berhasil diinisialisasi dengan {len(napster_manager.clients)} klien.")
+        else:
+            logging.warning("PERINGATAN: Tidak ada akun Napster yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
     logging.info("Menginisialisasi data pengguna...")
