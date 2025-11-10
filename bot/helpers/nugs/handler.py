@@ -135,11 +135,10 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'albumartist': album_data.get('artistName'),
         'album': album_data.get('containerInfo'),
         
-        # --- MODIFIKASI: Kembalikan ke 'tracknumber' dan 'discnumber' ---
-        # Ini adalah kunci standar yang kemungkinan besar diharapkan oleh Config.TRACK_NAME_FORMAT Anda
-        # dan juga oleh penulis tag Anda (metadata.py)
+        # --- MODIFIKASI: Sertakan 'tracknumber', 'discnumber', DAN 'volume' ---
         'tracknumber': str(track_data.get('trackNum')),
         'discnumber': str(track_data.get('discNum')),
+        'volume': str(track_data.get('discNum')), # Perbaikan untuk "Gagal menulis metadata ...: 'volume'"
         # --- BATAS MODIFIKASI ---
         
         'totaltracks': str(len(album_data.get('songs'))),
@@ -150,10 +149,8 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'copyright': f"© {release_year} {album_data.get('licensorName')}",
         'explicit': False, 
         
-        # --- MODIFIKASI: Ubah 'None' menjadi string kosong ---
         'isrc': '', # Perbaikan untuk "None needs to be str for key 'isrc'"
         'lyrics': '', # Perbaikan untuk "None needs to be str for key 'lyrics'"
-        # --- BATAS MODIFIKASI ---
         
         'duration': int(track_data.get('duration', 0)), 
     }
