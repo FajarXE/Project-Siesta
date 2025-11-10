@@ -1,4 +1,4 @@
-# [TARUH DI: bot/helpers/nugs/handler.py]
+# [GANTI FILE: bot/helpers/nugs/handler.py]
 
 import asyncio
 import os
@@ -33,29 +33,48 @@ QUALITY_MAP = {
     'MHA1': ("Sony 360RA", "m4a", 4) # (Format Spasial)
 }
 
-# Regex dari interface.py
-URL_REGEX = r'https?://play.nugs.net/#/(artist|catalog/recording|playlists/playlist)/(\d+)'
+# --- MODIFIKASI: Tambahkan Regex untuk API ---
+# Regex lama dari interface.py
+PLAY_URL_REGEX = r'https?://play.nugs.net/#/(artist|catalog/recording|playlists/playlist)/(\d+)'
+# Regex baru untuk link API dari redirect
+API_URL_REGEX = r'https?://streamapi.nugs.net/show\.aspx\?show=(\d+)'
+# --- BATAS MODIFIKASI ---
 
 def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL Nugs."""
-    match = re.search(URL_REGEX, link)
-    if not match:
-        raise Exception(f"URL Nugs tidak valid: {link}")
     
-    media_type_raw = match.group(1)
-    item_id = match.group(2)
+    # --- MODIFIKASI: Cek kedua format Regex ---
     
-    media_types = {
-        'catalog/recording': 'album',
-        'artist': 'artist',
-        'playlists/playlist': 'playlist',
-    }
-    
-    media_type = media_types.get(media_type_raw)
-    if not media_type:
-         raise NotImplementedError(f"Tipe media Nugs '{media_type_raw}' belum didukung.")
-         
-    return media_type, item_id
+    # Coba regex halaman web (play.nugs.net)
+    play_match = re.search(PLAY_URL_REGEX, link)
+    if play_match:
+        media_type_raw = play_match.group(1)
+        item_id = play_match.group(2)
+        
+        media_types = {
+            'catalog/recording': 'album',
+            'artist': 'artist',
+            'playlists/playlist': 'playlist',
+        }
+        
+        media_type = media_types.get(media_type_raw)
+        if not media_type:
+             raise NotImplementedError(f"Tipe media Nugs '{media_type_raw}' belum didukung.")
+             
+        return media_type, item_id
+
+    # Coba regex API (streamapi.nugs.net)
+    api_match = re.search(API_URL_REGEX, link)
+    if api_match:
+        # URL API ini (show.aspx?show=ID) sejauh ini hanya untuk album
+        media_type = 'album'
+        item_id = api_match.group(1)
+        return media_type, item_id
+    # --- BATAS MODIFIKASI ---
+
+    # Jika keduanya gagal
+    raise Exception(f"URL Nugs tidak valid atau tidak dikenali: {link}")
+
 
 async def parse_stream_format(stream_url: str):
     """Mengurai URL stream untuk menentukan kualitas (dari interface.py)"""
