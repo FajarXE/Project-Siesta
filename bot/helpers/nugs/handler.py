@@ -105,6 +105,11 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     client = user['nugs_api'] # Ini adalah instance NugsApi
     sub_details = client.subscription_details # Diatur oleh manager.py
     
+    # --- MODIFIKASI: Ekstrak tanggal rilis ---
+    release_date_str = album_data.get('releaseDateFormatted', '').replace('/', '-')
+    release_year = release_date_str.split('-')[0] if '-' in release_date_str else release_date_str[:4]
+    # --- BATAS MODIFIKASI ---
+    
     metadata = {
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
         'provider': 'Nugs.net',
@@ -118,24 +123,23 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'totaltracks': str(len(album_data.get('songs'))),
         'discnumber': str(track_data.get('discNum')),
         'totaldiscs': str(album_data.get('numDiscs', 1)),
-        'date': album_data.get('releaseDateFormatted', '').replace('/', '-'),
-        'copyright': f"© {album_data.get('releaseDateFormatted', '')[:4]} {album_data.get('licensorName')}",
-        'explicit': False, 
-        'isrc': None, 
-        # --- MODIFIKASI: Tambahkan 'duration' ---
-        # set_metadata memerlukan ini. API Nugs tampaknya menyediakannya dalam detik.
-        'duration': int(track_data.get('duration', 0)),
+        # --- MODIFIKASI: Tambahkan 'totalvolume' ---
+        'totalvolume': str(album_data.get('numDiscs', 1)),
         # --- BATAS MODIFIKASI ---
+        # --- MODIFIKASI: Tambahkan 'date' dan 'year' ---
+        'date': release_date_str,
+        'year': release_year,
+        # --- BATAS MODIFIKASI ---
+        'copyright': f"© {release_year} {album_data.get('licensorName')}",
+        'explicit': False, # API Nugs tidak menyediakan ini
+        'isrc': None, 
+        'duration': int(track_data.get('duration', 0)),
     }
     
     # Sampul
     cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
     metadata['cover'] = await create_cover_file(cover_url, metadata)
-    
-    # --- MODIFIKASI: Perbaiki URL thumbnail ---
-    # Gunakan URL sampul utama; create_cover_file akan menanganinya
     metadata['thumbnail'] = await create_cover_file(cover_url, metadata, True)
-    # --- BATAS MODIFIKASI ---
 
     # --- Logika Kualitas (dari interface.py) ---
     stream_data = []
@@ -205,6 +209,11 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     elif selected_stream['codec'] in ['FLAC', 'ALAC']:
         metadata['bit_depth'] = 16
         metadata['sample_rate'] = 44100
+    
+    # --- MODIFIKASI: Tambahkan tag kualitas kustom ---
+    # Ini akan menulis string "MQA 24-bit / 192kHz" ke tag file
+    metadata['quality_tag'] = metadata['quality']
+    # --- BATAS MODIFIKASI ---
     
     return metadata
 
@@ -296,11 +305,7 @@ async def start_album(album_id: str, user: dict, upload=True):
         # Dapatkan sampul untuk poster
         cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
         album_meta['cover'] = await create_cover_file(cover_url, album_meta)
-        
-        # --- MODIFIKASI: Perbaiki URL thumbnail ---
         album_meta['thumbnail'] = await create_cover_file(cover_url, album_meta, True)
-        # --- BATAS MODIFIKASI ---
-        
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     tasks = []
