@@ -87,6 +87,14 @@ except ImportError:
     idagio_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Nugs.net ---
+try:
+    from .helpers.nugs.manager import nugs_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'nugs_manager'!")
+    nugs_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 # --- Fungsi Login Qobuz ---
 async def login_single_client(creds: dict):
@@ -248,6 +256,16 @@ async def main():
             logging.info(f"Manajer Idagio berhasil diinisialisasi dengan {len(idagio_manager.clients)} klien.")
         else:
             logging.warning("PERINGATAN: Tidak ada akun Idagio yang berhasil login!")
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Login Nugs.net ---
+    if nugs_manager:
+        logging.info("Memulai inisialisasi Manajer Nugs.net...")
+        await nugs_manager.initialize_clients()
+        if nugs_manager.clients:
+            logging.info(f"Manajer Nugs.net berhasil diinisialisasi dengan {len(nugs_manager.clients)} klien.")
+        else:
+            logging.warning("PERINGATAN: Tidak ada akun Nugs.net yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
     logging.info("Menginisialisasi data pengguna...")
