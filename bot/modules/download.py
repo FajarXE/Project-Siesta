@@ -5,6 +5,7 @@ from pyrogram import Client, filters
 import asyncio 
 import traceback
 import random
+import aiohttp # <-- TAMBAHKAN IMPOR INI
 
 from bot import CMD
 from bot.logger import LOGGER
@@ -87,6 +88,25 @@ except ImportError:
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
 
+# --- FUNGSI BARU UNTUK MEMBUKA SHORTLINK ---
+async def resolve_shortlink(link: str) -> str:
+    """Membuka shortlink (seperti 2nu.gs) untuk mendapatkan URL penuh."""
+    if "2nu.gs" in link:
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Cukup lakukan HEAD request dan biarkan ia mengikuti redirect
+                async with session.head(link, allow_redirects=True) as response:
+                    # response.url akan menjadi URL final setelah semua redirect
+                    final_url = str(response.url)
+                    LOGGER.info(f"Shortlink terdeteksi: {link} -> dialihkan ke -> {final_url}")
+                    return final_url
+        except Exception as e:
+            LOGGER.error(f"Gagal me-resolve shortlink {link}: {e}")
+            return link # Kembalikan link asli jika gagal
+    return link # Bukan shortlink, kembalikan seperti semula
+# --- BATAS FUNGSI BARU ---
+
+
 async def run_download_task(link: str, user: dict):
     """
     Fungsi ini berjalan di latar belakang.
@@ -160,6 +180,16 @@ async def download_track(c, msg:Message):
             return await send_message(msg, lang.s.ERR_LINK_RECOGNITION)
         
         user = await fetch_user_details(msg, reply)
+        
+        # --- MODIFIKASI: Resolve shortlink ---
+        try:
+            resolved_link = await resolve_shortlink(link)
+            if resolved_link != link:
+                link = resolved_link # Perbarui variabel link
+        except Exception:
+            pass # Failsafe, gunakan link asli jika gagal
+        # --- BATAS MODIFIKASI ---
+        
         user['link'] = link
         
         asyncio.create_task(run_download_task(link, user))
