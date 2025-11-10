@@ -5,7 +5,7 @@ from pyrogram import Client, filters
 import asyncio 
 import traceback
 import random
-import aiohttp # <-- TAMBAHKAN IMPOR INI
+import aiohttp # Pastikan impor ini ada
 
 from bot import CMD
 from bot.logger import LOGGER
@@ -93,7 +93,14 @@ async def resolve_shortlink(link: str) -> str:
     """Membuka shortlink (seperti 2nu.gs) untuk mendapatkan URL penuh."""
     if "2nu.gs" in link:
         try:
-            async with aiohttp.ClientSession() as session:
+            # --- MODIFIKASI: Tambahkan User-Agent browser ---
+            # Ini penting agar Nugs mengarahkan kita ke halaman web, bukan API
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'
+            }
+            # --- BATAS MODIFIKASI ---
+            
+            async with aiohttp.ClientSession(headers=headers) as session:
                 # Cukup lakukan HEAD request dan biarkan ia mengikuti redirect
                 async with session.head(link, allow_redirects=True) as response:
                     # response.url akan menjadi URL final setelah semua redirect
@@ -220,6 +227,7 @@ async def start_link(link: str, user: dict) -> None:
     # --- BATAS TAMBAHAN ---
     
     # --- TAMBAHAN BARU: URL Nugs.net ---
+    # Sekarang link yang sudah di-resolve (play.nugs.net) akan cocok
     nugs = ["https://play.nugs.net", "play.nugs.net"]
     # --- BATAS TAMBAHAN ---
     
