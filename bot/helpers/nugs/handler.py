@@ -135,11 +135,11 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'albumartist': album_data.get('artistName'),
         'album': album_data.get('containerInfo'),
         
-        # --- MODIFIKASI: Sertakan 'tracknumber', 'discnumber', DAN 'volume' ---
+        # Sediakan 'tracknumber' dan 'discnumber' untuk format nama file
         'tracknumber': str(track_data.get('trackNum')),
         'discnumber': str(track_data.get('discNum')),
-        'volume': str(track_data.get('discNum')), # Perbaikan untuk "Gagal menulis metadata ...: 'volume'"
-        # --- BATAS MODIFIKASI ---
+        # Sediakan 'volume' untuk penulis tag (metadata.py)
+        'volume': str(track_data.get('discNum')),
         
         'totaltracks': str(len(album_data.get('songs'))),
         'totaldiscs': str(album_data.get('numDiscs', 1)),
@@ -149,8 +149,10 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'copyright': f"© {release_year} {album_data.get('licensorName')}",
         'explicit': False, 
         
+        # --- MODIFIKASI: Ubah 'None' menjadi string kosong ---
         'isrc': '', # Perbaikan untuk "None needs to be str for key 'isrc'"
         'lyrics': '', # Perbaikan untuk "None needs to be str for key 'lyrics'"
+        # --- BATAS MODIFIKASI ---
         
         'duration': int(track_data.get('duration', 0)), 
     }
@@ -193,14 +195,16 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     stream_data = sorted(stream_data, key=lambda k: k['priority'], reverse=True)
     selected_stream = stream_data[0] # Ambil kualitas terbaik yang tersedia
     
+    # Tetapkan info default
     metadata['quality'] = selected_stream['quality_name']
     metadata['extension'] = selected_stream['extension']
     metadata['download_url'] = selected_stream['url']
     
-    # --- Deteksi MQA ---
+    # --- MODIFIKASI: Logika MQA dan Fallback yang Disempurnakan ---
     if selected_stream['codec'] == 'MQA':
         LOGGER.debug(f"Nugs: Deteksi MQA untuk {metadata['title']}...")
         temp_flac_header = await download_temp_header(selected_stream['url'], client.session.user_agent)
+        mqa_verified = False
         
         if temp_flac_header:
             try:
@@ -211,25 +215,37 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
                     metadata['quality'] = f"MQA{studio} {mqa_file.bit_depth}-bit / {original_rate}kHz"
                     metadata['bit_depth'] = mqa_file.bit_depth
                     metadata['sample_rate'] = mqa_file.original_sample_rate
+                    mqa_verified = True
                     LOGGER.info(f"Nugs: Deteksi MQA Berhasil: {metadata['quality']}")
-                else:
-                    LOGGER.warning(f"Nugs: File ditandai MQA tetapi detektor gagal memverifikasi (mungkin bukan FLAC?).")
-                    metadata['quality'] = "MQA 24-bit" 
-                    metadata['bit_depth'] = 24
-                    
             except Exception as e:
                 LOGGER.error(f"Nugs: Error MqaIdentifier: {e}. Kemungkinan file bukan FLAC.")
-                metadata['quality'] = "MQA (Format Tidak Dikenal)"
-                metadata['bit_depth'] = 24 # Asumsi
             finally:
                 if os.path.exists(temp_flac_header):
                     os.remove(temp_flac_header)
-        else:
-             LOGGER.warning(f"Nugs: Gagal mengunduh header MQA untuk analisis.")
+        
+        if not mqa_verified:
+            # Verifikasi MQA gagal (bukan FLAC, atau bukan MQA sejati)
+            # Coba cari fallback FLAC 16-bit (Priority 2)
+            flac_stream = next((s for s in stream_data if s['priority'] == 2), None)
+            if flac_stream:
+                LOGGER.info("Nugs: Fallback ke FLAC 16-bit karena verifikasi MQA gagal.")
+                selected_stream = flac_stream # Ganti stream yang dipilih
+                metadata['quality'] = selected_stream['quality_name']
+                metadata['extension'] = selected_stream['extension']
+                metadata['download_url'] = selected_stream['url']
+                metadata['bit_depth'] = 16
+                metadata['sample_rate'] = 44100
+            else:
+                # Jika tidak ada fallback, gunakan label MQA sederhana (menghapus "(Format Tidak Dikenal)")
+                LOGGER.warning("Nugs: Verifikasi MQA gagal, tidak ada fallback FLAC. Menggunakan label MQA 24-bit.")
+                metadata['quality'] = "MQA 24-bit"
+                metadata['bit_depth'] = 24
 
     elif selected_stream['codec'] in ['FLAC', 'ALAC']:
         metadata['bit_depth'] = 16
         metadata['sample_rate'] = 44100
+    
+    # --- BATAS MODIFIKASI ---
     
     metadata['quality_tag'] = metadata['quality']
     
