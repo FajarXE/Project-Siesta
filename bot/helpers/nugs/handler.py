@@ -90,7 +90,6 @@ async def download_temp_header(file_url: str, user_agent: str) -> str | None:
         async with aiohttp.ClientSession() as session:
             async with session.get(file_url, headers=headers) as response:
                 response.raise_for_status()
-                # --- MODIFIKASI: Periksa apakah ada konten sebelum menulis ---
                 content = await response.content.read()
                 if not content:
                     LOGGER.warning("Nugs: Header MQA kosong, tidak ada yang ditulis.")
@@ -99,7 +98,6 @@ async def download_temp_header(file_url: str, user_agent: str) -> str | None:
                 async with aiofiles.open(temp_location, 'wb') as f:
                     await f.write(content)
                 return temp_location
-                # --- BATAS MODIFIKASI ---
     except Exception as e:
         LOGGER.warning(f"Nugs: Gagal mengunduh header MQA: {e}")
         if os.path.exists(temp_location):
@@ -112,13 +110,10 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     client = user['nugs_api'] # Ini adalah instance NugsApi
     sub_details = client.subscription_details # Diatur oleh manager.py
     
-    # --- MODIFIKASI: Logika Tanggal Rilis dengan Fallback ---
     release_date_str = album_data.get('releaseDateFormatted', '').replace('/', '-')
     if not release_date_str:
-        # Fallback: Coba ekstrak tanggal dari judul album (misal: "11/09/25 ...")
         title_date_match = re.search(r'^(\d{2}/\d{2}/\d{2})', album_data.get('containerInfo', ''))
         if title_date_match:
-            # Ubah format "11/09/25" menjadi "2025-11-09" (dengan asumsi format AS MM/DD/YY)
             try:
                 parts = title_date_match.group(1).split('/')
                 year = f"20{parts[2]}"
@@ -126,10 +121,9 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
                 day = parts[1]
                 release_date_str = f"{year}-{month}-{day}"
             except Exception:
-                release_date_str = '' # Gagal parsing
+                release_date_str = '' 
     
     release_year = release_date_str.split('-')[0] if '-' in release_date_str else ''
-    # --- BATAS MODIFIKASI ---
     
     metadata = {
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
@@ -140,20 +134,28 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'artist': album_data.get('artistName'),
         'albumartist': album_data.get('artistName'),
         'album': album_data.get('containerInfo'),
+        
+        # --- MODIFIKASI: Kembalikan ke 'tracknumber' dan 'discnumber' ---
+        # Ini adalah kunci standar yang kemungkinan besar diharapkan oleh Config.TRACK_NAME_FORMAT Anda
+        # dan juga oleh penulis tag Anda (metadata.py)
         'tracknumber': str(track_data.get('trackNum')),
+        'discnumber': str(track_data.get('discNum')),
+        # --- BATAS MODIFIKASI ---
+        
         'totaltracks': str(len(album_data.get('songs'))),
-        'volume': str(track_data.get('discNum')), # Perbaikan untuk KeyError: 'volume'
         'totaldiscs': str(album_data.get('numDiscs', 1)),
         'totalvolume': str(album_data.get('numDiscs', 1)),
         'date': release_date_str,
         'year': release_year,
         'copyright': f"© {release_year} {album_data.get('licensorName')}",
-        'explicit': False, # API Nugs tidak menyediakan ini
-        'isrc': None, 
-        'duration': int(track_data.get('duration', 0)), # Perbaikan untuk KeyError: 'duration'
-        # --- MODIFIKASI: Tambahkan 'lyrics' ---
-        'lyrics': None, # API Nugs tidak menyediakan lirik
+        'explicit': False, 
+        
+        # --- MODIFIKASI: Ubah 'None' menjadi string kosong ---
+        'isrc': '', # Perbaikan untuk "None needs to be str for key 'isrc'"
+        'lyrics': '', # Perbaikan untuk "None needs to be str for key 'lyrics'"
         # --- BATAS MODIFIKASI ---
+        
+        'duration': int(track_data.get('duration', 0)), 
     }
     
     # Sampul
@@ -205,7 +207,6 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         
         if temp_flac_header:
             try:
-                # --- MODIFIKASI: Bungkus dengan try...except yang lebih spesifik ---
                 mqa_file = await asyncio.to_thread(MqaIdentifier, temp_flac_header)
                 if mqa_file.is_mqa:
                     original_rate = mqa_file.get_original_sample_rate()
@@ -216,16 +217,13 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
                     LOGGER.info(f"Nugs: Deteksi MQA Berhasil: {metadata['quality']}")
                 else:
                     LOGGER.warning(f"Nugs: File ditandai MQA tetapi detektor gagal memverifikasi (mungkin bukan FLAC?).")
-                    # Fallback ke kualitas stream MQA non-terverifikasi
                     metadata['quality'] = "MQA 24-bit" 
                     metadata['bit_depth'] = 24
                     
             except Exception as e:
-                # Tangkap error jika MqaIdentifier gagal (misalnya file bukan FLAC)
                 LOGGER.error(f"Nugs: Error MqaIdentifier: {e}. Kemungkinan file bukan FLAC.")
                 metadata['quality'] = "MQA (Format Tidak Dikenal)"
                 metadata['bit_depth'] = 24 # Asumsi
-            # --- BATAS MODIFIKASI ---
             finally:
                 if os.path.exists(temp_flac_header):
                     os.remove(temp_flac_header)
@@ -309,20 +307,15 @@ async def start_album(album_id: str, user: dict, upload=True):
     except Exception as e:
         raise Exception(f"Gagal mendapatkan metadata album Nugs: {e}")
 
-    # --- MODIFIKASI: Proses track pertama DULU untuk info poster ---
     try:
         track_one_data = tracks_list[0]
         track_one_meta = await process_track_metadata(track_one_data, album_data, user)
     except Exception as e:
         LOGGER.error(f"Nugs: Gagal memproses track pertama untuk poster: {e}")
-        # Fallback: buat poster dengan info seadanya
         track_one_meta = {}
-    # --- BATAS MODIFIKASI ---
 
-    # --- MODIFIKASI: Logika Tanggal Rilis dengan Fallback (UNTUK POSTER) ---
     poster_release_date = track_one_meta.get('date', album_data.get('releaseDateFormatted', '').replace('/', '-'))
     if not poster_release_date:
-        # Fallback: Coba ekstrak tanggal dari judul album (misal: "11/09/25 ...")
         title_date_match = re.search(r'^(\d{2}/\d{2}/\d{2})', album_data.get('containerInfo', ''))
         if title_date_match:
             try:
@@ -332,9 +325,8 @@ async def start_album(album_id: str, user: dict, upload=True):
                 day = parts[1]
                 poster_release_date = f"{year}-{month}-{day}"
             except Exception:
-                poster_release_date = '' # Gagal parsing
-    # --- BATAS MODIFIKASI ---
-
+                poster_release_date = '' 
+    
     # Proses metadata album dasar
     album_meta = {
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
@@ -346,15 +338,13 @@ async def start_album(album_id: str, user: dict, upload=True):
         'albumartist': album_data.get('artistName'),
         'totaltracks': str(len(tracks_list)),
         
-        # --- MODIFIKASI: Gunakan variabel tanggal poster yang baru ---
         'date': poster_release_date,
         'year': poster_release_date.split('-')[0] if '-' in poster_release_date else '',
         'release_date': poster_release_date,
         'totalvolume': track_one_meta.get('totalvolume', str(album_data.get('numDiscs', 1))),
-        'quality': track_one_meta.get('quality', 'Unknown'), # Ambil kualitas dari track 1
-        'explicit': track_one_meta.get('explicit', False), # Ambil explicit dari track 1
+        'quality': track_one_meta.get('quality', 'Unknown'), 
+        'explicit': track_one_meta.get('explicit', False), 
         'lyrics': None, # Tambahkan ini juga untuk poster
-        # --- BATAS MODIFIKASI ---
     }
     
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
@@ -370,10 +360,8 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     tasks = []
     
-    # --- MODIFIKASI: Tambahkan track pertama yang sudah diproses ke antrian ---
     if track_one_meta: # Hanya jika pemrosesan track pertama berhasil
         tasks.append(start_track(track_one_meta, user, False))
-    # --- BATAS MODIFIKASI ---
 
     # Loop sisa track (mulai dari track kedua, indeks 1)
     for track_data in tracks_list[1:]: 
