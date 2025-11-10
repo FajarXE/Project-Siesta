@@ -267,6 +267,31 @@ class Config:
         logging.warning("Tidak ada kredensial Idagio (IDAGIO_EMAIL_1, dll.) ditemukan di .env")
 #-------------------- 
 # --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Blok Nugs.net ---
+#--------------------    
+# NUGS.NET
+#--------------------
+    NUGS_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"NUGS_EMAIL_{i}")
+        password = getenv(f"NUGS_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan Nugs.net Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password, "id": i}
+            NUGS_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun Nugs.net.")
+            break
+
+    if not NUGS_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Nugs.net (NUGS_EMAIL_1, dll.) ditemukan di .env")
+#-------------------- 
+# --- BATAS TAMBAHAN ---
     
 # CONCURRENT
 #--------------------
