@@ -90,9 +90,16 @@ async def download_temp_header(file_url: str, user_agent: str) -> str | None:
         async with aiohttp.ClientSession() as session:
             async with session.get(file_url, headers=headers) as response:
                 response.raise_for_status()
+                # --- MODIFIKASI: Periksa apakah ada konten sebelum menulis ---
+                content = await response.content.read()
+                if not content:
+                    LOGGER.warning("Nugs: Header MQA kosong, tidak ada yang ditulis.")
+                    return None
+                
                 async with aiofiles.open(temp_location, 'wb') as f:
-                    await f.write(await response.content.read())
-        return temp_location
+                    await f.write(content)
+                return temp_location
+                # --- BATAS MODIFIKASI ---
     except Exception as e:
         LOGGER.warning(f"Nugs: Gagal mengunduh header MQA: {e}")
         if os.path.exists(temp_location):
@@ -144,6 +151,9 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'explicit': False, # API Nugs tidak menyediakan ini
         'isrc': None, 
         'duration': int(track_data.get('duration', 0)), # Perbaikan untuk KeyError: 'duration'
+        # --- MODIFIKASI: Tambahkan 'lyrics' ---
+        'lyrics': None, # API Nugs tidak menyediakan lirik
+        # --- BATAS MODIFIKASI ---
     }
     
     # Sampul
@@ -195,6 +205,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         
         if temp_flac_header:
             try:
+                # --- MODIFIKASI: Bungkus dengan try...except yang lebih spesifik ---
                 mqa_file = await asyncio.to_thread(MqaIdentifier, temp_flac_header)
                 if mqa_file.is_mqa:
                     original_rate = mqa_file.get_original_sample_rate()
@@ -204,12 +215,17 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
                     metadata['sample_rate'] = mqa_file.original_sample_rate
                     LOGGER.info(f"Nugs: Deteksi MQA Berhasil: {metadata['quality']}")
                 else:
-                    LOGGER.warning(f"Nugs: File ditandai MQA tetapi detektor gagal memverifikasi.")
-                    metadata['quality'] = "FLAC 24-bit" # Fallback jika MQA tapi gagal deteksi
+                    LOGGER.warning(f"Nugs: File ditandai MQA tetapi detektor gagal memverifikasi (mungkin bukan FLAC?).")
+                    # Fallback ke kualitas stream MQA non-terverifikasi
+                    metadata['quality'] = "MQA 24-bit" 
                     metadata['bit_depth'] = 24
                     
             except Exception as e:
-                LOGGER.error(f"Nugs: Error MqaIdentifier: {e}")
+                # Tangkap error jika MqaIdentifier gagal (misalnya file bukan FLAC)
+                LOGGER.error(f"Nugs: Error MqaIdentifier: {e}. Kemungkinan file bukan FLAC.")
+                metadata['quality'] = "MQA (Format Tidak Dikenal)"
+                metadata['bit_depth'] = 24 # Asumsi
+            # --- BATAS MODIFIKASI ---
             finally:
                 if os.path.exists(temp_flac_header):
                     os.remove(temp_flac_header)
@@ -336,7 +352,8 @@ async def start_album(album_id: str, user: dict, upload=True):
         'release_date': poster_release_date,
         'totalvolume': track_one_meta.get('totalvolume', str(album_data.get('numDiscs', 1))),
         'quality': track_one_meta.get('quality', 'Unknown'), # Ambil kualitas dari track 1
-        'explicit': track_one_meta.get('explicit', False) # Ambil explicit dari track 1
+        'explicit': track_one_meta.get('explicit', False), # Ambil explicit dari track 1
+        'lyrics': None, # Tambahkan ini juga untuk poster
         # --- BATAS MODIFIKASI ---
     }
     
