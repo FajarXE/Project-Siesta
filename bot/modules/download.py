@@ -226,10 +226,10 @@ async def start_link(link: str, user: dict) -> None:
     idagio = ["https://www.idagio.com", "idagio.com", "https://app.idagio.com"]
     # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: URL Nugs.net ---
-    # Sekarang link yang sudah di-resolve (play.nugs.net) akan cocok
-    nugs = ["https://play.nugs.net", "play.nugs.net"]
-    # --- BATAS TAMBAHAN ---
+    # --- MODIFIKASI: URL Nugs.net ---
+    # Menambahkan domain API yang didapat dari redirect
+    nugs = ["https://play.nugs.net", "play.nugs.net", "https://streamapi.nugs.net"]
+    # --- BATAS MODIFIKASI ---
     
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
