@@ -327,10 +327,8 @@ async def uset_tidal(client, query):
             if any(c.mobile_atmos or c.mobile_hires for c in tidal_manager.clients):
                 options.append('Sony 360RA')
                 
-            # --- PERBAIKAN: Baca dari bot_set ---
             main_user_dict = bot_set.user_data.get(user_id, {})
             user_spatial = main_user_dict.get("tidal_spatial", tidal_manager.spatial)
-            # --- BATAS PERBAIKAN ---
             
             try:
                 current = options.index(user_spatial)
@@ -338,9 +336,9 @@ async def uset_tidal(client, query):
                 current = 0
             nexti = (current + 1) % len(options) 
             
-            # --- PERBAIKAN: Simpan ke bot_set dan DB ---
+            # --- PERBAIKAN: Gunakan save_user_settings ---
             bot_set.user_data.setdefault(user_id, {})["tidal_spatial"] = options[nexti]
-            await database.set_variable(user_id, "tidal_spatial", options[nexti], True)
+            await database.save_user_settings(user_id, {"tidal_spatial": options[nexti]})
             # --- BATAS PERBAIKAN ---
             
             return await uset_cb(client, query, "tidal")
@@ -348,9 +346,9 @@ async def uset_tidal(client, query):
             qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
             to_set_qual = list(filter(lambda x: qualities[x] == to_set, qualities))[0]
 
-            # --- PERBAIKAN: Simpan ke bot_set dan DB ---
+            # --- PERBAIKAN: Gunakan save_user_settings ---
             bot_set.user_data.setdefault(user_id, {})["tidal_qual"] = to_set_qual
-            await database.set_variable(user_id, "tidal_qual", to_set_qual, True)
+            await database.save_user_settings(user_id, {"tidal_qual": to_set_qual})
             # --- BATAS PERBAIKAN ---
             
             return await uset_cb(client, query, "tidal")
@@ -369,10 +367,10 @@ async def uset_qobuz(client, query):
         await query.answer("Layanan Qobuz tidak aktif!", show_alert=True)
         return
 
-    # --- PERBAIKAN: Simpan ke bot_set dan DB ---
+    # --- PERBAIKAN: Gunakan save_user_settings ---
     user_id = query.from_user.id
     bot_set.user_data.setdefault(user_id, {})["qobuz_qual"] = qobuz_qual
-    await database.set_variable(user_id, "qobuz_qual", qobuz_qual, True)
+    await database.save_user_settings(user_id, {"qobuz_qual": qobuz_qual})
     # --- BATAS PERBAIKAN ---
     
     await uset_cb(client, query, "qobuz")
@@ -397,10 +395,10 @@ async def uset_beatport(client, query):
         return
     user_id = query.from_user.id
     
-    # --- PERBAIKAN: Simpan ke bot_set dan DB, lalu sinkronkan ke manajer ---
-    await beatport_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
-    bot_set.user_data.setdefault(user_id, {})['beatport_qual'] = to_set # Simpan ke cache utama
-    await database.set_variable(user_id, 'beatport_qual', to_set, True) # Simpan ke DB
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await beatport_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['beatport_qual'] = to_set 
+    await database.save_user_settings(user_id, {'beatport_qual': to_set})
     # --- BATAS PERBAIKAN ---
     
     await uset_cb(client, query, "beatport")
@@ -428,10 +426,10 @@ async def uset_beatsource(client, query):
 
     user_id = query.from_user.id
     
-    # --- PERBAIKAN: Simpan ke bot_set dan DB, lalu sinkronkan ke manajer ---
-    await beatsource_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
-    bot_set.user_data.setdefault(user_id, {})['beatsource_qual'] = to_set # Simpan ke cache utama
-    await database.set_variable(user_id, 'beatsource_qual', to_set, True) # Simpan ke DB
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await beatsource_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['beatsource_qual'] = to_set 
+    await database.save_user_settings(user_id, {'beatsource_qual': to_set})
     # --- BATAS PERBAIKAN ---
     
     await uset_cb(client, query, "beatsource")
@@ -458,10 +456,10 @@ async def uset_soundcloud(client, query):
 
     user_id = query.from_user.id
     
-    # --- PERBAIKAN: Simpan ke bot_set dan DB, lalu sinkronkan ke manajer ---
-    await soundcloud_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
-    bot_set.user_data.setdefault(user_id, {})['soundcloud_qual'] = to_set # Simpan ke cache utama
-    await database.set_variable(user_id, 'soundcloud_qual', to_set, True) # Simpan ke DB
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await soundcloud_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['soundcloud_qual'] = to_set 
+    await database.save_user_settings(user_id, {'soundcloud_qual': to_set})
     # --- BATAS PERBAIKAN ---
     
     await uset_cb(client, query, "soundcloud")
@@ -485,10 +483,10 @@ async def uset_deezer(client, query):
         return
     user_id = query.from_user.id
 
-    # --- PERBAIKAN: Simpan ke bot_set dan DB, lalu sinkronkan ke manajer ---
-    await deezer_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
-    bot_set.user_data.setdefault(user_id, {})['deezer_qual'] = to_set # Simpan ke cache utama
-    await database.set_variable(user_id, 'deezer_qual', to_set, True) # Simpan ke DB
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await deezer_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['deezer_qual'] = to_set 
+    await database.save_user_settings(user_id, {'deezer_qual': to_set})
     # --- BATAS PERBAIKAN ---
     
     await uset_cb(client, query, "deezer")
@@ -515,15 +513,14 @@ async def uset_kkbox(client, query):
         return
     user_id = query.from_user.id
     
-    # --- PERBAIKAN: Simpan ke bot_set dan DB, lalu sinkronkan ke manajer ---
-    await kkbox_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
-    bot_set.user_data.setdefault(user_id, {})['kkbox_qual'] = to_set # Simpan ke cache utama
-    await database.set_variable(user_id, 'kkbox_qual', to_set, True) # Simpan ke DB
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await kkbox_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['kkbox_qual'] = to_set 
+    await database.save_user_settings(user_id, {'kkbox_qual': to_set})
     # --- BATAS PERBAIKAN ---
 
     await uset_cb(client, query, "kkbox")
 
-# --- TAMBAHAN BARU: Fungsi Napster ---
 @Client.on_callback_query(filters.regex("^unps")) # User Napster Set
 async def uset_napster(client, query):
     m = query.message
@@ -545,14 +542,14 @@ async def uset_napster(client, query):
         return
     user_id = query.from_user.id
     
-    await napster_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
-    bot_set.user_data.setdefault(user_id, {})['napster_qual'] = to_set # Simpan ke cache utama
-    await database.set_variable(user_id, 'napster_qual', to_set, True) # Simpan ke DB
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await napster_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['napster_qual'] = to_set 
+    await database.save_user_settings(user_id, {'napster_qual': to_set})
+    # --- BATAS PERBAIKAN ---
 
     await uset_cb(client, query, "napster")
-# --- BATAS TAMBAJAN ---
 
-# --- TAMBAHAN BARU: Fungsi Idagio ---
 @Client.on_callback_query(filters.regex("^uids")) # User Idagio Set
 async def uset_idagio(client, query):
     m = query.message
@@ -572,12 +569,13 @@ async def uset_idagio(client, query):
         return
     user_id = query.from_user.id
     
-    await idagio_manager.setup_quality(user_id, to_set) # Sinkronkan ke cache lokal
-    bot_set.user_data.setdefault(user_id, {})['idagio_qual'] = to_set # Simpan ke cache utama
-    await database.set_variable(user_id, 'idagio_qual', to_set, True) # Simpan ke DB
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await idagio_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['idagio_qual'] = to_set 
+    await database.save_user_settings(user_id, {'idagio_qual': to_set})
+    # --- BATAS PERBAIKAN ---
 
     await uset_cb(client, query, "idagio")
-# --- BATAS TAMBAJAN ---
 
 
 @Client.on_callback_query(filters.regex("^zip"))
@@ -644,9 +642,7 @@ async def debug(c, m): # debugger
     if beatport_manager and beatport_manager.clients:
         dt_bp += f"{len(beatport_manager.clients)} klien Beatport aktif.\n"
         dt_bp += f"Kualitas Default: {beatport_manager.quality}\n"
-        # --- PERBAIKAN: Baca dari bot_set ---
         dt_bp += f"Cache User (Global): {len([u for u in bot_set.user_data if 'beatport_qual' in bot_set.user_data[u]])} pengguna"
-        # --- BATAS PERBAIKAN ---
     else:
         dt_bp += "Tidak ada klien Beatport yang aktif."
 
@@ -654,9 +650,7 @@ async def debug(c, m): # debugger
     if beatsource_manager and beatsource_manager.clients:
         dt_bs += f"{len(beatsource_manager.clients)} klien Beatsource aktif.\n"
         dt_bs += f"Kualitas Default: {beatsource_manager.quality}\n"
-        # --- PERBAIKAN: Baca dari bot_set ---
         dt_bs += f"Cache User (Global): {len([u for u in bot_set.user_data if 'beatsource_qual' in bot_set.user_data[u]])} pengguna\n"
-        # --- BATAS PERBAIKAN ---
         dt_bs += f"Cache Langganan: { {k.session.cookie_jar.filter_cookies(k.API_URL).get('sessionid').value[:5]+'...': v for k, v in beatsource_manager.subscription_cache.items()} }"
     else:
         dt_bs += "Tidak ada klien Beatsource yang aktif."
@@ -665,9 +659,7 @@ async def debug(c, m): # debugger
     if soundcloud_manager and soundcloud_manager.get_client():
         dt_sc += f"Klien Soundcloud aktif (Token diatur).\n"
         dt_sc += f"Kualitas Default: {soundcloud_manager.quality}\n"
-        # --- PERBAIKAN: Baca dari bot_set ---
         dt_sc += f"Cache User (Global): {len([u for u in bot_set.user_data if 'soundcloud_qual' in bot_set.user_data[u]])} pengguna"
-        # --- BATAS PERBAIKAN ---
     else:
         dt_sc += "Tidak ada klien Soundcloud yang aktif (Token hilang)."
 
@@ -675,9 +667,7 @@ async def debug(c, m): # debugger
     if deezer_manager and deezer_manager.clients:
         dt_dz += f"{len(deezer_manager.clients)} klien Deezer aktif.\n"
         dt_dz += f"Kualitas Default: {deezer_manager.quality}\n"
-        # --- PERBAIKAN: Baca dari bot_set ---
         dt_dz += f"Cache User (Global): {len([u for u in bot_set.user_data if 'deezer_qual' in bot_set.user_data[u]])} pengguna"
-        # --- BATAS PERBAIKAN ---
     else:
         dt_dz += "Tidak ada klien Deezer yang aktif."
 
@@ -685,9 +675,7 @@ async def debug(c, m): # debugger
     if tidal_manager and tidal_manager.clients:
         dt_td += f"{len(tidal_manager.clients)} klien Tidal aktif.\n"
         dt_td += f"Kualitas Default: {tidal_manager.quality}, Spasial: {tidal_manager.spatial}\n"
-        # --- PERBAIKAN: Baca dari bot_set ---
         dt_td += f"Cache User (Global): {len([u for u in bot_set.user_data if 'tidal_qual' in bot_set.user_data[u]])} pengguna"
-        # --- BATAS PERBAIKAN ---
     else:
         dt_td += "Tidak ada klien Tidal yang aktif."
 
@@ -695,13 +683,10 @@ async def debug(c, m): # debugger
     if kkbox_manager and kkbox_manager.clients:
         dt_kk += f"{len(kkbox_manager.clients)} klien KKBox aktif.\n"
         dt_kk += f"Kualitas Default: {kkbox_manager.quality}\n"
-        # --- PERBAIKAN: Baca dari bot_set ---
         dt_kk += f"Cache User (Global): {len([u for u in bot_set.user_data if 'kkbox_qual' in bot_set.user_data[u]])} pengguna"
-        # --- BATAS PERBAIKAN ---
     else:
         dt_kk += "Tidak ada klien KKBox yang aktif."
 
-    # --- TAMBAHAN BARU: Debug Napster ---
     dt_np = "\n\nNAPSTER:\n"
     if napster_manager and napster_manager.clients:
         dt_np += f"{len(napster_manager.clients)} klien Napster aktif.\n"
@@ -709,9 +694,7 @@ async def debug(c, m): # debugger
         dt_np += f"Cache User (Global): {len([u for u in bot_set.user_data if 'napster_qual' in bot_set.user_data[u]])} pengguna"
     else:
         dt_np += "Tidak ada klien Napster yang aktif."
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: Debug Idagio ---
     dt_id = "\n\nIDAGIO:\n"
     if idagio_manager and idagio_manager.clients:
         dt_id += f"{len(idagio_manager.clients)} klien Idagio aktif.\n"
@@ -719,7 +702,6 @@ async def debug(c, m): # debugger
         dt_id += f"Cache User (Global): {len([u for u in bot_set.user_data if 'idagio_qual' in bot_set.user_data[u]])} pengguna"
     else:
         dt_id += "Tidak ada klien Idagio yang aktif."
-    # --- BATAS TAMBAHAN ---
 
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
