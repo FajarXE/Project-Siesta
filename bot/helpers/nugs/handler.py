@@ -33,17 +33,14 @@ QUALITY_MAP = {
     'MHA1': ("Sony 360RA", "m4a", 4) # (Format Spasial)
 }
 
-# --- MODIFIKASI: Tambahkan Regex untuk API ---
 # Regex lama dari interface.py
 PLAY_URL_REGEX = r'https?://play.nugs.net/#/(artist|catalog/recording|playlists/playlist)/(\d+)'
 # Regex baru untuk link API dari redirect
 API_URL_REGEX = r'https?://streamapi.nugs.net/show\.aspx\?show=(\d+)'
-# --- BATAS MODIFIKASI ---
+
 
 def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL Nugs."""
-    
-    # --- MODIFIKASI: Cek kedua format Regex ---
     
     # Coba regex halaman web (play.nugs.net)
     play_match = re.search(PLAY_URL_REGEX, link)
@@ -70,7 +67,6 @@ def custom_url_parse(link: str):
         media_type = 'album'
         item_id = api_match.group(1)
         return media_type, item_id
-    # --- BATAS MODIFIKASI ---
 
     # Jika keduanya gagal
     raise Exception(f"URL Nugs tidak valid atau tidak dikenali: {link}")
@@ -78,7 +74,6 @@ def custom_url_parse(link: str):
 
 async def parse_stream_format(stream_url: str):
     """Mengurai URL stream untuk menentukan kualitas (dari interface.py)"""
-    #
     if ".aac150/" in stream_url: return 'AAC'
     if ".alac16/" in stream_url: return 'ALAC'
     if ".flac16/" in stream_url: return 'FLAC'
@@ -88,7 +83,6 @@ async def parse_stream_format(stream_url: str):
 
 async def download_temp_header(file_url: str, user_agent: str) -> str | None:
     """Mengunduh header file untuk analisis MQA (dari interface.py)"""
-    #
     temp_location = await asyncio.to_thread(create_temp_filename, '.flac')
     
     try:
@@ -107,12 +101,14 @@ async def download_temp_header(file_url: str, user_agent: str) -> str | None:
 
 async def process_track_metadata(track_data: dict, album_data: dict, user: dict):
     """Memproses metadata untuk satu lagu (logika dari interface.py)"""
-    #
     
     client = user['nugs_api'] # Ini adalah instance NugsApi
     sub_details = client.subscription_details # Diatur oleh manager.py
     
     metadata = {
+        # --- MODIFIKASI: Tambahkan 'tempfolder' ---
+        'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
+        # --- BATAS MODIFIKASI ---
         'provider': 'Nugs.net',
         'type': 'track',
         'itemid': track_data.get('songID'),
@@ -137,7 +133,6 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
 
     # --- Logika Kualitas (dari interface.py) ---
     stream_data = []
-    #
     for stream_format_id in [9, 5, 2, None]: # Prioritas Nugs: MQA, FLAC, ALAC, AAC
         try:
             stream_info = await asyncio.to_thread(
@@ -174,7 +169,6 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     metadata['download_url'] = selected_stream['url']
     
     # --- Deteksi MQA ---
-    #
     if selected_stream['codec'] == 'MQA':
         LOGGER.debug(f"Nugs: Deteksi MQA untuk {metadata['title']}...")
         temp_flac_header = await download_temp_header(selected_stream['url'], client.session.user_agent)
@@ -277,6 +271,9 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     # Proses metadata album dasar
     album_meta = {
+        # --- MODIFIKASI: Tambahkan 'tempfolder' ---
+        'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
+        # --- BATAS MODIFIKASI ---
         'provider': 'Nugs.net',
         'type': 'album',
         'itemid': album_id,
