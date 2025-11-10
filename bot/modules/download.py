@@ -34,6 +34,13 @@ except ImportError:
     idagio_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Nugs.net ---
+try:
+    from bot.helpers.nugs.manager import nugs_manager
+except ImportError:
+    nugs_manager = None
+# --- BATAS TAMBAHAN ---
+
 from ..helpers.soundcloud.handler import start_soundcloud
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -67,6 +74,14 @@ try:
 except ImportError:
     async def start_idagio(*args, **kwargs):
         raise NotImplementedError("Modul Idagio ('handler.py') belum diimplementasikan.")
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Impor Handler Nugs.net ---
+try:
+    from ..helpers.nugs.handler import start_nugs
+except ImportError:
+    async def start_nugs(*args, **kwargs):
+        raise NotImplementedError("Modul Nugs.net ('handler.py') belum diimplementasikan.")
 # --- BATAS TAMBAHAN ---
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
@@ -172,6 +187,10 @@ async def start_link(link: str, user: dict) -> None:
     
     # --- TAMBAHAN BARU: URL Idagio ---
     idagio = ["https://www.idagio.com", "idagio.com", "https://app.idagio.com"]
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: URL Nugs.net ---
+    nugs = ["https://play.nugs.net", "play.nugs.net"]
     # --- BATAS TAMBAHAN ---
     
     if link.startswith(tuple(tidal)):
@@ -412,6 +431,27 @@ async def start_link(link: str, user: dict) -> None:
             return
         except Exception as e:
             LOGGER.error(f"Idagio: Tugas gagal (Fatal): {e}")
+            raise e
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: Blok Nugs.net ---
+    elif link.startswith(tuple(nugs)):
+        user['provider'] = 'Nugs.net'
+        
+        if not nugs_manager or not nugs_manager.clients:
+            raise Exception("Maaf, tidak ada akun Nugs.net bot yang aktif saat ini.")
+
+        client = nugs_manager.get_client()
+        if not client:
+             raise Exception("Tidak ada klien Nugs.net yang tersedia (semua gagal login?).")
+
+        try:
+            user['nugs_api'] = client
+            await start_nugs(link, user)
+            LOGGER.info(f"Nugs.net: Unduhan berhasil menggunakan akun.")
+            return
+        except Exception as e:
+            LOGGER.error(f"Nugs.net: Tugas gagal (Fatal): {e}")
             raise e
     # --- BATAS TAMBAHAN ---
 
