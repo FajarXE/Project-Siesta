@@ -106,9 +106,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     sub_details = client.subscription_details # Diatur oleh manager.py
     
     metadata = {
-        # --- MODIFIKASI: Tambahkan 'tempfolder' ---
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
-        # --- BATAS MODIFIKASI ---
         'provider': 'Nugs.net',
         'type': 'track',
         'itemid': track_data.get('songID'),
@@ -122,14 +120,22 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'totaldiscs': str(album_data.get('numDiscs', 1)),
         'date': album_data.get('releaseDateFormatted', '').replace('/', '-'),
         'copyright': f"© {album_data.get('releaseDateFormatted', '')[:4]} {album_data.get('licensorName')}",
-        'explicit': False, # Nugs tampaknya tidak menandai ini
-        'isrc': None, # Tidak tersedia di API
+        'explicit': False, 
+        'isrc': None, 
+        # --- MODIFIKASI: Tambahkan 'duration' ---
+        # set_metadata memerlukan ini. API Nugs tampaknya menyediakannya dalam detik.
+        'duration': int(track_data.get('duration', 0)),
+        # --- BATAS MODIFIKASI ---
     }
     
     # Sampul
     cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
     metadata['cover'] = await create_cover_file(cover_url, metadata)
-    metadata['thumbnail'] = await create_cover_file(cover_url.replace('.jpg', '_small.jpg'), metadata, True)
+    
+    # --- MODIFIKASI: Perbaiki URL thumbnail ---
+    # Gunakan URL sampul utama; create_cover_file akan menanganinya
+    metadata['thumbnail'] = await create_cover_file(cover_url, metadata, True)
+    # --- BATAS MODIFIKASI ---
 
     # --- Logika Kualitas (dari interface.py) ---
     stream_data = []
@@ -271,9 +277,7 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     # Proses metadata album dasar
     album_meta = {
-        # --- MODIFIKASI: Tambahkan 'tempfolder' ---
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
-        # --- BATAS MODIFIKASI ---
         'provider': 'Nugs.net',
         'type': 'album',
         'itemid': album_id,
@@ -292,7 +296,11 @@ async def start_album(album_id: str, user: dict, upload=True):
         # Dapatkan sampul untuk poster
         cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
         album_meta['cover'] = await create_cover_file(cover_url, album_meta)
-        album_meta['thumbnail'] = await create_cover_file(cover_url.replace('.jpg', '_small.jpg'), album_meta, True)
+        
+        # --- MODIFIKASI: Perbaiki URL thumbnail ---
+        album_meta['thumbnail'] = await create_cover_file(cover_url, album_meta, True)
+        # --- BATAS MODIFIKASI ---
+        
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     tasks = []
