@@ -105,8 +105,24 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     client = user['nugs_api'] # Ini adalah instance NugsApi
     sub_details = client.subscription_details # Diatur oleh manager.py
     
+    # --- MODIFIKASI: Logika Tanggal Rilis dengan Fallback ---
     release_date_str = album_data.get('releaseDateFormatted', '').replace('/', '-')
-    release_year = release_date_str.split('-')[0] if '-' in release_date_str else release_date_str[:4]
+    if not release_date_str:
+        # Fallback: Coba ekstrak tanggal dari judul album (misal: "11/09/25 ...")
+        title_date_match = re.search(r'^(\d{2}/\d{2}/\d{2})', album_data.get('containerInfo', ''))
+        if title_date_match:
+            # Ubah format "11/09/25" menjadi "2025-11-09" (dengan asumsi format AS MM/DD/YY)
+            try:
+                parts = title_date_match.group(1).split('/')
+                year = f"20{parts[2]}"
+                month = parts[0]
+                day = parts[1]
+                release_date_str = f"{year}-{month}-{day}"
+            except Exception:
+                release_date_str = '' # Gagal parsing
+    
+    release_year = release_date_str.split('-')[0] if '-' in release_date_str else ''
+    # --- BATAS MODIFIKASI ---
     
     metadata = {
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
@@ -287,6 +303,22 @@ async def start_album(album_id: str, user: dict, upload=True):
         track_one_meta = {}
     # --- BATAS MODIFIKASI ---
 
+    # --- MODIFIKASI: Logika Tanggal Rilis dengan Fallback (UNTUK POSTER) ---
+    poster_release_date = track_one_meta.get('date', album_data.get('releaseDateFormatted', '').replace('/', '-'))
+    if not poster_release_date:
+        # Fallback: Coba ekstrak tanggal dari judul album (misal: "11/09/25 ...")
+        title_date_match = re.search(r'^(\d{2}/\d{2}/\d{2})', album_data.get('containerInfo', ''))
+        if title_date_match:
+            try:
+                parts = title_date_match.group(1).split('/')
+                year = f"20{parts[2]}"
+                month = parts[0]
+                day = parts[1]
+                poster_release_date = f"{year}-{month}-{day}"
+            except Exception:
+                poster_release_date = '' # Gagal parsing
+    # --- BATAS MODIFIKASI ---
+
     # Proses metadata album dasar
     album_meta = {
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/",
@@ -298,12 +330,10 @@ async def start_album(album_id: str, user: dict, upload=True):
         'albumartist': album_data.get('artistName'),
         'totaltracks': str(len(tracks_list)),
         
-        # --- MODIFIKASI: Salin info dari track pertama untuk poster ---
-        'date': track_one_meta.get('date', album_data.get('releaseDateFormatted', '').replace('/', '-')),
-        'year': track_one_meta.get('year', ''),
-        # --- MODIFIKASI BARU: Tambahkan 'release_date' ---
-        'release_date': track_one_meta.get('date', album_data.get('releaseDateFormatted', '').replace('/', '-')),
-        # --- BATAS MODIFIKASI BARU ---
+        # --- MODIFIKASI: Gunakan variabel tanggal poster yang baru ---
+        'date': poster_release_date,
+        'year': poster_release_date.split('-')[0] if '-' in poster_release_date else '',
+        'release_date': poster_release_date,
         'totalvolume': track_one_meta.get('totalvolume', str(album_data.get('numDiscs', 1))),
         'quality': track_one_meta.get('quality', 'Unknown'), # Ambil kualitas dari track 1
         'explicit': track_one_meta.get('explicit', False) # Ambil explicit dari track 1
