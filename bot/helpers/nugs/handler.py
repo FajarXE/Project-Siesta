@@ -301,6 +301,9 @@ async def start_album(album_id: str, user: dict, upload=True):
         # --- MODIFIKASI: Salin info dari track pertama untuk poster ---
         'date': track_one_meta.get('date', album_data.get('releaseDateFormatted', '').replace('/', '-')),
         'year': track_one_meta.get('year', ''),
+        # --- MODIFIKASI BARU: Tambahkan 'release_date' ---
+        'release_date': track_one_meta.get('date', album_data.get('releaseDateFormatted', '').replace('/', '-')),
+        # --- BATAS MODIFIKASI BARU ---
         'totalvolume': track_one_meta.get('totalvolume', str(album_data.get('numDiscs', 1))),
         'quality': track_one_meta.get('quality', 'Unknown'), # Ambil kualitas dari track 1
         'explicit': track_one_meta.get('explicit', False) # Ambil explicit dari track 1
