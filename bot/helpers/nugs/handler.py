@@ -119,11 +119,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'album': album_data.get('containerInfo'),
         'tracknumber': str(track_data.get('trackNum')),
         'totaltracks': str(len(album_data.get('songs'))),
-        
-        # --- MODIFIKASI: Ganti nama 'discnumber' menjadi 'volume' ---
-        'volume': str(track_data.get('discNum')), 
-        # --- BATAS MODIFIKASI ---
-        
+        'volume': str(track_data.get('discNum')), # Perbaikan untuk KeyError: 'volume'
         'totaldiscs': str(album_data.get('numDiscs', 1)),
         'totalvolume': str(album_data.get('numDiscs', 1)),
         'date': release_date_str,
@@ -131,7 +127,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'copyright': f"© {release_year} {album_data.get('licensorName')}",
         'explicit': False, # API Nugs tidak menyediakan ini
         'isrc': None, 
-        'duration': int(track_data.get('duration', 0)),
+        'duration': int(track_data.get('duration', 0)), # Perbaikan untuk KeyError: 'duration'
     }
     
     # Sampul
@@ -275,9 +271,21 @@ async def start_album(album_id: str, user: dict, upload=True):
             raise NugsError(f"Album {album_id} tidak ditemukan.")
             
         tracks_list = album_data.get('songs', [])
-        
+        if not tracks_list:
+            raise NugsError(f"Tidak ada lagu yang ditemukan di album {album_id}.")
+            
     except Exception as e:
         raise Exception(f"Gagal mendapatkan metadata album Nugs: {e}")
+
+    # --- MODIFIKASI: Proses track pertama DULU untuk info poster ---
+    try:
+        track_one_data = tracks_list[0]
+        track_one_meta = await process_track_metadata(track_one_data, album_data, user)
+    except Exception as e:
+        LOGGER.error(f"Nugs: Gagal memproses track pertama untuk poster: {e}")
+        # Fallback: buat poster dengan info seadanya
+        track_one_meta = {}
+    # --- BATAS MODIFIKASI ---
 
     # Proses metadata album dasar
     album_meta = {
@@ -288,8 +296,15 @@ async def start_album(album_id: str, user: dict, upload=True):
         'title': album_data.get('containerInfo'),
         'artist': album_data.get('artistName'),
         'albumartist': album_data.get('artistName'),
-        'date': album_data.get('releaseDateFormatted', '').replace('/', '-'),
-        'totaltracks': str(len(tracks_list))
+        'totaltracks': str(len(tracks_list)),
+        
+        # --- MODIFIKASI: Salin info dari track pertama untuk poster ---
+        'date': track_one_meta.get('date', album_data.get('releaseDateFormatted', '').replace('/', '-')),
+        'year': track_one_meta.get('year', ''),
+        'totalvolume': track_one_meta.get('totalvolume', str(album_data.get('numDiscs', 1))),
+        'quality': track_one_meta.get('quality', 'Unknown'), # Ambil kualitas dari track 1
+        'explicit': track_one_meta.get('explicit', False) # Ambil explicit dari track 1
+        # --- BATAS MODIFIKASI ---
     }
     
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
@@ -304,7 +319,14 @@ async def start_album(album_id: str, user: dict, upload=True):
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     tasks = []
-    for track_data in tracks_list:
+    
+    # --- MODIFIKASI: Tambahkan track pertama yang sudah diproses ke antrian ---
+    if track_one_meta: # Hanya jika pemrosesan track pertama berhasil
+        tasks.append(start_track(track_one_meta, user, False))
+    # --- BATAS MODIFIKASI ---
+
+    # Loop sisa track (mulai dari track kedua, indeks 1)
+    for track_data in tracks_list[1:]: 
         try:
             # Kirim track_data dan album_data agar tidak perlu fetch ulang
             track_meta = await process_track_metadata(track_data, album_data, user)
