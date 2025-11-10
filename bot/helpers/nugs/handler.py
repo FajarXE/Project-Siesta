@@ -236,9 +236,9 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
                 metadata['bit_depth'] = 16
                 metadata['sample_rate'] = 44100
             else:
-                # Jika tidak ada fallback, gunakan label MQA sederhana (menghapus "(Format Tidak Dikenal)")
-                LOGGER.warning("Nugs: Verifikasi MQA gagal, tidak ada fallback FLAC. Menggunakan label MQA 24-bit.")
-                metadata['quality'] = "MQA 24-bit"
+                # PERBAIKAN: Jika tidak ada fallback FLAC, gunakan label FLAC 24-bit (sesuai permintaan Anda)
+                LOGGER.warning("Nugs: Verifikasi MQA gagal, tidak ada fallback FLAC 16-bit. Menggunakan label FLAC 24-bit.")
+                metadata['quality'] = "FLAC 24-bit" # <-- INI PERBAIKANNYA
                 metadata['bit_depth'] = 24
 
     elif selected_stream['codec'] in ['FLAC', 'ALAC']:
