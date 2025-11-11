@@ -87,15 +87,16 @@ async def set_flac(data, handle):
     handle.tags['tracknumber'] = str(data['tracknumber'])
     handle.tags['tracktotal'] = str(data['totaltracks'])
     handle.tags['genre'] = data.get('genre') or '' 
-    handle.tags['date'] = data['date']
-    handle.tags['isrc'] = data['isrc']
-    handle.tags['lyrics'] = data['lyrics']
     
-    # --- PERBAIKAN: Gunakan .get() agar aman jika 'volume' tidak ada ---
-    handle.tags['discnumber'] = str(data.get('volume') or '')
-    handle.tags['disctotal'] = str(data.get('totalvolume') or '')
+    # --- PERBAIKAN: Hanya tulis tag jika data ada ---
+    if data['date']:
+        handle.tags['date'] = data['date']
     # --- BATAS PERBAIKAN ---
     
+    handle.tags['isrc'] = data['isrc']
+    handle.tags['lyrics'] = data['lyrics']
+    handle.tags['discnumber'] = str(data.get('volume') or '')
+    handle.tags['disctotal'] = str(data.get('totalvolume') or '')
     handle.tags['composer'] = data.get('composer', '')
     await savePic(handle, data)
     handle.save()
@@ -111,7 +112,6 @@ async def set_mp3(data, handle):
     else:
         track_pos = track_num
         
-    # Kode ini sudah aman menggunakan .get()
     disc_num = str(data.get('volume', ''))
     disc_total = str(data.get('totalvolume', ''))
     if disc_total and disc_total != '0':
@@ -129,7 +129,12 @@ async def set_mp3(data, handle):
     handle.tags.add(TRCK(encoding=3, text=track_pos)) 
     handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
     handle.tags.add(TCON(encoding=3, text=genre_text)) 
-    handle.tags.add(TDRC(encoding=3, text=data['date']))
+    
+    # --- PERBAIKAN: Hanya tulis tag jika data ada ---
+    if data['date']:
+        handle.tags.add(TDRC(encoding=3, text=data['date']))
+    # --- BATAS PERBAIKAN ---
+    
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
     handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
     handle.tags.add(TCOM(encoding=3, text=composer_text)) 
@@ -144,7 +149,12 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9alb'] = data['album']
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
-    handle.tags['\u00a9day'] = data['date']
+    
+    # --- PERBAIKAN: Hanya tulis tag jika data ada ---
+    if data['date']:
+        handle.tags['\u00a9day'] = data['date']
+    # --- BATAS PERBAIKAN ---
+    
     handle.tags['\u00a9gen'] = data.get('genre') or '' 
     handle.tags['\u00a9cpr'] = data['copyright']
 
