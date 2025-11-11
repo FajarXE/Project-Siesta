@@ -128,7 +128,13 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['albumartist'] = album_data['artistName']
     metadata['tracknumber'] = str(track_data['index'])
     metadata['totaltracks'] = str(album_data['trackCount'])
-    metadata['date'] = album_data['released'].split('-')[0]
+    
+    # --- PERBAIKAN: Tangani jika tanggal rilis (released) adalah None ---
+    release_date = album_data.get('released')
+    if release_date:
+        metadata['date'] = release_date.split('-')[0]
+    # --- BATAS PERBAIKAN ---
+    
     metadata['copyright'] = album_data.get('copyright')
     metadata['upc'] = album_data.get('upc')
     metadata['isrc'] = track_data.get('isrc')
@@ -249,7 +255,13 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['album'] = album_data['name']
     metadata['artist'] = album_data['artistName']
     metadata['albumartist'] = album_data['artistName']
-    metadata['date'] = album_data['released'].split('-')[0]
+    
+    # --- PERBAIKAN: Tangani jika tanggal rilis (released) adalah None ---
+    release_date = album_data.get('released')
+    if release_date:
+        metadata['date'] = release_date.split('-')[0]
+    # --- BATAS PERBAIKAN ---
+    
     metadata['totaltracks'] = str(album_data['trackCount'])
     metadata['explicit'] = bool(album_data.get('isExplicit'))
     metadata['provider'] = 'Napster'
