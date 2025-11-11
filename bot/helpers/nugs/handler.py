@@ -135,8 +135,10 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'albumartist': album_data.get('artistName'),
         'album': album_data.get('containerInfo'),
         
+        # Sediakan 'tracknumber' dan 'discnumber' untuk format nama file
         'tracknumber': str(track_data.get('trackNum')),
         'discnumber': str(track_data.get('discNum')),
+        # Sediakan 'volume' untuk penulis tag (metadata.py)
         'volume': str(track_data.get('discNum')),
         
         'totaltracks': str(len(album_data.get('songs'))),
@@ -154,7 +156,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     }
     
     # Sampul
-    cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
+    cover_url = f"https_secure.livedownloads.com{album_data.get('img', {}).get('url')}"
     metadata['cover'] = await create_cover_file(cover_url, metadata)
     metadata['thumbnail'] = await create_cover_file(cover_url, metadata, True)
 
@@ -190,74 +192,56 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     # Urutkan berdasarkan prioritas (tertinggi dulu)
     stream_data = sorted(stream_data, key=lambda k: k['priority'], reverse=True)
     
-    # --- MODIFIKASI BARU: Logika Pemilihan Kualitas ---
+    # --- MODIFIKASI: Logika Pemilihan Kualitas yang Diperbaiki ---
     
-    selected_stream = None # Akan diisi oleh loop di bawah
+    # Selalu pilih stream terbaik yang tersedia dari API
+    selected_stream = stream_data[0]
     
-    for stream in stream_data:
-        codec = stream['codec']
-        
-        if codec == 'MQA':
-            LOGGER.debug(f"Nugs: Deteksi MQA untuk {metadata['title']}...")
-            temp_flac_header = await download_temp_header(stream['url'], client.session.user_agent)
-            mqa_verified = False
-            
-            if temp_flac_header:
-                try:
-                    mqa_file = await asyncio.to_thread(MqaIdentifier, temp_flac_header)
-                    if mqa_file.is_mqa:
-                        original_rate = mqa_file.get_original_sample_rate()
-                        studio = " Studio" if mqa_file.is_mqa_studio else ""
-                        metadata['quality'] = f"MQA{studio} {mqa_file.bit_depth}-bit / {original_rate}kHz"
-                        metadata['bit_depth'] = mqa_file.bit_depth
-                        metadata['sample_rate'] = mqa_file.original_sample_rate
-                        mqa_verified = True
-                        LOGGER.info(f"Nugs: Deteksi MQA Berhasil: {metadata['quality']}")
-                except Exception as e:
-                    LOGGER.error(f"Nugs: Error MqaIdentifier: {e}. Kemungkinan file bukan FLAC.")
-                finally:
-                    if os.path.exists(temp_flac_header):
-                        os.remove(temp_flac_header)
-            
-            if mqa_verified:
-                selected_stream = stream # MQA valid, kita pilih ini.
-                break # Hentikan loop
-            else:
-                # MQA GAGAL VERIFIKASI
-                LOGGER.warning("Nugs: Verifikasi MQA gagal, mencari stream berikutnya (FLAC/ALAC)...")
-                continue # Lanjutkan loop untuk mencari FLAC atau ALAC
-
-        elif codec == 'FLAC':
-            LOGGER.info(f"Nugs: Memilih stream FLAC 16-bit.")
-            selected_stream = stream
-            metadata['quality'] = stream['quality_name']
-            metadata['bit_depth'] = 16
-            metadata['sample_rate'] = 44100
-            break # Hentikan loop
-
-        elif codec == 'ALAC':
-            LOGGER.info(f"Nugs: Memilih stream ALAC 16-bit.")
-            selected_stream = stream
-            metadata['quality'] = stream['quality_name']
-            metadata['bit_depth'] = 16
-            metadata['sample_rate'] = 44100
-            break # Hentikan loop
-
-        elif codec == 'AAC':
-            LOGGER.info(f"Nugs: Memilih stream AAC 150k.")
-            selected_stream = stream
-            metadata['quality'] = stream['quality_name']
-            break # Hentikan loop
-
-    # Jika loop selesai dan tidak ada yang dipilih (sangat tidak mungkin)
-    if not selected_stream:
-        LOGGER.error("Nugs: Tidak ada stream yang dapat dipilih setelah loop.")
-        selected_stream = stream_data[0] # Fallback ke prioritas tertinggi
-        metadata['quality'] = selected_stream['quality_name']
-
-    # Tetapkan stream yang akhirnya dipilih
+    # Tetapkan metadata berdasarkan pilihan ini
+    metadata['quality'] = selected_stream['quality_name']
     metadata['extension'] = selected_stream['extension']
     metadata['download_url'] = selected_stream['url']
+
+    if selected_stream['codec'] == 'MQA':
+        # Jika stream terbaik adalah MQA, coba verifikasi untuk label yang lebih baik
+        LOGGER.debug(f"Nugs: Deteksi MQA untuk {metadata['title']}...")
+        temp_flac_header = await download_temp_header(selected_stream['url'], client.session.user_agent)
+        mqa_verified = False
+        
+        if temp_flac_header:
+            try:
+                mqa_file = await asyncio.to_thread(MqaIdentifier, temp_flac_header)
+                if mqa_file.is_mqa:
+                    # BERHASIL: Ganti label "MQA" menjadi label MQA yang terverifikasi
+                    original_rate = mqa_file.get_original_sample_rate()
+                    studio = " Studio" if mqa_file.is_mqa_studio else ""
+                    metadata['quality'] = f"MQA{studio} {mqa_file.bit_depth}-bit / {original_rate}kHz"
+                    metadata['bit_depth'] = mqa_file.bit_depth
+                    metadata['sample_rate'] = mqa_file.original_sample_rate
+                    mqa_verified = True
+                    LOGGER.info(f"Nugs: Deteksi MQA Berhasil: {metadata['quality']}")
+            except Exception as e:
+                LOGGER.error(f"Nugs: Error MqaIdentifier: {e}. Kemungkinan file bukan FLAC.")
+            finally:
+                if os.path.exists(temp_flac_header):
+                    os.remove(temp_flac_header)
+        
+        if not mqa_verified:
+            # GAGAL: Verifikasi gagal. TAPI KITA TETAP MENGGUNAKAN MQA INI.
+            # Jangan cari fallback. Cukup beri label MQA 24-bit.
+            LOGGER.warning("Nugs: Verifikasi MQA gagal. Menggunakan label MQA 24-bit.")
+            metadata['quality'] = "MQA 24-bit"
+            metadata['bit_depth'] = 24 # Asumsi
+
+    elif selected_stream['codec'] == 'FLAC':
+        # Stream terbaik adalah FLAC 16-bit
+        metadata['bit_depth'] = 16
+        metadata['sample_rate'] = 44100
+
+    elif selected_stream['codec'] == 'ALAC':
+        # Stream terbaik adalah ALAC 16-bit
+        metadata['bit_depth'] = 16
+        metadata['sample_rate'] = 44100
     
     # --- BATAS MODIFIKASI ---
     
@@ -380,7 +364,7 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     if upload:
         # Dapatkan sampul untuk poster
-        cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
+        cover_url = f"https{':'}//secure.livedownloads.com{album_data.get('img', {}).get('url')}"
         album_meta['cover'] = await create_cover_file(cover_url, album_meta)
         album_meta['thumbnail'] = await create_cover_file(cover_url, album_meta, True)
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
