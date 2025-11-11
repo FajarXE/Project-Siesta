@@ -219,7 +219,8 @@ async def start_link(link: str, user: dict) -> None:
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
     # --- TAMBAHAN BARU: URL Napster ---
-    napster = ["https://app.napster.com", "napster.com", "http://app.napster.com"]
+    # --- PERBAIKAN: Menambahkan domain dari log error ---
+    napster = ["https://app.napster.com", "napster.com", "http://app.napster.com", "https://play.napster.com", "play.napster.com"]
     # --- BATAS TAMBAHAN ---
     
     # --- TAMBAHAN BARU: URL Idagio ---
