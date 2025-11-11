@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/napster/manager.py]
+# [GANTI FILE: bot/helpers/napster/manager.py]
 
 import asyncio
 import itertools
@@ -98,7 +98,9 @@ class NapsterLoginManager:
             # Panggil login sinkron di thread terpisah
             await asyncio.to_thread(
                 client.login,
-                email=account['email'], 
+                # --- PERBAIKAN ---
+                # Argumen 'email' diubah menjadi 'username' agar cocok dengan api.py
+                username=account['email'], 
                 password=account['password'],
                 current_timestamp=int(time())
             )
