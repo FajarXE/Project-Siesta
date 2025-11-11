@@ -83,7 +83,9 @@ def custom_url_parse(link: str):
 
 async def _process_cover(metadata: dict, album_id: str):
     """Memproses sampul dari ID Album Napster"""
-    url = f"https.api.napster.com/imageserver/v2/albums/{album_id}/images/600x600.jpg"
+    # --- PERBAIKAN: Memperbaiki typo URL (https. -> https://) ---
+    url = f"https://api.napster.com/imageserver/v2/albums/{album_id}/images/600x600.jpg"
+    # --- BATAS PERBAIKAN ---
     return await create_cover_file(url, metadata)
 
 
