@@ -133,16 +133,18 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     # --- PERBAIKAN: Kirim SEMUA variasi key 'disc' ---
     if track_data.get('disc'):
         disc_num = str(track_data.get('disc'))
-        metadata['discnumber'] = disc_num  # Standar
+        metadata['discnumber'] = disc_num  # Standar ID3
         metadata['disc'] = disc_num        # Alternatif umum
+        metadata['DISCNUMBER'] = disc_num  # Standar Vorbis/FLAC
     # --- BATAS PERBAIKAN ---
 
     # --- PERBAIKAN: Kirim SEMUA variasi key 'total discs' ---
     if album_data.get('discCount'):
         total_discs = str(album_data.get('discCount'))
-        metadata['disctotal'] = total_discs    # Standar (tag file)
+        metadata['disctotal'] = total_discs    # Standar ID3
         metadata['totaldiscs'] = total_discs   # Alternatif umum
-        metadata['totalvolumes'] = total_discs # Untuk poster (dari masalah sebelumnya)
+        metadata['totalvolumes'] = total_discs # Untuk poster album
+        metadata['DISCTOTAL'] = total_discs    # Standar Vorbis/FLAC
     # --- BATAS PERBAIKAN ---
     
     metadata['totaltracks'] = str(album_data['trackCount'])
