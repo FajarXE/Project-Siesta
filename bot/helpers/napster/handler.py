@@ -99,15 +99,29 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
                     async for chunk in response.content.iter_chunked(8192):
                         await f.write(chunk)
 
+    # --- PERBAIKAN: Menyembunyikan Error 404 dari Log ---
     except Exception as e:
-        LOGGER.error(f"Napster dl_track gagal untuk {item_id}: {e}")
+        is_404_error = False
+        if isinstance(e, aiohttp.ClientResponseError):
+            if e.status == 404:
+                is_404_error = True
+        
+        if is_404_error:
+            # Ini adalah error 404 yang ingin kita sembunyikan.
+            # Jangan log sebagai ERROR, cukup sebagai DEBUG (tersembunyi).
+            LOGGER.debug(f"Napster dl_track 404 (diredam) untuk {item_id}: {e}")
+        else:
+            # Ini adalah error lain yang valid, log seperti biasa.
+            LOGGER.error(f"Napster dl_track gagal untuk {item_id}: {e}")
+        
         return False
-    # --- BATAS LOGIKA UNDUH ---
+    # --- BATAS PERBAIKAN ---
 
     try:
         await set_metadata(track_meta)
     except FileNotFoundError:
-        LOGGER.error(f"[Errno 2] File not found setelah download Napster: {filepath}")
+        # Kita masih mungkin mendapatkan error ini jika file gagal diunduh (karena 404)
+        LOGGER.debug(f"[Errno 2] File not found setelah download Napster (diredam): {filepath}")
         return False
     except Exception as e:
         LOGGER.error(f"Gagal memproses metadata Napster: {filepath} -> {e}")
