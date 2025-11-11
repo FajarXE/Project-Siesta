@@ -117,8 +117,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             # --- BATAS PERBAIKAN ---
             album_data = album_data_list[0]
 
-        # --- BATAS DEBUG (Baris log telah dihapus) ---
-
     except Exception as e:
         LOGGER.error(f"Napster: Gagal mendapatkan metadata track {track_id}: {e}")
         raise e
@@ -139,7 +137,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     # --- PERBAIKAN: Tambahkan Total Discs (Berdasarkan log) ---
     if album_data.get('discCount'):
-        # Mengubah key ke 'disctotal' (lebih standar)
+        # Mengubah key ke 'disctotal' (lebih standar untuk tag file)
         metadata['disctotal'] = str(album_data.get('discCount')) 
     # --- BATAS PERBAIKAN ---
     
@@ -293,6 +291,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     # --- BATAS PERBAIKAN ---
     
     metadata['totaltracks'] = str(album_data['trackCount'])
+    
+    # --- PERBAIKAN: Tambahkan Total Volumes (Total Discs) untuk Poster Album ---
+    if album_data.get('discCount'):
+        metadata['totalvolumes'] = str(album_data.get('discCount'))
+    # --- BATAS PERBAIKAN ---
+    
     metadata['explicit'] = bool(album_data.get('isExplicit'))
     metadata['provider'] = 'Napster'
     metadata['type'] = 'album'
