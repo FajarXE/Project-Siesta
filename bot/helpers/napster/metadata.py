@@ -117,6 +117,11 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             # --- BATAS PERBAIKAN ---
             album_data = album_data_list[0]
 
+        # --- TAMBAHAN DEBUG: Cetak data mentah ---
+        LOGGER.info(f"Napster DEBUG (Track Data): {track_data}")
+        LOGGER.info(f"Napster DEBUG (Album Data): {album_data}")
+        # --- BATAS DEBUG ---
+
     except Exception as e:
         LOGGER.error(f"Napster: Gagal mendapatkan metadata track {track_id}: {e}")
         raise e
@@ -187,7 +192,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             genre_data = await asyncio.to_thread(client.get_string_from_items_list, 'genres', genre_ids, 'name')
             metadata['genre'] = ", ".join(list(genre_data.values()))
         except Exception as e:
-            LOGGER.warning(f"Napster: Gagal memproses genre: {e}")
+            LOGGER.warning(f"Napster: GGagal memproses genre: {e}")
 
     # Sampul
     metadata['cover'] = await _process_cover(metadata, track_data["albumId"])
