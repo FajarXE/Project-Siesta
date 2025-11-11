@@ -134,6 +134,11 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     if track_data.get('disc'):
         metadata['discnumber'] = str(track_data.get('disc'))
     # --- BATAS PERBAIKAN ---
+
+    # --- PERBAIKAN: Tambahkan Total Discs (Total Volumes) ---
+    if album_data.get('discCount'):
+        metadata['totaldiscs'] = str(album_data.get('discCount'))
+    # --- BATAS PERBAIKAN ---
     
     metadata['totaltracks'] = str(album_data['trackCount'])
     
