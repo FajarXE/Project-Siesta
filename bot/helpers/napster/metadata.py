@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/napster/metadata.py]
+# [GANTI FILE: bot/helpers/napster/metadata.py]
 
 import copy
 import re
@@ -99,12 +99,20 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             track_data = pre_data
         else:
             track_data_list = await asyncio.to_thread(client.get_items_list, 'tracks', track_id)
+            # --- PERBAIKAN: Tangani IndexError ---
+            if not track_data_list:
+                raise NapsterError(f"Track {track_id} tidak ditemukan atau tidak tersedia (mungkin region-lock).")
+            # --- BATAS PERBAIKAN ---
             track_data = track_data_list[0]
             
         if alb_info_pre:
             album_data = alb_info_pre
         else:
             album_data_list = await asyncio.to_thread(client.get_items_list, 'albums', track_data['albumId'])
+            # --- PERBAIKAN: Tangani IndexError (meskipun jarang terjadi di sini) ---
+            if not album_data_list:
+                raise NapsterError(f"Album {track_data['albumId']} untuk track {track_id} tidak ditemukan.")
+            # --- BATAS PERBAIKAN ---
             album_data = album_data_list[0]
 
     except Exception as e:
@@ -223,6 +231,10 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     try:
         # Panggil API di thread terpisah
         album_data_list = await asyncio.to_thread(client.get_items_list, 'albums', album_id)
+        # --- PERBAIKAN: Tangani IndexError ---
+        if not album_data_list:
+            raise NapsterError(f"Album {album_id} tidak ditemukan atau tidak tersedia (mungkin region-lock).")
+        # --- BATAS PERBAIKAN ---
         album_data = album_data_list[0]
         
         # Dapatkan semua track untuk album
