@@ -96,6 +96,54 @@ except ImportError:
 # --- BATAS TAMBAHAN ---
 
 
+# --- FUNGSI BARU UNTUK MEMUAT PENGATURAN PENGGUNA ---
+
+async def load_all_user_settings_into_managers():
+    """
+    Menyinkronkan pengaturan dari cache global (bot_set.user_data)
+    ke dalam cache RAM manajer lokal (seperti Napster, Deezer, dll.)
+    
+    Ini diperlukan agar pengaturan tetap ada setelah bot di-restart.
+    Qobuz dan Tidal menangani ini secara berbeda dan tidak disertakan di sini.
+    """
+    logging.info("Menyinkronkan pengaturan pengguna dari bot_set ke cache manajer lokal...")
+    try:
+        count = 0
+        
+        # Manajer ini menggunakan cache RAM lokal via setup_quality()
+        settings_map = {
+            'deezer_qual': deezer_manager,
+            'beatport_qual': beatport_manager,
+            'kkbox_qual': kkbox_manager,
+            'beatsource_qual': beatsource_manager,
+            'soundcloud_qual': soundcloud_manager,
+            'napster_qual': napster_manager,
+            'idagio_qual': idagio_manager,
+        }
+
+        # Loop melalui cache global bot_set yang SEKARANG SUDAH DIISI oleh initialize_users()
+        for user_id, user_data in bot_set.user_data.items():
+            if not user_id:
+                continue
+            
+            for key, manager in settings_map.items():
+                quality_val = user_data.get(key)
+                # Jika nilai ditemukan di bot_set DAN manajer-nya ada
+                if quality_val and manager:
+                    try:
+                        # Panggil setup_quality untuk mengisi cache lokal manajer
+                        await manager.setup_quality(user_id, quality_val)
+                        count += 1
+                    except Exception as e:
+                        logging.error(f"Gagal memuat {key} untuk user {user_id} ke cache manajer: {e}")
+        
+        logging.info(f"Berhasil menyinkronkan {count} pengaturan pengguna individual ke cache RAM manajer.")
+
+    except Exception as e:
+        logging.error(f"Gagal total menyinkronkan pengaturan pengguna ke manajer: {e}\n{traceback.format_exc()}")
+        logging.warning("Pengaturan kualitas pengguna mungkin tidak akan persisten saat restart.")
+
+
 # --- Fungsi Login Qobuz ---
 async def login_single_client(creds: dict):
     """
@@ -270,6 +318,11 @@ async def main():
 
     logging.info("Menginisialisasi data pengguna...")
     await bot_set.initialize_users()
+    
+    # --- PERBAIKAN: Panggil fungsi baru untuk memuat pengaturan ke RAM ---
+    # Ini harus dipanggil SETELAH initialize_users() yang mengisi bot_set.user_data
+    await load_all_user_settings_into_managers()
+    # --- BATAS PERBAIKAN ---
 
     await aio.start()
     signal.signal(signal.SIGINT, signal_handler)
