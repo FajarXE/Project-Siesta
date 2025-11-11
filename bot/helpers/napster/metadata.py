@@ -130,12 +130,10 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['albumartist'] = album_data['artistName']
     metadata['tracknumber'] = str(track_data['index'])
     
-    # --- PERBAIKAN: Gunakan key 'volume' dan 'totalvolume' ---
-    if track_data.get('disc'):
-        metadata['volume'] = str(track_data.get('disc'))
-    
-    if album_data.get('discCount'):
-        metadata['totalvolume'] = str(album_data.get('discCount'))
+    # --- PERBAIKAN: Sediakan nilai default untuk 'volume' dan 'totalvolume' ---
+    # Ini untuk mencegah crash di set_m4a (bot/helpers/metadata.py)
+    metadata['volume'] = str(track_data.get('disc') or '')
+    metadata['totalvolume'] = str(album_data.get('discCount') or '')
     # --- BATAS PERBAIKAN ---
     
     metadata['totaltracks'] = str(album_data['trackCount'])
