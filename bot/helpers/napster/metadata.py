@@ -180,10 +180,25 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     requested_bitrate = QUALITY_MAP_BITRATE[preferred_quality_key]
     
     # Periksa batas langganan klien
-    if requested_bitrate > client.max_bitrate:
+    
+    # --- PERBAIKAN: Percayai 'max_bitrate', bukan 'hires_enabled' ---
+    
+    # Jika pengguna meminta FLAC (-1), tapi 'max_bitrate' akun rendah
+    # (kita anggap 320000 bps (320k) atau lebih rendah BUKAN HiRes),
+    # maka paksa turunkan kualitas ke bitrate maksimum akun tersebut.
+    if requested_bitrate == -1 and client.max_bitrate <= 320000:
+        LOGGER.warning(f"Napster: Permintaan FLAC ditolak. Akun terbatas pada {client.max_bitrate}bps. Menurunkan kualitas...")
+        # Ini akan memaksa kualitas ke 192000 (192k) sesuai log
+        requested_bitrate = client.max_bitrate 
+    
+    # Jika tidak, jika permintaan (non-FLAC) lebih tinggi dari batas akun,
+    # turunkan ke batas akun.
+    elif requested_bitrate > client.max_bitrate:
         requested_bitrate = client.max_bitrate
-    if requested_bitrate == -1 and not client.hires_enabled:
-        requested_bitrate = 320 # Turunkan ke 320 jika HiRes tidak aktif
+        
+    # Cek 'hires_enabled' yang lama (baris 185-187) dihapus 
+    # karena terbukti tidak bisa diandalkan.
+    # --- BATAS PERBAIKAN ---
 
     chosen_bitrate = 0
     chosen_codec = ""
