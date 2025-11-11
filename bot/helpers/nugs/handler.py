@@ -86,7 +86,8 @@ async def download_temp_header(file_url: str, user_agent: str) -> str | None:
     temp_location = await asyncio.to_thread(create_temp_filename, '.flac')
     
     try:
-        headers = {'User-Agent': user_agent, 'Range': 'bytes=0-32768'}
+        # --- PERBAIKAN 1 --- : Mengubah rentang dari 32KB menjadi 1MB (1048576 byte)
+        headers = {'User-Agent': user_agent, 'Range': 'bytes=0-1048576'}
         async with aiohttp.ClientSession() as session:
             async with session.get(file_url, headers=headers) as response:
                 response.raise_for_status()
@@ -156,7 +157,8 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     }
     
     # Sampul
-    cover_url = f"https_secure.livedownloads.com{album_data.get('img', {}).get('url')}"
+    # --- PERBAIKAN 2 --- : Memperbaiki typo URL, menambahkan "://"
+    cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
     metadata['cover'] = await create_cover_file(cover_url, metadata)
     metadata['thumbnail'] = await create_cover_file(cover_url, metadata, True)
 
@@ -364,7 +366,7 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     if upload:
         # Dapatkan sampul untuk poster
-        cover_url = f"https{':'}//secure.livedownloads.com{album_data.get('img', {}).get('url')}"
+        cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
         album_meta['cover'] = await create_cover_file(cover_url, album_meta)
         album_meta['thumbnail'] = await create_cover_file(cover_url, album_meta, True)
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
