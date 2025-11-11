@@ -90,8 +90,12 @@ async def set_flac(data, handle):
     handle.tags['date'] = data['date']
     handle.tags['isrc'] = data['isrc']
     handle.tags['lyrics'] = data['lyrics']
-    handle.tags['discnumber'] = str(data['volume'])
-    handle.tags['disctotal'] = str(data['totalvolume'])
+    
+    # --- PERBAIKAN: Gunakan .get() agar aman jika 'volume' tidak ada ---
+    handle.tags['discnumber'] = str(data.get('volume') or '')
+    handle.tags['disctotal'] = str(data.get('totalvolume') or '')
+    # --- BATAS PERBAIKAN ---
+    
     handle.tags['composer'] = data.get('composer', '')
     await savePic(handle, data)
     handle.save()
@@ -106,12 +110,15 @@ async def set_mp3(data, handle):
         track_pos = f"{track_num}/{track_total}"
     else:
         track_pos = track_num
+        
+    # Kode ini sudah aman menggunakan .get()
     disc_num = str(data.get('volume', ''))
     disc_total = str(data.get('totalvolume', ''))
     if disc_total and disc_total != '0':
         disc_pos = f"{disc_num}/{disc_total}"
     else:
         disc_pos = disc_num
+        
     genre_text = data.get('genre') or ''
     composer_text = data.get('composer') or ''
     handle.tags.add(TIT2(encoding=3, text=data['title']))
@@ -140,11 +147,21 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9day'] = data['date']
     handle.tags['\u00a9gen'] = data.get('genre') or '' 
     handle.tags['\u00a9cpr'] = data['copyright']
-    track_number = int(data['tracknumber']) if data['tracknumber'] else 0
-    totaltracks = int(data['totaltracks']) if data['totaltracks'] else 0
+
+    # --- PERBAIKAN: Konversi int() yang aman untuk M4A ---
+    # Memeriksa .isdigit() untuk menghindari crash int('')
+    track_number_str = str(data.get('tracknumber') or '')
+    totaltracks_str = str(data.get('totaltracks') or '')
+    volume_str = str(data.get('volume') or '')
+    totalvolume_str = str(data.get('totalvolume') or '')
+
+    track_number = int(track_number_str) if track_number_str.isdigit() else 0
+    totaltracks = int(totaltracks_str) if totaltracks_str.isdigit() else 0
+    volume = int(volume_str) if volume_str.isdigit() else 0
+    totalvolume = int(totalvolume_str) if totalvolume_str.isdigit() else 0
+    # --- BATAS PERBAIKAN ---
+
     handle.tags['trkn'] = [(track_number, totaltracks)]
-    volume = int(data['volume']) if data['volume'] else 0
-    totalvolume = int(data['totalvolume']) if data['totalvolume'] else 0
     handle.tags['disk'] = [(volume, totalvolume)]
     handle.tags['\u00a9wrt'] = data.get('composer', '')
     await savePic(handle, data)
