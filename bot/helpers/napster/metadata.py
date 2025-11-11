@@ -83,7 +83,7 @@ def custom_url_parse(link: str):
 
 async def _process_cover(metadata: dict, album_id: str):
     """Memproses sampul dari ID Album Napster"""
-    url = f"https://api.napster.com/imageserver/v2/albums/{album_id}/images/600x600.jpg"
+    url = f"https.api.napster.com/imageserver/v2/albums/{album_id}/images/600x600.jpg"
     return await create_cover_file(url, metadata)
 
 
@@ -205,14 +205,28 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
              metadata['quality'] = f"MQA {l_format['sampleBits']}-bit {l_format['sampleRate']/1000}kHz"
 
     else:
+        # --- PERBAIKAN: Logika Fallback Kualitas ---
+        # Jika FLAC diminta (bitrate == -1) TAPI tidak tersedia (kita masuk ke block 'else' ini),
+        # kita harus mencari kualitas lossy terbaik yang tersedia.
+        # Kita atur 'effective_bitrate' ke nilai tinggi (320) agar loop di bawah
+        # dapat menemukan format lossy terbaik.
+        
+        effective_bitrate = requested_bitrate
+        if effective_bitrate == -1:
+            # Ini adalah fallback dari FLAC. Cari lossy terbaik (maks 320k).
+            effective_bitrate = 320 
+        # --- BATAS PERBAIKAN ---
+
         # Cari format lossy terbaik (AAC)
         for f in track_data['formats']:
-            if f['bitrate'] <= requested_bitrate and f['bitrate'] > chosen_bitrate and f['name'] != 'MQA':
+            # Gunakan effective_bitrate untuk perbandingan
+            if f['bitrate'] <= effective_bitrate and f['bitrate'] > chosen_bitrate and f['name'] != 'MQA':
                 chosen_bitrate = f['bitrate']
                 chosen_codec = f['name'] # Akan menjadi 'AAC' atau 'AAC PLUS'
         
         if chosen_bitrate == 0:
-            raise NapsterError(f"Tidak ada bitrate yang cocok ditemukan (diminta <= {requested_bitrate})")
+            # Jika masih 0, berarti TIDAK ADA format yang tersedia
+            raise NapsterError(f"Tidak ada bitrate yang cocok ditemukan (diminta <= {effective_bitrate})")
         
         display_codec = "AAC"
         if chosen_codec == "AAC PLUS":
