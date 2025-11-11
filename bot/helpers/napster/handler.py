@@ -33,7 +33,8 @@ async def start_napster(url: str, user: dict):
         if media_type == 'track':
             success = await start_track(item_id, user, None)
             if not success:
-                raise Exception("Gagal mengunduh atau memproses track.")
+                # Diredam: Kita tidak 'raise Exception' agar tidak ada log error fatal
+                LOGGER.warning("Napster: Gagal mengunduh atau memproses track (diredam).")
         
         elif media_type == 'album':
             await start_album(item_id, user)
@@ -42,6 +43,7 @@ async def start_napster(url: str, user: dict):
             raise NotImplementedError(f"Tipe media Napster '{media_type}' belum didukung.")
         
     except Exception as e:
+        # Error ini seharusnya tidak terjadi jika 'start_album' juga diredam
         LOGGER.error(f"Error fatal di Napster handler: {e}\n{traceback.format_exc()}")
         raise e 
 
@@ -99,7 +101,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
                     async for chunk in response.content.iter_chunked(8192):
                         await f.write(chunk)
 
-    # --- PERBAIKAN: Menyembunyikan Error 404 dari Log ---
+    # --- PERBAIKAN 1: Menyembunyikan Error 404 dari Log ---
     except Exception as e:
         is_404_error = False
         if isinstance(e, aiohttp.ClientResponseError):
@@ -115,7 +117,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             LOGGER.error(f"Napster dl_track gagal untuk {item_id}: {e}")
         
         return False
-    # --- BATAS PERBAIKAN ---
+    # --- BATAS PERBAIKAN 1 ---
 
     try:
         await set_metadata(track_meta)
@@ -172,8 +174,12 @@ async def start_album(album_id: str, user: dict, upload=True):
     album_meta['tracks'] = successful_tracks
     album_meta['totaltracks'] = len(successful_tracks)
 
+    # --- PERBAIKAN 2: Ubah 'raise Exception' menjadi 'return' agar tidak ada error log ---
     if not successful_tracks:
-        raise Exception(f"Tidak ada lagu Napster yang berhasil diunduh untuk album {album_meta['title']}.")
+        # raise Exception(f"Tidak ada lagu Napster yang berhasil diunduh untuk album {album_meta['title']}.")
+        LOGGER.warning(f"Napster: Tidak ada lagu yang berhasil diunduh untuk album {album_meta['title']} (kemungkinan 404).")
+        return # Keluar dengan tenang
+    # --- BATAS PERBAIKAN 2 ---
 
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
 
