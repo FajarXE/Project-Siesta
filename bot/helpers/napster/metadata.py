@@ -130,15 +130,19 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['albumartist'] = album_data['artistName']
     metadata['tracknumber'] = str(track_data['index'])
     
-    # --- PERBAIKAN: Tambahkan Disc Number (Berdasarkan log) ---
+    # --- PERBAIKAN: Kirim SEMUA variasi key 'disc' ---
     if track_data.get('disc'):
-        metadata['discnumber'] = str(track_data.get('disc'))
+        disc_num = str(track_data.get('disc'))
+        metadata['discnumber'] = disc_num  # Standar
+        metadata['disc'] = disc_num        # Alternatif umum
     # --- BATAS PERBAIKAN ---
 
-    # --- PERBAIKAN: Tambahkan Total Discs (Berdasarkan log) ---
+    # --- PERBAIKAN: Kirim SEMUA variasi key 'total discs' ---
     if album_data.get('discCount'):
-        # Mengubah key ke 'disctotal' (lebih standar untuk tag file)
-        metadata['disctotal'] = str(album_data.get('discCount')) 
+        total_discs = str(album_data.get('discCount'))
+        metadata['disctotal'] = total_discs    # Standar (tag file)
+        metadata['totaldiscs'] = total_discs   # Alternatif umum
+        metadata['totalvolumes'] = total_discs # Untuk poster (dari masalah sebelumnya)
     # --- BATAS PERBAIKAN ---
     
     metadata['totaltracks'] = str(album_data['trackCount'])
@@ -294,6 +298,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     # --- PERBAIKAN: Tambahkan Total Volumes (Total Discs) untuk Poster Album ---
     if album_data.get('discCount'):
+        # Pastikan key 'totalvolumes' ada untuk poster
         metadata['totalvolumes'] = str(album_data.get('discCount'))
     # --- BATAS PERBAIKAN ---
     
