@@ -125,34 +125,38 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         raise NapsterError(f"Track '{track_data['name']}' tidak streamable.")
 
     metadata['itemid'] = track_id
-    metadata['title'] = track_data['name']
-    metadata['album'] = track_data['albumName']
-    metadata['albumartist'] = album_data['artistName']
-    metadata['tracknumber'] = str(track_data['index'])
     
-    # --- PERBAIKAN: Sediakan nilai default untuk 'volume' dan 'totalvolume' ---
-    # Ini untuk mencegah crash di set_m4a (bot/helpers/metadata.py)
+    # --- PERBAIKAN: Gunakan .get() atau '' untuk semua tag string ---
+    # Ini untuk mencegah crash 'NoneType' di set_m4a
+    metadata['title'] = track_data.get('name') or ''
+    metadata['album'] = track_data.get('albumName') or ''
+    metadata['albumartist'] = album_data.get('artistName') or ''
+    
+    metadata['tracknumber'] = str(track_data.get('index') or '')
+    
+    # Sediakan nilai default untuk 'volume' dan 'totalvolume'
     metadata['volume'] = str(track_data.get('disc') or '')
     metadata['totalvolume'] = str(album_data.get('discCount') or '')
-    # --- BATAS PERBAIKAN ---
     
-    metadata['totaltracks'] = str(album_data['trackCount'])
+    metadata['totaltracks'] = str(album_data.get('trackCount') or '')
     
-    # --- PERBAIKAN: Tangani jika tanggal rilis (released) adalah None ---
+    # Tangani jika tanggal rilis (released) adalah None
     release_date = album_data.get('released')
     if release_date:
         metadata['date'] = release_date.split('-')[0]
+    # 'date' akan menjadi '' jika tidak ada, yang aman untuk set_m4a
+    
+    metadata['copyright'] = album_data.get('copyright') or ''
+    metadata['upc'] = album_data.get('upc') or ''
+    metadata['isrc'] = track_data.get('isrc') or ''
     # --- BATAS PERBAIKAN ---
     
-    metadata['copyright'] = album_data.get('copyright')
-    metadata['upc'] = album_data.get('upc')
-    metadata['isrc'] = track_data.get('isrc')
     metadata['explicit'] = bool(track_data.get('isExplicit'))
     metadata['provider'] = 'Napster'
     metadata['type'] = 'track'
 
     # --- Logika Artis & Composer ---
-    artists = [track_data['artistName']]
+    artists = [track_data.get('artistName') or '']
     composers = []
     
     if track_data.get('contributors'):
@@ -274,21 +278,22 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         raise e
 
     metadata['itemid'] = album_id
-    metadata['title'] = album_data['name']
-    metadata['album'] = album_data['name']
-    metadata['artist'] = album_data['artistName']
-    metadata['albumartist'] = album_data['artistName']
     
-    # --- PERBAIKAN: Tangani jika tanggal rilis (released) adalah None ---
+    # --- PERBAIKAN: Gunakan .get() atau '' untuk semua tag string ---
+    metadata['title'] = album_data.get('name') or ''
+    metadata['album'] = album_data.get('name') or ''
+    metadata['artist'] = album_data.get('artistName') or ''
+    metadata['albumartist'] = album_data.get('artistName') or ''
+    
+    # Tangani jika tanggal rilis (released) adalah None
     release_date = album_data.get('released')
     if release_date:
         metadata['date'] = release_date.split('-')[0]
-    # --- BATAS PERBAIKAN ---
+    # 'date' akan menjadi '' jika tidak ada, yang aman untuk poster
     
-    metadata['totaltracks'] = str(album_data['trackCount'])
+    metadata['totaltracks'] = str(album_data.get('trackCount') or '')
     
-    # --- PERBAIKAN: Tambahkan Total Volumes (Total Discs) untuk Poster Album ---
-    # Kita tetap gunakan 'totalvolumes' di sini karena poster album mengharapkannya
+    # Tambahkan Total Volumes (Total Discs) untuk Poster Album
     if album_data.get('discCount'):
         metadata['totalvolumes'] = str(album_data.get('discCount'))
     # --- BATAS PERBAIKAN ---
