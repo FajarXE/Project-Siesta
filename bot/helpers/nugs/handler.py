@@ -135,10 +135,8 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         'albumartist': album_data.get('artistName'),
         'album': album_data.get('containerInfo'),
         
-        # Sediakan 'tracknumber' dan 'discnumber' untuk format nama file
         'tracknumber': str(track_data.get('trackNum')),
         'discnumber': str(track_data.get('discNum')),
-        # Sediakan 'volume' untuk penulis tag (metadata.py)
         'volume': str(track_data.get('discNum')),
         
         'totaltracks': str(len(album_data.get('songs'))),
@@ -198,7 +196,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     metadata['extension'] = selected_stream['extension']
     metadata['download_url'] = selected_stream['url']
     
-    # --- MODIFIKASI: Logika MQA Disederhanakan ---
+    # --- MODIFIKASI: Logika MQA dan Fallback yang Disempurnakan ---
     if selected_stream['codec'] == 'MQA':
         LOGGER.debug(f"Nugs: Deteksi MQA untuk {metadata['title']}...")
         temp_flac_header = await download_temp_header(selected_stream['url'], client.session.user_agent)
@@ -222,11 +220,31 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
                     os.remove(temp_flac_header)
         
         if not mqa_verified:
-            # PERBAIKAN: Jika verifikasi GAGAL, tetap beri label MQA 24-bit (sesuai permintaan Anda).
-            # Kita tidak akan mencari fallback FLAC 16-bit.
-            LOGGER.warning("Nugs: Verifikasi MQA gagal. Menggunakan label MQA 24-bit.")
-            metadata['quality'] = "MQA 24-bit"
-            metadata['bit_depth'] = 24
+            # Verifikasi MQA gagal (bukan FLAC, atau bukan MQA sejati)
+            # Coba cari fallback FLAC 16-bit (Priority 2)
+            flac_stream = next((s for s in stream_data if s['priority'] == 2), None)
+            if flac_stream:
+                LOGGER.info("Nugs: Fallback ke FLAC 16-bit karena verifikasi MQA gagal.")
+                selected_stream = flac_stream
+            else:
+                # Jika tidak ada FLAC, coba cari ALAC 16-bit (Priority 1)
+                alac_stream = next((s for s in stream_data if s['priority'] == 1), None)
+                if alac_stream:
+                    LOGGER.info("Nugs: Fallback ke ALAC 16-bit karena verifikasi MQA gagal & tidak ada FLAC.")
+                    selected_stream = alac_stream
+                else:
+                    # Pilihan terakhir: Tetap gunakan stream MQA yang gagal diverifikasi
+                    LOGGER.warning(f"Nugs: Verifikasi MQA gagal, tidak ada fallback FLAC/ALAC. Menggunakan stream MQA asli.")
+                    metadata['quality'] = "MQA 24-bit"
+                    metadata['bit_depth'] = 24
+                    
+            # Jika stream diganti (ke FLAC atau ALAC), perbarui metadata
+            if selected_stream['codec'] != 'MQA':
+                metadata['quality'] = selected_stream['quality_name']
+                metadata['extension'] = selected_stream['extension']
+                metadata['download_url'] = selected_stream['url']
+                metadata['bit_depth'] = 16
+                metadata['sample_rate'] = 44100
 
     elif selected_stream['codec'] in ['FLAC', 'ALAC']:
         metadata['bit_depth'] = 16
