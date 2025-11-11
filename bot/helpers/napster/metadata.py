@@ -117,10 +117,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             # --- BATAS PERBAIKAN ---
             album_data = album_data_list[0]
 
-        # --- TAMBAHAN DEBUG: Cetak data mentah ---
-        LOGGER.info(f"Napster DEBUG (Track Data): {track_data}")
-        LOGGER.info(f"Napster DEBUG (Album Data): {album_data}")
-        # --- BATAS DEBUG ---
+        # --- BATAS DEBUG (Baris log telah dihapus) ---
 
     except Exception as e:
         LOGGER.error(f"Napster: Gagal mendapatkan metadata track {track_id}: {e}")
@@ -135,14 +132,15 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['albumartist'] = album_data['artistName']
     metadata['tracknumber'] = str(track_data['index'])
     
-    # --- PERBAIKAN: Tambahkan Disc Number ---
+    # --- PERBAIKAN: Tambahkan Disc Number (Berdasarkan log) ---
     if track_data.get('disc'):
         metadata['discnumber'] = str(track_data.get('disc'))
     # --- BATAS PERBAIKAN ---
 
-    # --- PERBAIKAN: Tambahkan Total Discs (Total Volumes) ---
+    # --- PERBAIKAN: Tambahkan Total Discs (Berdasarkan log) ---
     if album_data.get('discCount'):
-        metadata['totaldiscs'] = str(album_data.get('discCount'))
+        # Mengubah key ke 'disctotal' (lebih standar)
+        metadata['disctotal'] = str(album_data.get('discCount')) 
     # --- BATAS PERBAIKAN ---
     
     metadata['totaltracks'] = str(album_data['trackCount'])
@@ -192,7 +190,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             genre_data = await asyncio.to_thread(client.get_string_from_items_list, 'genres', genre_ids, 'name')
             metadata['genre'] = ", ".join(list(genre_data.values()))
         except Exception as e:
-            LOGGER.warning(f"Napster: GGagal memproses genre: {e}")
+            LOGGER.warning(f"Napster: Gagal memproses genre: {e}")
 
     # Sampul
     metadata['cover'] = await _process_cover(metadata, track_data["albumId"])
