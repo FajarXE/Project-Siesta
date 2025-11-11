@@ -27,8 +27,8 @@ import bot.helpers.translations as lang
 # Format: {codec_enum: (nama_kualitas, ekstensi, prioritas)}
 QUALITY_MAP = {
     'AAC': ("AAC 150k", "m4a", 0),
-    'ALAC': ("ALAC 16-bit", "m4a", 1), # ALAC menggunakan ekstensi .m4a
-    'FLAC': ("FLAC 16-bit", "flac", 2),
+    'ALAC': ("ALAC", "m4a", 1), # --- PERUBAHAN --- (Sebelumnya "ALAC 16-bit")
+    'FLAC': ("FLAC", "flac", 2), # --- PERUBAHAN --- (Sebelumnya "FLAC 16-bit")
     'MQA': ("MQA", "flac", 3), # Akan diupdate oleh detektor MQA
     'MHA1': ("Sony 360RA", "m4a", 4) # (Format Spasial)
 }
@@ -86,7 +86,7 @@ async def download_temp_header(file_url: str, user_agent: str) -> str | None:
     temp_location = await asyncio.to_thread(create_temp_filename, '.flac')
     
     try:
-        # --- PERBAIKAN 1 --- : Mengubah rentang dari 32KB menjadi 1MB (1048576 byte)
+        # Menggunakan rentang 1MB yang sudah diperbaiki dari analisis sebelumnya
         headers = {'User-Agent': user_agent, 'Range': 'bytes=0-1048576'}
         async with aiohttp.ClientSession() as session:
             async with session.get(file_url, headers=headers) as response:
@@ -157,7 +157,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     }
     
     # Sampul
-    # --- PERBAIKAN 2 --- : Memperbaiki typo URL, menambahkan "://"
+    # Menggunakan URL yang sudah diperbaiki dari analisis sebelumnya
     cover_url = f"https://secure.livedownloads.com{album_data.get('img', {}).get('url')}"
     metadata['cover'] = await create_cover_file(cover_url, metadata)
     metadata['thumbnail'] = await create_cover_file(cover_url, metadata, True)
@@ -200,7 +200,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
     selected_stream = stream_data[0]
     
     # Tetapkan metadata berdasarkan pilihan ini
-    metadata['quality'] = selected_stream['quality_name']
+    metadata['quality'] = selected_stream['quality_name'] # Ini sekarang akan menjadi "MQA", "FLAC", atau "ALAC"
     metadata['extension'] = selected_stream['extension']
     metadata['download_url'] = selected_stream['url']
 
@@ -217,11 +217,17 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
                     # BERHASIL: Ganti label "MQA" menjadi label MQA yang terverifikasi
                     original_rate = mqa_file.get_original_sample_rate()
                     studio = " Studio" if mqa_file.is_mqa_studio else ""
-                    metadata['quality'] = f"MQA{studio} {mqa_file.bit_depth}-bit / {original_rate}kHz"
+                    
+                    # --- PERUBAHAN ---: Baris ini dinonaktifkan untuk menjaga label tetap "MQA"
+                    # metadata['quality'] = f"MQA{studio} {mqa_file.bit_depth}-bit / {original_rate}kHz"
+                    
+                    # Kita tetap menyimpan info ini untuk metadata file, meskipun tidak ada di label
                     metadata['bit_depth'] = mqa_file.bit_depth
                     metadata['sample_rate'] = mqa_file.original_sample_rate
                     mqa_verified = True
-                    LOGGER.info(f"Nugs: Deteksi MQA Berhasil: {metadata['quality']}")
+                    
+                    # --- PERUBAHAN ---: Memperbarui log agar mencerminkan label yang diinginkan
+                    LOGGER.info(f"Nugs: Deteksi MQA Berhasil: {metadata['quality']} (Detail: {mqa_file.bit_depth}-bit / {original_rate}kHz{studio})")
             except Exception as e:
                 LOGGER.error(f"Nugs: Error MqaIdentifier: {e}. Kemungkinan file bukan FLAC.")
             finally:
@@ -230,9 +236,11 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
         
         if not mqa_verified:
             # GAGAL: Verifikasi gagal. TAPI KITA TETAP MENGGUNAKAN MQA INI.
-            # Jangan cari fallback. Cukup beri label MQA 24-bit.
-            LOGGER.warning("Nugs: Verifikasi MQA gagal. Menggunakan label MQA 24-bit.")
-            metadata['quality'] = "MQA 24-bit"
+            # --- PERUBAHAN ---: Memperbarui log
+            LOGGER.warning(f"Nugs: Verifikasi MQA gagal. Menggunakan label '{metadata['quality']}'.")
+            
+            # --- PERUBAHAN ---: Baris ini dinonaktifkan
+            # metadata['quality'] = "MQA 24-bit"
             metadata['bit_depth'] = 24 # Asumsi
 
     elif selected_stream['codec'] == 'FLAC':
