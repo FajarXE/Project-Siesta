@@ -129,6 +129,12 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['album'] = track_data['albumName']
     metadata['albumartist'] = album_data['artistName']
     metadata['tracknumber'] = str(track_data['index'])
+    
+    # --- PERBAIKAN: Tambahkan Disc Number ---
+    if track_data.get('disc'):
+        metadata['discnumber'] = str(track_data.get('disc'))
+    # --- BATAS PERBAIKAN ---
+    
     metadata['totaltracks'] = str(album_data['trackCount'])
     
     # --- PERBAIKAN: Tangani jika tanggal rilis (released) adalah None ---
