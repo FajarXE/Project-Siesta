@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/napster/api.py]
+# [GANTI FILE: bot/helpers/napster/api.py]
 
 import base64
 import json
@@ -13,8 +13,11 @@ class NapsterAPI:
     def __init__(self, exception, api_key, customer_secret):
         self.API_URL = 'https://api.napster.com'
         self.API_VERSION = 'v2.2'
-        # Modifikasi: Ganti create_requests_session dengan requests.Session()
-        self.s = requests.Session() 
+        
+        # --- PERBAIKAN: Hapus self.s (Session bersama) ---
+        # requests.Session() tidak thread-safe dan menyebabkan pool exhaustion.
+        # Kita akan menggunakan requests.get/post langsung.
+        
         self.exception = exception
 
         self.api_key = api_key
@@ -39,7 +42,10 @@ class NapsterAPI:
         }
 
         headers = {**self.headers, 'Authorization': 'Basic ' + basic_token}
-        r = self.s.post(self.API_URL + '/oauth/token', data, headers=headers)
+        
+        # --- PERBAIKAN: Ganti self.s.post dengan requests.post ---
+        r = requests.post(self.API_URL + '/oauth/token', data=data, headers=headers)
+        
         if r.status_code != 200: 
             raise self.exception(r.json().get('message', 'Login gagal'))
 
@@ -70,7 +76,9 @@ class NapsterAPI:
             'grant_type': 'refresh_token'
         }
 
-        r = self.s.post(self.API_URL + '/oauth/access_token', data, headers=self.headers)
+        # --- PERBAIKAN: Ganti self.s.post dengan requests.post ---
+        r = requests.post(self.API_URL + '/oauth/access_token', data=data, headers=self.headers)
+        
         if r.status_code != 200: 
             raise self.exception(r.json().get('message', 'Refresh token gagal'))
 
@@ -85,7 +93,9 @@ class NapsterAPI:
         if 'catalog' not in params:
             params['catalog'] = self.catalog_region
             
-        r = self.s.get(f'{self.API_URL}/{self.API_VERSION}/{url}', params=params, headers=headers)
+        # --- PERBAIKAN: Ganti self.s.get dengan requests.get ---
+        r = requests.get(f'{self.API_URL}/{self.API_VERSION}/{url}', params=params, headers=headers)
+        
         if r.status_code not in [200, 201, 202]: 
             raise self.exception(r.json().get('message', f'API Error {r.status_code}'))
         return r.json()
