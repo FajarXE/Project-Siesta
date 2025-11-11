@@ -64,9 +64,12 @@ except ImportError:
 # --- TAMBAHAN BARU: Impor Handler Napster ---
 try:
     from ..helpers.napster.handler import start_napster
+    # --- TAMBAHAN BARU: Impor error Napster ---
+    from ..helpers.napster.manager import NapsterError
 except ImportError:
     async def start_napster(*args, **kwargs):
         raise NotImplementedError("Modul Napster ('handler.py') belum diimplementasikan.")
+    class NapsterError(Exception): pass
 # --- BATAS TAMBAHAN ---
 
 # --- TAMBAHAN BARU: Impor Handler Idagio ---
@@ -136,7 +139,8 @@ async def run_download_task(link: str, user: dict):
             
     except Exception as e:
         error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
-        if "not available in any" in str(e) or "Maaf, tidak ada akun" in str(e) or "NotImplementedError" in str(e) or "URL Deezer tidak valid" in str(e):
+        # --- PERBAIKAN: Tambahkan NapsterError ke pesan yang bersih ---
+        if "not available in any" in str(e) or "Maaf, tidak ada akun" in str(e) or "NotImplementedError" in str(e) or "URL Deezer tidak valid" in str(e) or "NapsterError" in str(e):
             error_message = f"Tugas Gagal: {e}"
             
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
@@ -219,8 +223,12 @@ async def start_link(link: str, user: dict) -> None:
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
     # --- TAMBAHAN BARU: URL Napster ---
-    # --- PERBAIKAN: Menambahkan domain dari log error ---
-    napster = ["https://app.napster.com", "napster.com", "http://app.napster.com", "https://play.napster.com", "play.napster.com"]
+    # --- PERBAIKAN: Menambahkan 'web.napster.com' dari log error ---
+    napster = [
+        "https://app.napster.com", "napster.com", "http://app.napster.com", 
+        "https://play.napster.com", "play.napster.com", 
+        "https://web.napster.com", "web.napster.com"
+    ]
     # --- BATAS TAMBAHAN ---
     
     # --- TAMBAHAN BARU: URL Idagio ---
@@ -446,10 +454,16 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.info(f"Napster: Unduhan berhasil menggunakan akun.")
             return
         except Exception as e:
-            # Napster API tampaknya tidak terlalu rentan region-lock,
-            # tapi Anda bisa menambahkan logika 'try/except' di sini jika perlu.
-            LOGGER.error(f"Napster: Tugas gagal (Fatal): {e}")
-            raise e
+            # --- PERBAIKAN: Tambahkan penanganan error Napster ---
+            error_str = str(e).lower()
+            if isinstance(e, NapsterError) or "tidak ditemukan" in error_str or "tidak tersedia" in error_str:
+                # Ini adalah error "bersih" (item tidak ada), jangan lempar traceback penuh
+                LOGGER.error(f"Napster: Tugas gagal (Dapat Ditangani): {e}")
+                raise e
+            else:
+                # Ini adalah error tak terduga
+                LOGGER.error(f"Napster: Tugas gagal (Fatal): {e}")
+                raise e
     # --- BATAS TAMBAHAN ---
 
     # --- TAMBAHAN BARU: Blok Idagio ---
@@ -497,3 +511,4 @@ async def start_link(link: str, user: dict) -> None:
     else:
         LOGGER.warning(f"Link tidak dikenali: {link}")
         raise Exception(f"Link tidak dikenali. Bot tidak tahu cara mengunduh dari: {link}")
+
