@@ -13,8 +13,8 @@ from ..metadata import create_cover_file
 from .dzapi import DeezerAPI 
 from bot.logger import LOGGER
 
-# --- MODIFIKASI: Impor manager Deezer ---
-from .manager import deezer_manager
+# --- MODIFIKASI: Impor manager Deezer dan Error kustom ---
+from .manager import deezer_manager, DeezerError
 # --- MODIFIKASI SELESAI ---
 
 # --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
@@ -69,7 +69,7 @@ async def process_track_metadata(track_id, r_id, cover=None,
     thumbnail=None, total_tracks=None, album_genre=None, total_disks=None, user: dict = None): 
     
     if not user:
-        raise Exception("Fungsi process_track_metadata memerlukan argumen 'user'.")
+        raise DeezerError("Fungsi process_track_metadata memerlukan argumen 'user'.")
     deezerapi = user['deezer_api']
 
     metadata = copy.deepcopy(base_meta)
@@ -87,7 +87,9 @@ async def process_track_metadata(track_id, r_id, cover=None,
         t_meta_page = t_meta_page.get('FALLBACK', t_meta_page) 
     except Exception as e:
         LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
-        raise Exception(f"Deezer : Track not available (pageTrack API failed)")
+        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
+        raise DeezerError(f"Deezer : Track not available (pageTrack API failed)")
+        # --- BATAS PERBAIKAN ---
     
     metadata['itemid'] = track_id
     metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
@@ -170,15 +172,13 @@ async def process_track_metadata(track_id, r_id, cover=None,
     metadata['token'] = t_meta_page['TRACK_TOKEN']
     metadata['token_expiry'] = t_meta_page['TRACK_TOKEN_EXPIRE']
     
-    # --- MODIFIKASI: Teruskan user_id ke get_quality ---
     metadata['quality'] = await get_quality(t_meta_page, deezerapi, user['user_id'])
-    # --- MODIFIKASI SELESAI ---
     return metadata
             
 
 async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, user: dict = None):
     if not user:
-        raise Exception("Fungsi process_album_metadata memerlukan argumen 'user'.")
+        raise DeezerError("Fungsi process_album_metadata memerlukan argumen 'user'.")
     deezerapi = user['deezer_api']
 
     metadata = copy.deepcopy(base_meta)
@@ -252,7 +252,9 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
             continue
 
     if not metadata['tracks']:
-        raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
+        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
+        raise DeezerError(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
+        # --- BATAS PERBAIKAN ---
     
     metadata['quality'] = metadata['tracks'][0]['quality']
     return metadata
@@ -261,7 +263,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
 
 async def process_playlist_meta(raw_meta, r_id, user: dict = None):
     if not user:
-        raise Exception("Fungsi process_playlist_meta memerlukan argumen 'user'.")
+        raise DeezerError("Fungsi process_playlist_meta memerlukan argumen 'user'.")
     deezerapi = user['deezer_api']
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -318,9 +320,13 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
 async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
     if not countries:
-        raise Exception("Deezer : Track not available")
+        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
+        raise DeezerError("Deezer : Track not available")
+        # --- BATAS PERBAIKAN ---
     elif deezerapi.country not in countries:
-        raise Exception("Deezer : Track not available in your country")
+        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
+        raise DeezerError("Deezer : Track not available in your country")
+        # --- BATAS PERBAIKAN ---
     
     # Dapatkan preferensi pengguna
     preferred_quality = deezer_manager.get_user_quality(user_id)
@@ -355,7 +361,9 @@ async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
         if 'MP3_128' in deezerapi.available_formats and f'FILESIZE_MP3_128' in meta and meta[f'FILESIZE_MP3_128'] != '0':
             final_format = 'MP3_128'
         else:
-             raise Exception(f"Deezer: Format yang diminta ({preferred_quality}) atau fallback (MP3_128) tidak tersedia untuk lagu ini atau oleh langganan ARL ini.")
+             # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
+             raise DeezerError(f"Deezer: Format yang diminta ({preferred_quality}) atau fallback (MP3_128) tidak tersedia untuk lagu ini atau oleh langganan ARL ini.")
+             # --- BATAS PERBAIKAN ---
 
     return final_format
 # --- MODIFIKASI SELESAI ---
