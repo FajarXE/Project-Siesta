@@ -66,6 +66,14 @@ except ImportError:
     idagio_manager = _DummyManager()
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Bugs ---
+try:
+    from bot.helpers.bugs.manager import bugs_manager
+except ImportError:
+    bugs_manager = _DummyManager()
+# --- BATAS TAMBAHAN ---
+
+
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def fetch_base_buttons():
@@ -193,6 +201,18 @@ def providers_button():
                 InlineKeyboardButton(
                     text="IDAGIO", 
                     callback_data='idP' # Idagio Panel
+                )
+            ]
+        )
+    # --- BATAS TAMBAHAN ---
+    
+    # --- TAMBAHAN BARU: Tombol Admin Bugs ---
+    if bugs_manager and bugs_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="BUGS", 
+                    callback_data='bgP' # Bugs Panel
                 )
             ]
         )
@@ -636,6 +656,51 @@ def id_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Tombol Bugs ---
+def bugs_button(quality: dict, user_id: int = None):
+    """Membuat tombol untuk pengaturan kualitas Bugs."""
+    buttons = []
+    usetting = user_id is not None
+    prefix = "bgQ" if not usetting else f"ubgs" # Bugs Quality / User Bugs Set
+    row = []
+    display_text_map = {
+        "flac24": "FLAC 24-bit",
+        "flac": "FLAC 16-bit",
+        "aac256": "AAC 256k",
+        "320k": "MP3 320k",
+        "aac": "AAC 128k"
+    }
+    # Kualitas Bugs diurutkan dalam 3 baris
+    keys_in_order = ["flac24", "flac", "aac256", "320k", "aac"]
+    
+    # Baris 1: FLAC
+    row.append(InlineKeyboardButton(quality.get("flac24", "FLAC 24-bit"), callback_data=f"{prefix}_{display_text_map['flac24']}"))
+    row.append(InlineKeyboardButton(quality.get("flac", "FLAC 16-bit"), callback_data=f"{prefix}_{display_text_map['flac']}"))
+    buttons.append(row)
+    row = []
+    
+    # Baris 2: AAC/MP3
+    row.append(InlineKeyboardButton(quality.get("aac256", "AAC 256k"), callback_data=f"{prefix}_{display_text_map['aac256']}"))
+    row.append(InlineKeyboardButton(quality.get("320k", "MP3 320k"), callback_data=f"{prefix}_{display_text_map['320k']}"))
+    buttons.append(row)
+    row = []
+
+    # Baris 3: AAC Low
+    row.append(InlineKeyboardButton(quality.get("aac", "AAC 128k"), callback_data=f"{prefix}_{display_text_map['aac']}"))
+    buttons.append(row)
+
+    if usetting:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
+
 
 def usetting_button() -> InlineKeyboardMarkup:
     buttons = []
@@ -675,9 +740,15 @@ def usetting_button() -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text=f"Idagio Quality", callback_data=f"uset_idagio")])
     # --- BATAS TAMBAHAN ---
     
+    # --- TAMBAHAN BARU: Tombol Pengguna Bugs ---
+    if bugs_manager and bugs_manager.clients:
+        buttons.append([InlineKeyboardButton(text=f"Bugs Quality", callback_data=f"uset_bugs")])
+    # --- BATAS TAMBAHAN ---
+    
     buttons.append([InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")])
     buttons.append([InlineKeyboardButton(text="ALBUM_ZIP", callback_data="zip_album")])
     buttons.append([InlineKeyboardButton(text="ART_POSTER", callback_data="zip_poster")])
     buttons.append([InlineKeyboardButton(text="Close", callback_data="uset_close")])
     
     return InlineKeyboardMarkup(buttons)
+
