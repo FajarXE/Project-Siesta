@@ -292,7 +292,33 @@ class Config:
         logging.warning("Tidak ada kredensial Nugs.net (NUGS_EMAIL_1, dll.) ditemukan di .env")
 #-------------------- 
 # --- BATAS TAMBAHAN ---
-    
+
+# --- TAMBAHAN BARU: Blok Bugs ---
+#--------------------    
+# BUGS
+#--------------------
+    BUGS_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"BUGS_EMAIL_{i}")
+        password = getenv(f"BUGS_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan Bugs Akun #{i} (Email/Pass)")
+            account_data = {"email": email, "password": password, "id": i}
+            BUGS_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun Bugs.")
+            break
+
+    if not BUGS_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Bugs (BUGS_EMAIL_1, dll.) ditemukan di .env")
+#-------------------- 
+# --- BATAS TAMBAHAN ---
+
 # CONCURRENT
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
+
