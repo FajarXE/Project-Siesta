@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/bugs/manager.py]
+# [GANTI FILE: bot/helpers/bugs/manager.py]
 
 import asyncio
 import itertools
@@ -46,9 +46,11 @@ class BugsLoginManager:
         self._client_cycler = None
         self.device_id = None # Akan dimuat dari DB atau dibuat baru
         
-        # Kualitas dari 'interface.py': ['flac24', 'flac', 'aac256', '320k', 'aac']
+        # Kualitas dari 'interface.py': ['flac', 'aac256', '320k', 'aac']
         self.quality = "flac" # Kualitas default bot
-        self.valid_qualities = ["flac24", "flac", "aac256", "320k", "aac"]
+        # --- PERBAIKAN: Hapus 'flac24' ---
+        self.valid_qualities = ["flac", "aac256", "320k", "aac"]
+        # --- BATAS PERBAIKAN ---
         
         # Cache RAM untuk pengaturan kualitas per-pengguna
         self.user_data = {} 
@@ -168,4 +170,4 @@ class BugsLoginManager:
         return self.quality 
 
 # Inisialisasi manajer global
-bugs_manager = BugsLoginManager(Config.BUGS_ACCOUNTS) # Asumsi Anda akan menambahkan BUGS_ACCOUNTS ke config.py
+bugs_manager = BugsLoginManager(Config.BUGS_ACCOUNTS)
