@@ -63,10 +63,19 @@ except ImportError:
     idagio_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Bugs ---
+try:
+    from ..helpers.bugs.manager import bugs_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor bugs_manager.")
+    bugs_manager = None
+# --- BATAS TAMBAHAN ---
+
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
-    bs_button, sc_button, np_button, id_button # <-- TAMBAHKAN ID_BUTTON
+    bs_button, sc_button, np_button, id_button,
+    bugs_button # <-- TAMBAHKAN BUGS_BUTTON
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -106,8 +115,8 @@ Choose Menu option bellow:
     await edit_message(m, text, markup=usetting_button())
 
 
-# --- MODIFIKASI: Tambahkan 'idagio' ke regex ---
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio)"))
+# --- MODIFIKASI: Tambahkan 'bugs' ke regex ---
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -306,6 +315,28 @@ async def uset_cb(client, query, datatype=""):
         if current in quality:
             quality[current] = quality[current] + '✅'
         return await edit_message(query.message, text, markup=id_button(quality, user_id))
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Blok Bugs ---
+    if data[1] == "bugs" or datatype == "bugs":
+        text = f"Choose Bugs Audio Quality bellow:"
+        quality = {
+            "flac24": "FLAC 24-bit",
+            "flac": "FLAC 16-bit",
+            "aac256": "AAC 256k",
+            "320k": "MP3 320k",
+            "aac": "AAC 128k"
+        }
+        if not bugs_manager or not bugs_manager.clients:
+            return await edit_message(query.message, "Layanan Bugs tidak aktif (tidak ada klien yang login).")
+        
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        current = main_user_dict.get("bugs_qual", bugs_manager.quality) 
+        await bugs_manager.setup_quality(user_id, current) # Sinkronkan ke cache lokal
+        
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        return await edit_message(query.message, text + "\n(Kualitas FLAC tergantung langganan akun bot)", markup=bugs_button(quality, user_id))
     # --- BATAS TAMBAHAN ---
 
 
@@ -577,6 +608,37 @@ async def uset_idagio(client, query):
 
     await uset_cb(client, query, "idagio")
 
+# --- TAMBAHAN BARU: Handler User Bugs ---
+@Client.on_callback_query(filters.regex("^ubgs")) # User Bugs Set
+async def uset_bugs(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    qual_map_display = {
+        "FLAC 24-bit": "flac24",
+        "FLAC 16-bit": "flac",
+        "AAC 256k": "aac256",
+        "MP3 320k": "320k",
+        "AAC 128k": "aac"
+    }
+    to_set_display = query.data.split('_')[1]
+    to_set = qual_map_display.get(to_set_display)
+    if not to_set:
+        return await query.answer("Kualitas tidak valid.", True)
+    if not bugs_manager or not bugs_manager.clients:
+        await query.answer("Layanan Bugs tidak aktif!", show_alert=True)
+        return
+    user_id = query.from_user.id
+    
+    # --- PERBAIKAN: Gunakan save_user_settings ---
+    await bugs_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['bugs_qual'] = to_set 
+    await database.save_user_settings(user_id, {'bugs_qual': to_set})
+    # --- BATAS PERBAIKAN ---
+
+    await uset_cb(client, query, "bugs")
+# --- BATAS TAMBAHAN ---
+
 
 @Client.on_callback_query(filters.regex("^zip"))
 async def uset_zip(self, query):
@@ -663,7 +725,7 @@ async def debug(c, m): # debugger
     else:
         dt_sc += "Tidak ada klien Soundcloud yang aktif (Token hilang)."
 
-    dt_dz = "\n\nDEEZER:\n"
+    dt_dz = "\n\NDEEZER:\n"
     if deezer_manager and deezer_manager.clients:
         dt_dz += f"{len(deezer_manager.clients)} klien Deezer aktif.\n"
         dt_dz += f"Kualitas Default: {deezer_manager.quality}\n"
@@ -703,8 +765,19 @@ async def debug(c, m): # debugger
     else:
         dt_id += "Tidak ada klien Idagio yang aktif."
 
+    # --- TAMBAHAN BARU: Info Debug Bugs ---
+    dt_bg = "\n\nBUGS:\n"
+    if bugs_manager and bugs_manager.clients:
+        dt_bg += f"{len(bugs_manager.clients)} klien Bugs aktif.\n"
+        dt_bg += f"Kualitas Default: {bugs_manager.quality}\n"
+        dt_bg += f"Cache User (Global): {len([u for u in bot_set.user_data if 'bugs_qual' in bot_set.user_data[u]])} pengguna"
+    else:
+        dt_bg += "Tidak ada klien Bugs yang aktif."
+    # --- BATAS TAMBAHAN ---
+
     zips = f"\n\n{bot_set.album_zip}"
     user_dict = bot_set.user_data
     zips += f"\n\n{user_dict}"
     
-    await m.reply(dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + zips, True)
+    # --- MODIFIKASI: Tambahkan dt_bg ke pesan balasan ---
+    await m.reply(dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + zips, True)
