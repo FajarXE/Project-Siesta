@@ -166,16 +166,10 @@ async def start_album(album_url: str, user: dict, upload=True):
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
-    # --- PERBAIKAN: Atasi 'NoneType' error dengan memberikan nilai default ---
-    try:
-        concurrency = int(bot_set.playlist_conc)
-        if concurrency <= 0:
-            concurrency = 5
-    except (TypeError, ValueError):
-        LOGGER.warning("HighResAudio: bot_set.playlist_conc tidak valid, menggunakan default 5.")
-        concurrency = 5
-        
-    sem = asyncio.Semaphore(concurrency) 
+    # --- PERBAIKAN: Paksa semaphore ke 1 untuk progres ---
+    # Ini akan mengunduh lagu satu per satu, tapi memastikan
+    # pembaruan progres tidak di-flood dan ditampilkan dengan benar.
+    sem = asyncio.Semaphore(1) 
     # --- BATAS PERBAIKAN ---
     
     total_tracks = len(album_meta['tracks'])
@@ -187,9 +181,8 @@ async def start_album(album_url: str, user: dict, upload=True):
             result = await task_coro
             completed_count += 1
             
-            # --- PERBAIKAN: Ubah '% 5' menjadi '% 1' agar selalu update ---
+            # Sekarang ini aman karena sem=1, tidak akan ada flood
             if completed_count % 1 == 0 or completed_count == total_tracks:
-            # --- BATAS PERBAIKAN ---
                 try:
                     await edit_message(
                         user['bot_msg'],
@@ -200,7 +193,10 @@ async def start_album(album_url: str, user: dict, upload=True):
                             f"{int((completed_count/total_tracks)*100)}%"
                         )
                     )
-                except: pass 
+                except Exception as e:
+                    # Log jika masih gagal, tapi jangan 'pass'
+                    LOGGER.warning(f"HighResAudio: Gagal mengedit pesan progres: {e}")
+            
             return result, track_meta
 
     task_coroutines = []
