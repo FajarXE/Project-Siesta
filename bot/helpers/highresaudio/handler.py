@@ -4,6 +4,7 @@ import aiofiles
 import os
 import traceback
 import asyncio
+import math # <-- PERBAIKAN: Impor 'math' untuk progress bar
 import requests # Diperlukan untuk unduhan sinkron
 
 from pathvalidate import sanitize_filepath
@@ -19,9 +20,7 @@ from .manager import HighResAudioError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-# --- PERBAIKAN: Hapus 'progress_bar' dari impor ---
 from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
-# --- BATAS PERBAIKAN ---
 from ...settings import bot_set 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
@@ -183,9 +182,17 @@ async def start_album(album_url: str, user: dict, upload=True):
             
             if completed_count % 1 == 0 or completed_count == total_tracks:
                 try:
-                    # --- PERBAIKAN: Kembali ke versi 5 argumen ---
-                    percentage_str = f"{int((completed_count/total_tracks)*100)}%"
+                    # --- PERBAIKAN: Buat bar & persentase (Disalin dari utils.py) ---
+                    percentage_int = int((completed_count/total_tracks)*100)
+                    percentage_str = f"{percentage_int}%"
                     
+                    # Logika dari 'utils.py' untuk membuat bar
+                    bar = "{0}{1}".format(
+                        ''.join(["▰" for _ in range(math.floor(percentage_int / 10))]),
+                        ''.join(["▱" for _ in range(10 - math.floor(percentage_int / 10))])
+                    )
+                    # --- BATAS PERBAIKAN ---
+
                     await edit_message(
                         user['bot_msg'],
                         lang.s.DOWNLOAD_PROGRESS.format(
@@ -193,10 +200,10 @@ async def start_album(album_url: str, user: dict, upload=True):
                             total_tracks,       # {1}
                             album_meta['title'],# {2}
                             percentage_str,     # {3}
-                            track_meta['title'] # {4}
+                            track_meta['title'],# {4}
+                            bar                 # {5} <-- Ini sekarang akan berfungsi
                         )
                     )
-                    # --- BATAS PERBAIKAN ---
                 except Exception as e:
                     # Log jika masih gagal
                     LOGGER.warning(f"HighResAudio: Gagal mengedit pesan progres: {e}")
