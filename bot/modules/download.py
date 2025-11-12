@@ -264,9 +264,9 @@ async def start_link(link: str, user: dict) -> None:
     nugs = ["https://play.nugs.net", "play.nugs.net", "https://streamapi.nugs.net"]
     # --- BATAS MODIFIKASI ---
 
-    # --- TAMBAHAN BARU: URL Bugs ---
-    bugs = ["https://music.bugs.co.kr", "music.bugs.co.kr"]
-    # --- BATAS TAMBAHAN ---
+    # --- PERBAIKAN: URL Bugs (Tambahkan m.bugs.co.kr) ---
+    bugs = ["https://music.bugs.co.kr", "music.bugs.co.kr", "https://m.bugs.co.kr", "m.bugs.co.kr"]
+    # --- BATAS PERBAIKAN ---
     
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
