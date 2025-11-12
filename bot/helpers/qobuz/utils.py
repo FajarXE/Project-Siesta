@@ -284,6 +284,10 @@ async def check_type(url, user: dict):
         type_dict = possibles[url_type]
     except (KeyError, IndexError):
         raise Exception(f"URL tidak dapat dikenali: {url}")
+    except TypeError:
+        # Ini akan menangani error jika get_url_info mengembalikan None
+        raise Exception(f"URL Qobuz tidak valid atau tidak dapat di-parse: {url}")
+        
     content = None
     items = None
     if type_dict["func"]:
@@ -329,6 +333,12 @@ async def get_url_info(url):
         r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)",
         url,
     )
+    
+    # --- PERBAIKAN: Tambahkan pemeriksaan jika r adalah None ---
+    if not r:
+        return None
+    # --- BATAS PERBAIKAN ---
+    
     return r.groups()
 
 
