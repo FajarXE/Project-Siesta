@@ -80,7 +80,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
-    # --- PERBAIKAN: Gunakan '' (string kosong) untuk DATE, dan 1/False untuk sisanya ---
+    # --- PERBAIKAN: Menambahkan GENRE dan COMPOSER ---
     # 1. RELEASE DATE: Gunakan fallback '' (string kosong).
     release_date_raw = data.get('publishDate', '') 
     metadata['date'] = release_date_raw[:4] # Jika '' maka akan jadi ''
@@ -91,6 +91,12 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     
     # 3. EXPLICIT: Gunakan fallback False (ini sudah berfungsi)
     metadata['explicit'] = bool(data.get('explicit', False))
+
+    # 4. GENRE: (Tebakan)
+    metadata['genre'] = data.get('genre', '') 
+
+    # 5. COMPOSER: (Tebakan)
+    metadata['composer'] = data.get('composer', '')
     # --- BATAS PERBAIKAN ---
 
     # --- Logika Sampul (Cover) ---
@@ -128,9 +134,12 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['type'] = 'track'
             track_meta['cover'] = metadata['cover']
             track_meta['thumbnail'] = metadata['thumbnail']
+            
             # --- PERBAIKAN: Salin data baru ke metadata lagu ---
-            track_meta['date'] = metadata['date'] # Ini akan menyalin '' jika tidak ada
+            track_meta['date'] = metadata['date'] 
             track_meta['explicit'] = metadata['explicit']
+            track_meta['genre'] = metadata['genre']
+            track_meta['composer'] = metadata['composer']
             # --- BATAS PERBAIKAN ---
 
             # Metadata spesifik lagu
