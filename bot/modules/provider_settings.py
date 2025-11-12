@@ -532,13 +532,15 @@ async def idagio_quality_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^bgP")) # Bugs Panel
 async def bugs_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
+        # --- PERBAIKAN: Hapus 'flac24' ---
         quality = {
-            "flac24": "FLAC 24-bit",
             "flac": "FLAC 16-bit",
             "aac256": "AAC 256k",
             "320k": "MP3 320k",
             "aac": "AAC 128k"
         }
+        # --- BATAS PERBAIKAN ---
+        
         if not bugs_manager or not bugs_manager.clients:
             return await edit_message(cb.message, "Layanan Bugs tidak aktif (tidak ada klien yang login).")
         
@@ -555,13 +557,15 @@ async def bugs_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^bgQ")) # Bugs Quality Set
 async def bugs_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
+        # --- PERBAIKAN: Hapus 'flac24' ---
         qual_map_display = {
-            "FLAC 24-bit": "flac24",
             "FLAC 16-bit": "flac",
             "AAC 256k": "aac256",
             "MP3 320k": "320k",
             "AAC 128k": "aac"
         }
+        # --- BATAS PERBAIKAN ---
+        
         to_set_display = cb.data.split('_')[1]
         to_set = qual_map_display.get(to_set_display)
         if not to_set:
