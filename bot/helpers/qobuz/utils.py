@@ -22,9 +22,7 @@ except ImportError:
     class QobuzContentUnavailableError(Exception):
         pass
 
-# --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
-# --- BATAS MODIFIKASI ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
@@ -333,7 +331,7 @@ async def check_type(url, user: dict):
         return None, item_id, type_dict, content
 
 
-# --- FUNGSI DIPERBARUI UNTUK MENANGANI REDIRECT (MANUAL HTTP) ---
+# --- FUNGSI DIPERBARUI UNTUK MENG-SCRAPE HTML (FIX 5) ---
 async def get_url_info(url):
     # Pola regex standar (pola utama)
     regex_pattern = (
@@ -346,56 +344,72 @@ async def get_url_info(url):
     if r:
         return r.groups() # (type, id)
 
-    # 2. Jika gagal, coba selesaikan redirect secara manual
-    logging.info(f"Qobuz URL tidak dikenali, mencoba menyelesaikan redirect untuk: {url}")
+    # 2. Jika gagal, coba G-E-T H-T-M-L dan scrape og:type (cara lambat)
+    logging.info(f"Qobuz URL tidak dikenali, mencoba scrape HTML untuk: {url}")
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9'
+            'Accept-Language': 'en-US,en;q=0.9' # Meminta bahasa Inggris
         }
         async with aiohttp.ClientSession(headers=headers) as session:
-            # --- PERBAIKAN: Setel allow_redirects=False untuk menangkap header 'Location' ---
-            async with session.get(url, allow_redirects=False, timeout=10) as response:
+            # --- PERBAIKAN: Gunakan allow_redirects=True (default) ---
+            # Biarkan aiohttp menangani redirect. Kita akan scrape dari URL final.
+            async with session.get(url, allow_redirects=True, timeout=10) as response:
                 
-                # 3. Cek jika ada redirect manual
-                if response.status in (301, 302, 307, 308) and 'Location' in response.headers:
-                    final_url = response.headers['Location']
-                    
-                    # Qobuz kadang mengirim URL relatif (tanpa domain)
-                    if final_url.startswith('/'):
-                        final_url = f"https://www.qobuz.com{final_url}"
-                        
-                    logging.info(f"Qobuz URL dialihkan (Manual HTTP) ke: {final_url}")
-                    
-                    # Coba regex lagi pada URL final
-                    r_final = re.search(regex_pattern, final_url)
-                    if r_final:
-                        return r_final.groups() # (type, id)
-                    else:
-                        logging.error(f"Gagal mem-parsing URL Qobuz yang sudah dialihkan: {final_url}")
-                        return None
-                
-                # 4. Jika tidak ada redirect, coba scrape (logika ini mungkin gagal jika halaman butuh JS)
-                logging.warning(f"Redirect Qobuz tidak terdeteksi (Status: {response.status}). Meng-scrape HTML dari {url}")
+                final_url = str(response.url)
+                logging.info(f"Qobuz URL diselesaikan ke: {final_url} (Status: {response.status})")
+
+                # Jika status bukan 200, gagal
+                if response.status != 200:
+                    logging.error(f"Gagal mengambil URL Qobuz, server merespons {response.status}")
+                    return None
+
+                # 2a. Coba regex lagi pada URL final (jika redirect-nya berhasil)
+                r_final = re.search(regex_pattern, final_url)
+                if r_final:
+                    logging.info("Regex URL final berhasil.")
+                    return r_final.groups() # (type, id)
+
+                # 2b. Jika regex final gagal, scrape HTML dari URL final
+                logging.warning(f"Regex URL final gagal, meng-scrape HTML dari {final_url}")
                 html_content = await response.text()
                 
+                # Pola regex untuk og:type dan ID dari URL
+                # <meta property="og:type" content="music.artist"> atau music.song atau music.album
                 og_type_match = re.search(r'<meta\s+property="og:type"\s+content="music\.(album|artist|song|playlist)"', html_content)
-                id_match = re.search(r"\/(\d+)(?:\?.*)?$", url.split('?')[0])
+                # Ambil ID dari URL (cari angka di akhir)
+                id_match = re.search(r"\/(\d+)(?:\?.*)?$", final_url.split('?')[0])
                 
                 if og_type_match and id_match:
                     og_type = og_type_match.group(1)
                     item_id = id_match.group(1)
-                    if og_type == "song": og_type = "track"
+                    
+                    # Terjemahkan og:type ke tipe internal kita
+                    if og_type == "song":
+                        og_type = "track"
+                    elif og_type == "artist":
+                        # Cek apakah ini 'interpreter' dari URL final
+                        if "/interpreter/" in final_url:
+                            og_type = "interpreter"
+                        else:
+                            og_type = "artist"
+                            
                     logging.info(f"Scrape HTML Qobuz berhasil: Tipe={og_type}, ID={item_id}")
                     return (og_type, item_id)
 
-                logging.error(f"Gagal meng-scrape tipe/ID dari HTML Qobuz (URL: {url})")
+                # Fallback jika og:type tidak ada TAPI URL-nya /interpreter/ (seperti kasus Serj Tankian)
+                if "/interpreter/" in final_url and id_match:
+                     logging.info(f"Scrape HTML Qobuz fallback: Tipe=interpreter, ID={id_match.group(1)}")
+                     return ("interpreter", id_match.group(1))
+
+                logging.error(f"Gagal meng-scrape tipe/ID dari HTML Qobuz: {final_url}")
                 return None
-    
+
     except Exception as e:
-        logging.error(f"Gagal menyelesaikan redirect/scrape Qobuz: {e}")
+        logging.error(f"Gagal meng-scrape HTML Qobuz: {e}")
         return None
 
+    # 4. Jika semua gagal
     return None
 # --- BATAS FUNGSI DIPERBARUI ---
 
