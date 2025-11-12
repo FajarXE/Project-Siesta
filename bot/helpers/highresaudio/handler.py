@@ -19,7 +19,7 @@ from .manager import HighResAudioError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-# --- PERBAIKAN: Hapus 'progress_bar' ---
+# --- PERBAIKAN: Hapus 'progress_bar' dari impor ---
 from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
 # --- BATAS PERBAIKAN ---
 from ...settings import bot_set 
@@ -183,7 +183,7 @@ async def start_album(album_url: str, user: dict, upload=True):
             
             if completed_count % 1 == 0 or completed_count == total_tracks:
                 try:
-                    # --- PERBAIKAN: Hapus 'bar', kembalikan ke 5 argumen ---
+                    # --- PERBAIKAN: Kembali ke versi 5 argumen ---
                     percentage_str = f"{int((completed_count/total_tracks)*100)}%"
                     
                     await edit_message(
