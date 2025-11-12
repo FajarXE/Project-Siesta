@@ -122,7 +122,10 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['tracknumber'] = str(track_data.get('track_no'))
     metadata['totaltracks'] = str(album_data.get('track_count'))
     metadata['discnumber'] = str(track_data.get('disc_no'))
-    metadata['totalvolume'] = str(album_data.get('disc_count'))
+    
+    # --- PERBAIKAN: Gunakan default '1' jika 'disc_count' tidak ada ---
+    metadata['totalvolume'] = str(album_data.get('disc_count') or 1)
+    # --- BATAS PERBAIKAN ---
     
     # Format tanggal YYYYMMDD atau YYYYMM -> YYYY-MM-DD
     release_date_str = album_data.get('release_ymd')
@@ -146,6 +149,11 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     metadata['provider'] = 'Bugs'
     metadata['type'] = 'track'
+
+    # --- PERBAIKAN: Atur 'explicit' ke False (default) ---
+    # API Bugs yang disediakan tampaknya tidak memiliki flag 'adult_yn'
+    metadata['explicit'] = False
+    # --- BATAS PERBAIKAN ---
     
     # --- Sampul ---
     cover_path = album_data.get('image', {}).get('path')
@@ -244,11 +252,18 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         metadata['date'] = datetime.strptime(release_date_str, '%Y%m%d').strftime('%Y-%m-%d')
     
     metadata['totaltracks'] = str(album_data.get('track_count'))
-    metadata['totalvolume'] = str(album_data.get('disc_count'))
+    
+    # --- PERBAIKAN: Gunakan default '1' jika 'disc_count' tidak ada ---
+    metadata['totalvolume'] = str(album_data.get('disc_count') or 1)
+    # --- BATAS PERBAIKAN ---
     
     metadata['provider'] = 'Bugs'
     metadata['type'] = 'album'
     
+    # --- PERBAIKAN: Atur 'explicit' ke False (default) ---
+    metadata['explicit'] = False
+    # --- BATAS PERBAIKAN ---
+
     # --- Sampul ---
     cover_path = album_data.get('image', {}).get('path')
     if cover_path:
