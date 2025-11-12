@@ -1,7 +1,7 @@
 # [GANTI FILE: bot/helpers/utils.py]
 
 import os
-import math
+import math # <-- Pastikan 'math' diimpor
 import aiohttp
 import asyncio
 import shutil
@@ -153,7 +153,8 @@ async def format_string(text:str, data:dict, user=None):
     return text
 # --- AKHIR PERBAIKAN ---
 
-# --- FUNGSI YANG DIPERBARUI UNTUK MENERIMA 'limit' ---
+
+# --- FUNGSI YANG DIPERBARUI UNTUK MEMPERBAIKI FORMAT PROGRESS ---
 async def run_concurrent_tasks(tasks: list, update_details: dict, limit: int = 100):
     """
     Menjalankan daftar tugas asyncio secara bersamaan dengan batas concurrency
@@ -186,25 +187,41 @@ async def run_concurrent_tasks(tasks: list, update_details: dict, limit: int = 1
             LOGGER.info(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
             result = False # Memberi sinyal kegagalan
         
-        # --- PERBAIKAN LOGIKA PROGRESS ---
-        # Update progress baik tugas itu berhasil (True) atau gagal (False)
-        # agar hitungan completed_tasks selalu akurat.
         completed_tasks += 1
         
         if update_details:
             try:
+                # --- PERBAIKAN: Mengembalikan logika format pesan yang benar ---
                 # Update setiap 5 tugas atau pada tugas terakhir
                 if completed_tasks % 5 == 0 or completed_tasks == total_tasks: 
+                    
+                    # 1. Buat progress bar (logika dari 'progress_message' lama)
+                    progress_bar = "{0}{1}".format(
+                        ''.join(["▰" for _ in range(math.floor((completed_tasks/total_tasks) * 10))]),
+                        ''.join(["▱" for _ in range(10 - math.floor((completed_tasks/total_tasks) * 10))])
+                    )
+                    
+                    # 2. Format string template lama dengan data yang benar
+                    text_to_send = update_details['text'].format(
+                        progress_bar,              # {0}
+                        completed_tasks,           # {1}
+                        total_tasks,               # {2}
+                        update_details['title'],   # {3}
+                        update_details['type'].title() # {4}
+                    )
+
                     await edit_message(
                         update_details['msg'],
-                        f"{update_details['text']}\n"
-                        f"**{update_details['title']}**\n"
-                        f"Status: {completed_tasks}/{total_tasks} trek diproses."
+                        text_to_send, # Kirim teks yang sudah diformat
+                        None,
+                        False
                     )
+                # --- BATAS PERBAIKAN ---
+            except FloodWait:
+                pass # Abaikan floodwait, lanjutkan proses
             except Exception:
                 # Jangan biarkan pembaruan UI menggagalkan seluruh unduhan
                 pass 
-        # --- AKHIR PERBAIKAN LOGIKA PROGRESS ---
         
         return result
 
