@@ -16,3 +16,4 @@ python-dotenv
 requests
 tgcrypto-pyrofork
 tqdm
+bs4
