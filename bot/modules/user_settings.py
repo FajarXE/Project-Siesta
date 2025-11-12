@@ -725,7 +725,7 @@ async def debug(c, m): # debugger
     else:
         dt_sc += "Tidak ada klien Soundcloud yang aktif (Token hilang)."
 
-    dt_dz = "\n\NDEEZER:\n"
+    dt_dz = "\n\nDEEZER:\n"
     if deezer_manager and deezer_manager.clients:
         dt_dz += f"{len(deezer_manager.clients)} klien Deezer aktif.\n"
         dt_dz += f"Kualitas Default: {deezer_manager.quality}\n"
