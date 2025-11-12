@@ -664,18 +664,18 @@ def bugs_button(quality: dict, user_id: int = None):
     prefix = "bgQ" if not usetting else f"ubgs" # Bugs Quality / User Bugs Set
     row = []
     
-    # --- PERBAIKAN: Hapus 'flac24' ---
+    # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
     display_text_map = {
         "flac": "FLAC 16-bit",
-        "aac256": "AAC 256k",
+        "aac256": "AAC 320k", # <--- PERBAIKAN DI SINI
         "320k": "MP3 320k",
         "aac": "AAC 128k"
     }
     
     # --- PERBAIKAN: Layout 2x2 ---
-    # Baris 1: FLAC / AAC 256
+    # Baris 1: FLAC / AAC 320
     row.append(InlineKeyboardButton(quality.get("flac", "FLAC 16-bit"), callback_data=f"{prefix}_{display_text_map['flac']}"))
-    row.append(InlineKeyboardButton(quality.get("aac256", "AAC 256k"), callback_data=f"{prefix}_{display_text_map['aac256']}"))
+    row.append(InlineKeyboardButton(quality.get("aac256", "AAC 320k"), callback_data=f"{prefix}_{display_text_map['aac256']}")) # <--- PERBAIKAN DI SINI
     buttons.append(row)
     row = []
     
@@ -747,3 +747,4 @@ def usetting_button() -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="Close", callback_data="uset_close")])
     
     return InlineKeyboardMarkup(buttons)
+
