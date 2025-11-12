@@ -49,17 +49,21 @@ except ImportError:
     bugs_manager = None
 # --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer HIGHRESAUDIO ---
+# --- PERBAIKAN IMPOR: Pisahkan Manajer dari Handler ---
+# Selalu impor manajer terlebih dahulu
 try:
-    from bot.helpers.highresaudio.manager import highresaudio_manager
-    from bot.helpers.highresaudio.handler import start_highresaudio
-    from bot.helpers.highresaudio.manager import HighResAudioError
+    from bot.helpers.highresaudio.manager import highresaudio_manager, HighResAudioError
 except ImportError:
     highresaudio_manager = None
+    class HighResAudioError(Exception): pass
+
+# Impor handler secara terpisah
+try:
+    from bot.helpers.highresaudio.handler import start_highresaudio
+except ImportError:
     async def start_highresaudio(*args, **kwargs):
         raise NotImplementedError("Modul HIGHRESAUDIO ('handler.py') belum diimplementasikan.")
-    class HighResAudioError(Exception): pass
-# --- BATAS TAMBAHAN ---
+# --- BATAS PERBAIKAN ---
 
 
 from ..helpers.soundcloud.handler import start_soundcloud
@@ -184,8 +188,8 @@ async def run_download_task(link: str, user: dict):
            "URL Deezer tidak valid" in str(e) or \
            isinstance(e, NapsterError) or \
            isinstance(e, BugsError) or \
-           isinstance(e, HighResAudioError) or \
-           isinstance(e, DeezerError): # <-- DITAMBAHKAN DI SINI
+           (highresaudio_manager and isinstance(e, HighResAudioError)) or \
+           isinstance(e, DeezerError): 
             error_message = f"Tugas Gagal: {e}"
         # --- BATAS MODIFIKASI ---
             
