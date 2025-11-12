@@ -22,9 +22,7 @@ except ImportError:
     class QobuzContentUnavailableError(Exception):
         pass
 
-# --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
-# --- BATAS MODIFIKASI ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
@@ -280,8 +278,16 @@ async def check_type(url, user: dict):
             "track": {"album": False, "func": None, "iterable_key": None},
         }
     try:
-        url_type, item_id = await get_url_info(url)
+        # --- PERBAIKAN: Memeriksa keluaran dari get_url_info ---
+        url_info = await get_url_info(url)
+        if url_info is None:
+            raise TypeError # Ini akan ditangkap oleh blok except di bawah
+            
+        url_type, item_id = url_info
+        # --- BATAS PERBAIKAN ---
+        
         type_dict = possibles[url_type]
+        
     except (KeyError, IndexError):
         raise Exception(f"URL tidak dapat dikenali: {url}")
     except TypeError:
@@ -327,19 +333,44 @@ async def check_type(url, user: dict):
         return None, item_id, type_dict, content
 
 
+# --- FUNGSI DIPERBARUI UNTUK MENANGANI REDIRECT ---
 async def get_url_info(url):
-    r = re.search(
-        r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a-z]{2}-[a-z]{2})"
-        r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)",
-        url,
+    # Pola regex standar
+    regex_pattern = (
+        r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a-z]{2}-[a-z]{2})?"
+        r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)"
     )
     
-    # --- PERBAIKAN: Tambahkan pemeriksaan jika r adalah None ---
-    if not r:
+    # 1. Coba regex standar (cara cepat)
+    r = re.search(regex_pattern, url)
+    if r:
+        return r.groups() # (type, id)
+
+    # 2. Jika gagal, coba selesaikan redirect (cara lambat)
+    logging.info(f"Qobuz URL tidak dikenali, mencoba menyelesaikan redirect untuk: {url}")
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.head(url, allow_redirects=True, timeout=10) as response:
+                final_url = str(response.url)
+                logging.info(f"Qobuz URL dialihkan ke: {final_url}")
+                
+                # 3. Coba regex lagi pada URL final
+                r = re.search(regex_pattern, final_url)
+                if r:
+                    return r.groups() # (type, id)
+                else:
+                    logging.error(f"Gagal mem-parsing URL Qobuz yang sudah dialihkan: {final_url}")
+                    return None
+    except Exception as e:
+        logging.error(f"Gagal menyelesaikan redirect Qobuz: {e}")
         return None
-    # --- BATAS PERBAIKAN ---
-    
-    return r.groups()
+
+    # 4. Jika semua gagal
+    return None
+# --- BATAS FUNGSI DIPERBARUI ---
 
 
 def smart_discography_filter(
