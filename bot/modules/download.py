@@ -42,6 +42,14 @@ except ImportError:
     nugs_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Bugs ---
+try:
+    from bot.helpers.bugs.manager import bugs_manager
+except ImportError:
+    bugs_manager = None
+# --- BATAS TAMBAHAN ---
+
+
 from ..helpers.soundcloud.handler import start_soundcloud
 from ..helpers.utils import cleanup
 from ..helpers.qobuz.handler import start_qobuz
@@ -87,6 +95,17 @@ except ImportError:
     async def start_nugs(*args, **kwargs):
         raise NotImplementedError("Modul Nugs.net ('handler.py') belum diimplementasikan.")
 # --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Impor Handler Bugs ---
+try:
+    from ..helpers.bugs.handler import start_bugs
+    from ..helpers.bugs.manager import BugsError
+except ImportError:
+    async def start_bugs(*args, **kwargs):
+        raise NotImplementedError("Modul Bugs ('handler.py') belum diimplementasikan.")
+    class BugsError(Exception): pass
+# --- BATAS TAMBAHAN ---
+
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
@@ -138,9 +157,14 @@ async def run_download_task(link: str, user: dict):
         await asyncio.sleep(5) 
             
     except Exception as e:
+        # --- MODIFIKASI: Tambahkan BugsError ke pesan bersih ---
         error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
-        # --- PERBAIKAN: Tambahkan NapsterError ke pesan yang bersih ---
-        if "not available in any" in str(e) or "Maaf, tidak ada akun" in str(e) or "NotImplementedError" in str(e) or "URL Deezer tidak valid" in str(e) or "NapsterError" in str(e):
+        if "not available in any" in str(e) or \
+           "Maaf, tidak ada akun" in str(e) or \
+           "NotImplementedError" in str(e) or \
+           "URL Deezer tidak valid" in str(e) or \
+           isinstance(e, NapsterError) or \
+           isinstance(e, BugsError):
             error_message = f"Tugas Gagal: {e}"
             
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
@@ -239,6 +263,10 @@ async def start_link(link: str, user: dict) -> None:
     # Menambahkan domain API yang didapat dari redirect
     nugs = ["https://play.nugs.net", "play.nugs.net", "https://streamapi.nugs.net"]
     # --- BATAS MODIFIKASI ---
+
+    # --- TAMBAHAN BARU: URL Bugs ---
+    bugs = ["https://music.bugs.co.kr", "music.bugs.co.kr"]
+    # --- BATAS TAMBAHAN ---
     
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
@@ -508,7 +536,35 @@ async def start_link(link: str, user: dict) -> None:
             raise e
     # --- BATAS TAMBAHAN ---
 
+    # --- TAMBAHAN BARU: Blok Bugs ---
+    elif link.startswith(tuple(bugs)):
+        user['provider'] = 'Bugs'
+        
+        if not bugs_manager or not bugs_manager.clients:
+            raise Exception("Maaf, tidak ada akun Bugs bot yang aktif saat ini.")
+
+        client = bugs_manager.get_client()
+        if not client:
+             raise Exception("Tidak ada klien Bugs yang tersedia (semua gagal login?).")
+
+        try:
+            user['bugs_api'] = client
+            await start_bugs(link, user)
+            LOGGER.info(f"Bugs: Unduhan berhasil menggunakan akun.")
+            return
+        except Exception as e:
+            # Menggunakan penanganan error yang mirip dengan Napster/KKBox
+            error_str = str(e).lower()
+            if isinstance(e, BugsError) or "tidak ditemukan" in error_str or "tidak tersedia" in error_str:
+                # Ini adalah error "bersih" (item tidak ada, tidak streamable)
+                LOGGER.error(f"Bugs: Tugas gagal (Dapat Ditangani): {e}")
+                raise e # Lempar error bersih agar pesan ke pengguna tidak menyertakan traceback
+            else:
+                # Ini adalah error tak terduga
+                LOGGER.error(f"Bugs: Tugas gagal (Fatal): {e}")
+                raise e # Lempar error fatal
+    # --- BATAS TAMBAHAN ---
+
     else:
         LOGGER.warning(f"Link tidak dikenali: {link}")
         raise Exception(f"Link tidak dikenali. Bot tidak tahu cara mengunduh dari: {link}")
-
