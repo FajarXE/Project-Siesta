@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/qobuz/qopy.py]
+
 # From vitiko98/qobuz-dl
 import time
 import hashlib
@@ -118,9 +120,16 @@ class QoClient:
                 if r.status == 403:
                     raise Exception(f"{r.status}, message='Akses ditolak (Forbidden). Kemungkinan IP server diblokir.', url='{r.url}'")
                 
-                return await r.json()
+                # --- PERBAIKAN: Tangani respons non-JSON (misal: 404, 500) ---
+                try:
+                    return await r.json()
+                except aiohttp.ContentTypeError:
+                    LOGGER.error(f"QOBUZ: Respons bukan JSON diterima dari {epoint} (Status: {r.status})")
+                    return None # Kembalikan None jika bukan JSON
+                # --- BATAS PERBAIKAN ---
 
 
+    # --- FUNGSI DIPERBARUI UNTUK MENANGANI KUNCI YANG HILANG ---
     async def multi_meta(self, epoint, key, id, type):
         # type akan menjadi "tracks" (untuk playlist) atau "albums" (untuk artist/label)
         total = 1
@@ -129,22 +138,36 @@ class QoClient:
             
             j = await self.api_call(epoint, id=id, offset=offset, type=type)
             
+            # Jika panggilan API gagal (misal: 404/500), j akan menjadi None
+            if j is None:
+                LOGGER.error(f"QOBUZ Error: Panggilan API ke {epoint} untuk ID {id} gagal (menerima None).")
+                return
+
             try:
                 if type in ["tracks", "albums"]:
-                    if type not in j:
-                        LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'.")
-                        return 
-                    j_iterable = j[type]
+                    # --- PERBAIKAN: Gunakan .get() untuk mengambil 'type' dengan aman ---
+                    # Jika 'albums' atau 'tracks' tidak ada, j_iterable akan menjadi dict kosong
+                    j_iterable = j.get(type)
+                    if j_iterable is None:
+                        LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'. Mengembalikan hasil kosong.")
+                        # Kembalikan dict kosong yang konsisten dengan 'key'
+                        yield {type: {'items': [], key: 0}}
+                        return
+                    # --- BATAS PERBAIKAN ---
                 else:
                     j_iterable = j
 
                 if offset == 0:
-                    if key not in j_iterable:
-                        LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}.")
-                        return 
+                    # --- PERBAIKAN: Gunakan .get() untuk mengambil 'key' dengan aman ---
+                    total_items = j_iterable.get(key)
+                    if total_items is None:
+                        LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}. Mengembalikan hasil kosong.")
+                        yield j # Kembalikan apa yang kita punya, tapi hentikan loop
+                        return
+                    # --- BATAS PERBAIKAN ---
                         
                     yield j 
-                    total = j_iterable[key] - 99999
+                    total = total_items - 99999
                 else:
                     yield j 
                     total -= 99999
@@ -153,6 +176,7 @@ class QoClient:
             except Exception as e:
                 LOGGER.error(f"QOBUZ Multi-Meta Parsing Gagal untuk {epoint}: {e}")
                 return 
+    # --- BATAS FUNGSI DIPERBARUI ---
             
 
     async def auth(self):
@@ -170,8 +194,13 @@ class QoClient:
             raise Exception("QOBUZ : No credentials (email/password or user_id/token) provided for this client instance.")
         
         if not usr_info:
-            return
-        if not usr_info["user"]["credential"]["parameters"]:
+            # Panggilan API gagal (misal 404/500)
+            raise Exception("QOBUZ : Gagal login, respons API kosong.")
+            
+        if not usr_info.get("user"):
+             raise Exception(f"QOBUZ : Gagal login, respons tidak terduga: {usr_info}")
+
+        if not usr_info["user"].get("credential") or not usr_info["user"]["credential"].get("parameters"):
             raise Exception("QOBUZ : Free accounts are not eligible to download tracks from QOBUZ. Disabling QOBUZ for now")
         
         self.uat = usr_info["user_auth_token"]
@@ -280,3 +309,4 @@ class QoClient:
         """Menutup sesi aiohttp jika ada."""
         if self.session and not self.session.closed:
             await self.session.close()
+
