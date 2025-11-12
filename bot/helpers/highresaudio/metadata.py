@@ -80,20 +80,20 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
-    # --- PERBAIKAN: Mengubah fallback '1900' menjadi '' (string kosong) ---
-    # Jika 'publishDate' tidak ada, gunakan string kosong, lalu ambil 4 karakter pertama
+    # --- PERBAIKAN GABUNGAN ---
+    # 1. RELEASE DATE: Gunakan fallback '' (string kosong) agar tidak tampil '1900'
     release_date_raw = data.get('publishDate', '') 
     metadata['date'] = release_date_raw[:4] # Jika '' maka akan jadi ''
     
-    # Jika 'discCount' tidak ada, gunakan 1 (atau string kosong jika Anda mau)
-    total_volumes = data.get('discCount')
-    metadata['totalvolumes'] = str(total_volumes) if total_volumes else ''
+    # 2. TOTAL VOLUMES: Kembalikan fallback ke 1 (ini yang berfungsi sebelumnya)
+    total_volumes = data.get('discCount', 1) 
+    metadata['totalvolumes'] = str(total_volumes)
     
-    # Jika 'explicit' tidak ada, gunakan False
+    # 3. EXPLICIT: Kembalikan fallback ke False (ini yang berfungsi sebelumnya)
     metadata['explicit'] = bool(data.get('explicit', False))
     # --- BATAS PERBAIKAN ---
 
-    # --- PERBAIKAN: Logika Sampul (Cover) ---
+    # --- Logika Sampul (Cover) ---
     cover_url_str = None
     try:
         cover_data = data.get('cover') 
@@ -109,7 +109,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
         pass 
 
     metadata['cover'] = await _process_cover(metadata, cover_url_str)
-    metadata['thumbnail'] = metadata['thumbnail']
+    metadata['thumbnail'] = metadata['cover']
     # --- BATAS PERBAIKAN ---
 
     # Memetakan Metadata Lagu
@@ -138,10 +138,10 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['tracknumber'] = str(track.get('trackNumber')).zfill(2)
             track_meta['totaltracks'] = metadata['totaltracks']
             
-            # --- PERBAIKAN: Tebakan 'discNumber' ---
-            disc_num = track.get('discNumber')
-            track_meta['discnumber'] = str(disc_num) if disc_num else '1'
-            track_meta['totalvolumes'] = metadata['totalvolumes'] if metadata['totalvolumes'] else '1'
+            # --- PERBAIKAN: Gunakan fallback 1 (logika sebelumnya) ---
+            disc_num = track.get('discNumber', 1) 
+            track_meta['discnumber'] = str(disc_num)
+            track_meta['totalvolumes'] = metadata['totalvolumes']
             # --- BATAS PERBAIKAN ---
 
             # Kualitas & Ekstensi (HRA-DL selalu FLAC)
