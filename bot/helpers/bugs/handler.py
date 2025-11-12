@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/bugs/handler.py]
+# [GANTI FILE: bot/helpers/bugs/handler.py]
 
 import aiohttp
 import aiofiles
@@ -80,7 +80,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     # --- LOGIKA UNDUH BUGS ---
     try:
         # 1. Dapatkan URL Stream (Async)
-        #    (download_id = track_id, download_quality = 'flac24', 'flac', dll.)
+        #    (download_id = track_id, download_quality = 'flac', '320k', dll.)
         stream_data = await asyncio.to_thread(
             client.get_stream, 
             int(download_id), 
@@ -155,7 +155,10 @@ async def start_album(album_id: str, user: dict, upload=True):
         'type': album_meta['type']
     }
     
-    task_results = await run_concurrent_tasks(tasks, update_details)
+    # --- PERBAIKAN: Tambahkan 'limit=8' untuk menghindari blokir server ---
+    # [span_0](start_span)[span_1](start_span)[span_2](start_span)Server Bugs memutus koneksi jika kita mencoba > 10 koneksi sekaligus[span_0](end_span)[span_1](end_span)[span_2](end_span)
+    task_results = await run_concurrent_tasks(tasks, update_details, limit=8)
+    # --- BATAS PERBAIKAN ---
     
     successful_tracks = [album_meta['tracks'][i] for i, result in enumerate(task_results) if result]
     album_meta['tracks'] = successful_tracks
