@@ -31,9 +31,12 @@ def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL Bugs"""
     url = urlparse(link)
     path_match = None
-    if url.hostname == 'music.bugs.co.kr':
+    
+    # --- PERBAIKAN: Tambahkan 'm.bugs.co.kr' sebagai hostname yang valid ---
+    if url.hostname in ('music.bugs.co.kr', 'm.bugs.co.kr'):
         # Pola untuk track, album, dan artist
         path_match = re.match(r'^\/(track|album|artist)\/(\d+)', url.path)
+    # --- BATAS PERBAIKAN ---
     else:
         raise BugsError(f'URL tidak valid: {link}')
         
