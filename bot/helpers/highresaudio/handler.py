@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/highresaudio/handler.py]
+# [GANTI FILE: bot/helpers/highresaudio/handler.py]
 
 import aiofiles
 import os
@@ -29,9 +29,9 @@ async def start_highresaudio(url: str, user: dict):
     try:
         media_type, item_id, extra_kwargs = custom_url_parse(url)
         
-        # HRA-DL.py hanya mendukung album, jadi kita juga
+        # HRA-DL.py only supports albums, so do we
         if media_type == 'album':
-            # item_id di sini adalah 'album_url' lengkap
+            # item_id here is the full 'album_url'
             await start_album(item_id, user)
         else:
             raise NotImplementedError(f"Tipe media HighResAudio '{media_type}' belum didukung.")
@@ -43,7 +43,7 @@ async def start_highresaudio(url: str, user: dict):
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
     """
-    Mengunduh satu lagu. track_meta HARUS disediakan oleh start_album.
+    Downloads a single track. track_meta MUST be provided by start_album.
     """
     client = user['highresaudio_api']
 
@@ -54,7 +54,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     filepath = sanitize_filepath(filepath)
 
     download_url = track_meta.get('download_url')
-    # Ini adalah ID album internal, bukan URL
+    # This is the internal album ID, not the URL
     album_id_referer = track_meta.get('album_id_referer') 
     
     if not download_url or not album_id_referer:
@@ -68,14 +68,14 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
-    # --- LOGIKA UNDUH (Tidak Terenkripsi) ---
+    # --- DOWNLOAD LOGIC (Unencrypted) ---
     try:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
-        # Jalankan unduhan sinkron di thread terpisah
+        # Run synchronous download in a separate thread
         await asyncio.to_thread(
             download_track_unencrypted,
-            client, # Objek HighResAudioApi (dengan sesi requests)
+            client, # HighResAudioApi object (with requests session)
             download_url,
             album_id_referer,
             track_meta['filepath']
@@ -84,7 +84,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     except Exception as e:
         LOGGER.error(f"HighResAudio dl_track gagal: {e}\n{traceback.format_exc()}")
         return False
-    # --- BATAS LOGIKA UNDUH ---
+    # --- END DOWNLOAD LOGIC ---
 
     try:
         await set_metadata(track_meta)
@@ -104,24 +104,24 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
 def download_track_unencrypted(client, url, album_id_referer, temp_location):
     """
-    Fungsi SINKRON untuk mengunduh file HighResAudio (tidak terenkripsi).
-    Dijalankan di ThreadPoolExecutor oleh asyncio.to_thread.
-    Logika diadaptasi dari HRA-DL.py fetchTrack()
+    SYNCHRONOUS function to download a HighResAudio file (unencrypted).
+    Run in ThreadPoolExecutor by asyncio.to_thread.
+    Logic adapted from HRA-DL.py fetchTrack()
     """
     
     try:
-        # 1. Dapatkan stream data (ini menggunakan 'requests' dari 'client.s')
+        # 1. Get stream data (this uses 'requests' from 'client.s')
         r = client.get_track_stream(url, album_id_referer)
         r.raise_for_status()
 
-        # 2. Unduh dan Tulis
+        # 2. Download and Write
         with open(temp_location, 'wb') as f:
             for chunk in r.iter_content(chunk_size=32 * 1024):
                 if chunk:
                     f.write(chunk)
                     
     except Exception as e:
-        # Hapus file parsial jika gagal
+        # Delete partial file on failure
         if os.path.isfile(temp_location):
             os.remove(temp_location)
         raise e
@@ -129,9 +129,9 @@ def download_track_unencrypted(client, url, album_id_referer, temp_location):
     LOGGER.info(f"HighResAudio: Berhasil mengunduh ke {temp_location}")
 
 def download_booklet(client, url, temp_location):
-    """Fungsi SINKRON untuk mengunduh booklet PDF."""
+    """SYNCHRONOUS function to download the PDF booklet."""
     try:
-        r = client.get_booklet_stream(url) # Panggil metode API booklet
+        r = client.get_booklet_stream(url) # Call booklet API method
         r.raise_for_status()
         with open(temp_location, 'wb') as f:
             for chunk in r.iter_content(chunk_size=32 * 1024):
@@ -141,19 +141,19 @@ def download_booklet(client, url, temp_location):
         if os.path.isfile(temp_location):
             os.remove(temp_location)
         LOGGER.error(f"HighResAudio: Gagal mengunduh booklet: {e}")
-        # Jangan 'raise e' agar tidak menggagalkan seluruh unduhan album
+        # Don't 'raise e' so we don't fail the whole album download
     
     LOGGER.info(f"HighResAudio: Berhasil mengunduh booklet ke {temp_location}")
 
 
 async def start_album(album_url: str, user: dict, upload=True):
     """
-    Handler untuk unduhan album (satu-satunya tipe yang didukung).
+    Handler for album downloads (the only supported type).
     """
     client = user['highresaudio_api']
     
     try:
-        # 'album_url' adalah URL lengkap dari toko
+        # 'album_url' is the full store URL
         album_meta = await process_album_metadata(album_url, user['r_id'], user)
     except Exception as e:
         raise Exception(f"Gagal mendapatkan metadata album HighResAudio: {e}")
@@ -166,8 +166,19 @@ async def start_album(album_url: str, user: dict, upload=True):
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
-    # --- Implementasi Semaphore (salin dari handler Idagio) ---
-    sem = asyncio.Semaphore(bot_set.playlist_conc) 
+    # --- PERBAIKAN: Atasi 'NoneType' error dengan memberikan nilai default ---
+    # Jika bot_set.playlist_conc None atau 0, gunakan 5 sebagai fallback.
+    try:
+        concurrency = int(bot_set.playlist_conc)
+        if concurrency <= 0:
+            concurrency = 5
+    except (TypeError, ValueError):
+        LOGGER.warning("HighResAudio: bot_set.playlist_conc tidak valid, menggunakan default 5.")
+        concurrency = 5
+        
+    sem = asyncio.Semaphore(concurrency) 
+    # --- BATAS PERBAIKAN ---
+    
     total_tracks = len(album_meta['tracks'])
     completed_count = 0
     
@@ -192,16 +203,16 @@ async def start_album(album_url: str, user: dict, upload=True):
 
     task_coroutines = []
     for track in album_meta['tracks']:
-        # item_id tidak digunakan, track_meta sudah lengkap
+        # item_id is not used, track_meta is pre-filled
         task_coro = start_track(None, user, track, False, album_folder) 
         task_coroutines.append(run_task_with_limit(task_coro, track))
 
     task_results_with_meta = await asyncio.gather(*task_coroutines)
     
-    # Filter hasil
+    # Filter results
     successful_tracks = []
     for result, track_meta in task_results_with_meta:
-        if result: # 'result' adalah boolean True/False dari start_track
+        if result: # 'result' is the boolean True/False from start_track
             successful_tracks.append(track_meta)
             
     album_meta['tracks'] = successful_tracks
@@ -210,7 +221,7 @@ async def start_album(album_url: str, user: dict, upload=True):
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu HighResAudio yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    # Unduh Booklet (jika ada)
+    # Download Booklet (if exists)
     if 'booklet_url' in album_meta:
         LOGGER.info("HighResAudio: Mengunduh booklet...")
         booklet_path = os.path.join(album_folder, "booklet.pdf")
@@ -221,7 +232,7 @@ async def start_album(album_url: str, user: dict, upload=True):
             album_meta['booklet_url'],
             booklet_path
         )
-        # TODO: Tambahkan 'booklet_path' ke album_meta jika ingin di-zip
+        # TODO: Add 'booklet_path' to album_meta if you want it zipped
         # album_meta['booklet_path'] = booklet_path
 
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
