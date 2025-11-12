@@ -663,31 +663,27 @@ def bugs_button(quality: dict, user_id: int = None):
     usetting = user_id is not None
     prefix = "bgQ" if not usetting else f"ubgs" # Bugs Quality / User Bugs Set
     row = []
+    
+    # --- PERBAIKAN: Hapus 'flac24' ---
     display_text_map = {
-        "flac24": "FLAC 24-bit",
         "flac": "FLAC 16-bit",
         "aac256": "AAC 256k",
         "320k": "MP3 320k",
         "aac": "AAC 128k"
     }
-    # Kualitas Bugs diurutkan dalam 3 baris
-    keys_in_order = ["flac24", "flac", "aac256", "320k", "aac"]
     
-    # Baris 1: FLAC
-    row.append(InlineKeyboardButton(quality.get("flac24", "FLAC 24-bit"), callback_data=f"{prefix}_{display_text_map['flac24']}"))
+    # --- PERBAIKAN: Layout 2x2 ---
+    # Baris 1: FLAC / AAC 256
     row.append(InlineKeyboardButton(quality.get("flac", "FLAC 16-bit"), callback_data=f"{prefix}_{display_text_map['flac']}"))
+    row.append(InlineKeyboardButton(quality.get("aac256", "AAC 256k"), callback_data=f"{prefix}_{display_text_map['aac256']}"))
     buttons.append(row)
     row = []
     
-    # Baris 2: AAC/MP3
-    row.append(InlineKeyboardButton(quality.get("aac256", "AAC 256k"), callback_data=f"{prefix}_{display_text_map['aac256']}"))
+    # Baris 2: MP3 320 / AAC 128
     row.append(InlineKeyboardButton(quality.get("320k", "MP3 320k"), callback_data=f"{prefix}_{display_text_map['320k']}"))
-    buttons.append(row)
-    row = []
-
-    # Baris 3: AAC Low
     row.append(InlineKeyboardButton(quality.get("aac", "AAC 128k"), callback_data=f"{prefix}_{display_text_map['aac']}"))
     buttons.append(row)
+    # --- BATAS PERBAIKAN ---
 
     if usetting:
         buttons.append(
@@ -751,4 +747,3 @@ def usetting_button() -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="Close", callback_data="uset_close")])
     
     return InlineKeyboardMarkup(buttons)
-
