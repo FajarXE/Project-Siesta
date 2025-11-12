@@ -19,8 +19,8 @@ from .manager import HighResAudioError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-# --- PERBAIKAN: Impor 'progress_bar' ---
-from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string, progress_bar
+# --- PERBAIKAN: Hapus 'progress_bar' ---
+from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
 # --- BATAS PERBAIKAN ---
 from ...settings import bot_set 
 import bot.helpers.translations as lang
@@ -183,13 +183,9 @@ async def start_album(album_url: str, user: dict, upload=True):
             
             if completed_count % 1 == 0 or completed_count == total_tracks:
                 try:
-                    # --- PERBAIKAN: Buat bar & persentase ---
-                    percentage_int = int((completed_count/total_tracks)*100)
-                    percentage_str = f"{percentage_int}%"
-                    # Panggil fungsi progress_bar
-                    bar = progress_bar(percentage_int) 
-                    # --- BATAS PERBAIKAN ---
-
+                    # --- PERBAIKAN: Hapus 'bar', kembalikan ke 5 argumen ---
+                    percentage_str = f"{int((completed_count/total_tracks)*100)}%"
+                    
                     await edit_message(
                         user['bot_msg'],
                         lang.s.DOWNLOAD_PROGRESS.format(
@@ -197,10 +193,10 @@ async def start_album(album_url: str, user: dict, upload=True):
                             total_tracks,       # {1}
                             album_meta['title'],# {2}
                             percentage_str,     # {3}
-                            track_meta['title'],# {4}
-                            bar                 # {5} <-- ARGUMEN BARU
+                            track_meta['title'] # {4}
                         )
                     )
+                    # --- BATAS PERBAIKAN ---
                 except Exception as e:
                     # Log jika masih gagal
                     LOGGER.warning(f"HighResAudio: Gagal mengedit pesan progres: {e}")
