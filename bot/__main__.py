@@ -103,6 +103,14 @@ except ImportError:
     bugs_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer HIGHRESAUDIO ---
+try:
+    from .helpers.highresaudio.manager import highresaudio_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'highresaudio_manager'!")
+    highresaudio_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 # --- FUNGSI BARU UNTUK MEMUAT PENGATURAN PENGGUNA ---
 
@@ -130,6 +138,7 @@ async def load_all_user_settings_into_managers():
             # --- TAMBAHAN BARU ---
             'bugs_qual': bugs_manager,
             # --- BATAS TAMBAHAN ---
+            # Tidak perlu highresaudio_qual karena tidak ada pengaturan kualitas
         }
 
         # Loop melalui cache global bot_set yang SEKARANG SUDAH DIISI oleh initialize_users()
@@ -337,6 +346,16 @@ async def main():
             logging.warning("PERINGATAN: Tidak ada akun Bugs yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
+    # --- TAMBAHAN BARU: Login HIGHRESAUDIO ---
+    if highresaudio_manager:
+        logging.info("Memulai inisialisasi Manajer HIGHRESAUDIO...")
+        await highresaudio_manager.initialize_clients()
+        if highresaudio_manager.clients:
+            logging.info(f"Manajer HIGHRESAUDIO berhasil diinisialisasi dengan {len(highresaudio_manager.clients)} klien.")
+        else:
+            logging.warning("PERINGATAN: Tidak ada akun HIGHRESAUDIO yang berhasil login!")
+    # --- BATAS TAMBAHAN ---
+
     logging.info("Menginisialisasi data pengguna...")
     await bot_set.initialize_users()
     
@@ -359,4 +378,3 @@ if __name__ == "__main__":
     except Exception:
         logging.error(traceback.format_exc())
         sys.exit(1)
-
