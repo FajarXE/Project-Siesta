@@ -80,13 +80,10 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
-    # --- PERBAIKAN: Gunakan "None" sebagai fallback untuk RELEASE DATE ---
-    # 1. RELEASE DATE: Coba ambil 'publishDate'. Jika tidak ada (None) atau kosong (''), gunakan 'None'.
-    release_date_raw = data.get('publishDate') 
-    if release_date_raw:
-        metadata['date'] = release_date_raw[:4] # Ambil 4 digit pertama (tahun)
-    else:
-        metadata['date'] = 'None' # Gunakan string "None"
+    # --- PERBAIKAN: Gunakan '' (string kosong) untuk DATE, dan 1/False untuk sisanya ---
+    # 1. RELEASE DATE: Gunakan fallback '' (string kosong).
+    release_date_raw = data.get('publishDate', '') 
+    metadata['date'] = release_date_raw[:4] # Jika '' maka akan jadi ''
     
     # 2. TOTAL VOLUMES: Gunakan fallback 1 (ini sudah berfungsi)
     total_volumes = data.get('discCount', 1) 
@@ -132,7 +129,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['cover'] = metadata['cover']
             track_meta['thumbnail'] = metadata['thumbnail']
             # --- PERBAIKAN: Salin data baru ke metadata lagu ---
-            track_meta['date'] = metadata['date'] # Ini akan menyalin "None" jika tidak ada
+            track_meta['date'] = metadata['date'] # Ini akan menyalin '' jika tidak ada
             track_meta['explicit'] = metadata['explicit']
             # --- BATAS PERBAIKAN ---
 
