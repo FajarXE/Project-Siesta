@@ -13,10 +13,10 @@ from ..metadata import create_cover_file
 from .manager import bugs_manager, BugsError
 from bot.logger import LOGGER
 
-# --- PERBAIKAN: Hapus 'flac24' ---
+# --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
 QUALITY_MAP_DISPLAY = {
     'flac': ("FLAC 16-bit", "flac"),
-    'aac256': ("AAC 256k", "m4a"),
+    'aac256': ("AAC 320k", "m4a"), # <--- PERBAIKAN DI SINI
     '320k': ("MP3 320k", "mp3"),
     'aac': ("AAC 128k", "m4a")
 }
@@ -32,11 +32,9 @@ def custom_url_parse(link: str):
     url = urlparse(link)
     path_match = None
     
-    # --- PERBAIKAN: Tambahkan 'm.bugs.co.kr' sebagai hostname yang valid ---
     if url.hostname in ('music.bugs.co.kr', 'm.bugs.co.kr'):
         # Pola untuk track, album, dan artist
         path_match = re.match(r'^\/(track|album|artist)\/(\d+)', url.path)
-    # --- BATAS PERBAIKAN ---
     else:
         raise BugsError(f'URL tidak valid: {link}')
         
@@ -123,9 +121,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['totaltracks'] = str(album_data.get('track_count'))
     metadata['discnumber'] = str(track_data.get('disc_no'))
     
-    # --- PERBAIKAN: Gunakan default '1' jika 'disc_count' tidak ada ---
     metadata['totalvolume'] = str(album_data.get('disc_count') or 1)
-    # --- BATAS PERBAIKAN ---
     
     # Format tanggal YYYYMMDD atau YYYYMM -> YYYY-MM-DD
     release_date_str = album_data.get('release_ymd')
@@ -150,10 +146,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['provider'] = 'Bugs'
     metadata['type'] = 'track'
 
-    # --- PERBAIKAN: Atur 'explicit' ke False (default) ---
-    # API Bugs yang disediakan tampaknya tidak memiliki flag 'adult_yn'
     metadata['explicit'] = False
-    # --- BATAS PERBAIKAN ---
     
     # --- Sampul ---
     cover_path = album_data.get('image', {}).get('path')
@@ -253,16 +246,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     metadata['totaltracks'] = str(album_data.get('track_count'))
     
-    # --- PERBAIKAN: Gunakan default '1' jika 'disc_count' tidak ada ---
     metadata['totalvolume'] = str(album_data.get('disc_count') or 1)
-    # --- BATAS PERBAIKAN ---
     
     metadata['provider'] = 'Bugs'
     metadata['type'] = 'album'
     
-    # --- PERBAIKAN: Atur 'explicit' ke False (default) ---
     metadata['explicit'] = False
-    # --- BATAS PERBAIKAN ---
 
     # --- Sampul ---
     cover_path = album_data.get('image', {}).get('path')
