@@ -19,7 +19,9 @@ from .manager import HighResAudioError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
+# --- PERBAIKAN: Impor 'progress_bar' ---
+from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string, progress_bar
+# --- BATAS PERBAIKAN ---
 from ...settings import bot_set 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
@@ -181,18 +183,24 @@ async def start_album(album_url: str, user: dict, upload=True):
             
             if completed_count % 1 == 0 or completed_count == total_tracks:
                 try:
-                    # --- PERBAIKAN: Tambahkan track_meta['title'] sebagai argumen ke-5 ---
+                    # --- PERBAIKAN: Buat bar & persentase ---
+                    percentage_int = int((completed_count/total_tracks)*100)
+                    percentage_str = f"{percentage_int}%"
+                    # Panggil fungsi progress_bar
+                    bar = progress_bar(percentage_int) 
+                    # --- BATAS PERBAIKAN ---
+
                     await edit_message(
                         user['bot_msg'],
                         lang.s.DOWNLOAD_PROGRESS.format(
-                            completed_count,
-                            total_tracks,
-                            album_meta['title'],
-                            f"{int((completed_count/total_tracks)*100)}%",
-                            track_meta['title'] # <--- INI ARGUMEN YANG HILANG (index 4)
+                            completed_count,    # {0}
+                            total_tracks,       # {1}
+                            album_meta['title'],# {2}
+                            percentage_str,     # {3}
+                            track_meta['title'],# {4}
+                            bar                 # {5} <-- ARGUMEN BARU
                         )
                     )
-                    # --- BATAS PERBAIKAN ---
                 except Exception as e:
                     # Log jika masih gagal
                     LOGGER.warning(f"HighResAudio: Gagal mengedit pesan progres: {e}")
