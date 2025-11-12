@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/bugs/metadata.py]
+# [GANTI FILE: bot/helpers/bugs/metadata.py]
 
 import copy
 import re
@@ -13,16 +13,16 @@ from ..metadata import create_cover_file
 from .manager import bugs_manager, BugsError
 from bot.logger import LOGGER
 
-# Kualitas dari interface.py
+# --- PERBAIKAN: Hapus 'flac24' ---
 QUALITY_MAP_DISPLAY = {
-    'flac24': ("FLAC 24-bit", "flac"),
     'flac': ("FLAC 16-bit", "flac"),
     'aac256': ("AAC 256k", "m4a"),
     '320k': ("MP3 320k", "mp3"),
     'aac': ("AAC 128k", "m4a")
 }
 # Urutan prioritas kualitas dari interface.py
-QUALITY_ORDER = ["flac24", "flac", "aac256", "320k", "aac"]
+QUALITY_ORDER = ["flac", "aac256", "320k", "aac"]
+# --- BATAS PERBAIKAN ---
 
 # Ukuran gambar yang didukung oleh API Bugs (dari interface.py)
 BUGS_SUPPORTED_COVER_SIZES = [75, 140, 200, 350, 500, 1000, 1280, 1400, 2000, 3001]
@@ -186,7 +186,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             chosen_quality_key = q_key
             break
             
-    # 2. Fallback: Jika preferensi pengguna tidak ditemukan (misal: ingin flac24 tapi tidak ada)
+    # 2. Fallback: Jika preferensi pengguna tidak ditemukan (misal: ingin flac tapi tidak ada)
     if not chosen_quality_key:
         fallback_order = reversed(QUALITY_ORDER) # Coba dari yang terendah ke atas
         for q_key in fallback_order:
@@ -204,7 +204,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     # Simpan info unduhan
     metadata['download_id'] = track_id # Bugs men-download pakai track_id
-    metadata['download_quality_key'] = chosen_quality_key # misal: "flac24" atau "320k"
+    metadata['download_quality_key'] = chosen_quality_key # misal: "flac" atau "320k"
     
     return metadata
 
