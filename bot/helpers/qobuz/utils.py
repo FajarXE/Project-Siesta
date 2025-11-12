@@ -22,7 +22,9 @@ except ImportError:
     class QobuzContentUnavailableError(Exception):
         pass
 
+# --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
+# --- BATAS MODIFIKASI ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
@@ -333,7 +335,7 @@ async def check_type(url, user: dict):
         return None, item_id, type_dict, content
 
 
-# --- FUNGSI DIPERBARUI UNTUK MENANGANI REDIRECT ---
+# --- FUNGSI DIPERBARUI UNTUK MENANGANI REDIRECT (MENGGUNAKAN GET) ---
 async def get_url_info(url):
     # Pola regex standar
     regex_pattern = (
@@ -353,7 +355,9 @@ async def get_url_info(url):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'
         }
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.head(url, allow_redirects=True, timeout=10) as response:
+            # --- PERBAIKAN KUNCI: Gunakan GET, bukan HEAD ---
+            # HEAD gagal mendapatkan URL redirect yang benar dari Qobuz.
+            async with session.get(url, allow_redirects=True, timeout=10) as response:
                 final_url = str(response.url)
                 logging.info(f"Qobuz URL dialihkan ke: {final_url}")
                 
