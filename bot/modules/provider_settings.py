@@ -532,10 +532,10 @@ async def idagio_quality_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^bgP")) # Bugs Panel
 async def bugs_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # --- PERBAIKAN: Hapus 'flac24' ---
+        # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
         quality = {
             "flac": "FLAC 16-bit",
-            "aac256": "AAC 256k",
+            "aac256": "AAC 320k", # <--- PERBAIKAN DI SINI
             "320k": "MP3 320k",
             "aac": "AAC 128k"
         }
@@ -557,10 +557,10 @@ async def bugs_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^bgQ")) # Bugs Quality Set
 async def bugs_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # --- PERBAIKAN: Hapus 'flac24' ---
+        # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
         qual_map_display = {
             "FLAC 16-bit": "flac",
-            "AAC 256k": "aac256",
+            "AAC 320k": "aac256", # <--- PERBAIKAN DI SINI
             "MP3 320k": "320k",
             "AAC 128k": "aac"
         }
