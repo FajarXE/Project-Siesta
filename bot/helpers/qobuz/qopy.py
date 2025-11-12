@@ -120,16 +120,14 @@ class QoClient:
                 if r.status == 403:
                     raise Exception(f"{r.status}, message='Akses ditolak (Forbidden). Kemungkinan IP server diblokir.', url='{r.url}'")
                 
-                # --- PERBAIKAN: Tangani respons non-JSON (misal: 404, 500) ---
                 try:
                     return await r.json()
                 except aiohttp.ContentTypeError:
                     LOGGER.error(f"QOBUZ: Respons bukan JSON diterima dari {epoint} (Status: {r.status})")
                     return None # Kembalikan None jika bukan JSON
-                # --- BATAS PERBAIKAN ---
 
 
-    # --- FUNGSI DIPERBARUI UNTUK MENANGANI KUNCI YANG HILANG ---
+    # --- FUNGSI DIPERBARUI UNTUK MENGUBAH LEVEL LOG ---
     async def multi_meta(self, epoint, key, id, type):
         # type akan menjadi "tracks" (untuk playlist) atau "albums" (untuk artist/label)
         total = 1
@@ -138,33 +136,30 @@ class QoClient:
             
             j = await self.api_call(epoint, id=id, offset=offset, type=type)
             
-            # Jika panggilan API gagal (misal: 404/500), j akan menjadi None
             if j is None:
                 LOGGER.error(f"QOBUZ Error: Panggilan API ke {epoint} untuk ID {id} gagal (menerima None).")
                 return
 
             try:
                 if type in ["tracks", "albums"]:
-                    # --- PERBAIKAN: Gunakan .get() untuk mengambil 'type' dengan aman ---
-                    # Jika 'albums' atau 'tracks' tidak ada, j_iterable akan menjadi dict kosong
                     j_iterable = j.get(type)
                     if j_iterable is None:
-                        LOGGER.error(f"QOBUZ Error: Respons untuk {epoint} tidak memiliki kunci '{type}'. Mengembalikan hasil kosong.")
-                        # Kembalikan dict kosong yang konsisten dengan 'key'
+                        # --- PERBAIKAN: Ubah dari .error() menjadi .warning() ---
+                        LOGGER.warning(f"QOBUZ Info: Respons untuk {epoint} tidak memiliki kunci '{type}'. Mengembalikan hasil kosong.")
+                        # --- BATAS PERBAIKAN ---
                         yield {type: {'items': [], key: 0}}
                         return
-                    # --- BATAS PERBAIKAN ---
                 else:
                     j_iterable = j
 
                 if offset == 0:
-                    # --- PERBAIKAN: Gunakan .get() untuk mengambil 'key' dengan aman ---
                     total_items = j_iterable.get(key)
                     if total_items is None:
-                        LOGGER.error(f"QOBUZ Error: Objek respons tidak memiliki kunci total '{key}' di {epoint}. Mengembalikan hasil kosong.")
+                        # --- PERBAIKAN: Ubah dari .error() menjadi .warning() ---
+                        LOGGER.warning(f"QOBUZ Info: Objek respons tidak memiliki kunci total '{key}' di {epoint}. Mengembalikan hasil kosong.")
+                        # --- BATAS PERBAIKAN ---
                         yield j # Kembalikan apa yang kita punya, tapi hentikan loop
                         return
-                    # --- BATAS PERBAIKAN ---
                         
                     yield j 
                     total = total_items - 99999
@@ -228,9 +223,7 @@ class QoClient:
         try:
             async with self.ratelimit:
                 async with self.session.get(self.base + test_epoint, params=params) as r:
-                    # --- PERBAIKAN: Hanya 200 yang dianggap sukses ---
                     if r.status == 200:
-                    # --- BATAS PERBAIKAN ---
                         return True
                     return False
         
