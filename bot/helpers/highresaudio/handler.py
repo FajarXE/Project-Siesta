@@ -167,7 +167,6 @@ async def start_album(album_url: str, user: dict, upload=True):
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     # --- PERBAIKAN: Atasi 'NoneType' error dengan memberikan nilai default ---
-    # Jika bot_set.playlist_conc None atau 0, gunakan 5 sebagai fallback.
     try:
         concurrency = int(bot_set.playlist_conc)
         if concurrency <= 0:
@@ -187,7 +186,10 @@ async def start_album(album_url: str, user: dict, upload=True):
         async with sem:
             result = await task_coro
             completed_count += 1
-            if completed_count % 5 == 0 or completed_count == total_tracks:
+            
+            # --- PERBAIKAN: Ubah '% 5' menjadi '% 1' agar selalu update ---
+            if completed_count % 1 == 0 or completed_count == total_tracks:
+            # --- BATAS PERBAIKAN ---
                 try:
                     await edit_message(
                         user['bot_msg'],
