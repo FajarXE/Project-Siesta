@@ -42,22 +42,34 @@ async def start_qobuz(url:str, user:dict):
             if items is None and item_id is None:
                  raise QobuzContentUnavailableError("Gagal mendapatkan item atau ID yang valid dari tautan.")
 
-            if items:
+            # --- PERBAIKAN: Gunakan 'if items is not None' ---
+            # Ini membedakan antara artist/playlist (items=[]) dan track/album (items=None)
+            if items is not None:
+                
+                # --- PERBAIKAN: Tangani artist/playlist kosong ---
+                if not items:
+                    artist_name = "N/A"
+                    if content and isinstance(content, list) and len(content) > 0:
+                        artist_name = content[0].get('name', item_id)
+                    
+                    await edit_message(user['bot_msg'], f"Sukses, tapi artis/playlist '{artist_name}' tidak memiliki item (album/trek) untuk diunduh.")
+                    return # Keluar dengan sukses
+                # --- BATAS PERBAIKAN ---
+
                 if type_dict['iterable_key'] == 'albums':
                     await start_artist(items, user, content)
                 else:
                     await start_playlist(items, content, user)
             else:
-                # --- PERBAIKAN: Ganti type_dict["album"] menjadi .get("album") ---
-                # Ini adalah perbaikan untuk KeyError: 'album' saat tautan adalah 'interpreter'
+                # Jika items adalah None, berarti itu adalah Album atau Track tunggal
                 if type_dict.get("album") is True:
                     await start_album(item_id, user)
                 elif type_dict.get("album") is False:
                     await start_track(item_id, user, None)
                 else:
-                    # Ini seharusnya tidak terjadi jika check_type() berfungsi
-                    raise Exception(f"Tipe konten tidak diketahui: {type_dict}")
-                # --- BATAS PERBAIKAN ---
+                    # Ini seharusnya tidak dapat dijangkau sekarang
+                    raise Exception(f"Tipe konten tidak diketahui (items=None, tapi type_dict aneh): {type_dict}")
+            # --- BATAS PERBAIKAN ---
             
             await edit_message(user['bot_msg'], f"Sukses mengunduh dengan Akun {client_label}!")
             return 
