@@ -39,12 +39,8 @@ async def start_qobuz(url:str, user:dict):
 
             items, item_id, type_dict, content = await check_type(url, user)
             
-            # --- PERBAIKAN: Tambahkan cek keamanan setelah check_type ---
             if items is None and item_id is None:
-                 # Jika check_type gagal, itu akan melempar QobuzContentUnavailableError
-                 # Tetapi kita tambahkan cek keamanan ini untuk kegagalan tak terduga
                  raise QobuzContentUnavailableError("Gagal mendapatkan item atau ID yang valid dari tautan.")
-            # --- BATAS PERBAIKAN ---
 
             if items:
                 if type_dict['iterable_key'] == 'albums':
@@ -52,11 +48,16 @@ async def start_qobuz(url:str, user:dict):
                 else:
                     await start_playlist(items, content, user)
             else:
-                # Jika items None, berarti itu adalah Album atau Track tunggal
-                if type_dict["album"]:
+                # --- PERBAIKAN: Ganti type_dict["album"] menjadi .get("album") ---
+                # Ini adalah perbaikan untuk KeyError: 'album' saat tautan adalah 'interpreter'
+                if type_dict.get("album") is True:
                     await start_album(item_id, user)
-                else:
+                elif type_dict.get("album") is False:
                     await start_track(item_id, user, None)
+                else:
+                    # Ini seharusnya tidak terjadi jika check_type() berfungsi
+                    raise Exception(f"Tipe konten tidak diketahui: {type_dict}")
+                # --- BATAS PERBAIKAN ---
             
             await edit_message(user['bot_msg'], f"Sukses mengunduh dengan Akun {client_label}!")
             return 
@@ -70,7 +71,7 @@ async def start_qobuz(url:str, user:dict):
             # Ini menangkap KeyError atau error fatal lain
             last_error = f"Error fatal di Akun {client_label}: {e}"
             LOGGER.error(f"{last_error}\n{traceback.format_exc()}")
-            break 
+            break # Hentikan loop jika terjadi error fatal (seperti KeyError)
 
     try:
         await edit_message(user['bot_msg'], f"Semua {len(clients_list)} akun Qobuz gagal.\nKesalahan terakhir: {last_error}")
