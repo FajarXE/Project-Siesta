@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/highresaudio/metadata.py]
+# [GANTI FILE: bot/helpers/highresaudio/metadata.py]
 
 import copy
 import re
@@ -29,9 +29,9 @@ def custom_url_parse(link: str):
 
 async def _process_cover(metadata: dict, url: str):
     """Memproses sampul dari URL (jika ditemukan)."""
-    # HRA-DL.py tidak mengunduh sampul, jadi kita coba tebak URL-nya
-    # Kita asumsikan URL sampul ada di metadata
+    # create_cover_file mengharapkan URL string, atau None
     if not url:
+        LOGGER.warning("HighResAudio: Tidak ada URL sampul valid yang ditemukan.")
         return metadata['tempfolder'] + "cover.jpg" # Fallback
     return await create_cover_file(url, metadata)
 
@@ -80,11 +80,30 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
-    # Coba tebak kunci sampul (tidak ada di HRA-DL.py)
-    # Kunci umum adalah 'cover', 'image', 'imageUrl'
-    cover_url = data.get('cover', data.get('image', data.get('imageUrl')))
-    metadata['cover'] = await _process_cover(metadata, cover_url)
+    # --- PERBAIKAN: Logika Sampul (Cover) ---
+    # Berdasarkan log error, sampul adalah objek, bukan string.
+    cover_url_str = None
+    try:
+        # 'cover' adalah kunci yang paling mungkin, berdasarkan tebakan awal
+        cover_data = data.get('cover') 
+        if isinstance(cover_data, dict):
+            # Log error menunjukkan: {'master': {'file_url': '...jpg'}}
+            file_url = cover_data.get('master', {}).get('file_url')
+            if file_url:
+                # Log error menunjukkan URL tidak memiliki prefix 'https://'
+                cover_url_str = f"https://{file_url}"
+                LOGGER.debug(f"HighResAudio: Menemukan URL sampul: {cover_url_str}")
+        elif isinstance(cover_data, str):
+            # Fallback jika ternyata 'cover' adalah string
+            cover_url_str = cover_data
+
+    except Exception as e:
+        LOGGER.warning(f"HighResAudio: Gagal mem-parsing struktur data sampul: {e}")
+        pass # Lanjutkan tanpa sampul
+
+    metadata['cover'] = await _process_cover(metadata, cover_url_str)
     metadata['thumbnail'] = metadata['cover']
+    # --- BATAS PERBAIKAN ---
 
     # Memetakan Metadata Lagu
     metadata['tracks'] = []
@@ -128,8 +147,9 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
 
     # Booklet (dari HRA-DL.py)
     if "booklet" in data and data['booklet']:
-        metadata['booklet_url'] = f"https_content://{data['booklet']}"
-        LOGGER.info("HighResAudio: Menemukan booklet.")
+        # URL booklet sudah lengkap 'https://...'
+        metadata['booklet_url'] = data['booklet']
+        LOGGER.info(f"HighResAudio: Menemukan booklet di {data['booklet']}")
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
