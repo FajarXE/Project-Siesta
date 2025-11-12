@@ -4,7 +4,7 @@ import aiofiles
 import os
 import traceback
 import asyncio
-import math # <-- PERBAIKAN: Impor 'math' untuk progress bar
+import math # Diperlukan untuk progress bar
 import requests # Diperlukan untuk unduhan sinkron
 
 from pathvalidate import sanitize_filepath
@@ -167,9 +167,8 @@ async def start_album(album_url: str, user: dict, upload=True):
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
-    # --- PERBAIKAN: Paksa semaphore ke 1 untuk progres ---
+    # Paksa semaphore ke 1 untuk progres
     sem = asyncio.Semaphore(1) 
-    # --- BATAS PERBAIKAN ---
     
     total_tracks = len(album_meta['tracks'])
     completed_count = 0
@@ -182,28 +181,27 @@ async def start_album(album_url: str, user: dict, upload=True):
             
             if completed_count % 1 == 0 or completed_count == total_tracks:
                 try:
-                    # --- PERBAIKAN: Buat bar & persentase (Disalin dari utils.py) ---
-                    percentage_int = int((completed_count/total_tracks)*100)
-                    percentage_str = f"{percentage_int}%"
+                    # --- PERBAIKAN: Meniru format 5-argumen dari utils.py ---
                     
-                    # Logika dari 'utils.py' untuk membuat bar
+                    # 1. Buat persentase & bar (logika dari utils.py)
+                    percentage_int = int((completed_count/total_tracks)*100)
                     bar = "{0}{1}".format(
                         ''.join(["▰" for _ in range(math.floor(percentage_int / 10))]),
                         ''.join(["▱" for _ in range(10 - math.floor(percentage_int / 10))])
                     )
-                    # --- BATAS PERBAIKAN ---
-
+                    
+                    # 2. Panggil edit_message dengan 5 argumen yang benar
                     await edit_message(
                         user['bot_msg'],
                         lang.s.DOWNLOAD_PROGRESS.format(
-                            completed_count,    # {0}
-                            total_tracks,       # {1}
-                            album_meta['title'],# {2}
-                            percentage_str,     # {3}
-                            track_meta['title'],# {4}
-                            bar                 # {5} <-- Ini sekarang akan berfungsi
+                            bar,                 # {0}
+                            completed_count,     # {1}
+                            total_tracks,        # {2}
+                            album_meta['title'], # {3}
+                            "Tracks"             # {4} (Tipe, seperti di utils.py)
                         )
                     )
+                    # --- BATAS PERBAIKAN ---
                 except Exception as e:
                     # Log jika masih gagal
                     LOGGER.warning(f"HighResAudio: Gagal mengedit pesan progres: {e}")
@@ -241,8 +239,6 @@ async def start_album(album_url: str, user: dict, upload=True):
             album_meta['booklet_url'],
             booklet_path
         )
-        # TODO: Add 'booklet_path' to album_meta if you want it zipped
-        # album_meta['booklet_path'] = booklet_path
 
     playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
 
