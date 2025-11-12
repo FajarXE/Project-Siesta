@@ -22,9 +22,7 @@ except ImportError:
     class QobuzContentUnavailableError(Exception):
         pass
 
-# --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
-# --- BATAS MODIFIKASI ---
 
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
@@ -280,13 +278,11 @@ async def check_type(url, user: dict):
             "track": {"album": False, "func": None, "iterable_key": None},
         }
     try:
-        # --- PERBAIKAN: Memeriksa keluaran dari get_url_info ---
         url_info = await get_url_info(url)
         if url_info is None:
             raise TypeError # Ini akan ditangkap oleh blok except di bawah
             
         url_type, item_id = url_info
-        # --- BATAS PERBAIKAN ---
         
         type_dict = possibles[url_type]
         
@@ -335,9 +331,9 @@ async def check_type(url, user: dict):
         return None, item_id, type_dict, content
 
 
-# --- FUNGSI DIPERBARUI UNTUK MENANGANI REDIRECT (MENGGUNAKAN GET) ---
+# --- FUNGSI DIPERBARUI UNTUK MENG-SCRAPE HTML JIKA PERLU ---
 async def get_url_info(url):
-    # Pola regex standar
+    # Pola regex standar (pola utama)
     regex_pattern = (
         r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a-z]{2}-[a-z]{2})?"
         r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)"
@@ -348,28 +344,59 @@ async def get_url_info(url):
     if r:
         return r.groups() # (type, id)
 
-    # 2. Jika gagal, coba selesaikan redirect (cara lambat)
-    logging.info(f"Qobuz URL tidak dikenali, mencoba menyelesaikan redirect untuk: {url}")
+    # 2. Jika gagal, coba G-E-T H-T-M-L dan scrape og:type (cara lambat)
+    logging.info(f"Qobuz URL tidak dikenali, mencoba scrape HTML untuk: {url}")
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9' # Meminta bahasa Inggris
         }
         async with aiohttp.ClientSession(headers=headers) as session:
-            # --- PERBAIKAN KUNCI: Gunakan GET, bukan HEAD ---
-            # HEAD gagal mendapatkan URL redirect yang benar dari Qobuz.
             async with session.get(url, allow_redirects=True, timeout=10) as response:
-                final_url = str(response.url)
-                logging.info(f"Qobuz URL dialihkan ke: {final_url}")
                 
-                # 3. Coba regex lagi pada URL final
-                r = re.search(regex_pattern, final_url)
-                if r:
-                    return r.groups() # (type, id)
-                else:
-                    logging.error(f"Gagal mem-parsing URL Qobuz yang sudah dialihkan: {final_url}")
-                    return None
+                final_url = str(response.url)
+                
+                # 2a. Coba regex lagi pada URL final (jika redirect-nya berhasil)
+                r_final = re.search(regex_pattern, final_url)
+                if r_final:
+                    logging.info(f"Qobuz URL dialihkan (via HTTP) ke: {final_url}")
+                    return r_final.groups() # (type, id)
+
+                # 2b. Jika URL final masih sama, scrape HTML
+                logging.info(f"Redirect Qobuz tidak menyelesaikan tipe. Meng-scrape HTML dari {final_url}")
+                html_content = await response.text()
+                
+                # Pola regex untuk og:type dan ID dari URL
+                og_type_match = re.search(r'<meta\s+property="og:type"\s+content="music\.(album|artist|song|playlist)"', html_content)
+                id_match = re.search(r"\/(\d+)", final_url.split('?')[0]) # Ambil angka di akhir URL
+                
+                if og_type_match and id_match:
+                    og_type = og_type_match.group(1)
+                    item_id = id_match.group(1)
+                    
+                    # Terjemahkan og:type ke tipe internal kita
+                    if og_type == "song":
+                        og_type = "track"
+                    elif og_type == "artist":
+                        # Cek apakah ini 'interpreter' dari URL
+                        if "/interpreter/" in final_url:
+                            og_type = "interpreter"
+                        else:
+                            og_type = "artist"
+                            
+                    logging.info(f"Scrape HTML Qobuz berhasil: Tipe={og_type}, ID={item_id}")
+                    return (og_type, item_id)
+
+                # Fallback jika og:type tidak ada TAPI URL-nya /interpreter/ (seperti kasus Serj Tankian)
+                if "/interpreter/" in final_url and id_match:
+                     logging.info(f"Scrape HTML Qobuz fallback: Tipe=interpreter, ID={id_match.group(1)}")
+                     return ("interpreter", id_match.group(1))
+
+                logging.error(f"Gagal meng-scrape tipe/ID dari HTML Qobuz: {final_url}")
+                return None
+
     except Exception as e:
-        logging.error(f"Gagal menyelesaikan redirect Qobuz: {e}")
+        logging.error(f"Gagal meng-scrape HTML Qobuz: {e}")
         return None
 
     # 4. Jika semua gagal
