@@ -167,8 +167,6 @@ async def start_album(album_url: str, user: dict, upload=True):
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     # --- PERBAIKAN: Paksa semaphore ke 1 untuk progres ---
-    # Ini akan mengunduh lagu satu per satu, tapi memastikan
-    # pembaruan progres tidak di-flood dan ditampilkan dengan benar.
     sem = asyncio.Semaphore(1) 
     # --- BATAS PERBAIKAN ---
     
@@ -181,20 +179,22 @@ async def start_album(album_url: str, user: dict, upload=True):
             result = await task_coro
             completed_count += 1
             
-            # Sekarang ini aman karena sem=1, tidak akan ada flood
             if completed_count % 1 == 0 or completed_count == total_tracks:
                 try:
+                    # --- PERBAIKAN: Tambahkan track_meta['title'] sebagai argumen ke-5 ---
                     await edit_message(
                         user['bot_msg'],
                         lang.s.DOWNLOAD_PROGRESS.format(
                             completed_count,
                             total_tracks,
                             album_meta['title'],
-                            f"{int((completed_count/total_tracks)*100)}%"
+                            f"{int((completed_count/total_tracks)*100)}%",
+                            track_meta['title'] # <--- INI ARGUMEN YANG HILANG (index 4)
                         )
                     )
+                    # --- BATAS PERBAIKAN ---
                 except Exception as e:
-                    # Log jika masih gagal, tapi jangan 'pass'
+                    # Log jika masih gagal
                     LOGGER.warning(f"HighResAudio: Gagal mengedit pesan progres: {e}")
             
             return result, track_meta
