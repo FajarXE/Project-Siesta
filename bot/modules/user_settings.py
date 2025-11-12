@@ -320,10 +320,10 @@ async def uset_cb(client, query, datatype=""):
     # --- TAMBAHAN BARU: Blok Bugs ---
     if data[1] == "bugs" or datatype == "bugs":
         text = f"Choose Bugs Audio Quality bellow:"
-        # --- PERBAIKAN: Hapus 'flac24' ---
+        # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
         quality = {
             "flac": "FLAC 16-bit",
-            "aac256": "AAC 256k",
+            "aac256": "AAC 320k", # <--- PERBAIKAN DI SINI
             "320k": "MP3 320k",
             "aac": "AAC 128k"
         }
@@ -615,10 +615,10 @@ async def uset_bugs(client, query):
     m = query.message
     if not await check_user(msg=m):
         return
-    # --- PERBAIKAN: Hapus 'flac24' ---
+    # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
     qual_map_display = {
         "FLAC 16-bit": "flac",
-        "AAC 256k": "aac256",
+        "AAC 320k": "aac256", # <--- PERBAIKAN DI SINI
         "MP3 320k": "320k",
         "AAC 128k": "aac"
     }
@@ -728,9 +728,7 @@ async def debug(c, m): # debugger
     else:
         dt_sc += "Tidak ada klien Soundcloud yang aktif (Token hilang)."
 
-    # --- PERBAIKAN: Mengganti \N menjadi \n ---
     dt_dz = "\n\nDEEZER:\n"
-    # --- BATAS PERBAIKAN ---
     if deezer_manager and deezer_manager.clients:
         dt_dz += f"{len(deezer_manager.clients)} klien Deezer aktif.\n"
         dt_dz += f"Kualitas Default: {deezer_manager.quality}\n"
