@@ -49,6 +49,18 @@ except ImportError:
     bugs_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer HIGHRESAUDIO ---
+try:
+    from bot.helpers.highresaudio.manager import highresaudio_manager
+    from bot.helpers.highresaudio.handler import start_highresaudio
+    from bot.helpers.highresaudio.manager import HighResAudioError
+except ImportError:
+    highresaudio_manager = None
+    async def start_highresaudio(*args, **kwargs):
+        raise NotImplementedError("Modul HIGHRESAUDIO ('handler.py') belum diimplementasikan.")
+    class HighResAudioError(Exception): pass
+# --- BATAS TAMBAHAN ---
+
 
 from ..helpers.soundcloud.handler import start_soundcloud
 from ..helpers.utils import cleanup
@@ -164,7 +176,7 @@ async def run_download_task(link: str, user: dict):
         await asyncio.sleep(5) 
             
     except Exception as e:
-        # --- MODIFIKASI: Tambahkan DeezerError ke pesan bersih ---
+        # --- MODIFIKASI: Tambahkan error bersih ---
         error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
         if "not available in any" in str(e) or \
            "Maaf, tidak ada akun" in str(e) or \
@@ -172,6 +184,7 @@ async def run_download_task(link: str, user: dict):
            "URL Deezer tidak valid" in str(e) or \
            isinstance(e, NapsterError) or \
            isinstance(e, BugsError) or \
+           isinstance(e, HighResAudioError) or \
            isinstance(e, DeezerError): # <-- DITAMBAHKAN DI SINI
             error_message = f"Tugas Gagal: {e}"
         # --- BATAS MODIFIKASI ---
@@ -276,6 +289,10 @@ async def start_link(link: str, user: dict) -> None:
     # --- PERBAIKAN: URL Bugs (Tambahkan m.bugs.co.kr) ---
     bugs = ["https://music.bugs.co.kr", "music.bugs.co.kr", "https://m.bugs.co.kr", "m.bugs.co.kr"]
     # --- BATAS PERBAIKAN ---
+
+    # --- TAMBAHAN BARU: URL HIGHRESAUDIO ---
+    highresaudio = ["https://www.highresaudio.com", "highresaudio.com"]
+    # --- BATAS TAMBAHAN ---
     
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
@@ -566,6 +583,31 @@ async def start_link(link: str, user: dict) -> None:
                 raise e 
             else:
                 LOGGER.error(f"Bugs: Tugas gagal (Fatal): {e}")
+                raise e 
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Blok HIGHRESAUDIO ---
+    elif link.startswith(tuple(highresaudio)):
+        user['provider'] = 'HIGHRESAUDIO'
+        
+        if not highresaudio_manager or not highresaudio_manager.clients:
+            raise Exception("Maaf, tidak ada akun HIGHRESAUDIO bot yang aktif saat ini.")
+
+        client = highresaudio_manager.get_client()
+        if not client:
+             raise Exception("Tidak ada klien HIGHRESAUDIO yang tersedia (semua gagal login?).")
+
+        try:
+            user['highresaudio_api'] = client
+            await start_highresaudio(link, user)
+            LOGGER.info(f"HIGHRESAUDIO: Unduhan berhasil menggunakan akun.")
+            return
+        except Exception as e:
+            if isinstance(e, HighResAudioError):
+                LOGGER.error(f"HIGHRESAUDIO: Tugas gagal (Dapat Ditangani): {e}")
+                raise e 
+            else:
+                LOGGER.error(f"HIGHRESAUDIO: Tugas gagal (Fatal): {e}")
                 raise e 
     # --- BATAS TAMBAHAN ---
 
