@@ -80,26 +80,33 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
+    # --- PERBAIKAN: Menambahkan Tanggal, Total Volume, dan Eksplisit ---
+    # Tebakan 'publishDate' (format YYYY-MM-DD)
+    release_date = data.get('publishDate', '1900')[:4]
+    metadata['date'] = release_date
+    
+    # Tebakan 'discCount'
+    total_volumes = data.get('discCount', 1) # Default ke 1 jika tidak ada
+    metadata['totalvolumes'] = str(total_volumes)
+    
+    # Tebakan 'explicit' (boolean)
+    metadata['explicit'] = bool(data.get('explicit', False))
+    # --- BATAS PERBAIKAN ---
+
     # --- PERBAIKAN: Logika Sampul (Cover) ---
-    # Berdasarkan log error, sampul adalah objek, bukan string.
     cover_url_str = None
     try:
-        # 'cover' adalah kunci yang paling mungkin, berdasarkan tebakan awal
         cover_data = data.get('cover') 
         if isinstance(cover_data, dict):
-            # Log error menunjukkan: {'master': {'file_url': '...jpg'}}
             file_url = cover_data.get('master', {}).get('file_url')
             if file_url:
-                # Log error menunjukkan URL tidak memiliki prefix 'https://'
                 cover_url_str = f"https://{file_url}"
                 LOGGER.debug(f"HighResAudio: Menemukan URL sampul: {cover_url_str}")
         elif isinstance(cover_data, str):
-            # Fallback jika ternyata 'cover' adalah string
             cover_url_str = cover_data
-
     except Exception as e:
         LOGGER.warning(f"HighResAudio: Gagal mem-parsing struktur data sampul: {e}")
-        pass # Lanjutkan tanpa sampul
+        pass 
 
     metadata['cover'] = await _process_cover(metadata, cover_url_str)
     metadata['thumbnail'] = metadata['cover']
@@ -121,12 +128,22 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['type'] = 'track'
             track_meta['cover'] = metadata['cover']
             track_meta['thumbnail'] = metadata['thumbnail']
+            # --- PERBAIKAN: Salin data baru ke metadata lagu ---
+            track_meta['date'] = metadata['date']
+            track_meta['explicit'] = metadata['explicit']
+            # --- BATAS PERBAIKAN ---
 
             # Metadata spesifik lagu
             track_meta['itemid'] = track.get('id') # Asumsi
             track_meta['tracknumber'] = str(track.get('trackNumber')).zfill(2)
             track_meta['totaltracks'] = metadata['totaltracks']
             
+            # --- PERBAIKAN: Tebakan 'discNumber' ---
+            disc_num = track.get('discNumber', 1) # Default ke 1
+            track_meta['discnumber'] = str(disc_num)
+            track_meta['totalvolumes'] = metadata['totalvolumes'] # Salin dari album
+            # --- BATAS PERBAIKAN ---
+
             # Kualitas & Ekstensi (HRA-DL selalu FLAC)
             track_meta['quality'] = f"{track.get('format')} kHz FLAC"
             track_meta['extension'] = 'flac'
