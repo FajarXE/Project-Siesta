@@ -10,7 +10,7 @@ from config import Config
 
 from ..logger import LOGGER
 from ..settings import bot_set
-from ..helpers.buttons.settings import * # Ini sekarang akan mengimpor id_button juga
+from ..helpers.buttons.settings import * # Ini sekarang akan mengimpor bugs_button juga
 from ..helpers.database.mongo_async import database
 from ..helpers.tidal.tidal_api import TidalApi
 from ..helpers.message import edit_message, check_user
@@ -67,6 +67,14 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor idagio_manager.")
     idagio_manager = None
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Impor Manajer Bugs ---
+try:
+    from ..helpers.bugs.manager import bugs_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor bugs_manager.")
+    bugs_manager = None
 # --- BATAS TAMBAHAN ---
 
 
@@ -445,7 +453,7 @@ async def napster_cb(c, cb:CallbackQuery):
         await edit_message(
             cb.message,
             "Pilih kualitas default untuk Napster:\n(Kualitas akhir tergantung langganan akun bot)",
-            markup=np_button(quality) # Anda perlu membuat np_button
+            markup=np_button(quality)
         )
 
 @Client.on_callback_query(filters.regex(pattern=r"^npQ")) # Napster Quality Set
@@ -515,4 +523,54 @@ async def idagio_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('IDAGIO_QUALITY', to_set) # Simpan ke DB
         
         await idagio_cb(c, cb)
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Handler Admin Bugs ---
+#----------------
+# BUGS
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^bgP")) # Bugs Panel
+async def bugs_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "flac24": "FLAC 24-bit",
+            "flac": "FLAC 16-bit",
+            "aac256": "AAC 256k",
+            "320k": "MP3 320k",
+            "aac": "AAC 128k"
+        }
+        if not bugs_manager or not bugs_manager.clients:
+            return await edit_message(cb.message, "Layanan Bugs tidak aktif (tidak ada klien yang login).")
+        
+        current = bugs_manager.quality 
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(
+            cb.message,
+            "Pilih kualitas default untuk Bugs:\n(Kualitas FLAC tergantung langganan akun bot)",
+            markup=bugs_button(quality)
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^bgQ")) # Bugs Quality Set
+async def bugs_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qual_map_display = {
+            "FLAC 24-bit": "flac24",
+            "FLAC 16-bit": "flac",
+            "AAC 256k": "aac256",
+            "MP3 320k": "320k",
+            "AAC 128k": "aac"
+        }
+        to_set_display = cb.data.split('_')[1]
+        to_set = qual_map_display.get(to_set_display)
+        if not to_set:
+            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
+        if not bugs_manager or not bugs_manager.clients:
+            return await edit_message(cb.message, "Layanan Bugs tidak aktif.")
+        
+        bugs_manager.quality = to_set
+        await database.set_variable('BUGS_QUALITY', to_set) # Simpan ke DB
+        
+        await bugs_cb(c, cb)
 # --- BATAS TAMBAHAN ---
