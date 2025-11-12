@@ -14,6 +14,11 @@ except (ImportError, ModuleNotFoundError):
         async def get_variable(self, *args, **kwargs): return {}
     database = DummyDatabase()
 
+# --- TAMBAHAN: Definisikan Error Kustom ---
+class DeezerError(Exception):
+    pass
+# --- BATAS TAMBAHAN ---
+
 
 class DeezerLoginManager:
     """
