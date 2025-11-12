@@ -57,6 +57,13 @@ from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
 from ..helpers.beatport.handler import start_beatport
 
+# --- PERBAIKAN: Impor DeezerError ---
+try:
+    from ..helpers.deezer.manager import DeezerError
+except ImportError:
+    class DeezerError(Exception): pass
+# --- BATAS PERBAIKAN ---
+
 try:
     from ..helpers.kkbox.handler import start_kkbox
 except ImportError:
@@ -157,15 +164,17 @@ async def run_download_task(link: str, user: dict):
         await asyncio.sleep(5) 
             
     except Exception as e:
-        # --- MODIFIKASI: Tambahkan BugsError ke pesan bersih ---
+        # --- MODIFIKASI: Tambahkan DeezerError ke pesan bersih ---
         error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
         if "not available in any" in str(e) or \
            "Maaf, tidak ada akun" in str(e) or \
            "NotImplementedError" in str(e) or \
            "URL Deezer tidak valid" in str(e) or \
            isinstance(e, NapsterError) or \
-           isinstance(e, BugsError):
+           isinstance(e, BugsError) or \
+           isinstance(e, DeezerError): # <-- DITAMBAHKAN DI SINI
             error_message = f"Tugas Gagal: {e}"
+        # --- BATAS MODIFIKASI ---
             
         LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
         try:
@@ -315,13 +324,17 @@ async def start_link(link: str, user: dict) -> None:
                 LOGGER.info(f"Deezer: Unduhan berhasil menggunakan ARL ID {client.user['USER']['USER_ID']}")
                 return 
             except Exception as e:
+                # --- PERBAIKAN: Tangkap DeezerError secara eksplisit ---
+                if isinstance(e, DeezerError):
+                    LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Dapat Ditangani): {e}. Mencoba ARL berikutnya...")
+                    last_error = e
+                    continue
+                # --- BATAS PERBAIKAN ---
+
                 error_str = str(e).lower()
-                # --- PERBAIKAN: Hapus "url deezer tidak valid" ---
-                # Biarkan error "URL tidak valid" menjadi fatal dan menghentikan tugas.
                 if "not available in your country" in error_str or \
                    "not available by your subscription" in error_str or \
                    "track not available" in error_str:
-                # --- AKHIR PERBAIKAN ---
                     LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Region/Sub Lock): {e}. Mencoba ARL berikutnya...")
                     last_error = e 
                     continue 
@@ -331,9 +344,6 @@ async def start_link(link: str, user: dict) -> None:
         if last_error:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Deezer yang dicoba. Error terakhir: {last_error}")
         else:
-            # Jika loop selesai tanpa 'return', tetapi 'last_error' tidak ada,
-            # itu berarti 'raise e' terakhir (error fatal) seharusnya terlempar.
-            # Bagian ini seharusnya tidak tercapai jika ada error fatal.
             raise Exception("Gagal mengunduh Deezer karena alasan yang tidak diketahui setelah mencoba semua akun.")
         
     elif link.startswith(tuple(qobuz)):
@@ -482,14 +492,11 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.info(f"Napster: Unduhan berhasil menggunakan akun.")
             return
         except Exception as e:
-            # --- PERBAIKAN: Tambahkan penanganan error Napster ---
             error_str = str(e).lower()
             if isinstance(e, NapsterError) or "tidak ditemukan" in error_str or "tidak tersedia" in error_str:
-                # Ini adalah error "bersih" (item tidak ada), jangan lempar traceback penuh
                 LOGGER.error(f"Napster: Tugas gagal (Dapat Ditangani): {e}")
                 raise e
             else:
-                # Ini adalah error tak terduga
                 LOGGER.error(f"Napster: Tugas gagal (Fatal): {e}")
                 raise e
     # --- BATAS TAMBAHAN ---
@@ -553,16 +560,13 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.info(f"Bugs: Unduhan berhasil menggunakan akun.")
             return
         except Exception as e:
-            # Menggunakan penanganan error yang mirip dengan Napster/KKBox
             error_str = str(e).lower()
             if isinstance(e, BugsError) or "tidak ditemukan" in error_str or "tidak tersedia" in error_str:
-                # Ini adalah error "bersih" (item tidak ada, tidak streamable)
                 LOGGER.error(f"Bugs: Tugas gagal (Dapat Ditangani): {e}")
-                raise e # Lempar error bersih agar pesan ke pengguna tidak menyertakan traceback
+                raise e 
             else:
-                # Ini adalah error tak terduga
                 LOGGER.error(f"Bugs: Tugas gagal (Fatal): {e}")
-                raise e # Lempar error fatal
+                raise e 
     # --- BATAS TAMBAHAN ---
 
     else:
