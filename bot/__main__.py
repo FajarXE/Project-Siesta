@@ -95,6 +95,14 @@ except ImportError:
     nugs_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Bugs ---
+try:
+    from .helpers.bugs.manager import bugs_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'bugs_manager'!")
+    bugs_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 # --- FUNGSI BARU UNTUK MEMUAT PENGATURAN PENGGUNA ---
 
@@ -119,6 +127,9 @@ async def load_all_user_settings_into_managers():
             'soundcloud_qual': soundcloud_manager,
             'napster_qual': napster_manager,
             'idagio_qual': idagio_manager,
+            # --- TAMBAHAN BARU ---
+            'bugs_qual': bugs_manager,
+            # --- BATAS TAMBAHAN ---
         }
 
         # Loop melalui cache global bot_set yang SEKARANG SUDAH DIISI oleh initialize_users()
@@ -316,6 +327,16 @@ async def main():
             logging.warning("PERINGATAN: Tidak ada akun Nugs.net yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
+    # --- TAMBAHAN BARU: Login Bugs ---
+    if bugs_manager:
+        logging.info("Memulai inisialisasi Manajer Bugs...")
+        await bugs_manager.initialize_clients()
+        if bugs_manager.clients:
+            logging.info(f"Manajer Bugs berhasil diinisialisasi dengan {len(bugs_manager.clients)} klien.")
+        else:
+            logging.warning("PERINGATAN: Tidak ada akun Bugs yang berhasil login!")
+    # --- BATAS TAMBAHAN ---
+
     logging.info("Menginisialisasi data pengguna...")
     await bot_set.initialize_users()
     
@@ -338,3 +359,4 @@ if __name__ == "__main__":
     except Exception:
         logging.error(traceback.format_exc())
         sys.exit(1)
+
