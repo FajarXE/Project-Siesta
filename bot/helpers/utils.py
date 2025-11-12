@@ -13,7 +13,7 @@ from urllib.parse import quote
 from aiohttp import ClientTimeout
 from pyrogram.errors import MessageNotModified
 from concurrent.futures import ThreadPoolExecutor
-from pyrogram.errors import FloodWait, MessageIdInvalid # <-- Import yang saya tambahkan terakhir
+from pyrogram.errors import FloodWait, MessageIdInvalid 
 
 from config import Config
 import bot.helpers.translations as lang
@@ -153,41 +153,68 @@ async def format_string(text:str, data:dict, user=None):
     return text
 # --- AKHIR PERBAIKAN ---
 
-
-async def run_concurrent_tasks(tasks, progress_details=None):
+# --- FUNGSI YANG DIPERBARUI UNTUK MENERIMA 'limit' ---
+async def run_concurrent_tasks(tasks: list, update_details: dict, limit: int = 100):
     """
+    Menjalankan daftar tugas asyncio secara bersamaan dengan batas concurrency
+    dan memperbarui pesan status.
+    
     Args:
         tasks: (list) async functions to be run
-        progress_details: details for progress message (dict)    
+        update_details: details for progress message (dict)    
+        limit: (int) Batas concurrency (default 100)
     Returns:
         List[bool]: Daftar hasil (True/False) dari setiap task.
     """
-    semaphore = asyncio.Semaphore(Config.MAX_WORKERS)
-
-    i = [0]
-    l = len(tasks)
-    async def sem_task(task):
-        async with semaphore:
-            try:
-                # Jalankan task (misal: start_track)
-                result = await task 
-            except Exception as e:
-                # Diubah ke .info() agar tidak mengganggu log
-                LOGGER.info(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
-                result = False # Memberi sinyal kegagalan
-            
-            if progress_details and result: # Hanya update progress jika 'start_track' mengembalikan True (sukses)
-                i[0]+=1 # currently done
-                await progress_message(i[0], l, progress_details)
-            
-            # Kembalikan hasil (meskipun False) agar gather bisa menangkapnya
-            return result 
-
-    # 'await asyncio.gather' akan menjalankan semua 'sem_task'
-    # 'sem_task' internal try/except akan mencegah satu kegagalan
-    # menghentikan yang lain.
+    # Buat Semaphore dengan batas yang ditentukan
+    sem = asyncio.Semaphore(limit)
     
-    return await asyncio.gather(*(sem_task(task) for task in tasks))
+    total_tasks = len(tasks)
+    completed_tasks = 0
+    results = []
+
+    # Fungsi helper internal untuk membungkus setiap tugas dengan semaphore
+    async def run_with_sem(task):
+        nonlocal completed_tasks
+        result = False # Default ke False jika terjadi error
+        try:
+            async with sem:
+                # Menjalankan tugas (misalnya: start_track)
+                result = await task
+        except Exception as e:
+            # Diubah ke .info() agar tidak mengganggu log
+            LOGGER.info(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
+            result = False # Memberi sinyal kegagalan
+        
+        # --- PERBAIKAN LOGIKA PROGRESS ---
+        # Update progress baik tugas itu berhasil (True) atau gagal (False)
+        # agar hitungan completed_tasks selalu akurat.
+        completed_tasks += 1
+        
+        if update_details:
+            try:
+                # Update setiap 5 tugas atau pada tugas terakhir
+                if completed_tasks % 5 == 0 or completed_tasks == total_tasks: 
+                    await edit_message(
+                        update_details['msg'],
+                        f"{update_details['text']}\n"
+                        f"**{update_details['title']}**\n"
+                        f"Status: {completed_tasks}/{total_tasks} trek diproses."
+                    )
+            except Exception:
+                # Jangan biarkan pembaruan UI menggagalkan seluruh unduhan
+                pass 
+        # --- AKHIR PERBAIKAN LOGIKA PROGRESS ---
+        
+        return result
+
+    # Buat daftar tugas yang sudah dibungkus
+    wrapped_tasks = [run_with_sem(task) for task in tasks]
+    
+    # Jalankan semua tugas yang dibungkus dan kumpulkan hasilnya
+    results = await asyncio.gather(*wrapped_tasks)
+    return results
+# --- BATAS FUNGSI YANG DIPERBARUI ---
 
 
 async def create_link(path, basepath):
