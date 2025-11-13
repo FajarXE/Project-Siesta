@@ -98,7 +98,7 @@ async def set_flac(data, handle):
         handle.tags['releasedate'] = data['release_date']
 
     if data.get('subgenre'): # Subgenre
-        handle.tags['subgenre'] = data['subgenre']
+        handle.tags['style'] = data['subgenre'] # <-- PERBAIKAN: Menggunakan 'style'
     # --- BATAS PERBAIKAN ---
     
     handle.tags['isrc'] = data['isrc']
@@ -145,8 +145,8 @@ async def set_mp3(data, handle):
     if data.get('release_date'): # Release Date (Tanggal Rilis, misal 2016-11-04)
         handle.tags.add(TDRL(encoding=3, text=data['release_date']))
 
-    if data.get('subgenre'): # Subgenre (sebagai tag TXXX kustom)
-        handle.tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
+    if data.get('subgenre'): # Subgenre
+        handle.tags.add(TXXX(encoding=3, desc='STYLE', text=data.get('subgenre'))) # <-- PERBAIKAN: Menggunakan 'STYLE'
     # --- BATAS PERBAIKAN ---
     
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
@@ -171,8 +171,8 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9gen'] = data.get('genre') or '' 
     handle.tags['\u00a9cpr'] = data['copyright']
 
-    if data.get('subgenre'): # Subgenre (Tag 'STYLE' kustom)
-        handle.tags['----:com.apple.iTunes:STYLE'] = data.get('subgenre').encode('utf-8')
+    if data.get('subgenre'): # Subgenre
+        handle.tags['----:com.apple.iTunes:STYLE'] = data.get('subgenre').encode('utf-8') # <-- PERBAIKAN: Menggunakan 'STYLE'
         
     if data.get('release_date'): # Release Date (Tag 'RELEASETIME' kustom)
         handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
