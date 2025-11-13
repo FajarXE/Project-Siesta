@@ -98,7 +98,7 @@ async def set_flac(data, handle):
         handle.tags['releasedate'] = data['release_date']
 
     if data.get('subgenre'): # Subgenre
-        handle.tags['style'] = data['subgenre'] # <-- PERBAIKAN: Menggunakan 'style'
+        handle.tags['subgenre'] = data['subgenre'] # <-- PERBAIKAN: Diubah kembali ke 'subgenre'
     # --- BATAS PERBAIKAN ---
     
     handle.tags['isrc'] = data['isrc']
@@ -146,7 +146,7 @@ async def set_mp3(data, handle):
         handle.tags.add(TDRL(encoding=3, text=data['release_date']))
 
     if data.get('subgenre'): # Subgenre
-        handle.tags.add(TXXX(encoding=3, desc='STYLE', text=data.get('subgenre'))) # <-- PERBAIKAN: Menggunakan 'STYLE'
+        handle.tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre'))) # <-- PERBAIKAN: Diubah kembali ke 'SUBGENRE'
     # --- BATAS PERBAIKAN ---
     
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
@@ -172,7 +172,7 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9cpr'] = data['copyright']
 
     if data.get('subgenre'): # Subgenre
-        handle.tags['----:com.apple.iTunes:STYLE'] = data.get('subgenre').encode('utf-8') # <-- PERBAIKAN: Menggunakan 'STYLE'
+        handle.tags['----:com.apple.iTunes:SUBGENRE'] = data.get('subgenre').encode('utf-8') # <-- PERBAIKAN: Diubah kembali ke 'SUBGENRE'
         
     if data.get('release_date'): # Release Date (Tag 'RELEASETIME' kustom)
         handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
