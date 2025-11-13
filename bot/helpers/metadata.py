@@ -12,7 +12,7 @@ from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
-    TCOM 
+    TCOM, TDRL # <-- TAMBAHAN: Impor TDRL (Release Time)
 
 from bot.logger import LOGGER
 # --- MODIFIKASI: Hapus impor download_file, kita buat sendiri ---
@@ -35,6 +35,7 @@ metadata = {
         'explicit': '',
         "tracknumber": '',
         'date': '',
+        'release_date': '', # <-- TAMBAHAN: Bidang untuk Tanggal Rilis
         'totaltracks': '',
         'quality': '',
         'extension': '',
@@ -42,6 +43,7 @@ metadata = {
         'volume': '',
         'totalvolume': '',
         'genre': '',
+        'subgenre': '', # <-- TAMBAHAN: Bidang untuk Subgenre
         'provider': '',
         'tracks': [],
         'albums': [],
@@ -88,9 +90,15 @@ async def set_flac(data, handle):
     handle.tags['tracktotal'] = str(data['totaltracks'])
     handle.tags['genre'] = data.get('genre') or '' 
     
-    # --- PERBAIKAN: Hanya tulis tag jika data ada ---
-    if data['date']:
+    # --- PERBAIKAN: Tulis semua tag jika data ada ---
+    if data.get('date'): # Recorded Date (Tahun Produksi, misal 1982)
         handle.tags['date'] = data['date']
+    
+    if data.get('release_date'): # Release Date (Tanggal Rilis, misal 2016-11-04)
+        handle.tags['releasedate'] = data['release_date']
+
+    if data.get('subgenre'): # Subgenre
+        handle.tags['subgenre'] = data['subgenre']
     # --- BATAS PERBAIKAN ---
     
     handle.tags['isrc'] = data['isrc']
@@ -130,9 +138,15 @@ async def set_mp3(data, handle):
     handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
     handle.tags.add(TCON(encoding=3, text=genre_text)) 
     
-    # --- PERBAIKAN: Hanya tulis tag jika data ada ---
-    if data['date']:
+    # --- PERBAIKAN: Tulis semua tag jika data ada ---
+    if data.get('date'): # Recorded Date (Tahun Produksi, misal 1982)
         handle.tags.add(TDRC(encoding=3, text=data['date']))
+        
+    if data.get('release_date'): # Release Date (Tanggal Rilis, misal 2016-11-04)
+        handle.tags.add(TDRL(encoding=3, text=data['release_date']))
+
+    if data.get('subgenre'): # Subgenre (sebagai tag TXXX kustom)
+        handle.tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
     # --- BATAS PERBAIKAN ---
     
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
@@ -150,16 +164,22 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     
-    # --- PERBAIKAN: Hanya tulis tag jika data ada ---
-    if data['date']:
-        handle.tags['\u00a9day'] = data['date']
-    # --- BATAS PERBAIKAN ---
+    # --- PERBAIKAN: Tulis semua tag jika data ada ---
+    if data.get('date'): # Recorded Date (Tahun Produksi, misal 1982)
+        handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
     
     handle.tags['\u00a9gen'] = data.get('genre') or '' 
     handle.tags['\u00a9cpr'] = data['copyright']
 
+    if data.get('subgenre'): # Subgenre (Tag 'STYLE' kustom)
+        handle.tags['----:com.apple.iTunes:STYLE'] = data.get('subgenre').encode('utf-8')
+        
+    if data.get('release_date'): # Release Date (Tag 'RELEASETIME' kustom)
+        handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
+    # --- BATAS PERBAIKAN ---
+
     # --- PERBAIKAN: Konversi int() yang aman untuk M4A ---
-    # Memeriksa .isdigit() untuk menghindari crash int('')
+    # ... (kode Anda untuk ini sudah benar) ...
     track_number_str = str(data.get('tracknumber') or '')
     totaltracks_str = str(data.get('totaltracks') or '')
     volume_str = str(data.get('volume') or '')
@@ -262,3 +282,4 @@ async def create_cover_file(url:str, meta:dict, thumbnail=False): # <-- Perbaika
         return cover
     else:
         return './project-siesta.png'
+
