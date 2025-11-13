@@ -95,7 +95,10 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     # 4. GENRE: (Tebakan)
     metadata['genre'] = data.get('genre', '') 
 
-    # 5. COMPOSER: (Tebakan)
+    # 5. SUBGENRE: (Tambahan Baru - Asumsi)
+    metadata['subgenre'] = data.get('subgenre', '') # <--- BARIS TAMBAHAN
+
+    # 6. COMPOSER: (Tebakan)
     metadata['composer'] = data.get('composer', '')
     # --- BATAS PERBAIKAN ---
 
@@ -139,6 +142,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['date'] = metadata['date'] 
             track_meta['explicit'] = metadata['explicit']
             track_meta['genre'] = metadata['genre']
+            track_meta['subgenre'] = metadata['subgenre'] # <--- BARIS TAMBAHAN
             track_meta['composer'] = metadata['composer']
             # --- BATAS PERBAIKAN ---
 
