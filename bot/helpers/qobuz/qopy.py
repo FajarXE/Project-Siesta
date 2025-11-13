@@ -86,9 +86,14 @@ class QoClient:
             fmt_id = kwargs["fmt_id"]
             if int(fmt_id) not in (5, 6, 7, 27):
                 raise Exception("QOBUZ : Invalid quality id: choose between 5, 6, 7 or 27")
+            
+            # --- INI ADALAH BARIS YANG DIPERBAIKI ---
+            # Menggunakan self.uat (user auth token) BUKAN self.sec (app secret)
             r_sig = "trackgetFileUrlformat_id{}intentstreamtrack_id{}{}{}".format(
-                fmt_id, track_id, unix, kwargs.get("sec", self.sec)
+                fmt_id, track_id, unix, self.uat
             )
+            # --- BATAS PERBAIKAN ---
+            
             r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
             params = {
                 "request_ts": unix,
