@@ -105,8 +105,18 @@ async def format_string(text:str, data:dict, user=None):
     artist = safe_get('artist')
     albumartist = safe_get('albumartist')
     tracknumber = safe_get('tracknumber')
-    date = safe_get('date') # <-- Ini adalah Recorded Date (1982)
-    release_date = safe_get('release_date') # <-- PERBAIKAN: Ambil release_date (2016-11-04)
+    
+    # --- PERBAIKAN: LOGIKA TANGGAL DENGAN FALLBACK ---
+    # {date} adalah 'Recorded Date' (misal 1982 dari HRA, atau 2016 dari Qobuz)
+    date = safe_get('date') 
+    
+    # {release_date} adalah 'Release Date' (misal 2016-11-04 dari HRA)
+    release_date = safe_get('release_date') 
+
+    # Jika {release_date} kosong (misal dari Qobuz), gunakan {date} sebagai gantinya.
+    release_date_fallback = release_date if release_date else date
+    # --- BATAS PERBAIKAN ---
+
     upc = safe_get('upc')
     isrc = safe_get('isrc')
     totaltracks = safe_get('totaltracks')
@@ -130,8 +140,12 @@ async def format_string(text:str, data:dict, user=None):
     text = text.replace(R'{artist}', artist)
     text = text.replace(R'{albumartist}', albumartist)
     text = text.replace(R'{tracknumber}', tracknumber)
-    text = text.replace(R'{date}', date)
-    text = text.replace(R'{release_date}', release_date) # <-- PERBAIKAN: Tambahkan penggantian
+    
+    # --- PERBAIKAN: Gunakan nilai yang benar ---
+    text = text.replace(R'{date}', date) # Untuk 'Recorded Date : {date}'
+    text = text.replace(R'{release_date}', release_date_fallback) # Untuk 'Release Date : {release_date}'
+    # --- BATAS PERBAIKAN ---
+
     text = text.replace(R'{upc}', upc)
     text = text.replace(R'{isrc}', isrc)
     text = text.replace(R'{totaltracks}', totaltracks)
