@@ -128,7 +128,7 @@ Auth Chats : {4}
     ALBUM_TEMPLATE = """
 <b>ᴛɪᴛʟᴇ :</b> {title}
 <b>ᴀʀᴛɪsᴛ :</b> {artist}
-<b>ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :</b> {date}
+<b>ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :</b> {release_date}
 <b>ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :</b> {totaltracks}
 <b>ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :</b> {totalvolume}
 <b>ǫᴜᴀʟɪᴛʏ :</b> {quality}
