@@ -16,7 +16,7 @@ def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL HighResAudio."""
     
     # Regex dari HRA-DL.py
-    pattern = r"https?://(?:www\.)?highresaudio\.com/[a-z]{2}/album/view/(\w+)/.*"
+    pattern = r"https://(?:www\.)?highresaudio\.com/[a-z]{2}/album/view/(\w+)/.*"
     match = re.match(pattern, link)
     
     if match:
@@ -64,9 +64,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
         if not data:
             raise HighResAudioError("Respons API tidak berisi data 'results'.")
 
-        # BARIS DEBUG: Akan mencetak data mentah ke log
-        LOGGER.info(f"HRA DEBUG DATA: {data}")
-        # ---------------------------------
+        # Baris debug telah dihapus.
 
     except Exception as e:
         LOGGER.error(f"HighResAudio: Gagal mendapatkan metadata album: {e}\n{traceback.format_exc()}")
@@ -86,9 +84,12 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     
     # --- PERBAIKAN: Menambahkan GENRE dan COMPOSER ---
     
-    # 1. RELEASE DATE: (PERBAIKAN) Mengambil tanggal lengkap, bukan hanya tahun.
-    release_date_raw = data.get('publishDate', '') 
-    metadata['date'] = release_date_raw # <-- PERBAIKAN: [ :4] DIHAPUS
+    # 1. RELEASE DATE: (PERBAIKAN) Menggunakan 'releaseDate' dan mengambil tanggal saja.
+    release_date_raw = data.get('releaseDate', '') # <-- KUNCI DIPERBAIKI
+    if ' ' in release_date_raw:
+        metadata['date'] = release_date_raw.split(' ')[0] # <-- Mengambil 'YYYY-MM-DD'
+    else:
+        metadata['date'] = release_date_raw
     
     # 2. TOTAL VOLUMES: Gunakan fallback 1 (ini sudah berfungsi)
     total_volumes = data.get('discCount', 1) 
@@ -100,8 +101,8 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     # 4. GENRE: (Tebakan)
     metadata['genre'] = data.get('genre', '') 
 
-    # 5. SUBGENRE: (PERBAIKAN) Menggunakan tebakan baru 'subGenre' (camelCase)
-    metadata['subgenre'] = data.get('subGenre', '') # <-- Ini masih tebakan
+    # 5. SUBGENRE: (PERBAIKAN) Menggunakan 'subgenre' (lowercase) sesuai data log.
+    metadata['subgenre'] = data.get('subgenre', '') # <-- KUNCI DIPERBAIKI
 
     # 6. COMPOSER: (Tebakan)
     metadata['composer'] = data.get('composer', '')
@@ -147,7 +148,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['date'] = metadata['date'] # <-- Akan mengambil tanggal lengkap sekarang
             track_meta['explicit'] = metadata['explicit']
             track_meta['genre'] = metadata['genre']
-            track_meta['subgenre'] = metadata['subgenre'] # <-- Akan mengambil data 'subGenre' sekarang
+            track_meta['subgenre'] = metadata['subgenre'] # <-- Akan mengambil 'subgenre' sekarang
             track_meta['composer'] = metadata['composer']
             # --- BATAS PERBAIKAN ---
 
