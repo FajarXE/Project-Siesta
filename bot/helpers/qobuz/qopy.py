@@ -70,8 +70,11 @@ class QoClient:
                 "extra": "albums",
             }
         elif epoint == "favorite/getUserFavorites":
-            unix = time.time()
+            # --- PERBAIKAN 1: Gunakan timestamp integer ---
+            unix = int(time.time())
             r_sig = "favoritegetUserFavorites" + str(unix) + kwargs["sec"]
+            # --- BATAS PERBAIKAN ---
+            
             r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
             params = {
                 "app_id": self.id,
@@ -81,16 +84,16 @@ class QoClient:
                 "request_sig": r_sig_hashed,
             }
         elif epoint == "track/getFileUrl":
-            unix = time.time()
+            # --- PERBAIKAN 2: Gunakan timestamp integer ---
+            unix = int(time.time())
             track_id = kwargs["id"]
             fmt_id = kwargs["fmt_id"]
             if int(fmt_id) not in (5, 6, 7, 27):
                 raise Exception("QOBUZ : Invalid quality id: choose between 5, 6, 7 or 27")
             
-            # --- INI ADALAH BARIS YANG DIPERBAIKI ---
-            # Menggunakan self.uat (user auth token) BUKAN self.sec (app secret)
+            # --- PERBAIKAN: Kembalikan ke self.sec DAN gunakan timestamp int ---
             r_sig = "trackgetFileUrlformat_id{}intentstreamtrack_id{}{}{}".format(
-                fmt_id, track_id, unix, self.uat
+                fmt_id, track_id, unix, kwargs.get("sec", self.sec)
             )
             # --- BATAS PERBAIKAN ---
             
@@ -119,8 +122,8 @@ class QoClient:
                     epoint in ["track/getFileUrl", "favorite/getUserFavorites"]
                     and r.status == 400
                 ):
-                    # --- INI ADALAH BARIS YANG MENYEBABKAN CRASH ANDA ---
-                    raise Exception("QOBUZ : Invalid App Secret. Please recheck your credentials.... Disabling QOBUZ")
+                    # --- PERBAIKAN: Pesan error yang lebih akurat ---
+                    raise Exception(f"QOBUZ : HTTP 400 (Bad Request) saat memanggil {epoint}. Ini bisa berarti App Secret salah ATAU akun tidak punya akses ke item ini.")
                 
                 if r.status == 403:
                     raise Exception(f"{r.status}, message='Akses ditolak (Forbidden). Kemungkinan IP server diblokir.', url='{r.url}'")
@@ -212,9 +215,13 @@ class QoClient:
 
     async def test_secret(self, sec):
         test_epoint = "track/getFileUrl"
-        unix = time.time()
+        
+        # --- PERBAIKAN 3: Gunakan timestamp integer ---
+        unix = int(time.time())
         
         r_sig = "trackgetFileUrlformat_id5intentstreamtrack_id5966783{}{}".format(unix, sec)
+        # --- BATAS PERBAIKAN ---
+
         r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
         
         params = {
