@@ -64,6 +64,10 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
         if not data:
             raise HighResAudioError("Respons API tidak berisi data 'results'.")
 
+        # BARIS DEBUG: Akan mencetak data mentah ke log
+        LOGGER.info(f"HRA DEBUG DATA: {data}")
+        # ---------------------------------
+
     except Exception as e:
         LOGGER.error(f"HighResAudio: Gagal mendapatkan metadata album: {e}\n{traceback.format_exc()}")
         raise e
@@ -97,7 +101,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     metadata['genre'] = data.get('genre', '') 
 
     # 5. SUBGENRE: (PERBAIKAN) Menggunakan tebakan baru 'subGenre' (camelCase)
-    metadata['subgenre'] = data.get('subGenre', '') # <-- PERBAIKAN: Mengganti 'subgenre' menjadi 'subGenre'
+    metadata['subgenre'] = data.get('subGenre', '') # <-- Ini masih tebakan
 
     # 6. COMPOSER: (Tebakan)
     metadata['composer'] = data.get('composer', '')
