@@ -81,9 +81,10 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     metadata['totaltracks'] = str(len(track_list))
     
     # --- PERBAIKAN: Menambahkan GENRE dan COMPOSER ---
-    # 1. RELEASE DATE: Gunakan fallback '' (string kosong).
+    
+    # 1. RELEASE DATE: (PERBAIKAN) Mengambil tanggal lengkap, bukan hanya tahun.
     release_date_raw = data.get('publishDate', '') 
-    metadata['date'] = release_date_raw[:4] # Jika '' maka akan jadi ''
+    metadata['date'] = release_date_raw # <-- PERBAIKAN: [ :4] DIHAPUS
     
     # 2. TOTAL VOLUMES: Gunakan fallback 1 (ini sudah berfungsi)
     total_volumes = data.get('discCount', 1) 
@@ -95,8 +96,8 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     # 4. GENRE: (Tebakan)
     metadata['genre'] = data.get('genre', '') 
 
-    # 5. SUBGENRE: (Tambahan Baru - Asumsi)
-    metadata['subgenre'] = data.get('subgenre', '') # <--- BARIS TAMBAHAN
+    # 5. SUBGENRE: (PERBAIKAN) Menggunakan tebakan baru 'subGenre' (camelCase)
+    metadata['subgenre'] = data.get('subGenre', '') # <-- PERBAIKAN: Mengganti 'subgenre' menjadi 'subGenre'
 
     # 6. COMPOSER: (Tebakan)
     metadata['composer'] = data.get('composer', '')
@@ -139,10 +140,10 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['thumbnail'] = metadata['thumbnail']
             
             # --- PERBAIKAN: Salin data baru ke metadata lagu ---
-            track_meta['date'] = metadata['date'] 
+            track_meta['date'] = metadata['date'] # <-- Akan mengambil tanggal lengkap sekarang
             track_meta['explicit'] = metadata['explicit']
             track_meta['genre'] = metadata['genre']
-            track_meta['subgenre'] = metadata['subgenre'] # <--- BARIS TAMBAHAN
+            track_meta['subgenre'] = metadata['subgenre'] # <-- Akan mengambil data 'subGenre' sekarang
             track_meta['composer'] = metadata['composer']
             # --- BATAS PERBAIKAN ---
 
