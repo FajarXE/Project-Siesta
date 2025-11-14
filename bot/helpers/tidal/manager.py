@@ -25,11 +25,12 @@ class TidalLoginManager:
         self.clients = [] 
         self._client_cycler = None
         
-        # --- MODIFIKASI: Tambahkan default MQA ---
+        # --- MODIFIKASI: Tambahkan default MQA & Convert ---
         self.quality = "LOSSLESS" 
         self.spatial = "OFF"
-        # Ambil default global dari Config, bukan hardcode "ON"
-        self.mqa_fix = Config.TIDAL_FIX_MQA 
+        # Ambil default global dari Config (sekarang "ON" atau "OFF")
+        self.mqa_fix = Config.TIDAL_FIX_MQA
+        self.convert_m4a = Config.TIDAL_CONVERT_M4A
         # --- AKHIR MODIFIKASI ---
         
         self.user_data = {}       
@@ -41,7 +42,6 @@ class TidalLoginManager:
         self.clients = [] 
         LOGGER.info("Tidal Manager: Menginisialisasi klien...")
         
-        # --- PERBAIKAN: Muat pengaturan dari satu dokumen ---
         try:
             all_settings = await database.get_variable() # Ambil SEMUA pengaturan
             if not all_settings:
@@ -58,21 +58,24 @@ class TidalLoginManager:
                 self.spatial = db_spatial
                 LOGGER.info(f"Tidal Manager: Kualitas spasial default dimuat dari DB: {self.spatial}")
             
-            # --- MODIFIKASI: Muat pengaturan MQA global (Admin) ---
-            # Ini akan menimpa default dari Config jika ada di DB
+            # 2. Muat pengaturan MQA global (Admin)
             db_mqa_fix = all_settings.get('TIDAL_MQA_FIX')
             if db_mqa_fix in ["ON", "OFF"]:
                 self.mqa_fix = db_mqa_fix
                 LOGGER.info(f"Tidal Manager: Perbaikan MQA default dimuat dari DB: {self.mqa_fix}")
-            # --- AKHIR MODIFIKASI ---
             
-            # 2. Muat Daftar Akun dari DB
+            # 3. Muat pengaturan Convert M4A global (Admin)
+            db_convert_m4a = all_settings.get('TIDAL_CONVERT_M4A')
+            if db_convert_m4a in ["ON", "OFF"]:
+                self.convert_m4a = db_convert_m4a
+                LOGGER.info(f"Tidal Manager: Konversi M4A default dimuat dari DB: {self.convert_m4a}")
+            
+            # 4. Muat Daftar Akun dari DB
             accounts_list = all_settings.get("TIDAL_ACCOUNTS_LIST", [])
             
         except Exception as e:
             LOGGER.error(f"Tidal Manager: Gagal memuat data dari DB: {e}. Menggunakan default.")
             accounts_list = []
-        # --- PERBAIKAN SELESAI ---
 
         if not accounts_list:
             LOGGER.warning("Tidal Manager: Tidak ada akun di database untuk diinisialisasi.")
@@ -124,9 +127,9 @@ class TidalLoginManager:
 
     # --- Fungsi Helper Kualitas ---
     
-    # --- MODIFIKASI: Ubah nama dan tambahkan parameter MQA ---
-    async def setup_user_settings(self, user_id: int, qual: str = None, spatial: str = None, mqa_fix: str = None):
-        """Mengatur cache kualitas & mqa untuk pengguna tertentu."""
+    # --- MODIFIKASI: Tambahkan parameter convert_m4a ---
+    async def setup_user_settings(self, user_id: int, qual: str = None, spatial: str = None, mqa_fix: str = None, convert_m4a: str = None):
+        """Mengatur cache kualitas, mqa, & convert untuk pengguna tertentu."""
         if user_id not in self.user_data:
             self.user_data[user_id] = {}
             
@@ -141,23 +144,27 @@ class TidalLoginManager:
         if mqa_fix in ['ON', 'OFF']:
             self.user_data[user_id]['tidal_mqa_fix'] = mqa_fix
             LOGGER.debug(f"Tidal Manager: Mengatur MQA Fix user {user_id} ke {mqa_fix}")
+            
+        if convert_m4a in ['ON', 'OFF']:
+            self.user_data[user_id]['tidal_convert_m4a'] = convert_m4a
+            LOGGER.debug(f"Tidal Manager: Mengatur Convert M4A user {user_id} ke {convert_m4a}")
     # --- AKHIR MODIFIKASI ---
 
-    # --- MODIFIKASI: Kembalikan 3 nilai ---
-    def get_user_quality_settings(self, user_id: int) -> tuple[str, str, str]:
-        """Mendapatkan kualitas, spasial, & mqa untuk pengguna, fallback ke default."""
+    # --- MODIFIKASI: Kembalikan 4 nilai ---
+    def get_user_quality_settings(self, user_id: int) -> tuple[str, str, str, str]:
+        """Mendapatkan kualitas, spasial, mqa, & convert untuk pengguna, fallback ke default."""
         user_dict = self.user_data.get(user_id, {})
         user_qual = user_dict.get('tidal_qual', self.quality)
         user_spatial = user_dict.get('tidal_spatial', self.spatial)
-        user_mqa_fix = user_dict.get('tidal_mqa_fix', self.mqa_fix) # <-- Tambahkan ini
-        return user_qual, user_spatial, user_mqa_fix # <-- Kembalikan 3 nilai
+        user_mqa_fix = user_dict.get('tidal_mqa_fix', self.mqa_fix)
+        user_convert_m4a = user_dict.get('tidal_convert_m4a', self.convert_m4a) # <-- Tambahkan ini
+        return user_qual, user_spatial, user_mqa_fix, user_convert_m4a # <-- Kembalikan 4 nilai
     # --- AKHIR MODIFIKASI ---
     
     # --- TAMBAHAN BARU: Helper untuk tombol ---
-    # Fungsi ini diperlukan oleh handler callback Anda untuk menggambar ulang tombol
     async def get_user_qualities_dict(self, user_id: int) -> dict:
         """Mendapatkan dict kualitas dengan tanda centang untuk tombol."""
-        user_qual, _, __ = self.get_user_quality_settings(user_id)
+        user_qual, _, __, ___ = self.get_user_quality_settings(user_id) # Diperbarui untuk 4 nilai
         qualities = {
             "LOW": "LOW",
             "HIGH": "HIGH",
@@ -169,7 +176,7 @@ class TidalLoginManager:
 
     async def get_user_spatial_dict(self, user_id: int) -> str:
         """Mendapatkan pengaturan spasial pengguna saat ini."""
-        _, user_spatial, __ = self.get_user_quality_settings(user_id)
+        _, user_spatial, __, ___ = self.get_user_quality_settings(user_id) # Diperbarui untuk 4 nilai
         return user_spatial
     # --- BATAS TAMBAHAN ---
 
