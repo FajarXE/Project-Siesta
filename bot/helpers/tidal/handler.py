@@ -145,36 +145,42 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
 
         track_meta['extension'] = await get_audio_extension(filepath)
         
-        if quality == 'HI_RES_LOSSLESS' and Config.TIDAL_CONVERT_M4A:
+        
+        # --- MODIFIKASI: Ambil SEMUA pengaturan pengguna ---
+        try:
+            # Ambil semua 4 pengaturan
+            _, __, user_mqa_fix, user_convert_m4a = tidal_manager.get_user_quality_settings(user['user_id'])
+        except Exception:
+            user_mqa_fix = "ON" # Fallback
+            user_convert_m4a = "OFF" # Fallback
+        # --- AKHIR MODIFIKASI ---
+        
+
+        # --- MODIFIKASI: Gunakan 'user_convert_m4a' ---
+        if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "ON":
+            LOGGER.info(f"Mengonversi M4A ke FLAC untuk user {user['user_id']} Sesuai pengaturan.")
             await ffmpeg_convert(filepath)
             track_meta['filepath'] = track_meta['filepath'] + '.flac'
             os.remove(filepath)
         else:
+            if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "OFF":
+                LOGGER.info(f"Melewatkan konversi M4A untuk user {user['user_id']} Sesuai pengaturan.")
             track_meta['filepath'] = track_meta['filepath'] + f".{track_meta['extension']}"
-            # local filepath var is not updated so it contains old path before extention update
             os.rename(filepath, track_meta['filepath'])
+        # --- AKHIR MODIFIKASI ---
             
             
         # --- MODIFIKASI: Analisis MQA dengan Pengecekan Pengguna ---
         track_meta['mqa_details'] = None # Inisialisasi
         
-        # Ambil pengaturan MQA spesifik pengguna
-        try:
-            # Ambil semua 3 pengaturan, tapi kita hanya butuh yang terakhir
-            _, __, user_mqa_fix = tidal_manager.get_user_quality_settings(user['user_id'])
-        except Exception:
-            user_mqa_fix = "ON" # Fallback jika terjadi error
-        
-        # Cek pengaturan pengguna sebelum menjalankan analisis
+        # Cek pengaturan pengguna 'user_mqa_fix' sebelum menjalankan analisis
         if track_meta['codec'] == 'MQA' and user_mqa_fix == "ON":
             try:
                 LOGGER.info(f"Menganalisis file MQA: {track_meta['filepath']} (User: {user['user_id']})")
-                # MqaIdentifier adalah sinkron, jalankan di thread agar tidak memblokir bot
                 mqa_file = await asyncio.to_thread(MqaIdentifier, track_meta['filepath'])
                 
                 if mqa_file.is_mqa:
                     LOGGER.info(f"MQA terdeteksi: {mqa_file.get_original_sample_rate()}kHz (Studio: {mqa_file.is_mqa_studio})")
-                    # Perbarui metadata dengan info MQA yang benar
                     track_meta['mqa_details'] = mqa_file
                     track_meta['bit_depth'] = mqa_file.bit_depth
                     track_meta['sample_rate'] = mqa_file.get_original_sample_rate()
@@ -194,8 +200,8 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
     return True
 
 
-# ... (Fungsi start_album, start_playlist, start_artist tidak berubah) ...
-# ... (Salin sisa file handler.py Anda) ...
+# ... (Salin sisa file handler.py Anda, 
+#  semua fungsi lain tidak berubah) ...
 async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     # --- MODIFIKASI: Dapatkan klien yang diinjeksi ---
     client: TidalApi = user['tidal_api']
