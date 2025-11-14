@@ -121,8 +121,14 @@ class Config:
     TIDAL_ATMOS_MOBILE_TOKEN = getenv("TIDAL_ATMOS_MOBILE_TOKEN", None)
     TIDAL_TV_TOKEN = getenv("TIDAL_TV_TOKEN", None)
     TIDAL_TV_SECRET = getenv("TIDAL_TV_SECRET", None)
-    TIDAL_CONVERT_M4A = getenv("TIDAL_CONVERT_M4A", False)
     
+    # --- PERBAIKAN: Baca boolean dari .env dengan benar ---
+    # Ambil nilai mentah dari .env, default-nya adalah string "False"
+    _convert_m4a_raw = getenv("TIDAL_CONVERT_M4A", "False")
+    # Konversikan ke boolean. Hanya "TRUE", "1", "YES" yang dianggap True.
+    TIDAL_CONVERT_M4A = _convert_m4a_raw.upper() in ["TRUE", "1", "Y", "YES"]
+    # --- AKHIR PERBAIKAN ---
+
     # --- TAMBAHAN BARU: Pengaturan MQA Global ---
     # Ambil dari .env, default-nya "ON". Ubah ke huruf besar.
     TIDAL_FIX_MQA = getenv("TIDAL_FIX_MQA", "ON").upper() 
