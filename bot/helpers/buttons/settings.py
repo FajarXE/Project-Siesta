@@ -81,6 +81,7 @@ def fetch_base_buttons():
     close_button = [[InlineKeyboardButton(text=lang.s.CLOSE_BUTTON, callback_data="close")]]
     return main_button, close_button
 
+# ... (Salin fungsi main_menu, providers_button, tg_button, core_buttons, language_buttons dari file Anda) ...
 def main_menu():
     inline_keyboard = [
         [
@@ -330,7 +331,6 @@ def language_buttons(languages, selected):
     inline_keyboard += main_button+ close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
-
 # tidal panel
 def tidal_buttons():
     inline_keyboard = [
@@ -411,8 +411,8 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
     
     # Ambil pengaturan spesifik pengguna jika ini adalah panel pengguna
     if usetting:
-        # Ambil semua 3 pengaturan dari manager
-        _, spatial_to_show, user_mqa_fix = tidal_manager.get_user_quality_settings(user_id)
+        # Ambil semua 4 pengaturan dari manager
+        _, spatial_to_show, user_mqa_fix, user_convert_m4a = tidal_manager.get_user_quality_settings(user_id)
 
     # 1. Tombol Kualitas
     for quality in qualities.values():
@@ -435,20 +435,37 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
         ]
     )
     
-    # 3. Tombol MQA (HANYA untuk panel pengguna)
+    # 3. Tombol MQA & Convert (HANYA untuk panel pengguna)
     if usetting:
+        # Tombol MQA
         if user_mqa_fix == "ON":
             mqa_text = "✅ MQA Fix: ON"
             mqa_callback = "utdqs_mqa_OFF" # utdqs_ = User Tidal Quality Setting
         else:
             mqa_text = "❌ MQA Fix: OFF"
             mqa_callback = "utdqs_mqa_ON"
+        
+        # Tombol Convert M4A
+        if user_convert_m4a == "ON":
+            convert_text = "✅ Convert M4A: ON"
+            convert_callback = "utdqs_convert_OFF"
+        else:
+            convert_text = "❌ Convert M4A: OFF"
+            convert_callback = "utdqs_convert_ON"
             
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
                     text=mqa_text,
                     callback_data=mqa_callback
+                )
+            ]
+        )
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=convert_text,
+                    callback_data=convert_callback
                 )
             ]
         )
@@ -468,6 +485,8 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
     return InlineKeyboardMarkup(inline_keyboard)
 # --- AKHIR MODIFIKASI ---
 
+# ... (Salin sisa file buttons/settings.py Anda, 
+#  semua fungsi lain tidak berubah) ...
 # Beatport Button
 def bp_button(quality: dict, user_id: int = None):
     buttons = []
