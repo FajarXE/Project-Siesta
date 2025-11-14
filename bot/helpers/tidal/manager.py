@@ -25,8 +25,13 @@ class TidalLoginManager:
         self.clients = [] 
         self._client_cycler = None
         
+        # --- MODIFIKASI: Tambahkan default MQA ---
         self.quality = "LOSSLESS" 
-        self.spatial = "OFF"      
+        self.spatial = "OFF"
+        # Ambil default global dari Config, bukan hardcode "ON"
+        self.mqa_fix = Config.TIDAL_FIX_MQA 
+        # --- AKHIR MODIFIKASI ---
+        
         self.user_data = {}       
 
     async def initialize_clients(self):
@@ -52,6 +57,14 @@ class TidalLoginManager:
             if db_spatial:
                 self.spatial = db_spatial
                 LOGGER.info(f"Tidal Manager: Kualitas spasial default dimuat dari DB: {self.spatial}")
+            
+            # --- MODIFIKASI: Muat pengaturan MQA global (Admin) ---
+            # Ini akan menimpa default dari Config jika ada di DB
+            db_mqa_fix = all_settings.get('TIDAL_MQA_FIX')
+            if db_mqa_fix in ["ON", "OFF"]:
+                self.mqa_fix = db_mqa_fix
+                LOGGER.info(f"Tidal Manager: Perbaikan MQA default dimuat dari DB: {self.mqa_fix}")
+            # --- AKHIR MODIFIKASI ---
             
             # 2. Muat Daftar Akun dari DB
             accounts_list = all_settings.get("TIDAL_ACCOUNTS_LIST", [])
@@ -111,22 +124,54 @@ class TidalLoginManager:
 
     # --- Fungsi Helper Kualitas ---
     
-    async def setup_quality(self, user_id: int, qual: str = None, spatial: str = None):
-        """Mengatur cache kualitas untuk pengguna tertentu."""
+    # --- MODIFIKASI: Ubah nama dan tambahkan parameter MQA ---
+    async def setup_user_settings(self, user_id: int, qual: str = None, spatial: str = None, mqa_fix: str = None):
+        """Mengatur cache kualitas & mqa untuk pengguna tertentu."""
         if user_id not in self.user_data:
             self.user_data[user_id] = {}
+            
         if qual in ["LOW", "HIGH", "LOSSLESS", "HI_RES"]:
             self.user_data[user_id]['tidal_qual'] = qual
             LOGGER.debug(f"Tidal Manager: Mengatur kualitas user {user_id} ke {qual}")
+            
         if spatial in ['OFF', 'ATMOS AC3 JOC', 'ATMOS AC4', 'Sony 360RA']:
             self.user_data[user_id]['tidal_spatial'] = spatial
             LOGGER.debug(f"Tidal Manager: Mengatur spasial user {user_id} ke {spatial}")
+            
+        if mqa_fix in ['ON', 'OFF']:
+            self.user_data[user_id]['tidal_mqa_fix'] = mqa_fix
+            LOGGER.debug(f"Tidal Manager: Mengatur MQA Fix user {user_id} ke {mqa_fix}")
+    # --- AKHIR MODIFIKASI ---
 
-    def get_user_quality_settings(self, user_id: int) -> tuple[str, str]:
-        """Mendapatkan kualitas & spasial untuk pengguna, fallback ke default."""
+    # --- MODIFIKASI: Kembalikan 3 nilai ---
+    def get_user_quality_settings(self, user_id: int) -> tuple[str, str, str]:
+        """Mendapatkan kualitas, spasial, & mqa untuk pengguna, fallback ke default."""
         user_dict = self.user_data.get(user_id, {})
         user_qual = user_dict.get('tidal_qual', self.quality)
         user_spatial = user_dict.get('tidal_spatial', self.spatial)
-        return user_qual, user_spatial
+        user_mqa_fix = user_dict.get('tidal_mqa_fix', self.mqa_fix) # <-- Tambahkan ini
+        return user_qual, user_spatial, user_mqa_fix # <-- Kembalikan 3 nilai
+    # --- AKHIR MODIFIKASI ---
+    
+    # --- TAMBAHAN BARU: Helper untuk tombol ---
+    # Fungsi ini diperlukan oleh handler callback Anda untuk menggambar ulang tombol
+    async def get_user_qualities_dict(self, user_id: int) -> dict:
+        """Mendapatkan dict kualitas dengan tanda centang untuk tombol."""
+        user_qual, _, __ = self.get_user_quality_settings(user_id)
+        qualities = {
+            "LOW": "LOW",
+            "HIGH": "HIGH",
+            "LOSSLESS": "LOSSLESS",
+            "HI_RES": "HI_RES"
+        }
+        qualities[user_qual] += " ✅"
+        return qualities
+
+    async def get_user_spatial_dict(self, user_id: int) -> str:
+        """Mendapatkan pengaturan spasial pengguna saat ini."""
+        _, user_spatial, __ = self.get_user_quality_settings(user_id)
+        return user_spatial
+    # --- BATAS TAMBAHAN ---
+
 
 tidal_manager = TidalLoginManager()
