@@ -62,7 +62,7 @@ async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False
         metadata['genre'] = t_meta['genre']
 
     # 2. Ambil Info Disk (Volume)
-    metadata['volume'] = t_meta['volumeNumber']
+    metadata['volume'] = t_meta.get('volumeNumber') # Gunakan .get() agar aman
     if t_meta.get('album') and t_meta['album'].get('numberOfVolumes'):
         metadata['totalvolume'] = t_meta['album']['numberOfVolumes']
 
@@ -110,18 +110,26 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
     metadata['thumbnail'] = await get_cover(a_meta.get('cover'), metadata, True)
 
 
+    # --- MODIFIKASI BESAR: Jangan panggil get_track_metadata ---
+    # Alih-alih membuat metadata lengkap (tapi tidak lengkap),
+    # kita hanya membuat "stub" (rangka) minimalis.
+    # start_track akan dipaksa untuk mengambil metadata lengkap.
     metadata['tracks'] = []
     for track in t_meta['items']:
-        track_meta = await get_track_metadata(track['id'], track, r_id, metadata['cover'], metadata['thumbnail'])
-        
-        # --- MODIFIKASI: Salin data level album ke setiap trek ---
-        # Ini memastikan trek memiliki info 'totalvolume' bahkan jika dipanggil dari album
-        if 'totalvolume' in metadata:
-            track_meta['totalvolume'] = metadata['totalvolume']
-        # 'composer' dan 'genre' biasanya per-trek, jadi kita biarkan apa adanya dari 'get_track_metadata'
-        # --- AKHIR MODIFIKASI ---
-        
-        metadata['tracks'].append(track_meta)
+        stub_meta = {
+            'itemid': track['id'],
+            'albumartist': metadata['albumartist'],
+            'album': metadata['album'],
+            'cover': metadata['cover'],
+            'thumbnail': metadata['thumbnail'],
+            'provider': 'Tidal',
+            # Info ini penting untuk nama file di start_track
+            'title': track['title'].replace('/', ' ') if track.get('title') else 'Unknown Title',
+            'artist': get_artists_name(track),
+            'tracknumber': track.get('trackNumber', 1)
+        }
+        metadata['tracks'].append(stub_meta)
+    # --- AKHIR MODIFIKASI BESAR ---
     
     return metadata
 
@@ -140,57 +148,50 @@ async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
     metadata['tempfolder'] += f"{r_id}-temp/"
 
     metadata['itemid'] = playlist_id
-    # Gunakan pembuat playlist sebagai 'artist', fallback ke 'Various Artists'
     metadata['albumartist'] = p_meta.get('creator', {}).get('name', 'Various Artists')
     metadata['artist'] = p_meta.get('creator', {}).get('name', 'Various Artists')
     metadata['title'] = p_meta['title']
     metadata['album'] = p_meta['title'] # Gunakan judul playlist sebagai nama folder album
     
-    # Coba ambil tanggal dari format 'created'
     try:
         parsed_date = datetime.strptime(p_meta['created'], '%Y-%m-%dT%H:%M:%S.%f%z')
-        # --- MODIFIKASI: Pisahkan Tanggal Rilis dan Tahun Rekam ---
         metadata['release_date'] = str(parsed_date.date())
         metadata['date'] = str(parsed_date.year)
-        # --- AKHIR MODIFIKASI ---
     except (ValueError, KeyError):
         metadata['date'] = '2000' # Fallback date year
         metadata['release_date'] = '2000-01-01' # Fallback date
 
     metadata['totaltracks'] = p_meta['numberOfTracks']
     metadata['duration'] = p_meta['duration']
-    
-    # --- PERBAIKAN: Ubah None menjadi string kosong ---
     metadata['copyright'] = "" # Playlist tidak memiliki info copyright
-    # --- PERBAIKAN SELESAI ---
-    
     metadata['explicit'] = p_meta.get('explicit', False)
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'playlist' # Set tipe sebagai playlist
 
-    # Gunakan 'image' (UUID) untuk cover playlist
     metadata['cover'] = await get_cover(p_meta.get('image'), metadata)
     metadata['thumbnail'] = await get_cover(p_meta.get('image'), metadata, True)
 
+    # --- MODIFIKASI BESAR (PLAYLIST): Buat stub, jangan panggil get_track_metadata ---
     metadata['tracks'] = []
-    # Loop melalui 'items' dari data tracks
     for item in t_meta['items']:
-        # Pastikan item adalah track dan memiliki data
         if item.get('type') == 'track' and item.get('item'):
             track = item['item']
-            # Panggil get_track_metadata untuk setiap track
-            # Lewatkan cover=None agar setiap track mendapatkan cover album aslinya
-            track_meta = await get_track_metadata(
-                track['id'], 
-                track,  # Ini adalah data track lengkap
-                r_id, 
-                cover=None, 
-                thumbnail=False
-            )
-            metadata['tracks'].append(track_meta)
+            # Buat stub minimalis. start_track AKAN mengambil metadata lengkap
+            stub_meta = {
+                'itemid': track['id'],
+                'albumartist': track['artist']['name'] if track.get('artist') else 'Various Artists',
+                'album': track['album']['title'] if track.get('album') else 'Unknown Album',
+                'cover': None, # Biarkan start_track yang mencari cover aslinya
+                'thumbnail': None,
+                'provider': 'Tidal',
+                'title': track['title'].replace('/', ' ') if track.get('title') else 'Unknown Title',
+                'artist': get_artists_name(track),
+                'tracknumber': track.get('trackNumber', 1)
+            }
+            metadata['tracks'].append(stub_meta)
     
-    # Perbarui jumlah total track berdasarkan track yang valid ditemukan
     metadata['totaltracks'] = len(metadata['tracks'])
+    # --- AKHIR MODIFIKASI BESAR ---
     
     return metadata
 # --- AKHIR TAMBAHAN ---
@@ -204,8 +205,11 @@ async def get_artist_metadata(a_meta:dict, r_id):
     metadata['title'] = a_meta['name']
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'artist'
+    
+    # --- PERBAIKAN: Gunakan a_meta.get('picture') ---
     metadata['cover'] = await get_cover(a_meta.get('picture'), metadata)
     metadata['thumbnail'] = await get_cover(a_meta.get('picture'), metadata, True)
+    # --- AKHIR PERBAIKAN ---
     return metadata
 
 
@@ -222,6 +226,10 @@ async def get_cover(cover_id, meta:dict, thumbnail=False):
 
 def get_artists_name(meta:dict):
     artists = []
-    for a in meta['artists']:
-        artists.append(a['name'])
+    if meta.get('artists'): # Periksa jika 'artists' ada
+        for a in meta['artists']:
+            artists.append(a['name'])
+    elif meta.get('artist'): # Fallback untuk beberapa objek (seperti 'track' sederhana)
+        artists.append(meta['artist']['name'])
+        
     return ', '.join([str(artist) for artist in artists])
