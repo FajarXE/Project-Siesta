@@ -1,13 +1,9 @@
 # [GANTI FILE: bot/helpers/metadata.py]
 
 import os
-# --- TAMBAHAN BARU: Impor untuk downloader kustom ---
 import aiohttp
 import aiofiles
-# --- AKHIR TAMBAHAN ---
-# --- TAMBAHAN BARU: Impor datetime untuk tag MQA ---
 from datetime import datetime
-# --- AKHIR TAMBAHAN ---
 
 from mutagen import File
 from config import Config
@@ -15,13 +11,9 @@ from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
-    TCOM, TDRL # <-- TAMBAHAN: Impor TDRL (Release Time)
+    TCOM, TDRL 
 
 from bot.logger import LOGGER
-# --- MODIFIKASI: Hapus impor download_file, kita buat sendiri ---
-# from .utils import download_file
-# --- MODIFIKASI SELESAI ---
-
 
 metadata = {
         'itemid': '',
@@ -38,7 +30,7 @@ metadata = {
         'explicit': '',
         "tracknumber": '',
         'date': '',
-        'release_date': '', # <-- TAMBAHAN: Bidang untuk Tanggal Rilis
+        'release_date': '', 
         'totaltracks': '',
         'quality': '',
         'extension': '',
@@ -46,7 +38,7 @@ metadata = {
         'volume': '',
         'totalvolume': '',
         'genre': '',
-        'subgenre': '', # <-- TAMBAHAN: Bidang untuk Subgenre
+        'subgenre': '', 
         'provider': '',
         'tracks': [],
         'albums': [],
@@ -63,10 +55,6 @@ async def set_metadata(metadata:dict):
     audio_path = metadata['filepath']
     handle = File(audio_path)
     
-    # --- MODIFIKASI: Hapus log debug ---
-    # LOGGER.info(f"DEBUG METADATA: ...")
-    # --- BATAS MODIFIKASI ---
-
     if metadata['duration'] == '':
         metadata['duration'] = handle.info.length
 
@@ -91,45 +79,40 @@ async def set_flac(data, handle):
     handle.tags['copyright'] = data['copyright']
     handle.tags['tracknumber'] = str(data['tracknumber'])
     handle.tags['tracktotal'] = str(data['totaltracks'])
-    handle.tags['genre'] = data.get('genre') or '' 
     
-    # --- PERBAIKAN: Tulis semua tag jika data ada ---
-    if data.get('date'): # Recorded Date (Tahun Produksi, misal 1982)
+    # --- TAMBAHAN TES 1 ---
+    handle.tags['genre'] = data.get('genre') or 'TES FLAC GENRE'
+    handle.tags['composer'] = data.get('composer', '') or 'TES FLAC COMPOSER'
+    handle.tags['discnumber'] = str(data.get('volume') or '1')
+    handle.tags['disctotal'] = str(data.get('totalvolume') or '1')
+    # --- AKHIR TES 1 ---
+    
+    if data.get('date'): 
         handle.tags['date'] = data['date']
     
-    if data.get('release_date'): # Release Date (Tanggal Rilis, misal 2016-11-04)
+    if data.get('release_date'): 
         handle.tags['releasedate'] = data['release_date']
 
-    if data.get('subgenre'): # Subgenre
-        handle.tags['subgenre'] = data['subgenre'] # <-- PERBAIKAN: Diubah kembali ke 'subgenre'
-    # --- BATAS PERBAIKAN ---
+    if data.get('subgenre'): 
+        handle.tags['subgenre'] = data['subgenre']
     
     handle.tags['isrc'] = data['isrc']
     handle.tags['lyrics'] = data['lyrics']
-    handle.tags['discnumber'] = str(data.get('volume') or '')
-    handle.tags['disctotal'] = str(data.get('totalvolume') or '')
+    
     handle.tags['composer'] = data.get('composer', '')
     
-    # --- TAMBAHAN BARU: Tulis tag BPS dan Sample Rate ---
     if data.get('bit_depth'):
         handle.tags['BPS'] = str(data['bit_depth'])
     if data.get('sample_rate'):
-        # sample_rate bisa float (44.1) atau int (96)
         handle.tags['SAMPLERATE'] = str(int(data['sample_rate'] * 1000))
     
-    # --- TAMBAHAN BARU: Logika Tag MQA ---
     if data.get('mqa_details'):
         mqa_file = data['mqa_details']
         encoder_time = datetime.now().strftime("%b %d %Y %H:%M:%S")
-        
-        # String encoder MQA standar
         mqa_encoder_str = f'MQAEncode v1.1, 2.4.0+0 (278f5dd), E24F1DE5-32F1-4930-8197-24954EB9D6F4, {encoder_time}'
-        
         handle.tags['ENCODER'] = mqa_encoder_str
         handle.tags['MQAENCODER'] = mqa_encoder_str
-        # 'original_sample_rate' dari mqa_file adalah int (misal: 96000)
         handle.tags['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
-    # --- AKHIR TAMBAHAN ---
     
     await savePic(handle, data)
     handle.save()
@@ -152,8 +135,13 @@ async def set_mp3(data, handle):
     else:
         disc_pos = disc_num
         
-    genre_text = data.get('genre') or ''
-    composer_text = data.get('composer') or ''
+    # --- TAMBAHAN TES (MP3) ---
+    genre_text = data.get('genre') or 'TES MP3 GENRE'
+    composer_text = data.get('composer') or 'TES MP3 COMPOSER'
+    if not disc_pos:
+        disc_pos = '1/1'
+    # --- AKHIR TES ---
+
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
     handle.tags.add(TOPE(encoding=3, text=data['albumartist']))
@@ -163,27 +151,23 @@ async def set_mp3(data, handle):
     handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
     handle.tags.add(TCON(encoding=3, text=genre_text)) 
     
-    # --- PERBAIKAN: Tulis semua tag jika data ada ---
-    if data.get('date'): # Recorded Date (Tahun Produksi, misal 1982)
+    if data.get('date'): 
         handle.tags.add(TDRC(encoding=3, text=data['date']))
         
-    if data.get('release_date'): # Release Date (Tanggal Rilis, misal 2016-11-04)
+    if data.get('release_date'): 
         handle.tags.add(TDRL(encoding=3, text=data['release_date']))
 
-    if data.get('subgenre'): # Subgenre
-        handle.tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre'))) # <-- PERBAIKAN: Diubah kembali ke 'SUBGENRE'
-    # --- BATAS PERBAIKAN ---
+    if data.get('subgenre'): 
+        handle.tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
     
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
     handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
     handle.tags.add(TCOM(encoding=3, text=composer_text)) 
     
-    # --- TAMBAHAN BARU: Tulis tag BPS dan Sample Rate (Kustom) ---
     if data.get('bit_depth'):
         handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
     if data.get('sample_rate'):
         handle.tags.add(TXXX(encoding=3, desc='SAMPLERATE', text=str(int(data['sample_rate'] * 1000))))
-    # --- AKHIR TAMBAHAN ---
     
     await savePic(handle, data)
     handle.save()
@@ -197,43 +181,39 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     
-    # --- PERBAIKAN: Tulis semua tag jika data ada ---
-    if data.get('date'): # Recorded Date (Tahun Produksi, misal 1982)
-        handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
+    # --- TAMBAHAN TES 2 (M4A) ---
+    handle.tags['\u00a9gen'] = data.get('genre') or 'TES M4A GENRE'
+    handle.tags['\u00a9wrt'] = data.get('composer', '') or 'TES M4A COMPOSER'
     
-    handle.tags['\u00a9gen'] = data.get('genre') or '' 
-    handle.tags['\u00a9cpr'] = data['copyright']
-
-    if data.get('subgenre'): # Subgenre
-        handle.tags['----:com.apple.iTunes:SUBGENRE'] = data.get('subgenre').encode('utf-8') # <-- PERBAIKAN: Diubah kembali ke 'SUBGENRE'
-        
-    if data.get('release_date'): # Release Date (Tag 'RELEASETIME' kustom)
-        handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
-    # --- BATAS PERBAIKAN ---
-
-    # --- PERBAIKAN: Konversi int() yang aman untuk M4A ---
-    # ... (kode Anda untuk ini sudah benar) ...
     track_number_str = str(data.get('tracknumber') or '')
     totaltracks_str = str(data.get('totaltracks') or '')
-    volume_str = str(data.get('volume') or '')
-    totalvolume_str = str(data.get('totalvolume') or '')
+    volume_str = str(data.get('volume') or '1') # Paksa '1' jika kosong
+    totalvolume_str = str(data.get('totalvolume') or '1') # Paksa '1' jika kosong
+    # --- AKHIR TES 2 ---
+    
+    if data.get('date'): 
+        handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
+    
+    handle.tags['\u00a9cpr'] = data['copyright']
+
+    if data.get('subgenre'): 
+        handle.tags['----:com.apple.iTunes:SUBGENRE'] = data.get('subgenre').encode('utf-8')
+        
+    if data.get('release_date'): 
+        handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
 
     track_number = int(track_number_str) if track_number_str.isdigit() else 0
     totaltracks = int(totaltracks_str) if totaltracks_str.isdigit() else 0
     volume = int(volume_str) if volume_str.isdigit() else 0
     totalvolume = int(totalvolume_str) if totalvolume_str.isdigit() else 0
-    # --- BATAS PERBAIKAN ---
 
     handle.tags['trkn'] = [(track_number, totaltracks)]
     handle.tags['disk'] = [(volume, totalvolume)]
-    handle.tags['\u00a9wrt'] = data.get('composer', '')
     
-    # --- TAMBAHAN BARU: Tulis tag BPS dan Sample Rate (Kustom) ---
     if data.get('bit_depth'):
         handle.tags['----:com.apple.iTunes:BITS PER SAMPLE'] = str(data['bit_depth']).encode('utf-8')
     if data.get('sample_rate'):
         handle.tags['----:com.apple.iTunes:SAMPLERATE'] = str(int(data['sample_rate'] * 1000)).encode('utf-8')
-    # --- AKHIR TAMBAHAN ---
     
     await savePic(handle, data)
     handle.save()
@@ -275,24 +255,20 @@ async def get_audio_extension(path):
     else:
         return 'mp3'
 
-# --- TAMBAHAN BARU: Downloader kustom untuk cover art ---
 async def _download_cover_with_headers(url: str, destination: str):
     """Downloader kustom untuk cover art dengan User-Agent."""
     if not url:
         return "No URL provided"
     
-    # Header User-Agent palsu untuk menyamar sebagai browser
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
-    # --- PERBAIKAN: Pastikan direktori tujuan ada ---
     try:
         dir_path = os.path.dirname(destination)
         os.makedirs(dir_path, exist_ok=True)
     except Exception as e:
         return f"Gagal membuat direktori {dir_path}: {e}"
-    # --- AKHIR PERBAIKAN ---
 
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
@@ -300,22 +276,18 @@ async def _download_cover_with_headers(url: str, destination: str):
                 if response.status == 200:
                     async with aiofiles.open(destination, 'wb') as f:
                         await f.write(await response.read())
-                    return None # Tidak ada error
+                    return None 
                 else:
-                    # Kembalikan pesan error yang sama seperti sebelumnya
                     return f"HTTP Status: {response.status} (URL: {url})"
     except Exception as e:
         return f"Exception: {e} (URL: {url})"
-# --- AKHIR TAMBAHAN ---
 
 
-async def create_cover_file(url:str, meta:dict, thumbnail=False): # <-- Perbaikan type hint: url:str
+async def create_cover_file(url:str, meta:dict, thumbnail=False): 
     filename = f"{meta['itemid']}-thumb.jpg" if thumbnail else f"{meta['itemid']}.jpg"
     cover = meta['tempfolder'] + filename
     if not os.path.exists(cover):
-        # --- MODIFIKASI: Gunakan downloader kustom kita ---
         err = await _download_cover_with_headers(url, cover) 
-        # --- MODIFIKASI SELESAI ---
         if err:
             LOGGER.error(f"Gagal mengunduh cover art: {err}")
             return './project-siesta.png'
