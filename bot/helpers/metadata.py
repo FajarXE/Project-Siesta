@@ -80,12 +80,12 @@ async def set_flac(data, handle):
     handle.tags['tracknumber'] = str(data['tracknumber'])
     handle.tags['tracktotal'] = str(data['totaltracks'])
     
-    # --- TAMBAHAN TES 1 ---
-    handle.tags['genre'] = data.get('genre') or 'TES FLAC GENRE'
-    handle.tags['composer'] = data.get('composer', '') or 'TES FLAC COMPOSER'
-    handle.tags['discnumber'] = str(data.get('volume') or '1')
-    handle.tags['disctotal'] = str(data.get('totalvolume') or '1')
-    # --- AKHIR TES 1 ---
+    # --- TULIS DATA NYATA (HAPUS TES) ---
+    handle.tags['genre'] = data.get('genre') or ''
+    handle.tags['composer'] = data.get('composer', '')
+    handle.tags['discnumber'] = str(data.get('volume') or '')
+    handle.tags['disctotal'] = str(data.get('totalvolume') or '')
+    # --- AKHIR PERUBAHAN ---
     
     if data.get('date'): 
         handle.tags['date'] = data['date']
@@ -98,8 +98,6 @@ async def set_flac(data, handle):
     
     handle.tags['isrc'] = data['isrc']
     handle.tags['lyrics'] = data['lyrics']
-    
-    handle.tags['composer'] = data.get('composer', '')
     
     if data.get('bit_depth'):
         handle.tags['BPS'] = str(data['bit_depth'])
@@ -135,12 +133,10 @@ async def set_mp3(data, handle):
     else:
         disc_pos = disc_num
         
-    # --- TAMBAHAN TES (MP3) ---
-    genre_text = data.get('genre') or 'TES MP3 GENRE'
-    composer_text = data.get('composer') or 'TES MP3 COMPOSER'
-    if not disc_pos:
-        disc_pos = '1/1'
-    # --- AKHIR TES ---
+    # --- TULIS DATA NYATA (HAPUS TES) ---
+    genre_text = data.get('genre') or ''
+    composer_text = data.get('composer') or ''
+    # --- AKHIR PERUBAHAN ---
 
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
@@ -181,15 +177,15 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     
-    # --- TAMBAHAN TES 2 (M4A) ---
-    handle.tags['\u00a9gen'] = data.get('genre') or 'TES M4A GENRE'
-    handle.tags['\u00a9wrt'] = data.get('composer', '') or 'TES M4A COMPOSER'
+    # --- TULIS DATA NYATA (HAPUS TES) ---
+    handle.tags['\u00a9gen'] = data.get('genre') or ''
+    handle.tags['\u00a9wrt'] = data.get('composer', '')
     
     track_number_str = str(data.get('tracknumber') or '')
     totaltracks_str = str(data.get('totaltracks') or '')
-    volume_str = str(data.get('volume') or '1') # Paksa '1' jika kosong
-    totalvolume_str = str(data.get('totalvolume') or '1') # Paksa '1' jika kosong
-    # --- AKHIR TES 2 ---
+    volume_str = str(data.get('volume') or '') 
+    totalvolume_str = str(data.get('totalvolume') or '') 
+    # --- AKHIR PERUBAHAN ---
     
     if data.get('date'): 
         handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
