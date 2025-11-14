@@ -5,6 +5,9 @@ import os
 import aiohttp
 import aiofiles
 # --- AKHIR TAMBAHAN ---
+# --- TAMBAHAN BARU: Impor datetime untuk tag MQA ---
+from datetime import datetime
+# --- AKHIR TAMBAHAN ---
 
 from mutagen import File
 from config import Config
@@ -106,6 +109,28 @@ async def set_flac(data, handle):
     handle.tags['discnumber'] = str(data.get('volume') or '')
     handle.tags['disctotal'] = str(data.get('totalvolume') or '')
     handle.tags['composer'] = data.get('composer', '')
+    
+    # --- TAMBAHAN BARU: Tulis tag BPS dan Sample Rate ---
+    if data.get('bit_depth'):
+        handle.tags['BPS'] = str(data['bit_depth'])
+    if data.get('sample_rate'):
+        # sample_rate bisa float (44.1) atau int (96)
+        handle.tags['SAMPLERATE'] = str(int(data['sample_rate'] * 1000))
+    
+    # --- TAMBAHAN BARU: Logika Tag MQA ---
+    if data.get('mqa_details'):
+        mqa_file = data['mqa_details']
+        encoder_time = datetime.now().strftime("%b %d %Y %H:%M:%S")
+        
+        # String encoder MQA standar
+        mqa_encoder_str = f'MQAEncode v1.1, 2.4.0+0 (278f5dd), E24F1DE5-32F1-4930-8197-24954EB9D6F4, {encoder_time}'
+        
+        handle.tags['ENCODER'] = mqa_encoder_str
+        handle.tags['MQAENCODER'] = mqa_encoder_str
+        # 'original_sample_rate' dari mqa_file adalah int (misal: 96000)
+        handle.tags['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
+    # --- AKHIR TAMBAHAN ---
+    
     await savePic(handle, data)
     handle.save()
     return True
@@ -152,6 +177,14 @@ async def set_mp3(data, handle):
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
     handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
     handle.tags.add(TCOM(encoding=3, text=composer_text)) 
+    
+    # --- TAMBAHAN BARU: Tulis tag BPS dan Sample Rate (Kustom) ---
+    if data.get('bit_depth'):
+        handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
+    if data.get('sample_rate'):
+        handle.tags.add(TXXX(encoding=3, desc='SAMPLERATE', text=str(int(data['sample_rate'] * 1000))))
+    # --- AKHIR TAMBAHAN ---
+    
     await savePic(handle, data)
     handle.save()
     return True
@@ -194,6 +227,14 @@ async def set_m4a(data, handle):
     handle.tags['trkn'] = [(track_number, totaltracks)]
     handle.tags['disk'] = [(volume, totalvolume)]
     handle.tags['\u00a9wrt'] = data.get('composer', '')
+    
+    # --- TAMBAHAN BARU: Tulis tag BPS dan Sample Rate (Kustom) ---
+    if data.get('bit_depth'):
+        handle.tags['----:com.apple.iTunes:BITS PER SAMPLE'] = str(data['bit_depth']).encode('utf-8')
+    if data.get('sample_rate'):
+        handle.tags['----:com.apple.iTunes:SAMPLERATE'] = str(int(data['sample_rate'] * 1000)).encode('utf-8')
+    # --- AKHIR TAMBAHAN ---
+    
     await savePic(handle, data)
     handle.save()
     return True
@@ -282,4 +323,3 @@ async def create_cover_file(url:str, meta:dict, thumbnail=False): # <-- Perbaika
         return cover
     else:
         return './project-siesta.png'
-
