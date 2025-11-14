@@ -40,11 +40,36 @@ async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False
     metadata['explicit'] = t_meta['explicit']
     metadata['tracknumber'] = t_meta['trackNumber']
 
+    # --- MODIFIKASI: Ambil Tanggal Rilis dan Tanggal Rekam ---
     parsed_date = datetime.strptime(t_meta['streamStartDate'], '%Y-%m-%dT%H:%M:%S.%f%z')
-    metadata['date'] = str(parsed_date.date())
+    metadata['release_date'] = str(parsed_date.date()) # Tanggal rilis trek
+    
+    # Gunakan tahun rilis album sebagai 'date' (Tahun Rekam) jika ada
+    if t_meta.get('album') and t_meta['album'].get('releaseDate'):
+         metadata['date'] = t_meta['album']['releaseDate'].split('-')[0] # Ambil tahun saja
+    else:
+         metadata['date'] = str(parsed_date.year) # Fallback ke tahun rilis trek
+    # --- AKHIR MODIFIKASI ---
 
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'track'
+
+    # --- TAMBAHAN BARU: Ambil Genre, Disk, dan Composer ---
+    # 1. Ambil Genre
+    if t_meta.get('genres'):
+        metadata['genre'] = ', '.join([g['name'] for g in t_meta['genres']])
+    elif t_meta.get('genre'): # Fallback
+        metadata['genre'] = t_meta['genre']
+
+    # 2. Ambil Info Disk (Volume)
+    metadata['volume'] = t_meta['volumeNumber']
+    if t_meta.get('album') and t_meta['album'].get('numberOfVolumes'):
+        metadata['totalvolume'] = t_meta['album']['numberOfVolumes']
+
+    # 3. Ambil Composer
+    if t_meta.get('composers'):
+        metadata['composer'] = ', '.join([c['name'] for c in t_meta['composers']])
+    # --- AKHIR TAMBAHAN ---
 
     # reuse albumart if possible
     metadata['cover'] = cover if cover else await get_cover(t_meta['album'].get('cover'), metadata)
@@ -66,7 +91,13 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
         metadata['title'] += f' ({a_meta["version"]})'
     metadata['album'] = a_meta['title']
     metadata['artist'] = get_artists_name(a_meta)
-    metadata['date'] = a_meta['releaseDate']
+    
+    # --- MODIFIKASI: Pisahkan Tanggal Rilis dan Tahun Rekam ---
+    if a_meta.get('releaseDate'):
+        metadata['release_date'] = a_meta['releaseDate'] # Tanggal rilis lengkap
+        metadata['date'] = a_meta['releaseDate'].split('-')[0] # Tahun rilis
+    # --- AKHIR MODIFIKASI ---
+    
     metadata['totaltracks'] = a_meta['numberOfTracks']
     metadata['duration'] = a_meta['duration']
     metadata['copyright'] = a_meta['copyright']
@@ -82,6 +113,14 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
     metadata['tracks'] = []
     for track in t_meta['items']:
         track_meta = await get_track_metadata(track['id'], track, r_id, metadata['cover'], metadata['thumbnail'])
+        
+        # --- MODIFIKASI: Salin data level album ke setiap trek ---
+        # Ini memastikan trek memiliki info 'totalvolume' bahkan jika dipanggil dari album
+        if 'totalvolume' in metadata:
+            track_meta['totalvolume'] = metadata['totalvolume']
+        # 'composer' dan 'genre' biasanya per-trek, jadi kita biarkan apa adanya dari 'get_track_metadata'
+        # --- AKHIR MODIFIKASI ---
+        
         metadata['tracks'].append(track_meta)
     
     return metadata
@@ -110,9 +149,13 @@ async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
     # Coba ambil tanggal dari format 'created'
     try:
         parsed_date = datetime.strptime(p_meta['created'], '%Y-%m-%dT%H:%M:%S.%f%z')
-        metadata['date'] = str(parsed_date.date())
+        # --- MODIFIKASI: Pisahkan Tanggal Rilis dan Tahun Rekam ---
+        metadata['release_date'] = str(parsed_date.date())
+        metadata['date'] = str(parsed_date.year)
+        # --- AKHIR MODIFIKASI ---
     except (ValueError, KeyError):
-        metadata['date'] = '2000-01-01' # Fallback date
+        metadata['date'] = '2000' # Fallback date year
+        metadata['release_date'] = '2000-01-01' # Fallback date
 
     metadata['totaltracks'] = p_meta['numberOfTracks']
     metadata['duration'] = p_meta['duration']
@@ -161,7 +204,7 @@ async def get_artist_metadata(a_meta:dict, r_id):
     metadata['title'] = a_meta['name']
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'artist'
-    metadata['cover'] = await get_cover(a_a_meta.get('picture'), metadata)
+    metadata['cover'] = await get_cover(a_meta.get('picture'), metadata)
     metadata['thumbnail'] = await get_cover(a_meta.get('picture'), metadata, True)
     return metadata
 
