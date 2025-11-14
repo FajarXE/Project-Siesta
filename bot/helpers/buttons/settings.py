@@ -403,14 +403,18 @@ def qb_button(qualities: dict, user_id: int = 0):
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
-# tidal qualities
+# --- MODIFIKASI: tidal_quality_button ---
 def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'):
     inline_keyboard = []
     usetting = user_id != 0
     spatial_to_show = spatial
+    
+    # Ambil pengaturan spesifik pengguna jika ini adalah panel pengguna
     if usetting:
-        user_dict = tidal_manager.user_data.get(user_id, {})
-        spatial_to_show = user_dict.get("tidal_spatial", tidal_manager.spatial)
+        # Ambil semua 3 pengaturan dari manager
+        _, spatial_to_show, user_mqa_fix = tidal_manager.get_user_quality_settings(user_id)
+
+    # 1. Tombol Kualitas
     for quality in qualities.values():
         inline_keyboard.append(
             [
@@ -420,6 +424,8 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
                 )
             ]
         )
+        
+    # 2. Tombol Spatial
     inline_keyboard.append(
         [
             InlineKeyboardButton(
@@ -428,17 +434,39 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
                 )
         ]
     )
+    
+    # 3. Tombol MQA (HANYA untuk panel pengguna)
+    if usetting:
+        if user_mqa_fix == "ON":
+            mqa_text = "✅ MQA Fix: ON"
+            mqa_callback = "utdqs_mqa_OFF" # utdqs_ = User Tidal Quality Setting
+        else:
+            mqa_text = "❌ MQA Fix: OFF"
+            mqa_callback = "utdqs_mqa_ON"
+            
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=mqa_text,
+                    callback_data=mqa_callback
+                )
+            ]
+        )
+    
+    # 4. Tombol 'Back' (HANYA untuk panel pengguna)
     if usetting:
         inline_keyboard.append(
             [
                 InlineKeyboardButton(text="Back", callback_data="uset_back")
             ]
         )
-    if usetting:
         return InlineKeyboardMarkup(inline_keyboard)
+        
+    # Tombol 'Main Menu' & 'Close' (HANYA untuk panel admin)
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
+# --- AKHIR MODIFIKASI ---
 
 # Beatport Button
 def bp_button(quality: dict, user_id: int = None):
@@ -747,4 +775,3 @@ def usetting_button() -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="Close", callback_data="uset_close")])
     
     return InlineKeyboardMarkup(buttons)
-
