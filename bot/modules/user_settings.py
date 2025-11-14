@@ -138,11 +138,10 @@ async def uset_cb(client, query, datatype=""):
               'HIGH': 'HIGH',
               'LOSSLESS': 'LOSSLESS'
         }
-        # --- PERBAIKAN: Baca pengaturan dari bot_set ---
-        main_user_dict = bot_set.user_data.get(user_id, {})
-        user_qual = main_user_dict.get("tidal_qual", tidal_manager.quality)
-        user_spatial = main_user_dict.get("tidal_spatial", tidal_manager.spatial)
-        # --- BATAS PERBAIKAN ---
+        
+        # --- MODIFIKASI: Baca pengaturan dari tidal_manager (yang sudah disinkronkan) ---
+        user_qual, user_spatial, _ = tidal_manager.get_user_quality_settings(user_id)
+        # --- BATAS MODIFIKASI ---
         
         if any(c.mobile_hires for c in tidal_manager.clients):
             qualities['HI_RES'] = 'MAX'
@@ -341,18 +340,35 @@ async def uset_cb(client, query, datatype=""):
     # --- BATAS TAMBAHAN ---
 
 
+# --- MODIFIKASI BESAR: Handler utdqs (Tidal User Settings) ---
 @Client.on_callback_query(filters.regex("^utdqs"))
 async def uset_tidal(client, query):
     m = query.message
     if not await check_user(msg=m):
         return
-    to_set = query.data.split('_')[1]
+    
+    data = query.data  # Ambil data lengkap, cth: "utdqs_mqa_ON"
     user_id = query.from_user.id
+    
     if not tidal_manager or not tidal_manager.clients:
         await query.answer("Layanan Tidal tidak aktif!", show_alert=True)
         return
+        
     try:
-        if to_set == 'spatial':
+        # --- BLOK 1: Logika Tombol MQA ---
+        if data.startswith("utdqs_mqa_"):
+            # Ekstrak status baru: "utdqs_mqa_ON" -> "ON"
+            new_state = data.split("_")[-1]
+            
+            # Simpan ke cache lokal bot_set
+            bot_set.user_data.setdefault(user_id, {})["tidal_mqa_fix"] = new_state
+            # Simpan ke database
+            await database.save_user_settings(user_id, {"tidal_mqa_fix": new_state})
+            # Sinkronkan ke cache internal tidal_manager
+            await tidal_manager.setup_user_settings(user_id, mqa_fix=new_state)
+
+        # --- BLOK 2: Logika Tombol Spasial ---
+        elif data == "utdqs_spatial":
             options = ['OFF', 'ATMOS AC3 JOC']
             if any(c.mobile_atmos for c in tidal_manager.clients):
                 options.append('ATMOS AC4')
@@ -366,26 +382,37 @@ async def uset_tidal(client, query):
                 current = options.index(user_spatial)
             except:
                 current = 0
-            nexti = (current + 1) % len(options) 
+            nexti = (current + 1) % len(options)
+            new_spatial = options[nexti]
             
-            # --- PERBAIKAN: Gunakan save_user_settings ---
-            bot_set.user_data.setdefault(user_id, {})["tidal_spatial"] = options[nexti]
-            await database.save_user_settings(user_id, {"tidal_spatial": options[nexti]})
-            # --- BATAS PERBAIKAN ---
-            
-            return await uset_cb(client, query, "tidal")
+            # Simpan ke cache lokal bot_set
+            bot_set.user_data.setdefault(user_id, {})["tidal_spatial"] = new_spatial
+            # Simpan ke database
+            await database.save_user_settings(user_id, {"tidal_spatial": new_spatial})
+            # Sinkronkan ke cache internal tidal_manager
+            await tidal_manager.setup_user_settings(user_id, spatial=new_spatial)
+        
+        # --- BLOK 3: Logika Tombol Kualitas (LOSSLESS, HI_RES, dll.) ---
         else:
+            to_set = data.split('_')[1] # Cth: 'LOSSLESS'
             qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
             to_set_qual = list(filter(lambda x: qualities[x] == to_set, qualities))[0]
 
-            # --- PERBAIKAN: Gunakan save_user_settings ---
+            # Simpan ke cache lokal bot_set
             bot_set.user_data.setdefault(user_id, {})["tidal_qual"] = to_set_qual
+            # Simpan ke database
             await database.save_user_settings(user_id, {"tidal_qual": to_set_qual})
-            # --- BATAS PERBAIKAN ---
-            
-            return await uset_cb(client, query, "tidal")
+            # Sinkronkan ke cache internal tidal_manager
+            await tidal_manager.setup_user_settings(user_id, qual=to_set_qual)
+        
+        # --- GAMBAR ULANG TOMBOL ---
+        # Panggil kembali uset_cb untuk menggambar ulang menu dengan info terbaru
+        return await uset_cb(client, query, "tidal")
+
     except Exception:
         logging.error(format_exc())
+# --- AKHIR MODIFIKASI BESAR ---
+
 
 @Client.on_callback_query(filters.regex("^uqbs"))
 async def uset_qobuz(client, query):
@@ -739,8 +766,11 @@ async def debug(c, m): # debugger
     dt_td = "\n\nTIDAL:\n"
     if tidal_manager and tidal_manager.clients:
         dt_td += f"{len(tidal_manager.clients)} klien Tidal aktif.\n"
-        dt_td += f"Kualitas Default: {tidal_manager.quality}, Spasial: {tidal_manager.spatial}\n"
-        dt_td += f"Cache User (Global): {len([u for u in bot_set.user_data if 'tidal_qual' in bot_set.user_data[u]])} pengguna"
+        # --- MODIFIKASI DEBUG: Tampilkan juga MQA ---
+        dt_td += f"Kualitas Default: {tidal_manager.quality}, Spasial: {tidal_manager.spatial}, MQA Fix: {tidal_manager.mqa_fix}\n"
+        dt_td += f"Cache User (Global): {len([u for u in bot_set.user_data if 'tidal_qual' in bot_set.user_data[u]])} pengguna\n"
+        dt_td += f"Cache User MQA (Global): {len([u for u in bot_set.user_data if 'tidal_mqa_fix' in bot_set.user_data[u]])} pengguna"
+        # --- AKHIR MODIFIKASI ---
     else:
         dt_td += "Tidak ada klien Tidal yang aktif."
 
