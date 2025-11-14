@@ -53,69 +53,65 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
     client: TidalApi = user['tidal_api']
 
     # --- MODIFIKASI BESAR: Logika Pengambilan Metadata ---
-    # Jika track_meta adalah None (panggilan trek tunggal, atau dari album/playlist)
-    if not track_meta:
+    if not track_meta or 'copyright' not in track_meta:
         try:
-            # 1. Ambil data track LENGKAP
             track_data = await client.get_track(track_id)
         except Exception as e:
             raise e 
 
-        # 2. Ambil cover/thumb (jika diteruskan dari album, jika tidak None)
         cover = track_meta.get('cover') if track_meta else None
         thumbnail = track_meta.get('thumbnail') if track_meta else None
         
-        # 3. Buat metadata LENGKAP, sekarang juga teruskan 'client'
-        track_meta = await get_track_metadata(
-            track_id, 
-            track_data, 
-            user['r_id'], 
-            cover, 
-            thumbnail, 
-            client # <-- TERUSKAN KLIEN UNTUK MENGAMBIL COMPOSER
-        )
-        
-        # 4. Tentukan filepath
-        if basefolder:
-            filepath = basefolder
-        else:
-            # Jika ini trek tunggal, bangun path dari metadata LENGKAP
-            filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
-        
-        # 5. Dapatkan session dan quality (penting untuk download)
-        session, quality = await get_stream_session(track_data, user)
-        
-    else:
-        # PENTING: Jika track_meta DITERUSKAN (dari stub album/playlist)
-        # Kita perlu mempertahankan info path/nama file kustom
-        # Tapi kita TETAP HARUS mengambil metadata LENGKAP
-        
-        custom_album_name = track_meta.get('album')
-        custom_album_artist = track_meta.get('albumartist')
-        custom_cover = track_meta.get('cover')
-        custom_thumbnail = track_meta.get('thumbnail')
-        
-        try:
-            track_data = await client.get_track(track_id)
-        except Exception as e:
-            raise e 
-            
+        # --- PERBAIKAN: Hapus 'client' dari panggilan ---
         track_meta_full = await get_track_metadata(
             track_id, 
             track_data, 
             user['r_id'], 
-            custom_cover, 
-            custom_thumbnail,
-            client
+            cover, 
+            thumbnail
         )
+        # --- AKHIR PERBAIKAN ---
         
-        # Ganti metadata lengkap dengan info kustom dari playlist/album
-        if custom_album_name:
-             track_meta_full['album'] = custom_album_name
-        if custom_album_artist:
-             track_meta_full['albumartist'] = custom_album_artist
-             
-        track_meta = track_meta_full
+        if basefolder:
+            filepath = basefolder
+        else:
+            filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta_full['provider']}/{track_meta_full['albumartist']}/{track_meta_full['album']}"
+        
+        session, quality = await get_stream_session(track_data, user)
+        
+        if track_meta: 
+            track_meta_full['album'] = track_meta.get('album', track_meta_full['album'])
+            track_meta_full['albumartist'] = track_meta.get('albumartist', track_meta_full['albumartist'])
+            track_meta_full['artist'] = track_meta.get('artist', track_meta_full['artist'])
+            track_meta_full['title'] = track_meta.get('title', track_meta_full['title'])
+            track_meta_full['tracknumber'] = track_meta.get('tracknumber', track_meta_full['tracknumber'])
+        
+        track_meta = track_meta_full 
+
+    else:
+        # --- PERBAIKAN: Panggil get_track_data jika 'genre' tidak ada ---
+        # Ini menangani kasus jika 'track_meta' diteruskan tetapi tidak lengkap
+        if 'genre' not in track_meta or 'volume' not in track_meta:
+            try:
+                track_data = await client.get_track(track_id)
+            except Exception as e:
+                raise e
+            
+            # Ambil nilai-nilai yang hilang
+            if t_meta := track_data: # (Walrus operator)
+                if t_meta.get('genres'):
+                    track_meta['genre'] = ', '.join([g['name'] for g in t_meta['genres']])
+                elif t_meta.get('genre'):
+                    track_meta['genre'] = t_meta['genre']
+                
+                track_meta['volume'] = t_meta.get('volumeNumber')
+                if t_meta.get('album') and t_meta['album'].get('numberOfVolumes'):
+                    track_meta['totalvolume'] = t_meta['album']['numberOfVolumes']
+                
+                if t_meta.get('composers'):
+                    track_meta['composer'] = ', '.join([c['name'] for c in t_meta['composers']])
+        # --- AKHIR PERBAIKAN ---
+            
         filepath = basefolder
     # --- AKHIR MODIFIKASI BESAR ---
 
@@ -155,12 +151,10 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         
         track_meta['folderpath'] = filepath
         
-        # --- PERBAIKAN: Gunakan format_string setelah metadata lengkap ada ---
         filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
         filepath += f"/{filename}"
         filepath = sanitize_filepath(filepath)
         track_meta['filepath'] = filepath
-        # --- AKHIR PERBAIKAN ---
 
 
         if type(urls) == list:
@@ -220,7 +214,7 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         elif track_meta['codec'] == 'MQA' and user_mqa_fix == "OFF":
              LOGGER.info(f"Melewatkan analisis MQA untuk user {user['user_id']} sesuai pengaturan.")
 
-        await set_metadata(track_meta) # Sekarang dipanggil dengan track_meta LENGKAP
+        await set_metadata(track_meta) 
 
         if upload:
             await track_upload(track_meta, user, False)
@@ -265,7 +259,6 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     # 'track' di sini sekarang HANYA {'itemid': ...}
     for track in album_meta['tracks']:
         # --- MODIFIKASI: Teruskan stub minimalis ---
-        # Buat stub minimalis dengan info path
         stub_meta = {
             'itemid': track['itemid'],
             'album': album_meta['album'],
@@ -342,28 +335,23 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         playlist_meta['poster_msg'] = await post_art_poster(user, playlist_meta)
 
     tasks = []
-    # 'track' di sini sekarang HANYA {'itemid': ...}
     for track in playlist_meta['tracks']:
-        # --- MODIFIKASI: Teruskan stub minimalis ---
-        # Stub ini akan memberi tahu start_track untuk mengambil
-        # metadata lengkap, tetapi menggunakan nama album/artis playlist
         stub_meta = {
             'itemid': track['itemid'],
-            'album': playlist_meta['album'], # Nama playlist
-            'albumartist': playlist_meta['albumartist'], # Pembuat playlist
-            'cover': None, # Paksa start_track mengambil cover album asli
+            'album': playlist_meta['album'], 
+            'albumartist': playlist_meta['albumartist'], 
+            'cover': None, 
             'thumbnail': None
         }
         tasks.append(start_track(
             track['itemid'], 
             user, 
-            stub_meta, # Teruskan stub minimalis
+            stub_meta, 
             False, 
             playlist_folder, 
             session, 
             quality
         ))
-        # --- AKHIR MODIFIKASI ---
 
     update_details = {
         'text': lang.s.DOWNLOAD_PROGRESS,
