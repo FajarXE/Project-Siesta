@@ -140,7 +140,17 @@ async def uset_cb(client, query, datatype=""):
         }
         
         # --- MODIFIKASI: Baca pengaturan dari tidal_manager (yang sudah disinkronkan) ---
-        user_qual, user_spatial, _ = tidal_manager.get_user_quality_settings(user_id)
+        # Kita panggil ini untuk memastikan cache manager.user_data terbaru
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        await tidal_manager.setup_user_settings(
+            user_id,
+            qual=main_user_dict.get("tidal_qual"),
+            spatial=main_user_dict.get("tidal_spatial"),
+            mqa_fix=main_user_dict.get("tidal_mqa_fix"),
+            convert_m4a=main_user_dict.get("tidal_convert_m4a")
+        )
+        # Sekarang kita baca dari manager
+        user_qual, user_spatial, _, __ = tidal_manager.get_user_quality_settings(user_id)
         # --- BATAS MODIFIKASI ---
         
         if any(c.mobile_hires for c in tidal_manager.clients):
@@ -367,7 +377,19 @@ async def uset_tidal(client, query):
             # Sinkronkan ke cache internal tidal_manager
             await tidal_manager.setup_user_settings(user_id, mqa_fix=new_state)
 
-        # --- BLOK 2: Logika Tombol Spasial ---
+        # --- BLOK 2: Logika Tombol Convert M4A ---
+        elif data.startswith("utdqs_convert_"):
+            # Ekstrak status baru: "utdqs_convert_ON" -> "ON"
+            new_state = data.split("_")[-1]
+            
+            # Simpan ke cache lokal bot_set
+            bot_set.user_data.setdefault(user_id, {})["tidal_convert_m4a"] = new_state
+            # Simpan ke database
+            await database.save_user_settings(user_id, {"tidal_convert_m4a": new_state})
+            # Sinkronkan ke cache internal tidal_manager
+            await tidal_manager.setup_user_settings(user_id, convert_m4a=new_state)
+
+        # --- BLOK 3: Logika Tombol Spasial ---
         elif data == "utdqs_spatial":
             options = ['OFF', 'ATMOS AC3 JOC']
             if any(c.mobile_atmos for c in tidal_manager.clients):
@@ -392,7 +414,7 @@ async def uset_tidal(client, query):
             # Sinkronkan ke cache internal tidal_manager
             await tidal_manager.setup_user_settings(user_id, spatial=new_spatial)
         
-        # --- BLOK 3: Logika Tombol Kualitas (LOSSLESS, HI_RES, dll.) ---
+        # --- BLOK 4: Logika Tombol Kualitas (LOSSLESS, HI_RES, dll.) ---
         else:
             to_set = data.split('_')[1] # Cth: 'LOSSLESS'
             qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
@@ -766,10 +788,12 @@ async def debug(c, m): # debugger
     dt_td = "\n\nTIDAL:\n"
     if tidal_manager and tidal_manager.clients:
         dt_td += f"{len(tidal_manager.clients)} klien Tidal aktif.\n"
-        # --- MODIFIKASI DEBUG: Tampilkan juga MQA ---
-        dt_td += f"Kualitas Default: {tidal_manager.quality}, Spasial: {tidal_manager.spatial}, MQA Fix: {tidal_manager.mqa_fix}\n"
-        dt_td += f"Cache User (Global): {len([u for u in bot_set.user_data if 'tidal_qual' in bot_set.user_data[u]])} pengguna\n"
-        dt_td += f"Cache User MQA (Global): {len([u for u in bot_set.user_data if 'tidal_mqa_fix' in bot_set.user_data[u]])} pengguna"
+        # --- MODIFIKASI DEBUG: Tampilkan MQA & Convert ---
+        dt_td += f"Kualitas Default: {tidal_manager.quality}, Spasial: {tidal_manager.spatial}\n"
+        dt_td += f"Global MQA Fix: {tidal_manager.mqa_fix}, Global Convert M4A: {tidal_manager.convert_m4a}\n"
+        dt_td += f"Cache User Kualitas: {len([u for u in bot_set.user_data if 'tidal_qual' in bot_set.user_data[u]])} pengguna\n"
+        dt_td += f"Cache User MQA: {len([u for u in bot_set.user_data if 'tidal_mqa_fix' in bot_set.user_data[u]])} pengguna\n"
+        dt_td += f"Cache User Convert: {len([u for u in bot_set.user_data if 'tidal_convert_m4a' in bot_set.user_data[u]])} pengguna"
         # --- AKHIR MODIFIKASI ---
     else:
         dt_td += "Tidak ada klien Tidal yang aktif."
