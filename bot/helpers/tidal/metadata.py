@@ -1,20 +1,22 @@
 # [GANTI FILE: bot/helpers/tidal/metadata.py]
 
 import copy
-
 from datetime import datetime
+
+# --- TAMBAHAN BARU: Impor LOGGER ---
+from bot.logger import LOGGER
+# --- AKHIR TAMBAHAN ---
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 
 
 
-async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False, client=None):
+async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False):
     """
     Args:
         item_id : track id
         t_meta : raw metadata from tidal (pre-fetched)
-        client : (Opsional) Klien TidalApi untuk mengambil data tambahan
     Returns:
         metadata: dict
     """
@@ -51,7 +53,7 @@ async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'track'
 
-    # --- MODIFIKASI: Ambil Genre & Disk dari t_meta ---
+    # --- MODIFIKASI: Ambil Genre, Disk, dan Composer HANYA dari t_meta ---
     if t_meta.get('genres'):
         metadata['genre'] = ', '.join([g['name'] for g in t_meta['genres']])
     elif t_meta.get('genre'): # Fallback
@@ -60,18 +62,11 @@ async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False
     metadata['volume'] = t_meta.get('volumeNumber') 
     if t_meta.get('album') and t_meta['album'].get('numberOfVolumes'):
         metadata['totalvolume'] = t_meta['album']['numberOfVolumes']
-    # --- AKHIR MODIFIKASI ---
 
-    # --- MODIFIKASI: Ambil Composer dari API call tambahan ---
-    if client:
-        try:
-            contributors = await client.get_track_contributors(track_id)
-            composers = [c['name'] for c in contributors.get('items', []) if c.get('role') == 'Composer']
-            if composers:
-                metadata['composer'] = ', '.join(composers)
-        except Exception as e:
-            LOGGER.warning(f"Gagal mengambil data composer untuk track {track_id}: {e}")
-    # --- AKHIR MODIFIKASI ---
+    # Ambil composer dari data track utama jika ada
+    if t_meta.get('composers'):
+        metadata['composer'] = ', '.join([c['name'] for c in t_meta['composers']])
+    # --- AKHIR MODIFIKASI (Blok 'if client:' telah dihapus) ---
 
     metadata['cover'] = cover if cover else await get_cover(t_meta['album'].get('cover'), metadata)
     metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta['album'].get('cover'), metadata, True)
@@ -109,16 +104,23 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
     metadata['thumbnail'] = await get_cover(a_meta.get('cover'), metadata, True)
 
 
-    # --- MODIFIKASI BESAR: Jangan buat stub. Cukup simpan ID. ---
     metadata['tracks'] = []
     for track in t_meta['items']:
-        # Hanya simpan ID-nya. `start_track` akan melakukan sisanya.
-        metadata['tracks'].append({'itemid': track['id']})
-    # --- AKHIR MODIFIKASI BESAR ---
+        stub_meta = {
+            'itemid': track['id'],
+            'albumartist': metadata['albumartist'],
+            'album': metadata['album'],
+            'cover': metadata['cover'], 
+            'thumbnail': metadata['thumbnail'], 
+            'provider': 'Tidal',
+            'title': track['title'].replace('/', ' ') if track.get('title') else 'Unknown Title',
+            'artist': get_artists_name(track),
+            'tracknumber': track.get('trackNumber', 1)
+        }
+        metadata['tracks'].append(stub_meta)
     
     return metadata
 
-# --- TAMBAHAN BARU UNTUK PLAYLIST ---
 async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
     metadata = copy.deepcopy(base_meta)
 
@@ -148,23 +150,32 @@ async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
     metadata['cover'] = await get_cover(p_meta.get('image'), metadata)
     metadata['thumbnail'] = await get_cover(p_meta.get('image'), metadata, True)
 
-    # --- MODIFIKASI BESAR (PLAYLIST): Cukup simpan ID ---
     metadata['tracks'] = []
     for item in t_meta['items']:
         if item.get('type') == 'track' and item.get('item'):
             track = item['item']
-            # `start_track` akan mengambil metadata lengkap, termasuk cover album asli
-            metadata['tracks'].append({'itemid': track['id']})
+            stub_meta = {
+                'itemid': track['id'],
+                'albumartist': track['artist']['name'] if track.get('artist') else 'Various Artists',
+                'album': track['album']['title'] if track.get('album') else 'Unknown Album',
+                'cover': None, 
+                'thumbnail': None,
+                'provider': 'Tidal',
+                'title': track['title'].replace('/', ' ') if track.get('title') else 'Unknown Title',
+                'artist': get_artists_name(track),
+                'tracknumber': track.get('trackNumber', 1)
+            }
+            metadata['tracks'].append(stub_meta)
     
     metadata['totaltracks'] = len(metadata['tracks'])
-    # --- AKHIR MODIFIKASI BESAR ---
     
     return metadata
-# --- AKHIR TAMBAHAN ---
 
 async def get_artist_metadata(a_meta:dict, r_id):
     metadata = copy.deepcopy(base_meta)
+
     metadata['tempfolder'] += f"{r_id}-temp/"
+
     metadata['artist'] = a_meta['name']
     metadata['title'] = a_meta['name']
     metadata['provider'] = 'Tidal'
