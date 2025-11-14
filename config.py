@@ -122,6 +122,13 @@ class Config:
     TIDAL_TV_TOKEN = getenv("TIDAL_TV_TOKEN", None)
     TIDAL_TV_SECRET = getenv("TIDAL_TV_SECRET", None)
     TIDAL_CONVERT_M4A = getenv("TIDAL_CONVERT_M4A", False)
+    
+    # --- TAMBAHAN BARU: Pengaturan MQA Global ---
+    # Ambil dari .env, default-nya "ON". Ubah ke huruf besar.
+    TIDAL_FIX_MQA = getenv("TIDAL_FIX_MQA", "ON").upper() 
+    if TIDAL_FIX_MQA not in ["ON", "OFF"]:
+        TIDAL_FIX_MQA = "ON"
+    # --- BATAS TAMBAHAN ---
 #--------------------    
 
 # BEATPORT
