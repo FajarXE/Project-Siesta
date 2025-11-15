@@ -34,10 +34,10 @@ from config import Config
 
 
 async def start_tidal(url:str, user:dict):
-    # ... (fungsi start_tidal tidak berubah) ...
     item_id, type_ = await parse_url(url)
     if not type_:
         raise Exception("Invalid Tidal URL")
+
     if type_ == 'track':
         await start_track(item_id, user, None)
     elif type_ == 'artist':
@@ -55,21 +55,18 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
     
     client: TidalApi = user['tidal_api']
 
-    # --- PERBAIKAN ALUR LOGIKA TOTAL ---
+    # --- ALUR LOGIKA FINAL ---
     try:
+        # 1. SELALU ambil data track lengkap
         track_data = await client.get_track(track_id)
-        LOGGER.info("--- START TRACK_DATA JSON DUMP ---")
-        try:
-            LOGGER.info(json.dumps(track_data, indent=2))
-        except Exception as e:
-            LOGGER.error(f"Tidak dapat men-dump track_data: {e}")
-        LOGGER.info("--- END TRACK_DATA JSON DUMP ---")
     except Exception as e:
         raise e 
 
+    # 2. Ambil cover/thumb dari stub (jika ada)
     cover = track_meta.get('cover') if track_meta else None
     thumbnail = track_meta.get('thumbnail') if track_meta else None
     
+    # 3. Buat metadata LENGKAP
     track_meta_full = await get_track_metadata(
         track_id, 
         track_data, 
@@ -78,14 +75,18 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         thumbnail
     )
     
+    # 4. Tentukan filepath
     if basefolder:
         filepath = basefolder
     else:
+        # Ini adalah trek tunggal
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta_full['provider']}/{track_meta_full['albumartist']}/{track_meta_full['album']}"
     
+    # 5. Dapatkan session dan quality (jika tidak diteruskan dari album/playlist)
     if not session:
         session, quality = await get_stream_session(track_data, user)
     
+    # 6. Timpa metadata lengkap dengan info kustom dari stub (jika ada)
     if track_meta: 
         if track_meta.get('album'):
             track_meta_full['album'] = track_meta['album']
@@ -98,8 +99,9 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         if track_meta.get('tracknumber'):
              track_meta_full['tracknumber'] = track_meta['tracknumber']
     
+    # 7. Tetapkan track_meta sebagai versi final yang lengkap
     track_meta = track_meta_full
-    # --- AKHIR PERBAIKAN ALUR ---
+    # --- AKHIR ALUR LOGIKA ---
 
 
     try:
@@ -168,10 +170,8 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             user_mqa_fix = "ON" 
             user_convert_m4a = "OFF" 
         
-        # Variabel untuk melacak apakah metadata sudah ditulis
         metadata_written = False
 
-        # --- MODIFIKASI: Analisis MQA SEBELUM konversi ---
         track_meta['mqa_details'] = None 
         if track_meta['codec'] == 'MQA' and user_mqa_fix == "ON":
             try:
@@ -189,32 +189,26 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
                 LOGGER.warning(f"Gagal memproses MQA: {e}")
         elif track_meta['codec'] == 'MQA' and user_mqa_fix == "OFF":
              LOGGER.info(f"Melewatkan analisis MQA untuk user {user['user_id']} sesuai pengaturan.")
-        # --- AKHIR MODIFIKASI ---
 
 
-        # --- MODIFIKASI: Logika Konversi FFmpeg ---
         if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "ON":
             LOGGER.info(f"Mengonversi M4A ke FLAC & Menulis Tag untuk user {user['user_id']} Sesuai pengaturan.")
             
-            # Panggil fungsi FFmpeg baru yang juga menulis tag
             await ffmpeg_convert_and_tag(filepath, track_meta)
             
             track_meta['filepath'] = track_meta['filepath'] + '.flac'
-            os.remove(filepath) # Hapus file .m4a asli
-            metadata_written = True # Tandai bahwa tag sudah ditulis
+            os.remove(filepath) 
+            metadata_written = True 
             
         else:
             if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "OFF":
                 LOGGER.info(f"Melewatkan konversi M4A untuk user {user['user_id']} Sesuai pengaturan.")
             
-            # Ganti nama file asli (M4A atau FLAC) dengan ekstensi yang benar
             new_filepath = track_meta['filepath'] + f".{track_meta['extension']}"
             os.rename(filepath, new_filepath)
             track_meta['filepath'] = new_filepath
-        # --- AKHIR MODIFIKASI ---
             
             
-        # Panggil set_metadata HANYA jika FFmpeg belum menanganinya
         if not metadata_written:
             LOGGER.info(f"Menjalankan set_metadata (Mutagen) untuk: {track_meta['filepath']}")
             await set_metadata(track_meta) 
@@ -229,7 +223,6 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
 
 
 async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
-    # ... (fungsi start_album tidak berubah dari versi sebelumnya) ...
     client: TidalApi = user['tidal_api']
     
     try:
@@ -303,7 +296,6 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
 
 
 async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=None):
-    # ... (fungsi start_playlist tidak berubah dari versi sebelumnya) ...
     client: TidalApi = user['tidal_api']
     
     try:
@@ -335,7 +327,7 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         stream_data = await client.get_stream_url(track_id_sample, quality, session)
         playlist_meta['quality'] = await get_quality(stream_data)
     except Exception as e:
-        LOGGER.error(f"GGagal mendapatkan info kualitas untuk playlist {playlist_id}: {e}")
+        LOGGER.error(f"Gagal mendapatkan info kualitas untuk playlist {playlist_id}: {e}")
         session, quality = (None, "LOSSLESS")
         playlist_meta['quality'] = "LOSSLESS"
 
@@ -384,7 +376,6 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
 
 
 async def start_artist(artist_id:int, user:dict):
-    # ... (fungsi start_artist tidak berubah dari versi sebelumnya) ...
     client: TidalApi = user['tidal_api']
 
     artist_data = await client.get_artist(artist_id)
