@@ -85,10 +85,14 @@ async def set_flac(data, handle):
         handle.tags['genre'] = data['genre']
     if data.get('composer'):
         handle.tags['composer'] = data['composer']
-    if data.get('volume') is not None: # Cek 'None' secara eksplisit
-        handle.tags['discnumber'] = str(data['volume'])
-    if data.get('totalvolume') is not None: # Cek 'None' secara eksplisit
-        handle.tags['disctotal'] = str(data['totalvolume'])
+    
+    # Gunakan str() untuk menangani angka 0 atau None
+    disc_num = str(data.get('volume') or '')
+    disc_total = str(data.get('totalvolume') or '')
+    if disc_num:
+        handle.tags['discnumber'] = disc_num
+    if disc_total:
+        handle.tags['disctotal'] = disc_total
     # --- AKHIR PERBAIKAN ---
     
     if data.get('date'): 
@@ -131,12 +135,8 @@ async def set_mp3(data, handle):
         track_pos = track_num
         
     # --- PERBAIKAN: Penulisan yang lebih aman ---
-    disc_num = ''
-    disc_total = ''
-    if data.get('volume') is not None:
-        disc_num = str(data['volume'])
-    if data.get('totalvolume') is not None:
-        disc_total = str(data['totalvolume'])
+    disc_num = str(data.get('volume') or '')
+    disc_total = str(data.get('totalvolume') or '')
     
     if disc_total and disc_total != '0':
         disc_pos = f"{disc_num}/{disc_total}"
@@ -268,7 +268,7 @@ async def _download_cover_with_headers(url: str, destination: str):
         return "No URL provided"
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5.37.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/5.37.36'
     }
     
     try:
