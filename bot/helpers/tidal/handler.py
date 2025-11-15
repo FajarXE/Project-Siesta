@@ -210,6 +210,23 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         elif track_meta['codec'] == 'MQA' and user_mqa_fix == "OFF":
              LOGGER.info(f"Melewatkan analisis MQA untuk user {user['user_id']} sesuai pengaturan.")
 
+        # --- DIAGNOSTIK: Log data final sebelum ditulis ---
+        LOGGER.info("--- START FINAL METADATA DUMP ---")
+        try:
+            # Kita hanya log data yang relevan
+            log_data = {
+                "title": track_meta.get('title'),
+                "volume": track_meta.get('volume'),
+                "totalvolume": track_meta.get('totalvolume'),
+                "genre": track_meta.get('genre'),
+                "composer": track_meta.get('composer')
+            }
+            LOGGER.info(json.dumps(log_data, indent=2))
+        except Exception as e:
+            LOGGER.error(f"Tidak dapat men-dump final_meta: {e}")
+        LOGGER.info("--- END FINAL METADATA DUMP ---")
+        # --- AKHIR DIAGNOSTIK ---
+
         await set_metadata(track_meta) 
 
         if upload:
