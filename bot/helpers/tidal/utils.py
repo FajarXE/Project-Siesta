@@ -69,9 +69,8 @@ async def get_stream_session(track_data: dict, user: dict):
     client: TidalApi = user['tidal_api']
     
     # Dapatkan pengaturan dari manager, bukan dari 'tidalapi' global
-    user_dict = tidal_manager.user_data.get(user["user_id"], {})
-    qual = user_dict.get("tidal_qual", tidal_manager.quality)
-    spatial = user_dict.get("tidal_spatial", tidal_manager.spatial)
+    # Ambil semua 4 pengaturan
+    qual, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
     # --- MODIFIKASI SELESAI ---
 
     if 'SONY_360RA' in media_tags and spatial == 'Sony 360RA':
@@ -193,8 +192,8 @@ async def sort_album_from_artist(album_data: dict, user: dict):
     albums = []
     
     # --- MODIFIKASI: Gunakan manager untuk pengaturan ---
-    user_dict = tidal_manager.user_data.get(user["user_id"], {})
-    spatial = user_dict.get("tidal_spatial", tidal_manager.spatial)
+    # Ambil 4 pengaturan, tapi kita hanya butuh 'spatial'
+    _, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
     # --- MODIFIKASI SELESAI ---
 
     for album in album_data:
@@ -229,7 +228,11 @@ async def sort_album_from_artist(album_data: dict, user: dict):
 async def ffmpeg_convert(input_file):
     # --- PERBAIKAN: Escape karakter $ untuk shell ---
     input_file_escaped = input_file.replace("$", "\\$")
-    cmd = f'ffmpeg -i "{input_file_escaped}" -c:a copy -loglevel error -y "{input_file_escaped}.flac"'
-    # --- AKHIR PERBAIKAN ---
+    
+    # --- PERBAIKAN BESAR: Hapus "-c:a copy" ---
+    # Ganti dengan "-c:a flac" untuk mengonversi (re-encode) ke FLAC
+    cmd = f'ffmpeg -i "{input_file_escaped}" -c:a flac -compression_level 8 -loglevel error -y "{input_file_escaped}.flac"'
+    # --- AKHIR PERBAIKAN BESAR ---
+    
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
