@@ -80,12 +80,12 @@ async def set_flac(data, handle):
     handle.tags['tracknumber'] = str(data['tracknumber'])
     handle.tags['tracktotal'] = str(data['totaltracks'])
     
-    # --- TULIS DATA NYATA (HAPUS TES) ---
+    # --- VERSI BERSIH: Tulis data HANYA JIKA ADA ---
     handle.tags['genre'] = data.get('genre') or ''
     handle.tags['composer'] = data.get('composer', '')
     handle.tags['discnumber'] = str(data.get('volume') or '')
     handle.tags['disctotal'] = str(data.get('totalvolume') or '')
-    # --- AKHIR PERUBAHAN ---
+    # --- AKHIR VERSI BERSIH ---
     
     if data.get('date'): 
         handle.tags['date'] = data['date']
@@ -133,10 +133,10 @@ async def set_mp3(data, handle):
     else:
         disc_pos = disc_num
         
-    # --- TULIS DATA NYATA (HAPUS TES) ---
+    # --- VERSI BERSIH: Tulis data HANYA JIKA ADA ---
     genre_text = data.get('genre') or ''
     composer_text = data.get('composer') or ''
-    # --- AKHIR PERUBAHAN ---
+    # --- AKHIR VERSI BERSIH ---
 
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
@@ -177,7 +177,7 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     
-    # --- TULIS DATA NYATA (HAPUS TES) ---
+    # --- VERSI BERSIH: Tulis data HANYA JIKA ADA ---
     handle.tags['\u00a9gen'] = data.get('genre') or ''
     handle.tags['\u00a9wrt'] = data.get('composer', '')
     
@@ -185,7 +185,7 @@ async def set_m4a(data, handle):
     totaltracks_str = str(data.get('totaltracks') or '')
     volume_str = str(data.get('volume') or '') 
     totalvolume_str = str(data.get('totalvolume') or '') 
-    # --- AKHIR PERUBAHAN ---
+    # --- AKHIR VERSI BERSIH ---
     
     if data.get('date'): 
         handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
