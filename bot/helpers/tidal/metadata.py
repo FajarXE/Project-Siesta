@@ -1,14 +1,58 @@
 # [GANTI FILE: bot/helpers/tidal/metadata.py]
 
 import copy
+import aiohttp
+from async_lru import alru_cache
 from datetime import datetime
 
-# --- TAMBAHAN BARU: Impor LOGGER ---
 from bot.logger import LOGGER
-# --- AKHIR TAMBAHAN ---
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
+
+
+@alru_cache(maxsize=128)
+async def search_itunes_cover(artist_name: str, album_name: str) -> str | None:
+    """
+    Mencari cover art resolusi tinggi di iTunes API.
+    Hasilnya di-cache dalam memori.
+    """
+    if not artist_name or not album_name:
+        return None
+        
+    LOGGER.info(f"Mencari cover iTunes untuk: {artist_name} - {album_name}")
+    search_term = f"{artist_name} {album_name}"
+    params = {'term': search_term, 'entity': 'album', 'limit': 1, 'media': 'music'}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://itunes.apple.com/search", params=params, timeout=10) as resp:
+                if resp.status != 200:
+                    LOGGER.warning(f"iTunes API Gagal: Status {resp.status} untuk {search_term}")
+                    return None
+                
+                data = await resp.json()
+                if data['resultCount'] > 0:
+                    result = data['results'][0]
+                    # Lakukan pemeriksaan dasar untuk memastikan hasilnya relevan
+                    if (album_name.lower() in result['collectionName'].lower() and
+                        artist_name.lower() in result['artistName'].lower()):
+                        
+                        # --- MODIFIKASI: Minta 3000x3000 ---
+                        hi_res_url = result['artworkUrl100'].replace('100x100bb.jpg', '3000x3000bb.jpg')
+                        # --- AKHIR MODIFIKASI ---
+                        
+                        LOGGER.info(f"Ditemukan cover iTunes: {hi_res_url}")
+                        return hi_res_url
+                    else:
+                        LOGGER.warning(f"Hasil iTunes tidak cocok: {result['collectionName']} vs {album_name}")
+                        return None
+                else:
+                    LOGGER.info(f"Tidak ada hasil iTunes untuk: {search_term}")
+                    return None
+    except Exception as e:
+        LOGGER.error(f"Error saat mencari di iTunes: {e}")
+        return None
 
 
 async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False):
@@ -52,23 +96,38 @@ async def get_track_metadata(track_id, t_meta, r_id, cover=None, thumbnail=False
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'track'
 
-    # --- MODIFIKASI: Ambil Genre, Disk, dan Composer HANYA dari t_meta ---
     if t_meta.get('genres'):
         metadata['genre'] = ', '.join([g['name'] for g in t_meta['genres']])
-    elif t_meta.get('genre'): # Fallback
+    elif t_meta.get('genre'): 
         metadata['genre'] = t_meta['genre']
 
     metadata['volume'] = t_meta.get('volumeNumber') 
     if t_meta.get('album') and t_meta['album'].get('numberOfVolumes'):
         metadata['totalvolume'] = t_meta['album']['numberOfVolumes']
 
-    # Ambil composer dari data track utama jika ada
     if t_meta.get('composers'):
         metadata['composer'] = ', '.join([c['name'] for c in t_meta['composers']])
-    # --- AKHIR MODIFIKASI (Panggilan 'client.get_track_contributors' dihapus) ---
 
-    metadata['cover'] = cover if cover else await get_cover(t_meta['album'].get('cover'), metadata)
-    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(t_meta['album'].get('cover'), metadata, True)
+    # --- MODIFIKASI: Panggil get_cover dengan info artis/album ---
+    artist_for_cover = metadata['albumartist']
+    album_for_cover = metadata['album']
+    tidal_cover_id = t_meta['album'].get('cover')
+
+    metadata['cover'] = cover if cover else await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=False
+    )
+    metadata['thumbnail'] = thumbnail if thumbnail else await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=True
+    )
+    # --- AKHIR MODIFIKASI ---
 
     return metadata
 
@@ -82,9 +141,13 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
     metadata['albumartist'] = a_meta['artist']['name']
     metadata['upc'] = a_meta['upc']
     metadata['title'] = a_meta['title']
+    
+    album_title = a_meta['title']
     if a_meta['version']:
         metadata['title'] += f' ({a_meta["version"]})'
-    metadata['album'] = a_meta['title']
+        album_title += f' ({a_meta["version"]})'
+    metadata['album'] = album_title
+    
     metadata['artist'] = get_artists_name(a_meta)
     
     if a_meta.get('releaseDate'):
@@ -99,11 +162,27 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'album'
 
-    metadata['cover'] = await get_cover(a_meta.get('cover'), metadata)
-    metadata['thumbnail'] = await get_cover(a_meta.get('cover'), metadata, True)
+    # --- MODIFIKASI: Panggil get_cover dengan info artis/album ---
+    artist_for_cover = metadata['albumartist']
+    album_for_cover = metadata['album']
+    tidal_cover_id = a_meta.get('cover')
+    
+    metadata['cover'] = await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=False
+    )
+    metadata['thumbnail'] = await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=True
+    )
+    # --- AKHIR MODIFIKASI ---
 
-
-    # --- MODIFIKASI BESAR: Buat "stub" (rangka) ---
     metadata['tracks'] = []
     for track in t_meta['items']:
         stub_meta = {
@@ -118,11 +197,9 @@ async def get_album_metadata(album_id, a_meta, t_meta, r_id):
             'tracknumber': track.get('trackNumber', 1)
         }
         metadata['tracks'].append(stub_meta)
-    # --- AKHIR MODIFIKASI BESAR ---
     
     return metadata
 
-# --- TAMBAHAN BARU UNTUK PLAYLIST ---
 async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
     metadata = copy.deepcopy(base_meta)
 
@@ -149,10 +226,27 @@ async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'playlist' 
 
-    metadata['cover'] = await get_cover(p_meta.get('image'), metadata)
-    metadata['thumbnail'] = await get_cover(p_meta.get('image'), metadata, True)
+    # --- MODIFIKASI: Panggil get_cover dengan info playlist ---
+    artist_for_cover = metadata['artist']
+    album_for_cover = metadata['title']
+    tidal_cover_id = p_meta.get('image')
 
-    # --- MODIFIKASI BESAR (PLAYLIST): Buat stub ---
+    metadata['cover'] = await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=False
+    )
+    metadata['thumbnail'] = await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=True
+    )
+    # --- AKHIR MODIFIKASI ---
+
     metadata['tracks'] = []
     for item in t_meta['items']:
         if item.get('type') == 'track' and item.get('item'):
@@ -171,10 +265,8 @@ async def get_playlist_metadata(playlist_id, p_meta, t_meta, r_id):
             metadata['tracks'].append(stub_meta)
     
     metadata['totaltracks'] = len(metadata['tracks'])
-    # --- AKHIR MODIFIKASI BESAR ---
     
     return metadata
-# --- AKHIR TAMBAHAN ---
 
 async def get_artist_metadata(a_meta:dict, r_id):
     metadata = copy.deepcopy(base_meta)
@@ -183,20 +275,69 @@ async def get_artist_metadata(a_meta:dict, r_id):
     metadata['title'] = a_meta['name']
     metadata['provider'] = 'Tidal'
     metadata['type'] = 'artist'
-    metadata['cover'] = await get_cover(a_meta.get('picture'), metadata)
-    metadata['thumbnail'] = await get_cover(a_meta.get('picture'), metadata, True)
+    
+    # --- MODIFIKASI: Panggil get_cover dengan info artis ---
+    artist_for_cover = a_meta['name']
+    album_for_cover = a_meta['name'] 
+    tidal_cover_id = a_meta.get('picture')
+
+    metadata['cover'] = await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=False
+    )
+    metadata['thumbnail'] = await get_cover(
+        tidal_cover_id, 
+        metadata, 
+        artist_for_cover, 
+        album_for_cover,
+        thumbnail=True
+    )
+    # --- AKHIR MODIFIKASI ---
     return metadata
 
 
-async def get_cover(cover_id, meta:dict, thumbnail=False):
-    url = None
+async def get_cover(cover_id, meta:dict, artist_name: str = None, album_name: str = None, thumbnail=False):
+    """
+    Mengambil cover.
+    Prioritas 1: iTunes (jika artist_name dan album_name diberikan)
+    Prioritas 2: Cover ID default Tidal
+    """
+    
+    # Logika thumbnail tetap sama (selalu ambil 80x80 dari Tidal)
+    if thumbnail:
+        url = None
+        if cover_id:
+            url = f'https://resources.tidal.com/images/{cover_id.replace("-", "/")}/80x80.jpg'
+        return await create_cover_file(url, meta, thumbnail)
+    
+    # --- LOGIKA BARU UNTUK COVER RESOLUSI PENUH ---
+    
+    # 1. Coba iTunes terlebih dahulu
+    itunes_url = None
+    if artist_name and album_name:
+        itunes_url = await search_itunes_cover(artist_name, album_name)
+    
+    if itunes_url:
+        # Coba unduh dari iTunes
+        itunes_cover_path = await create_cover_file(itunes_url, meta, thumbnail)
+        
+        # Periksa apakah unduhan berhasil (bukan gambar placeholder)
+        if itunes_cover_path and 'project-siesta.png' not in itunes_cover_path:
+            return itunes_cover_path
+        else:
+            LOGGER.warning(f"Gagal mengunduh cover iTunes ({itunes_url}), fallback ke Tidal.")
+    
+    # 2. Fallback ke Tidal jika iTunes gagal atau tidak dicari
+    LOGGER.info(f"Menggunakan cover art default Tidal untuk {meta['itemid']}.")
+    tidal_url = None
     if cover_id:
-        url = (
-            f'https://resources.tidal.com/images/{cover_id.replace("-", "/")}/80x80.jpg'
-            if thumbnail
-            else f'https://resources.tidal.com/images/{cover_id.replace("-", "/")}/1400x1400.jpg'
-        )
-    return await create_cover_file(url, meta, thumbnail)
+        tidal_url = f'https://resources.tidal.com/images/{cover_id.replace("-", "/")}/1280x1280.jpg'
+    
+    return await create_cover_file(tidal_url, meta, thumbnail)
+    # --- AKHIR LOGIKA BARU ---
 
 
 def get_artists_name(meta:dict):
