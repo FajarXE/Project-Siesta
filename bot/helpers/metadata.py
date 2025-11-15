@@ -85,10 +85,12 @@ async def set_flac(data, handle):
         handle.tags['genre'] = data['genre']
     if data.get('composer'):
         handle.tags['composer'] = data['composer']
-    
-    # Gunakan str() untuk menangani angka 0 atau None
+        
+    # Perbaikan: Gunakan str() untuk menangani angka 0 atau None
     disc_num = str(data.get('volume') or '')
     disc_total = str(data.get('totalvolume') or '')
+    
+    # Hanya tulis jika tidak kosong
     if disc_num:
         handle.tags['discnumber'] = disc_num
     if disc_total:
@@ -153,8 +155,10 @@ async def set_mp3(data, handle):
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
     handle.tags.add(TRCK(encoding=3, text=track_pos)) 
-    handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
-    handle.tags.add(TCON(encoding=3, text=genre_text)) 
+    if disc_pos: # Hanya tulis jika tidak kosong
+        handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
+    if genre_text: # Hanya tulis jika tidak kosong
+        handle.tags.add(TCON(encoding=3, text=genre_text)) 
     
     if data.get('date'): 
         handle.tags.add(TDRC(encoding=3, text=data['date']))
@@ -167,7 +171,8 @@ async def set_mp3(data, handle):
     
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
     handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
-    handle.tags.add(TCOM(encoding=3, text=composer_text)) 
+    if composer_text: # Hanya tulis jika tidak kosong
+        handle.tags.add(TCOM(encoding=3, text=composer_text)) 
     
     if data.get('bit_depth'):
         handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
