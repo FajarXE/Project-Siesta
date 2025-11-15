@@ -53,20 +53,26 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
     client: TidalApi = user['tidal_api']
 
     # --- MODIFIKASI BESAR: Logika Pengambilan Metadata ---
-    # Periksa 'copyright'. Jika tidak ada, ini adalah "stub" dan kita HARUS
-    # mengambil metadata lengkap.
     if not track_meta or 'copyright' not in track_meta:
         try:
-            # 1. Ambil data track LENGKAP
             track_data = await client.get_track(track_id)
+            
+            # --- TAMBAHAN BARU: LOGGING UNTUK DIAGNOSTIK ---
+            LOGGER.info("--- START TRACK_DATA JSON DUMP ---")
+            try:
+                # Dump seluruh JSON ke log
+                LOGGER.info(json.dumps(track_data, indent=2))
+            except Exception as e:
+                LOGGER.error(f"Tidak dapat men-dump track_data: {e}")
+            LOGGER.info("--- END TRACK_DATA JSON DUMP ---")
+            # --- AKHIR TAMBAHAN ---
+            
         except Exception as e:
             raise e 
 
-        # 2. Ambil cover/thumb dari stub jika ada (diteruskan dari album/playlist)
         cover = track_meta.get('cover') if track_meta else None
         thumbnail = track_meta.get('thumbnail') if track_meta else None
         
-        # 3. Buat metadata LENGKAP menggunakan data LENGKAP
         track_meta_full = await get_track_metadata(
             track_id, 
             track_data, 
@@ -75,18 +81,14 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             thumbnail
         )
         
-        # 4. Tentukan filepath
         if basefolder:
             filepath = basefolder
         else:
-            # Jika ini trek tunggal, bangun path dari metadata LENGKAP
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta_full['provider']}/{track_meta_full['albumartist']}/{track_meta_full['album']}"
         
-        # 5. Dapatkan session dan quality (jika tidak diteruskan dari album/playlist)
         if not session:
             session, quality = await get_stream_session(track_data, user)
         
-        # 6. Ganti metadata lengkap dengan info kustom dari stub (jika ada)
         if track_meta and 'copyright' not in track_meta: # Pastikan ini adalah stub
             if track_meta.get('album'):
                 track_meta_full['album'] = track_meta['album']
@@ -99,10 +101,41 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             if track_meta.get('tracknumber'):
                  track_meta_full['tracknumber'] = track_meta['tracknumber']
         
-        track_meta = track_meta_full # Selesai, track_meta sekarang LENGKAP
+        track_meta = track_meta_full 
 
     else:
-        # track_meta sudah lengkap (diterima dari panggilan start_track tunggal)
+        # --- PERBAIKAN: Panggil get_track_data jika 'genre' tidak ada ---
+        if 'genre' not in track_meta or 'volume' not in track_meta:
+            try:
+                track_data = await client.get_track(track_id)
+                
+                # --- TAMBAHAN BARU: LOGGING UNTUK DIAGNOSTIK ---
+                LOGGER.info("--- START TRACK_DATA (STUB) JSON DUMP ---")
+                try:
+                    # Dump seluruh JSON ke log
+                    LOGGER.info(json.dumps(track_data, indent=2))
+                except Exception as e:
+                    LOGGER.error(f"Tidak dapat men-dump track_data (stub): {e}")
+                LOGGER.info("--- END TRACK_DATA (STUB) JSON DUMP ---")
+                # --- AKHIR TAMBAHAN ---
+                
+            except Exception as e:
+                raise e
+            
+            if t_meta := track_data: 
+                if t_meta.get('genres'):
+                    track_meta['genre'] = ', '.join([g['name'] for g in t_meta['genres']])
+                elif t_meta.get('genre'):
+                    track_meta['genre'] = t_meta['genre']
+                
+                track_meta['volume'] = t_meta.get('volumeNumber')
+                if t_meta.get('album') and t_meta['album'].get('numberOfVolumes'):
+                    track_meta['totalvolume'] = t_meta['album']['numberOfVolumes']
+                
+                if t_meta.get('composers'):
+                    track_meta['composer'] = ', '.join([c['name'] for c in t_meta['composers']])
+        # --- AKHIR PERBAIKAN ---
+            
         filepath = basefolder
     # --- AKHIR MODIFIKASI BESAR ---
 
@@ -247,17 +280,21 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     tasks = []
-    # 'track' di sini sekarang adalah "stub" dari get_album_metadata
     for track in album_meta['tracks']:
-        # Panggil start_track dengan stub. 
-        # start_track akan mendeteksi stub dan mengambil metadata lengkap.
+        stub_meta = {
+            'itemid': track['itemid'],
+            'album': album_meta['album'],
+            'albumartist': album_meta['albumartist'],
+            'cover': album_meta['cover'],
+            'thumbnail': album_meta['thumbnail']
+        }
         tasks.append(start_track(
             track['itemid'], 
             user, 
-            track, # Ini adalah stub-nya
+            stub_meta, 
             False, 
             album_folder, 
-            session, # Teruskan session/quality yang sudah kita dapatkan
+            session, 
             quality
         ))
 
@@ -319,9 +356,7 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         playlist_meta['poster_msg'] = await post_art_poster(user, playlist_meta)
 
     tasks = []
-    # 'track' di sini sekarang adalah "stub" dari get_playlist_metadata
     for track in playlist_meta['tracks']:
-        # Panggil start_track dengan stub. 
         stub_meta = {
             'itemid': track['itemid'],
             'album': playlist_meta['album'], 
@@ -332,7 +367,7 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         tasks.append(start_track(
             track['itemid'], 
             user, 
-            stub_meta, # Teruskan stub minimalis
+            stub_meta, 
             False, 
             playlist_folder, 
             session, 
