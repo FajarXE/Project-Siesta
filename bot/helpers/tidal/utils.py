@@ -8,6 +8,7 @@ import logging
 
 from shutil import copyfileobj
 from xml.etree import ElementTree
+from datetime import datetime # <-- Impor datetime
 
 from .manager import tidal_manager
 try:
@@ -18,14 +19,14 @@ except ImportError:
 async def parse_url(url):
     # ... (fungsi parse_url tidak berubah) ...
     patterns = [
-        (r"/browse/track/(\d+)", "track"),  # Track from browse
-        (r"/browse/artist/(\d+)", "artist"),  # Artist from browse
-        (r"/browse/album/(\d+)", "album"),  # Album from browse
-        (r"/browse/playlist/([\w-]+)", "playlist"),  # Playlist with numeric or UUID
-        (r"/track/(\d+)", "track"),  # Track from listen.tidal.com
-        (r"/artist/(\d+)", "artist"),  # Artist from listen.tidal.com
-        (r"/playlist/([\w-]+)", "playlist"),  # Playlist with numeric or UUID
-        (r"/album/\d+/track/(\d+)", "track"),  # Extract only track ID from album_and_track
+        (r"/browse/track/(\d+)", "track"),
+        (r"/browse/artist/(\d+)", "artist"),
+        (r"/browse/album/(\d+)", "album"),
+        (r"/browse/playlist/([\w-]+)", "playlist"),
+        (r"/track/(\d+)", "track"),
+        (r"/artist/(\d+)", "artist"),
+        (r"/playlist/([\w-]+)", "playlist"),
+        (r"/album/\d+/track/(\d+)", "track"),
         (r"/album/(\d+)", "album"),
     ]
     
@@ -114,7 +115,7 @@ async def merge_tracks(temp_tracks: list, output_path: str):
         for temp_location in temp_tracks:
             async with aiofiles.open(temp_location, 'rb') as segment_file:
                 while True:
-                    chunk = await segment_file.read(1024 * 64)  # Read in chunks
+                    chunk = await segment_file.read(1024 * 64)
                     if not chunk:
                         break
                     await dest_file.write(chunk)
@@ -171,7 +172,8 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     
     def escape_str(value):
         """Helper untuk meng-escape metadata untuk FFmpeg."""
-        # Meng-escape karakter khusus untuk shell dan FFmpeg
+        if value is None:
+            value = ''
         if not isinstance(value, str):
             value = str(value)
         return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$").replace("`", "\\`")
@@ -181,34 +183,37 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     
     # 1. Bangun string metadata
     metadata_cmd = ""
+    
+    # --- PERBAIKAN: Gunakan nama tag VORBIS COMMENT (UPPERCASE) ---
     tags_to_write = {
-        'title': track_meta.get('title'),
-        'album': track_meta.get('album'),
-        'album_artist': track_meta.get('albumartist'),
-        'artist': track_meta.get('artist'),
-        'copyright': track_meta.get('copyright'),
-        'track': track_meta.get('tracknumber'),
-        'tracktotal': track_meta.get('totaltracks'),
-        'genre': track_meta.get('genre'),
-        'date': track_meta.get('date'),
-        'releasedate': track_meta.get('release_date'),
-        'isrc': track_meta.get('isrc'),
-        'lyrics': track_meta.get('lyrics'),
-        'disc': track_meta.get('volume'),
-        'disctotal': track_meta.get('totalvolume'),
-        'composer': track_meta.get('composer'),
-        'bps': track_meta.get('bit_depth'),
-        'samplerate': int(track_meta.get('sample_rate', 44.1) * 1000)
+        'TITLE': track_meta.get('title'),
+        'ALBUM': track_meta.get('album'),
+        'ALBUMARTIST': track_meta.get('albumartist'),
+        'ARTIST': track_meta.get('artist'),
+        'COPYRIGHT': track_meta.get('copyright'),
+        'TRACKNUMBER': track_meta.get('tracknumber'),
+        'TRACKTOTAL': track_meta.get('totaltracks'),
+        'GENRE': track_meta.get('genre'),
+        'DATE': track_meta.get('date'),
+        'RELEASETIME': track_meta.get('release_date'), # Tag kustom
+        'ISRC': track_meta.get('isrc'),
+        'LYRICS': track_meta.get('lyrics'),
+        'DISCNUMBER': track_meta.get('volume'), # Kunci yang benar
+        'DISCTOTAL': track_meta.get('totalvolume'), # Kunci yang benar
+        'COMPOSER': track_meta.get('composer'),
+        'BPS': track_meta.get('bit_depth'),
+        'SAMPLERATE': int(track_meta.get('sample_rate', 44.1) * 1000)
     }
+    # --- AKHIR PERBAIKAN ---
 
     # Tambahkan tag MQA jika ada
     if track_meta.get('mqa_details'):
         mqa_file = track_meta['mqa_details']
-        encoder_time = mqa_file.datetime.now().strftime("%b %d %Y %H:%M:%S")
+        encoder_time = datetime.now().strftime("%b %d %Y %H:%M:%S")
         mqa_encoder_str = f'MQAEncode v1.1, 2.4.0+0 (278f5dd), E24F1DE5-32F1-4930-8197-24954EB9D6F4, {encoder_time}'
-        tags_to_write['encoder'] = mqa_encoder_str
-        tags_to_write['mqaencoder'] = mqa_encoder_str
-        tags_to_write['originalsamplerate'] = str(mqa_file.original_sample_rate)
+        tags_to_write['ENCODER'] = mqa_encoder_str
+        tags_to_write['MQAENCODER'] = mqa_encoder_str
+        tags_to_write['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
 
     # Buat argumen -metadata
     for key, value in tags_to_write.items():
@@ -223,9 +228,7 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
         f'-loglevel error -y "{output_file_escaped}"' # Output
     )
     
-    # --- DIAGNOSTIK: Log perintah FFmpeg ---
-    logging.info(f"FFMPEG CMD: {cmd}")
-    # --- AKHIR DIAGNOSTIK ---
+    logging.info(f"FFMPEG CMD: {cmd}") # Tetap log perintah ini
 
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
