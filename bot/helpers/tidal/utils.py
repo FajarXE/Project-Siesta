@@ -9,25 +9,14 @@ import logging
 from shutil import copyfileobj
 from xml.etree import ElementTree
 
-# --- MODIFIKASI: Impor manajer baru ---
 from .manager import tidal_manager
-# Kita juga butuh Tipe data TidalApi
 try:
     from .tidal_api import TidalApi
 except ImportError:
-    class TidalApi: pass # Fallback
-# --- MODIFIKASI SELESAI ---
-
+    class TidalApi: pass 
 
 async def parse_url(url):
-    """
-    Parse url type and ID from Tidal URL
-    Args:
-        url (str): Tidal URL.
-    Returns:
-        id: int
-        type: str
-    """
+    # ... (fungsi parse_url tidak berubah) ...
     patterns = [
         (r"/browse/track/(\d+)", "track"),  # Track from browse
         (r"/browse/artist/(\d+)", "artist"),  # Artist from browse
@@ -43,35 +32,22 @@ async def parse_url(url):
     for pattern, type_ in patterns:
         match = re.search(pattern, url)
         if match:
-            #return {"type": type_, "id": match.group(1)}
             return match.group(1), type_
     
     return None, None
 
 
 async def get_stream_session(track_data: dict, user: dict):
-    """
-    Session needed for the quality chosen
-    Args:
-        track_data: raw data for the track
-        user: user dict (harus berisi 'tidal_api')
-    Returns:
-        session: TidalSession
-        quality: LOW | HIGH | LOSSLESS | HI_RES | HI_RES_LOSSLESS
-    """
+    # ... (fungsi get_stream_session tidak berubah) ...
     media_tags = track_data['mediaMetadata']['tags']
     formats = None
 
-    # --- MODIFIKASI: Gunakan manager dan klien yang diinjeksi ---
     if 'tidal_api' not in user:
         raise ValueError("User dict tidak memiliki 'tidal_api' client instance.")
     
     client: TidalApi = user['tidal_api']
     
-    # Dapatkan pengaturan dari manager, bukan dari 'tidalapi' global
-    # Ambil semua 4 pengaturan
     qual, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
-    # --- MODIFIKASI SELESAI ---
 
     if 'SONY_360RA' in media_tags and spatial == 'Sony 360RA':
         formats = '360ra'
@@ -79,11 +55,9 @@ async def get_stream_session(track_data: dict, user: dict):
         formats = 'ac3'
     elif 'DOLBY_ATMOS' in media_tags and spatial == 'ATMOS AC4':
         formats = 'ac4'
-    # let spatial audio have priority
     elif 'HIRES_LOSSLESS' in media_tags and qual == 'HI_RES':
         formats = 'flac_hires'
 
-    # --- MODIFIKASI: Gunakan instance klien ---
     session = {
             'flac_hires': client.mobile_hires,
             '360ra': client.mobile_hires if client.mobile_hires else client.mobile_atmos,
@@ -92,75 +66,50 @@ async def get_stream_session(track_data: dict, user: dict):
             None: client.tv_session,
     }[formats]
 
-    # tv sesion gets atmos always so try mobi1e session if exists
     if not formats and 'DOLBY_ATMOS' in media_tags:
         if client.mobile_hires:
             session = client.mobile_hires
-    # --- MODIFIKASI SELESAI ---
 
     quality = qual if formats != 'flac_hires' else 'HI_RES_LOSSLESS'
-    #logging.info((session, quality))
     return session, quality
     
 
-
-def parse_mpd(xml: bytes) -> list:
+def parse_mpd(xml: bytes):
+    # ... (fungsi parse_mpd tidak berubah) ...
     xml = xml.decode('UTF-8')
-    # Removes default namespace definition, don't do that!
     xml = re.sub(r'xmlns="[^"]+"', '', xml, count=1)
     root = ElementTree.fromstring(xml)
-
-    # List of AudioTracks
     tracks = []
-
     for period in root.findall('Period'):
         for adaptation_set in period.findall('AdaptationSet'):
             for rep in adaptation_set.findall('Representation'):
-                # Check if representation is audio
                 content_type = adaptation_set.get('contentType')
                 if content_type != 'audio':
                     raise ValueError('Only supports audio MPDs!')
-
-                # Codec checks
                 codec = rep.get('codecs').upper()
                 if codec.startswith('MP4A'):
                     codec = 'AAC'
-
-                # Segment template
                 seg_template = rep.find('SegmentTemplate')
-                # Add init file to track_urls
                 track_urls = [seg_template.get('initialization')]
                 start_number = int(seg_template.get('startNumber') or 1)
-
-                # https://dashif-documents.azurewebsites.net/Guidelines-TimingModel/master/Guidelines-TimingModel.html#addressing-explicit
-                # Also see example 9
                 seg_timeline = seg_template.find('SegmentTimeline')
                 if seg_timeline is not None:
                     seg_time_list = []
                     cur_time = 0
-
                     for s in seg_timeline.findall('S'):
-                        # Media segments start time
                         if s.get('t'):
                             cur_time = int(s.get('t'))
-
-                        # Segment reference
                         for i in range((int(s.get('r') or 0) + 1)):
                             seg_time_list.append(cur_time)
-                            # Add duration to current time
                             cur_time += int(s.get('d'))
-
-                    # Create list with $Number$ indices
                     seg_num_list = list(range(start_number, len(seg_time_list) + start_number))
-                    # Replace $Number$ with all the seg_num_list indices
                     track_urls += [seg_template.get('media').replace('$Number$', str(n)) for n in seg_num_list]
-
                 tracks.append(track_urls)
-
     return tracks, codec
 
 
 async def merge_tracks(temp_tracks: list, output_path: str):
+    # ... (fungsi merge_tracks tidak berubah) ...
     async with aiofiles.open(output_path, 'wb') as dest_file:
         for temp_location in temp_tracks:
             async with aiofiles.open(temp_location, 'rb') as segment_file:
@@ -169,12 +118,11 @@ async def merge_tracks(temp_tracks: list, output_path: str):
                     if not chunk:
                         break
                     await dest_file.write(chunk)
-    
-    # Delete temp files asynchronously
     delete_tasks = [asyncio.to_thread(os.remove, temp_location) for temp_location in temp_tracks]
     await asyncio.gather(*delete_tasks)
 
 async def get_quality(stream_data: dict):
+    # ... (fungsi get_quality tidak berubah) ...
     quality_dict = qualities = {
         'LOW':'LOW',
         'HIGH':'HIGH',
@@ -182,36 +130,27 @@ async def get_quality(stream_data: dict):
         'HI_RES':'MAX',
         'HI_RES_LOSSLESS':'MAX'
     }
-
     if stream_data['audioMode'] == 'DOLBY_ATMOS':
         return 'DOLBY ATMOS'
     return quality_dict[stream_data['audioQuality']]
 
 
 async def sort_album_from_artist(album_data: dict, user: dict):
+    # ... (fungsi sort_album_from_artist tidak berubah) ...
     albums = []
-    
-    # --- MODIFIKASI: Gunakan manager untuk pengaturan ---
-    # Ambil 4 pengaturan, tapi kita hanya butuh 'spatial'
     _, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
-    # --- MODIFIKASI SELESAI ---
 
     for album in album_data:
-        # --- MODIFIKASI: Gunakan variabel spasial ---
         if album['audioModes'] == ['DOLBY_ATMOS'] \
             and spatial in ['ATMOS AC3 JOC', 'ATMOS AC4']: 
             albums.append(album)
         elif album['audioModes'] == ['STEREO'] \
             and spatial == 'OFF':
             albums.append(album)
-        # --- MODIFIKASI SELESAI ---
 
     unique_albums = {}
-
-    # Get unique albums (check by mediaMetadata and choose one with more quality)
     for album in albums:
         unique_key = (album['title'], album['version'])
-
         if unique_key not in unique_albums:
             unique_albums[unique_key] = album
         else:
@@ -219,20 +158,75 @@ async def sort_album_from_artist(album_data: dict, user: dict):
             new_metadata = album.get('mediaMetadata', {})
             if len(new_metadata) > len(existing_metadata):  
                 unique_albums[unique_key] = album
-
     filtered_tracks = list(unique_albums.values())
-
     return filtered_tracks
 
 
-async def ffmpeg_convert(input_file):
-    # --- PERBAIKAN: Escape karakter $ untuk shell ---
-    input_file_escaped = input_file.replace("$", "\\$")
+# --- MODIFIKASI BESAR: ffmpeg_convert sekarang menulis SEMUA metadata ---
+async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
+    """
+    Mengonversi M4A (ALAC) ke FLAC dan menulis semua tag metadata
+    menggunakan FFmpeg dalam satu perintah.
+    """
     
-    # --- PERBAIKAN BESAR: Hapus "-c:a copy" ---
-    # Ganti dengan "-c:a flac" untuk mengonversi (re-encode) ke FLAC
-    cmd = f'ffmpeg -i "{input_file_escaped}" -c:a flac -compression_level 8 -loglevel error -y "{input_file_escaped}.flac"'
-    # --- AKHIR PERBAIKAN BESAR ---
+    def escape_str(value):
+        """Helper untuk meng-escape metadata untuk FFmpeg."""
+        # Meng-escape karakter khusus untuk shell dan FFmpeg
+        if not isinstance(value, str):
+            value = str(value)
+        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$").replace("`", "\\`")
+
+    input_file_escaped = escape_str(input_file)
+    output_file_escaped = f"{input_file_escaped}.flac"
     
+    # 1. Bangun string metadata
+    metadata_cmd = ""
+    tags_to_write = {
+        'title': track_meta.get('title'),
+        'album': track_meta.get('album'),
+        'album_artist': track_meta.get('albumartist'),
+        'artist': track_meta.get('artist'),
+        'copyright': track_meta.get('copyright'),
+        'track': track_meta.get('tracknumber'),
+        'tracktotal': track_meta.get('totaltracks'),
+        'genre': track_meta.get('genre'),
+        'date': track_meta.get('date'),
+        'releasedate': track_meta.get('release_date'),
+        'isrc': track_meta.get('isrc'),
+        'lyrics': track_meta.get('lyrics'),
+        'disc': track_meta.get('volume'),
+        'disctotal': track_meta.get('totalvolume'),
+        'composer': track_meta.get('composer'),
+        'bps': track_meta.get('bit_depth'),
+        'samplerate': int(track_meta.get('sample_rate', 44.1) * 1000)
+    }
+
+    # Tambahkan tag MQA jika ada
+    if track_meta.get('mqa_details'):
+        mqa_file = track_meta['mqa_details']
+        encoder_time = mqa_file.datetime.now().strftime("%b %d %Y %H:%M:%S")
+        mqa_encoder_str = f'MQAEncode v1.1, 2.4.0+0 (278f5dd), E24F1DE5-32F1-4930-8197-24954EB9D6F4, {encoder_time}'
+        tags_to_write['encoder'] = mqa_encoder_str
+        tags_to_write['mqaencoder'] = mqa_encoder_str
+        tags_to_write['originalsamplerate'] = str(mqa_file.original_sample_rate)
+
+    # Buat argumen -metadata
+    for key, value in tags_to_write.items():
+        if value is not None and value != '':
+            metadata_cmd += f' -metadata {key}="{escape_str(value)}"'
+
+    # 2. Bangun perintah FFmpeg
+    cmd = (
+        f'ffmpeg -i "{input_file_escaped}" '
+        f'-c:a flac -compression_level 8 ' # Konversi ke FLAC
+        f'{metadata_cmd} ' # Tambahkan semua tag metadata
+        f'-loglevel error -y "{output_file_escaped}"' # Output
+    )
+    
+    # --- DIAGNOSTIK: Log perintah FFmpeg ---
+    logging.info(f"FFMPEG CMD: {cmd}")
+    # --- AKHIR DIAGNOSTIK ---
+
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
+# --- AKHIR MODIFIKASI BESAR ---
