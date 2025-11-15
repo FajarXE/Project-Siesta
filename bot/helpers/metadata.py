@@ -80,12 +80,16 @@ async def set_flac(data, handle):
     handle.tags['tracknumber'] = str(data['tracknumber'])
     handle.tags['tracktotal'] = str(data['totaltracks'])
     
-    # --- VERSI BERSIH: Tulis data HANYA JIKA ADA ---
-    handle.tags['genre'] = data.get('genre') or ''
-    handle.tags['composer'] = data.get('composer', '')
-    handle.tags['discnumber'] = str(data.get('volume') or '')
-    handle.tags['disctotal'] = str(data.get('totalvolume') or '')
-    # --- AKHIR VERSI BERSIH ---
+    # --- PERBAIKAN: Penulisan yang lebih aman ---
+    if data.get('genre'):
+        handle.tags['genre'] = data['genre']
+    if data.get('composer'):
+        handle.tags['composer'] = data['composer']
+    if data.get('volume') is not None: # Cek 'None' secara eksplisit
+        handle.tags['discnumber'] = str(data['volume'])
+    if data.get('totalvolume') is not None: # Cek 'None' secara eksplisit
+        handle.tags['disctotal'] = str(data['totalvolume'])
+    # --- AKHIR PERBAIKAN ---
     
     if data.get('date'): 
         handle.tags['date'] = data['date']
@@ -126,17 +130,22 @@ async def set_mp3(data, handle):
     else:
         track_pos = track_num
         
-    disc_num = str(data.get('volume', ''))
-    disc_total = str(data.get('totalvolume', ''))
+    # --- PERBAIKAN: Penulisan yang lebih aman ---
+    disc_num = ''
+    disc_total = ''
+    if data.get('volume') is not None:
+        disc_num = str(data['volume'])
+    if data.get('totalvolume') is not None:
+        disc_total = str(data['totalvolume'])
+    
     if disc_total and disc_total != '0':
         disc_pos = f"{disc_num}/{disc_total}"
     else:
         disc_pos = disc_num
         
-    # --- VERSI BERSIH: Tulis data HANYA JIKA ADA ---
     genre_text = data.get('genre') or ''
     composer_text = data.get('composer') or ''
-    # --- AKHIR VERSI BERSIH ---
+    # --- AKHIR PERBAIKAN ---
 
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
@@ -177,15 +186,17 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     
-    # --- VERSI BERSIH: Tulis data HANYA JIKA ADA ---
-    handle.tags['\u00a9gen'] = data.get('genre') or ''
-    handle.tags['\u00a9wrt'] = data.get('composer', '')
+    # --- PERBAIKAN: Penulisan yang lebih aman ---
+    if data.get('genre'):
+        handle.tags['\u00a9gen'] = data['genre']
+    if data.get('composer'):
+        handle.tags['\u00a9wrt'] = data['composer']
     
     track_number_str = str(data.get('tracknumber') or '')
     totaltracks_str = str(data.get('totaltracks') or '')
     volume_str = str(data.get('volume') or '') 
     totalvolume_str = str(data.get('totalvolume') or '') 
-    # --- AKHIR VERSI BERSIH ---
+    # --- AKHIR PERBAIKAN ---
     
     if data.get('date'): 
         handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
