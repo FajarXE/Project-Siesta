@@ -8,7 +8,7 @@ import logging
 
 from shutil import copyfileobj
 from xml.etree import ElementTree
-from datetime import datetime # <-- Impor datetime
+from datetime import datetime 
 
 from .manager import tidal_manager
 try:
@@ -17,7 +17,6 @@ except ImportError:
     class TidalApi: pass 
 
 async def parse_url(url):
-    # ... (fungsi parse_url tidak berubah) ...
     patterns = [
         (r"/browse/track/(\d+)", "track"),
         (r"/browse/artist/(\d+)", "artist"),
@@ -39,7 +38,6 @@ async def parse_url(url):
 
 
 async def get_stream_session(track_data: dict, user: dict):
-    # ... (fungsi get_stream_session tidak berubah) ...
     media_tags = track_data['mediaMetadata']['tags']
     formats = None
 
@@ -76,7 +74,6 @@ async def get_stream_session(track_data: dict, user: dict):
     
 
 def parse_mpd(xml: bytes):
-    # ... (fungsi parse_mpd tidak berubah) ...
     xml = xml.decode('UTF-8')
     xml = re.sub(r'xmlns="[^"]+"', '', xml, count=1)
     root = ElementTree.fromstring(xml)
@@ -110,7 +107,6 @@ def parse_mpd(xml: bytes):
 
 
 async def merge_tracks(temp_tracks: list, output_path: str):
-    # ... (fungsi merge_tracks tidak berubah) ...
     async with aiofiles.open(output_path, 'wb') as dest_file:
         for temp_location in temp_tracks:
             async with aiofiles.open(temp_location, 'rb') as segment_file:
@@ -123,7 +119,6 @@ async def merge_tracks(temp_tracks: list, output_path: str):
     await asyncio.gather(*delete_tasks)
 
 async def get_quality(stream_data: dict):
-    # ... (fungsi get_quality tidak berubah) ...
     quality_dict = qualities = {
         'LOW':'LOW',
         'HIGH':'HIGH',
@@ -137,7 +132,6 @@ async def get_quality(stream_data: dict):
 
 
 async def sort_album_from_artist(album_data: dict, user: dict):
-    # ... (fungsi sort_album_from_artist tidak berubah) ...
     albums = []
     _, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
 
@@ -163,7 +157,6 @@ async def sort_album_from_artist(album_data: dict, user: dict):
     return filtered_tracks
 
 
-# --- MODIFIKASI BESAR: ffmpeg_convert sekarang menulis SEMUA metadata ---
 async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     """
     Mengonversi M4A (ALAC) ke FLAC dan menulis semua tag metadata
@@ -184,7 +177,6 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     # 1. Bangun string metadata
     metadata_cmd = ""
     
-    # --- PERBAIKAN: Gunakan nama tag VORBIS COMMENT (UPPERCASE) ---
     tags_to_write = {
         'TITLE': track_meta.get('title'),
         'ALBUM': track_meta.get('album'),
@@ -195,16 +187,15 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
         'TRACKTOTAL': track_meta.get('totaltracks'),
         'GENRE': track_meta.get('genre'),
         'DATE': track_meta.get('date'),
-        'RELEASETIME': track_meta.get('release_date'), # Tag kustom
+        'RELEASETIME': track_meta.get('release_date'), 
         'ISRC': track_meta.get('isrc'),
         'LYRICS': track_meta.get('lyrics'),
-        'DISCNUMBER': track_meta.get('volume'), # Kunci yang benar
-        'DISCTOTAL': track_meta.get('totalvolume'), # Kunci yang benar
+        'DISCNUMBER': track_meta.get('volume'), 
+        'DISCTOTAL': track_meta.get('totalvolume'), 
         'COMPOSER': track_meta.get('composer'),
         'BPS': track_meta.get('bit_depth'),
         'SAMPLERATE': int(track_meta.get('sample_rate', 44.1) * 1000)
     }
-    # --- AKHIR PERBAIKAN ---
 
     # Tambahkan tag MQA jika ada
     if track_meta.get('mqa_details'):
@@ -228,8 +219,7 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
         f'-loglevel error -y "{output_file_escaped}"' # Output
     )
     
-    logging.info(f"FFMPEG CMD: {cmd}") # Tetap log perintah ini
+    # Log diagnostik FFMPEG CMD telah dihapus
 
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
-# --- AKHIR MODIFIKASI BESAR ---
