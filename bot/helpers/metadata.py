@@ -60,10 +60,15 @@ async def set_metadata(metadata:dict):
 
     try:
         if 'audio/x-flac' in handle.mime:
+            # --- TAMBAHAN LOG DIAGNOSTIK ---
+            LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
+            # --- AKHIR TAMBAHAN ---
             await set_flac(metadata, handle)
         elif 'audio/mpeg' in handle.mime:
+            LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}") # (Log untuk mp3)
             await set_mp3(metadata, handle)
         elif 'audio/x-m4a' in handle.mime: 
+            LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}") # (Log untuk m4a)
             await set_m4a(metadata, handle)
     except Exception as e:
         LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
@@ -80,29 +85,25 @@ async def set_flac(data, handle):
     handle.tags['TRACKNUMBER'] = str(data['tracknumber'])
     handle.tags['TRACKTOTAL'] = str(data['totaltracks'])
     
-    # --- PERBAIKAN: Gunakan Kunci VORBIS COMMENT (UPPERCASE) ---
-    if data.get('genre'):
-        handle.tags['GENRE'] = data['genre']
-    if data.get('composer'):
-        handle.tags['COMPOSER'] = data['composer']
+    # --- TES DIAGNOSTIK: TULIS PAKSA ---
+    # Kita akan menulis '999' secara paksa.
+    # Kita juga akan menggunakan data['volume'] jika ada, atau '999' jika tidak.
+    handle.tags['DISCNUMBER'] = str(data.get('volume') or '999')
+    handle.tags['DISCTOTAL'] = str(data.get('totalvolume') or '1') # Paksa '1'
     
-    disc_num = str(data.get('volume') or '')
-    disc_total = str(data.get('totalvolume') or '')
-    
-    if disc_num:
-        handle.tags['DISCNUMBER'] = disc_num
-    if disc_total:
-        handle.tags['DISCTOTAL'] = disc_total
-    # --- AKHIR PERBAIKAN ---
+    # Tulis genre & composer asli jika ada, jika tidak, tulis string tes
+    handle.tags['GENRE'] = data.get('genre') or 'TES FLAC GENRE'
+    handle.tags['COMPOSER'] = data.get('composer') or 'TES FLAC COMPOSER'
+    # --- AKHIR TES DIAGNOSTIK ---
     
     if data.get('date'): 
-        handle.tags['DATE'] = data['date'] # 'DATE' adalah standar, bukan 'releasedate'
+        handle.tags['DATE'] = data['date'] 
     
     if data.get('release_date'): 
-        handle.tags['RELEASETIME'] = data['release_date'] # Tag kustom untuk tanggal rilis
+        handle.tags['RELEASETIME'] = data['release_date'] 
 
     if data.get('subgenre'): 
-        handle.tags['SUBGENRE'] = data['subgenre'] # Tag kustom
+        handle.tags['SUBGENRE'] = data['subgenre'] 
     
     handle.tags['ISRC'] = data['isrc']
     if data.get('lyrics'):
@@ -126,6 +127,7 @@ async def set_flac(data, handle):
     return True
 
 async def set_mp3(data, handle):
+    # ... (fungsi set_mp3 tidak berubah, salin dari file Anda) ...
     if handle.tags is None:
             handle.add_tags()
     track_num = str(data.get('tracknumber', ''))
@@ -182,6 +184,7 @@ async def set_mp3(data, handle):
     return True
 
 async def set_m4a(data, handle):
+    # ... (fungsi set_m4a tidak berubah, salin dari file Anda) ...
     if handle.tags is None:
         handle.add_tags()
     handle.tags['\u00a9nam'] = data['title']
@@ -227,7 +230,7 @@ async def set_m4a(data, handle):
     handle.save()
     return True
 
-
+# ... (sisa file tidak berubah) ...
 async def savePic(handle, metadata):
     album_art = metadata['cover']
     if album_art == './project-siesta.png' or not os.path.exists(album_art):
@@ -256,7 +259,7 @@ async def savePic(handle, metadata):
 
 async def get_audio_extension(path):
     handle = File(path)
-    if 'audio/x-m4a' in handle.mime:
+    if 'audio/x-flac' in handle.mime:
         return 'm4a'
     elif 'audio/x-flac' in handle.mime:
         return 'flac'
