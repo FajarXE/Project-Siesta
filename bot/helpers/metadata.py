@@ -72,42 +72,41 @@ async def set_metadata(metadata:dict):
 async def set_flac(data, handle):
     if handle.tags is None:
             handle.add_tags()
-    handle.tags['title'] = data['title']
-    handle.tags['album'] = data['album']
-    handle.tags['albumartist'] = data['albumartist']
-    handle.tags['artist'] = data['artist']
-    handle.tags['copyright'] = data['copyright']
-    handle.tags['tracknumber'] = str(data['tracknumber'])
-    handle.tags['tracktotal'] = str(data['totaltracks'])
+    handle.tags['TITLE'] = data['title']
+    handle.tags['ALBUM'] = data['album']
+    handle.tags['ALBUMARTIST'] = data['albumartist']
+    handle.tags['ARTIST'] = data['artist']
+    handle.tags['COPYRIGHT'] = data['copyright']
+    handle.tags['TRACKNUMBER'] = str(data['tracknumber'])
+    handle.tags['TRACKTOTAL'] = str(data['totaltracks'])
     
-    # --- PERBAIKAN: Penulisan yang lebih aman ---
+    # --- PERBAIKAN: Gunakan Kunci VORBIS COMMENT (UPPERCASE) ---
     if data.get('genre'):
-        handle.tags['genre'] = data['genre']
+        handle.tags['GENRE'] = data['genre']
     if data.get('composer'):
-        handle.tags['composer'] = data['composer']
-        
-    # Perbaikan: Gunakan str() untuk menangani angka 0 atau None
+        handle.tags['COMPOSER'] = data['composer']
+    
     disc_num = str(data.get('volume') or '')
     disc_total = str(data.get('totalvolume') or '')
     
-    # Hanya tulis jika tidak kosong
     if disc_num:
-        handle.tags['discnumber'] = disc_num
+        handle.tags['DISCNUMBER'] = disc_num
     if disc_total:
-        handle.tags['disctotal'] = disc_total
+        handle.tags['DISCTOTAL'] = disc_total
     # --- AKHIR PERBAIKAN ---
     
     if data.get('date'): 
-        handle.tags['date'] = data['date']
+        handle.tags['DATE'] = data['date'] # 'DATE' adalah standar, bukan 'releasedate'
     
     if data.get('release_date'): 
-        handle.tags['releasedate'] = data['release_date']
+        handle.tags['RELEASETIME'] = data['release_date'] # Tag kustom untuk tanggal rilis
 
     if data.get('subgenre'): 
-        handle.tags['subgenre'] = data['subgenre']
+        handle.tags['SUBGENRE'] = data['subgenre'] # Tag kustom
     
-    handle.tags['isrc'] = data['isrc']
-    handle.tags['lyrics'] = data['lyrics']
+    handle.tags['ISRC'] = data['isrc']
+    if data.get('lyrics'):
+        handle.tags['LYRICS'] = data['lyrics']
     
     if data.get('bit_depth'):
         handle.tags['BPS'] = str(data['bit_depth'])
@@ -136,7 +135,6 @@ async def set_mp3(data, handle):
     else:
         track_pos = track_num
         
-    # --- PERBAIKAN: Penulisan yang lebih aman ---
     disc_num = str(data.get('volume') or '')
     disc_total = str(data.get('totalvolume') or '')
     
@@ -147,7 +145,6 @@ async def set_mp3(data, handle):
         
     genre_text = data.get('genre') or ''
     composer_text = data.get('composer') or ''
-    # --- AKHIR PERBAIKAN ---
 
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
@@ -155,9 +152,9 @@ async def set_mp3(data, handle):
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
     handle.tags.add(TRCK(encoding=3, text=track_pos)) 
-    if disc_pos: # Hanya tulis jika tidak kosong
+    if disc_pos: 
         handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
-    if genre_text: # Hanya tulis jika tidak kosong
+    if genre_text: 
         handle.tags.add(TCON(encoding=3, text=genre_text)) 
     
     if data.get('date'): 
@@ -170,8 +167,9 @@ async def set_mp3(data, handle):
         handle.tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
     
     handle.tags.add(TSRC(encoding=3, text=data['isrc']))
-    handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
-    if composer_text: # Hanya tulis jika tidak kosong
+    if data.get('lyrics'):
+        handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
+    if composer_text: 
         handle.tags.add(TCOM(encoding=3, text=composer_text)) 
     
     if data.get('bit_depth'):
@@ -191,7 +189,6 @@ async def set_m4a(data, handle):
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     
-    # --- PERBAIKAN: Penulisan yang lebih aman ---
     if data.get('genre'):
         handle.tags['\u00a9gen'] = data['genre']
     if data.get('composer'):
@@ -201,7 +198,6 @@ async def set_m4a(data, handle):
     totaltracks_str = str(data.get('totaltracks') or '')
     volume_str = str(data.get('volume') or '') 
     totalvolume_str = str(data.get('totalvolume') or '') 
-    # --- AKHIR PERBAIKAN ---
     
     if data.get('date'): 
         handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
