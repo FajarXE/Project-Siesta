@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/bugs/bugs_api.py]
+
 from datetime import datetime, timedelta
 
 import requests
@@ -223,7 +225,9 @@ class BugsApi:
 
     def get_stream(self, track_id: int, bitrate: str = 'flac'):
         # bitrate is either 'flac24', 'flac', 'aac256', 'aac', '320k'
-        valid_bitrate = {'flac24', 'flac', 'aac256', 'aac', '320k'}
+        # --- PERBAIKAN: Hapus 'flac24' dari set yang valid ---
+        valid_bitrate = {'flac', 'aac256', 'aac', '320k'}
+        # --- BATAS PERBAIKAN ---
         if bitrate not in valid_bitrate:
             raise ValueError('bitrate: must be one of %r ' % valid_bitrate)
 
@@ -249,3 +253,10 @@ class BugsApi:
             'sort': 'exact',
             'flac_str_only': 'N'
         })
+
+    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
+    def close_session(self):
+        """Menutup sesi 'requests' internal."""
+        if self.s:
+            self.s.close()
+    # --- AKHIR TAMBAHAN ---
