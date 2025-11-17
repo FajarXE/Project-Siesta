@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/highresaudio/api.py]
+# [GANTI FILE: bot/helpers/highresaudio/api.py]
 
 import requests
 import json
@@ -126,3 +126,9 @@ class HighResAudioApi:
             LOGGER.error(f"HighResAudio: Gagal memulai stream booklet: {e}")
             raise self.exception(f'Gagal memulai stream booklet: {e}')
 
+    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
+    def close_session(self):
+        """Menutup sesi 'requests' internal."""
+        if self.s:
+            self.s.close()
+    # --- AKHIR TAMBAHAN ---
