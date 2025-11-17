@@ -1,11 +1,14 @@
-# [BUAT FILE BARU: bot/helpers/idagio/manager.py]
+# [GANTI FILE: bot/helpers/idagio/manager.py]
 
 import asyncio
 import itertools
 from bot.logger import LOGGER
 from config import Config
 
-from ...settings import bot_set 
+# --- PERBAIKAN: Hapus impor 'bot_set' ---
+# Impor melingkar tidak diperlukan, manager hanya perlu cache lokal.
+# from ...settings import bot_set 
+# --- BATAS PERBAIKAN ---
 
 try:
     from ..database.mongo_async import database
@@ -24,6 +27,9 @@ except ImportError:
         def __init__(self, *args, **kwargs): pass
         def login(self, *args, **kwargs): 
             raise NotImplementedError("File 'IdagioApi' inti tidak ditemukan.")
+        # --- Tambahkan stub close_session ---
+        def close_session(self): pass
+        # --- Akhir Tambahan ---
     class IdagioError(Exception): pass
 
 class IdagioLoginManager:
@@ -55,7 +61,7 @@ class IdagioLoginManager:
             else:
                 LOGGER.info(f"Idagio Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
 
-            LOGGER.info(f"Idagio Manager: Pengaturan kualitas pengguna akan dibaca dari bot_set.")
+            LOGGER.info(f"Idagio Manager: Pengaturan kualitas pengguna akan dibaca dari cache lokal nanti.")
 
         except Exception as e:
             LOGGER.error(f"Idagio Manager: Gagal memuat kualitas default dari DB: {e}. Menggunakan default: {self.quality}")
@@ -99,6 +105,10 @@ class IdagioLoginManager:
             return client
         except Exception as e:
             LOGGER.error(f"Idagio Manager: Gagal login ke Akun #{account['id']}. Error: {e}")
+            # --- Tambahan: Panggil close_session jika login gagal ---
+            if hasattr(client, 'close_session'):
+                await asyncio.to_thread(client.close_session)
+            # --- Akhir Tambahan ---
             return None
 
     def get_client(self) -> IdagioApi | None:
@@ -124,5 +134,26 @@ class IdagioLoginManager:
         if user_qual in ["FLAC", "MP3_320", "MP3_160"]:
             return user_qual
         return self.quality 
+
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien IdagioApi (requests) yang dikelola."""
+        LOGGER.info(f"Idagio Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien 'requests'.")
+        tasks = []
+        for client in self.clients:
+            if hasattr(client, 'close_session'):
+                # Panggil 'close_session' (sinkron) di thread terpisah
+                tasks.append(asyncio.to_thread(client.close_session))
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"Idagio Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("Idagio Manager: Semua sesi klien 'requests' telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
 
 idagio_manager = IdagioLoginManager(Config.IDAGIO_ACCOUNTS)
