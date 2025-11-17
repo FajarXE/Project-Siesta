@@ -231,3 +231,12 @@ class KkboxAPI:
         with open(path, 'wb') as f:
             for chunk in resp.iter_content(chunk_size=4096):
                 f.write(rc4.decrypt(chunk))
+
+    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
+    def close_session(self):
+        """Menutup sesi 'requests' internal."""
+        if self.s:
+            self.s.close()
+            # LOGGER.debug(f"KKBoxAPI (SID: {self.sid[:5]}...): Sesi 'requests' ditutup.")
+            # Tidak bisa log dari sini karena tidak punya akses ke LOGGER
+    # --- AKHIR TAMBAHAN ---
