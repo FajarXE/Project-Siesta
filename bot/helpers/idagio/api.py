@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/idagio/api.py]
+# [GANTI FILE: bot/helpers/idagio/api.py]
 
 import requests # Modifikasi
 import asyncio
@@ -173,3 +173,10 @@ class IdagioApi:
             raise self.exception(r.text)
 
         return r.json().get('results')
+
+    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
+    def close_session(self):
+        """Menutup sesi 'requests' internal."""
+        if self.s:
+            self.s.close()
+    # --- AKHIR TAMBAHAN ---
