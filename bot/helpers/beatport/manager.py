@@ -122,4 +122,25 @@ class BeatportLoginManager:
             return user_qual
         return self.quality 
 
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien BeatportAPI yang dikelola."""
+        LOGGER.info(f"Beatport Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien.")
+        tasks = []
+        for client in self.clients:
+            # Memanggil 'close_session' sesuai dengan nama metode di api.py
+            if hasattr(client, 'close_session'):
+                tasks.append(client.close_session())
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"Beatport Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("Beatport Manager: Semua sesi klien telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
+
 beatport_manager = BeatportLoginManager(Config.BEATPORT_ACCOUNTS)
