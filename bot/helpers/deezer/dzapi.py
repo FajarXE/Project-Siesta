@@ -177,7 +177,8 @@ class DeezerAPI:
             async with self.ratelimit:
                 # Pastikan self.session sudah ada
                 if not self.session:
-                    await self.login_via_arl(Config.DEEZER_ARL) # Fallback? Atau pastikan login terjadi
+                    # Ini seharusnya tidak terjadi jika login dipanggil dulu
+                    raise Exception("Sesi Deezer belum diinisialisasi sebelum parsing URL")
                 
                 async with self.session.get(link, allow_redirects=True) as r:
                     if r.status != 200:
@@ -247,6 +248,11 @@ class DeezerAPI:
                 raise e
         return res 
     
+    async def get_artist(self, id):
+        # --- TAMBAHAN BARU: Fungsi untuk mengambil data artist ---
+        return await self._api_call('artist.getData', {'art_id': id})
+        # --- BATAS TAMBAHAN ---
+    
     async def get_artist_album_ids(self, id, start, nb, credited_albums):
         payload = {
             'art_id': id, 'start': start, 'nb': nb,
@@ -272,6 +278,12 @@ class DeezerAPI:
     async def dl_track(self, id, url, path):
         bf_key = self._get_blowfish_key(id)
         async with self.session.get(url, allow_redirects=True) as resp:
+            # --- TAMBAHAN: Periksa status 403/404 ---
+            if resp.status in [403, 404]:
+                LOGGER.error(f"Deezer download URL gagal (HTTP {resp.status}) untuk track ID {id}")
+                return f"HTTP {resp.status} Error" # Kembalikan pesan error
+            # --- BATAS TAMBAHAN ---
+            
             buf = bytearray()
             async for data, _ in resp.content.iter_chunks():
                 buf += data
@@ -286,12 +298,23 @@ class DeezerAPI:
                     else:
                         decrypted_chunk = data
                     await audio.write(decrypted_chunk)
+        return None # Sukses
 
 
     @staticmethod
     def _decrypt_chunk(key, data):
         return Blowfish.new(key, Blowfish.MODE_CBC, b"\x00\x01\x02\x03\x04\x05\x06\x07").decrypt(data)
 
+    # --- TAMBAHAN BARU: Metode Close ---
+    async def close(self):
+        """Menutup aiohttp.ClientSession internal."""
+        if self.session and not self.session.closed:
+            await self.session.close()
+            user_id = self.user['USER']['USER_ID'] if self.user and self.user.get('USER') else 'N/A'
+            LOGGER.debug(f"DeezerAPI (User {user_id}): Sesi aiohttp ditutup.")
+    # --- AKHIR TAMBAHAN ---
+
+
 # --- MODIFIKASI: Hapus instans global ---
-# deezerapi = DeezerAPI()  <--- BARIS INI DIHAPUS
+# deezerapi = DeezerAPI()
 # --- BATAS MODIFIKASI ---
