@@ -1,4 +1,4 @@
-# [TARUH DI: bot/helpers/nugs/manager.py]
+# [GANTI FILE: bot/helpers/nugs/manager.py]
 
 import asyncio
 import itertools
@@ -15,8 +15,13 @@ except ImportError:
     # Definisikan kelas dummy jika impor gagal
     class NugsMobileSession:
         def __init__(self, *args, **kwargs): pass
+        def auth(self, *args, **kwargs): raise NotImplementedError("File NugsApi tidak ditemukan.")
+        def get_subscription(self, *args, **kwargs): raise NotImplementedError("File NugsApi tidak ditemukan.")
     class NugsApi:
         def __init__(self, *args, **kwargs): pass
+        # --- Tambahkan stub close_session ---
+        def close_session(self): pass
+        # --- Akhir Tambahan ---
     class NugsNotAvailableError(Exception): pass
 
 # Pengecualian kustom agar konsisten dengan manajer lain
@@ -65,6 +70,10 @@ class NugsLoginManager:
         """
         Tugas login untuk satu akun (menggunakan asyncio.to_thread karena berbasis 'requests').
         """
+        # --- Tambahan: Variabel klien untuk cleanup ---
+        api_client = None
+        session = None
+        # --- Akhir Tambahan ---
         try:
             email = account['email']
             password = account['password']
@@ -85,7 +94,7 @@ class NugsLoginManager:
             current_time = int(datetime.now().timestamp())
             
             if sub.end_stamp < current_time:
-                raise NugsError(f"Langganan untuk Akun #{account['id']} telah berakhir pada {sub.end_stamp}")
+                raise NugsError(f"Langganan untuk Akun #{account['id']} telah berakhir pada {datetime.fromtimestamp(sub.end_stamp)}")
             
             LOGGER.info(f"Nugs Manager: Berhasil login & verifikasi langganan Akun #{account['id']}.")
 
@@ -99,6 +108,10 @@ class NugsLoginManager:
             
         except Exception as e:
             LOGGER.error(f"Nugs Manager: Gagal login ke Akun #{account['id']}. Error: {e}")
+            # --- Tambahan: Panggil close_session jika login gagal ---
+            if api_client and hasattr(api_client, 'close_session'):
+                await asyncio.to_thread(api_client.close_session)
+            # --- Akhir Tambahan ---
             return None
 
     def get_client(self) -> NugsApi | None:
@@ -114,6 +127,28 @@ class NugsLoginManager:
         except StopIteration:
             LOGGER.error("Nugs Manager: Kumpulan klien kosong.")
             return None
+
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien NugsApi (requests) yang dikelola."""
+        LOGGER.info(f"Nugs Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien 'requests'.")
+        tasks = []
+        for client in self.clients:
+            if hasattr(client, 'close_session'):
+                # Panggil 'close_session' (sinkron) di thread terpisah
+                tasks.append(asyncio.to_thread(client.close_session))
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"Nugs Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("Nugs Manager: Semua sesi klien 'requests' telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
+
 
 # Buat instance global yang akan diimpor oleh file lain
 nugs_manager = NugsLoginManager(Config.NUGS_ACCOUNTS)
