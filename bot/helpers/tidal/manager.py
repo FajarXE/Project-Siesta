@@ -180,5 +180,24 @@ class TidalLoginManager:
         return user_spatial
     # --- BATAS TAMBAHAN ---
 
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien TidalApi yang dikelola."""
+        LOGGER.info(f"Tidal Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien.")
+        tasks = []
+        for client in self.clients:
+            tasks.append(client.close())
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"Tidal Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("Tidal Manager: Semua sesi klien telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
+
 
 tidal_manager = TidalLoginManager()
