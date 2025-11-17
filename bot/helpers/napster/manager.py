@@ -134,4 +134,17 @@ class NapsterLoginManager:
             return user_qual
         return self.quality 
 
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """
+        Menjalankan tugas pembersihan untuk Napster.
+        API Napster menggunakan 'requests' langsung, bukan 'requests.Session',
+        sehingga tidak ada sesi yang perlu ditutup secara eksplisit.
+        """
+        LOGGER.info(f"Napster Manager: Memulai shutdown... (Tidak ada sesi 'requests' untuk ditutup).")
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("Napster Manager: Klien telah dibersihkan.")
+    # --- AKHIR TAMBAHAN ---
+
 napster_manager = NapsterLoginManager(Config.NAPSTER_ACCOUNTS)
