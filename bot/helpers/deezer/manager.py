@@ -116,4 +116,25 @@ class DeezerLoginManager:
             return user_qual
         return self.quality 
 
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien DeezerAPI yang dikelola."""
+        LOGGER.info(f"Deezer Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien.")
+        tasks = []
+        for client in self.clients:
+            if hasattr(client, 'close'):
+                tasks.append(client.close())
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"Deezer Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("Deezer Manager: Semua sesi klien telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
+
+
 deezer_manager = DeezerLoginManager(Config.DEEZER_ACCOUNTS)
