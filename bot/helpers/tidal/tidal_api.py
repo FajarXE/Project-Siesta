@@ -310,6 +310,14 @@ class TidalApi:
     #         data["tidal_spatial"] = spatial
     #     self.user_data[user_id].update(data)
     # --- MODIFIKASI SELESAI ---
+
+    # --- TAMBAHAN BARU: Metode Close ---
+    async def close(self):
+        """Menutup aiohttp.ClientSession internal."""
+        if self.session and not self.session.closed:
+            await self.session.close()
+            LOGGER.debug(f"TidalApi (User {self.user_id}): Sesi aiohttp ditutup.")
+    # --- AKHIR TAMBAHAN ---
         
 
 
