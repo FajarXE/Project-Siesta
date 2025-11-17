@@ -1,4 +1,4 @@
-# [TARUH DI: bot/helpers/nugs/nugs_api.py]
+# [GANTI FILE: bot/helpers/nugs/nugs_api.py]
 
 import hashlib
 import json
@@ -205,6 +205,13 @@ class NugsApi:
         return self._get('api.aspx', {
             'method': 'catalog.artists'
         })
+
+    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
+    def close_session(self):
+        """Menutup sesi 'requests' internal."""
+        if self.s:
+            self.s.close()
+    # --- AKHIR TAMBAHAN ---
 
 
 class NugsMobileSession(NugsSession):
