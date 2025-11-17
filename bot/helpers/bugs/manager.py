@@ -30,6 +30,10 @@ except ImportError:
         def get_account(self, *args, **kwargs): 
             raise NotImplementedError("File 'BugsApi' inti tidak ditemukan.")
         def set_session(self, *args, **kwargs): pass
+        # --- Tambahkan stub close_session ---
+        def close_session(self): pass
+        # --- Akhir Tambahan ---
+
 
 # Pengecualian kustom
 class BugsError(Exception):
@@ -168,6 +172,28 @@ class BugsLoginManager:
         if user_qual in self.valid_qualities:
             return user_qual
         return self.quality 
+
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien BugsApi (requests) yang dikelola."""
+        LOGGER.info(f"Bugs Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien 'requests'.")
+        tasks = []
+        for client in self.clients:
+            if hasattr(client, 'close_session'):
+                # Panggil 'close_session' (sinkron) di thread terpisah
+                tasks.append(asyncio.to_thread(client.close_session))
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"Bugs Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("Bugs Manager: Semua sesi klien 'requests' telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
+
 
 # Inisialisasi manajer global
 bugs_manager = BugsLoginManager(Config.BUGS_ACCOUNTS)
