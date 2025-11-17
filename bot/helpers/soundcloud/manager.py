@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/soundcloud/manager.py]
+# [GANTI FILE: bot/helpers/soundcloud/manager.py]
 
 import asyncio
 from bot.logger import LOGGER
@@ -10,6 +10,9 @@ except ImportError:
     LOGGER.critical("Soundcloud: Gagal mengimpor 'SoundcloudAPI' dari 'bot/helpers/soundcloud/api.py'.")
     class SoundcloudAPI:
         def __init__(self, *args, **kwargs): pass
+        # --- Tambahkan stub untuk close_session ---
+        async def close_session(self): pass
+        # --- Akhir Tambahan ---
 
 class SoundcloudLoginManager:
     """
@@ -67,6 +70,21 @@ class SoundcloudLoginManager:
         if user_qual in ["original", "stream"]:
             return user_qual
         return self.quality 
+
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup sesi klien SoundcloudAPI yang dikelola."""
+        LOGGER.info("Soundcloud Manager: Memulai shutdown...")
+        if self.api_client and hasattr(self.api_client, 'close_session'):
+            try:
+                await self.api_client.close_session()
+                LOGGER.info("Soundcloud Manager: Sesi klien API berhasil ditutup.")
+            except Exception as e:
+                LOGGER.error(f"Soundcloud Manager: Terjadi error saat shutdown: {e}")
+        
+        self.api_client = None
+    # --- AKHIR TAMBAHAN ---
+
 
 # Buat instance manager tunggal
 soundcloud_manager = SoundcloudLoginManager()
