@@ -165,4 +165,25 @@ class KKBoxLoginManager:
             return user_qual
         return self.quality 
 
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien KkboxAPI (requests) yang dikelola."""
+        LOGGER.info(f"KKBox Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien 'requests'.")
+        tasks = []
+        for client in self.clients:
+            if hasattr(client, 'close_session'):
+                # Panggil 'close_session' (sinkron) di thread terpisah
+                tasks.append(asyncio.to_thread(client.close_session))
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"KKBox Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("KKBox Manager: Semua sesi klien 'requests' telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
+
 kkbox_manager = KKBoxLoginManager(Config.KKBOX_ACCOUNTS)
