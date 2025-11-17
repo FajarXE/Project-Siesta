@@ -1,7 +1,10 @@
 # [GANTI FILE: bot/helpers/idagio/handler.py]
 
-import aiohttp
-import aiofiles
+# --- PERBAIKAN: Hapus impor yang tidak terpakai ---
+# import aiohttp 
+# import aiofiles
+# --- BATAS PERBAIKAN ---
+
 import os
 import traceback
 import asyncio
@@ -24,7 +27,11 @@ from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
-from ...settings import bot_set 
+
+# --- PERBAIKAN: Hapus impor 'bot_set' ---
+# from ...settings import bot_set 
+# --- BATAS PERBAIKAN ---
+
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
