@@ -367,14 +367,101 @@ async def main():
     await aio.start()
     signal.signal(signal.SIGINT, signal_handler)
 
+
+# --- TAMBAHAN BARU: Fungsi Shutdown Terpusat ---
+async def shutdown_all_services(loop):
+    """
+    Menjalankan semua tugas pembersihan untuk SEMUA layanan 
+    (Klien TG, Qobuz, Tidal, Deezer, dll.)
+    """
+    logging.info("Memulai shutdown layanan...")
+    tasks = []
+
+    # 1. Hentikan Klien Telegram (aio)
+    if aio and aio.is_initialized:
+        logging.info("Menghentikan klien Telegram (aio)...")
+        tasks.append(aio.stop())
+
+    # 2. Tutup Klien Qobuz (mereka menggunakan .close_session())
+    logging.info(f"Menutup {len(BOT_QOBUZ_CLIENTS)} klien Qobuz...")
+    for client_id, client in BOT_QOBUZ_CLIENTS.items():
+        if client and hasattr(client, 'close_session'):
+            tasks.append(client.close_session())
+
+    # 3. Tutup Semua Manajer Lainnya (mereka menggunakan .shutdown())
+    all_managers = {
+        "Tidal": tidal_manager,
+        "Deezer": deezer_manager,
+        "Beatport": beatport_manager,
+        "KKBox": kkbox_manager,
+        "Beatsource": beatsource_manager,
+        "Soundcloud": soundcloud_manager,
+        "Napster": napster_manager,
+        "Idagio": idagio_manager,
+        "Nugs": nugs_manager,
+        "Bugs": bugs_manager,
+        "HIGHRESAUDIO": highresaudio_manager,
+    }
+
+    for name, manager in all_managers.items():
+        # Cek jika manajer diimpor (tidak None) & memiliki metode shutdown
+        if manager and hasattr(manager, 'shutdown'):
+            logging.info(f"Memulai shutdown untuk Manajer {name}...")
+            tasks.append(manager.shutdown())
+        elif manager:
+            logging.warning(f"Manajer {name} ada tetapi tidak memiliki metode 'shutdown'!")
+
+    # Jalankan semua tugas shutdown secara bersamaan
+    if tasks:
+        logging.info(f"Menjalankan {len(tasks)} tugas shutdown...")
+        # return_exceptions=True agar 1 kegagalan tidak menghentikan yg lain
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logging.error(f"Error saat shutdown tugas ke-{i}: {result}")
+    
+    logging.info("Semua layanan telah dihentikan.")
+# --- AKHIR TAMBAHAN BARU ---
+
+
+# --- MODIFIKASI: Blok __main__ untuk menangani shutdown ---
 if __name__ == "__main__":
     if not os.path.isdir(Config.DOWNLOAD_BASE_DIR):
         os.makedirs(Config.DOWNLOAD_BASE_DIR)
     loop = asyncio.get_event_loop()
     
     try:
+        logging.info("Memulai bot...")
         loop.run_until_complete(main())
+        logging.info("Bot sekarang berjalan. loop.run_forever() dipanggil.")
         loop.run_forever()
+        
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Shutdown diminta (KeyboardInterrupt/SystemExit)...")
+        
     except Exception:
-        logging.error(traceback.format_exc())
-        sys.exit(1)
+        # Menangkap error fatal yang tidak terduga dari loop utama
+        logging.critical("Error fatal di loop utama:")
+        logging.critical(traceback.format_exc())
+        
+    finally:
+        # Blok ini akan SELALU berjalan saat loop dihentikan
+        logging.info("Memulai proses shutdown di blok 'finally'...")
+        
+        # Jalankan fungsi shutdown asinkron kita
+        if loop.is_running():
+            loop.run_until_complete(shutdown_all_services(loop))
+        else:
+            # Jika loop sudah ditutup, coba jalankan minimal
+            # Ini mungkin tidak sempurna tapi lebih baik daripada tidak sama sekali
+            asyncio.run(shutdown_all_services(loop))
+
+        # Hentikan dan tutup loop secara eksplisit
+        logging.info("Menutup event loop...")
+        loop.stop()
+        loop.close()
+        
+        logging.info("Shutdown selesai. Keluar.")
+        sys.exit(0) # Keluar dengan bersih
+# --- AKHIR MODIFIKASI ---
