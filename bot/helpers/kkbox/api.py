@@ -3,6 +3,7 @@
 import json
 import re
 import requests # Impor requests standar
+from requests.adapters import HTTPAdapter # --- PENINGKATAN POOL ---
 from time import time, sleep
 from random import randrange
 from Cryptodome.Cipher import ARC4
@@ -23,6 +24,14 @@ class KkboxAPI:
         self.secret_key = secret_key.encode('ascii')
         
         self.s = requests.Session() 
+        
+        # --- PENINGKATAN POOL ---
+        # Tingkatkan ukuran pool untuk menangani unduhan album bersamaan
+        adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
+        self.s.mount('http://', adapter)
+        self.s.mount('https://', adapter)
+        # --- BATAS PENINGKATAN ---
+        
         self.s.headers.update({
             'user-agent': 'okhttp/3.14.9'
         })
