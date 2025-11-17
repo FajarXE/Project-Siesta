@@ -82,7 +82,19 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         else:
             album_raw_id = track_data.get('raw_album_id') or int(track_data['album_id'])
             album_data_more = await asyncio.to_thread(client.get_album_more, album_raw_id)
+            
+            # --- PERBAIKAN: Validasi respons get_album_more (untuk track) ---
+            if not album_data_more or 'info' not in album_data_more:
+                LOGGER.debug(f"KKBox: Respons 'get_album_more' tidak valid (dari track) untuk raw_id {album_raw_id}: {album_data_more}")
+                raise KKBoxError(f"Respons 'get_album_more' tidak valid atau tidak berisi 'info'. (Track ID: {track_id})")
+            
             alb_info = album_data_more['info']
+            
+            if 'song_list' not in album_data_more or 'song' not in album_data_more.get('song_list', {}):
+                 LOGGER.debug(f"KKBox: Respons 'get_album_more' tidak valid (dari track, tidak ada song_list) untuk raw_id {album_raw_id}: {album_data_more}")
+                 raise KKBoxError(f"Respons 'get_album_more' tidak valid atau tidak berisi 'song_list'. (Track ID: {track_id})")
+            # --- BATAS PERBAIKAN ---
+
             alb_info['num_tracks'] = len(album_data_more['song_list']['song'])
 
     except Exception as e:
@@ -177,7 +189,20 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         raw_id = album_resp['album']['album_id']
         
         album_data_more = await asyncio.to_thread(client.get_album_more, raw_id)
+
+        # --- PERBAIKAN: Validasi respons get_album_more ---
+        if not album_data_more or 'info' not in album_data_more:
+            # Log respons mentah jika memungkinkan untuk debug
+            LOGGER.debug(f"KKBox: Respons 'get_album_more' tidak valid untuk raw_id {raw_id}: {album_data_more}")
+            raise KKBoxError(f"Respons 'get_album_more' tidak valid atau tidak berisi 'info'. (Album ID: {album_id})")
+        
         alb_info = album_data_more['info']
+        
+        if 'song_list' not in album_data_more or 'song' not in album_data_more.get('song_list', {}):
+             LOGGER.debug(f"KKBox: Respons 'get_album_more' tidak valid (tidak ada song_list) untuk raw_id {raw_id}: {album_data_more}")
+             raise KKBoxError(f"Respons 'get_album_more' tidak valid atau tidak berisi 'song_list'. (Album ID: {album_id})")
+        # --- BATAS PERBAIKAN ---
+        
         tracks_list = album_data_more['song_list']['song']
         alb_info['num_tracks'] = len(tracks_list)
 
