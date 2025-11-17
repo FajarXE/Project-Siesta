@@ -1,4 +1,4 @@
-# [BUAT FILE BARU: bot/helpers/highresaudio/manager.py]
+# [GANTI FILE: bot/helpers/highresaudio/manager.py]
 
 import asyncio
 import itertools
@@ -8,7 +8,10 @@ from config import Config
 try:
     from .api import HighResAudioApi
 except ImportError:
-    class HighResAudioApi: pass 
+    # --- Tambahkan stub close_session ---
+    class HighResAudioApi: 
+        def close_session(self): pass
+    # --- Akhir Tambahan ---
     LOGGER.critical("HighResAudio: Gagal mengimpor 'HighResAudioApi' dari '.api'.")
 
 class HighResAudioError(Exception):
@@ -68,6 +71,10 @@ class HighResAudioLoginManager:
             return client
         except Exception as e:
             LOGGER.error(f"HighResAudio Manager: Gagal login ke Akun #{account['id']}. Error: {e}")
+            # --- Tambahan: Panggil close_session jika login gagal ---
+            if hasattr(client, 'close_session'):
+                await asyncio.to_thread(client.close_session)
+            # --- Akhir Tambahan ---
             return None
 
     def get_client(self) -> HighResAudioApi | None:
@@ -81,6 +88,27 @@ class HighResAudioLoginManager:
         except StopIteration:
             LOGGER.error("HighResAudio Manager: Kumpulan klien kosong.")
             return None
+
+    # --- TAMBAHAN BARU: Metode Shutdown ---
+    async def shutdown(self):
+        """Menutup semua sesi klien HighResAudioApi (requests) yang dikelola."""
+        LOGGER.info(f"HighResAudio Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien 'requests'.")
+        tasks = []
+        for client in self.clients:
+            if hasattr(client, 'close_session'):
+                # Panggil 'close_session' (sinkron) di thread terpisah
+                tasks.append(asyncio.to_thread(client.close_session))
+        
+        # Jalankan semua tugas penutupan secara bersamaan
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            LOGGER.error(f"HighResAudio Manager: Terjadi error saat shutdown: {e}")
+            
+        self.clients = []
+        self._client_cycler = None
+        LOGGER.info("HighResAudio Manager: Semua sesi klien 'requests' telah ditutup.")
+    # --- AKHIR TAMBAHAN ---
 
 # Inisialisasi manajer global
 highresaudio_manager = HighResAudioLoginManager(Config.HIGHRESAUDIO_ACCOUNTS)
