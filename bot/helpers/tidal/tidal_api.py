@@ -202,7 +202,7 @@ class TidalApi:
             logging.error(format_exc())
             return False, e
 
-
+    # --- MODIFIKASI: Tambahkan blok 'finally' untuk menutup sesi ---
     async def login_tv(self):
         try:
             await self.tv_session.auth()
@@ -219,8 +219,14 @@ class TidalApi:
             return self.sub_type, None
         except Exception as e:
             logging.error(format_exc())
-            await self.session.close()
+            # Hapus 'await self.session.close()' dari sini
             return False, e
+        finally:
+            # Blok ini akan SELALU berjalan, baik sukses maupun gagal
+            if self.session and not self.session.closed:
+                await self.session.close()
+                LOGGER.debug("TidalApi: Sesi login TV sementara (dari get_tv_login_url) ditutup.")
+    # --- AKHIR MODIFIKASI ---
 
 
     async def login_from_saved(self, data):
