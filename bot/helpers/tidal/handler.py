@@ -192,7 +192,7 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
 
 
         if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "ON":
-            LOGGER.info(f"Mengonversi M4A ke FLAC & Menulis Tag untuk user {user['userid']} Sesuai pengaturan.")
+            LOGGER.info(f"Mengonversi M4A ke FLAC & Menulis Tag untuk user {user['user_id']} Sesuai pengaturan.")
             
             await ffmpeg_convert_and_tag(filepath, track_meta)
             
@@ -285,7 +285,10 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     }
     await run_concurrent_tasks(tasks, update_details)
     
-    _, album_zip, __ = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    _, album_zip, __, ___ = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
+    
     if album_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -364,7 +367,9 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
     }
     await run_concurrent_tasks(tasks, update_details)
     
-    playlist_zip, _, __ = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, _, __, ___ = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if playlist_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
@@ -394,17 +399,17 @@ async def start_artist(artist_id:int, user:dict):
     
     albums.extend(ep_singles)
 
-    # --- PERBAIKAN: Gunakan pengaturan zip artis PENGGUNA, bukan admin ---
-    # Ambil pengaturan zip artis milik pengguna
-    _, __, user_artist_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    _, __, artist_zip, ___ = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     upload_album = True
     
     if bot_set.artist_batch:
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
     
-    # Cek pengaturan PENGGUNA (user_artist_zip), bukan admin (bot_set.artist_zip)
-    if user_artist_zip: 
+    # Cek pengaturan PENGGUNA (artist_zip)
+    if artist_zip: 
         upload_album = False
     # --- AKHIR PERBAIKAN ---
 
@@ -412,8 +417,10 @@ async def start_artist(artist_id:int, user:dict):
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        _, __, artist_zip = fetch_zip_settings(user) # Baca lagi (meskipun sudah ada di user_artist_zip)
-        if artist_zip: 
+        # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+        _, __, artist_zip_check, ___ = fetch_zip_settings(user) 
+        if artist_zip_check: 
+        # --- AKHIR PERBAIKAN ---
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
             artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
         
