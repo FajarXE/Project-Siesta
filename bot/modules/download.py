@@ -257,7 +257,7 @@ async def download_track(c, msg:Message):
 
 
 async def start_link(link: str, user: dict) -> None:
-    tidal = ["https://tidal.com", "https://listen.tidal.com", "tidal.com", "listen.tidal.com"]
+    tidal = ["https://tidal.com", "https://listen.tidal.com", "http://www.tidal.com", "tidal.com", "listen.tidal.com"]
     deezer = ["https://link.deezer.com", "https://deezer.com", "deezer.com", "https://www.deezer.com", "link.deezer.com"]
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
