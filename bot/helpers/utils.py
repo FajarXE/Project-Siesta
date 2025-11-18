@@ -193,15 +193,17 @@ async def run_concurrent_tasks(tasks: list, update_details: dict, limit: int = 1
     # Fungsi helper internal untuk membungkus setiap tugas dengan semaphore
     async def run_with_sem(task):
         nonlocal completed_tasks
-        result = False # Default ke False jika terjadi error
+        # --- PERBAIKAN: Default ke None ---
+        result = None 
         try:
             async with sem:
                 # Menjalankan tugas (misalnya: start_track)
-                result = await task
+                result = await task # Ini akan menjadi track_meta atau None
         except Exception as e:
             # Diubah ke .info() agar tidak mengganggu log
             LOGGER.info(f"Satu task di run_concurrent_tasks gagal (tapi ditangani): {e}")
-            result = False # Memberi sinyal kegagalan
+            result = None # Memberi sinyal kegagalan
+        # --- AKHIR PERBAIKAN ---
         
         completed_tasks += 1
         
