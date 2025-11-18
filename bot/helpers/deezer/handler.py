@@ -182,7 +182,9 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None): # 
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
@@ -215,8 +217,11 @@ async def start_artist(artist_id, user):
     artist_meta['folderpath'] = sanitize_filepath(artist_meta['folderpath'])
     # --- AKHIR PERBAIKAN ---
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
-    artist_zip = bot_set.user_data.get(user.get("user_id", 0), {}).get("artist_zip", bot_set.artist_zip)
+    # --- PERBAIKAN: Unpack 4 nilai dan gunakan 'artist_zip' yang benar ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # Hapus baris lama yang salah: artist_zip = bot_set.user_data.get(user.get("user_id", 0), {}).get("artist_zip", bot_set.artist_zip)
+    # --- AKHIR PERBAIKAN ---
+    
     upload_album = True
     if bot_set.artist_batch:
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
@@ -250,7 +255,11 @@ async def start_playlist(playlist_id, user):
     # --- BATAS MODIFIKASI ---
 
     playlist_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{play_meta['provider']}/"
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
+    
     playlist_sort = False if bot_set.upload_mode == 'Telegram' else bot_set.playlist_sort
     
     if not playlist_sort:
