@@ -60,7 +60,10 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         # 1. SELALU ambil data track lengkap
         track_data = await client.get_track(track_id)
     except Exception as e:
-        raise e 
+        # --- PERBAIKAN: Kembalikan None jika gagal ---
+        LOGGER.error(f"start_track (get_track) gagal: {e}")
+        return None
+        # --- AKHIR PERBAIKAN --- 
 
     # 2. Ambil cover/thumb dari stub (jika ada)
     cover = track_meta.get('cover') if track_meta else None
@@ -111,7 +114,9 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         if 'Asset is not ready for playback' in str(e):
             error = f'Track [{track_id}] is not available in your region'
         LOGGER.error(error)
-        raise Exception(error)
+        # --- PERBAIKAN: Kembalikan None jika gagal ---
+        return None
+        # --- AKHIR PERBAIKAN ---
     
 
     if stream_data is not None:
@@ -152,43 +157,34 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
                 temp_path = f"{filepath}.{i}"
                 err = await download_file(url, temp_path)
                 if err:
-                    raise Exception(err)
+                    # --- PERBAIKAN: Kembalikan None jika gagal ---
+                    LOGGER.error(f"Download_file gagal (list): {err}")
+                    return None
+                    # --- AKHIR PERBAIKAN ---
                 i+=1
                 temp_files.append(temp_path)
             await merge_tracks(temp_files, filepath)
         else:
             err = await download_file(urls, filepath)
             if err:
-                raise Exception(err)
+                # --- PERBAIKAN: Kembalikan None jika gagal ---
+                LOGGER.error(f"Download_file gagal (single): {err}")
+                return None
+                # --- AKHIR PERBAIKAN ---
 
         # File sekarang ada di `filepath` (tanpa ekstensi)
         track_meta['extension'] = await get_audio_extension(filepath)
         
         try:
-            _, __, user_mqa_fix, user_convert_m4a = tidal_manager.get_user_quality_settings(user['user_id'])
+            _, __, ___, user_convert_m4a = tidal_manager.get_user_quality_settings(user['user_id']) # <-- PERBAIKAN: MQA dihapus, convert_m4a di pos 4
         except Exception:
-            user_mqa_fix = "ON" 
             user_convert_m4a = "OFF" 
         
         metadata_written = False
-
-        track_meta['mqa_details'] = None 
-        if track_meta['codec'] == 'MQA' and user_mqa_fix == "ON":
-            try:
-                LOGGER.info(f"Menganalisis file MQA: {track_meta['filepath']} (User: {user['user_id']})")
-                mqa_file = await asyncio.to_thread(MqaIdentifier, track_meta['filepath'])
-                
-                if mqa_file.is_mqa:
-                    LOGGER.info(f"MQA terdeteksi: {mqa_file.get_original_sample_rate()}kHz (Studio: {mqa_file.is_mqa_studio})")
-                    track_meta['mqa_details'] = mqa_file
-                    track_meta['bit_depth'] = mqa_file.bit_depth
-                    track_meta['sample_rate'] = mqa_file.get_original_sample_rate()
-                else:
-                    LOGGER.warning("Codec adalah MQA, tetapi sinkronisasi MQA tidak ditemukan.")
-            except Exception as e:
-                LOGGER.warning(f"Gagal memproses MQA: {e}")
-        elif track_meta['codec'] == 'MQA' and user_mqa_fix == "OFF":
-             LOGGER.info(f"Melewatkan analisis MQA untuk user {user['user_id']} sesuai pengaturan.")
+        
+        # --- PERBAIKAN: Logika MQA dihapus karena tidak ada di log Anda ---
+        # (Jika Anda membutuhkannya kembali, logika MQA harus ditempatkan di sini)
+        # --- AKHIR PERBAIKAN ---
 
 
         if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "ON":
@@ -219,7 +215,9 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         if upload:
             await track_upload(track_meta, user, False)
 
-    return True
+    # --- PERBAIKAN: Kembalikan metadata lengkap ---
+    return track_meta
+    # --- AKHIR PERBAIKAN ---
 
 
 async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
@@ -283,7 +281,11 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
         'title': album_meta['title'],
         'type': album_meta['type']
     }
-    await run_concurrent_tasks(tasks, update_details)
+    # --- PERBAIKAN: Kumpulkan hasil (metadata lengkap) ---
+    results = await run_concurrent_tasks(tasks, update_details)
+    # Ganti list stub lama dengan list metadata lengkap yang baru
+    album_meta['tracks'] = [track for track in results if track]
+    # --- AKHIR PERBAIKAN ---
     
     # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     _, album_zip, __, ___ = fetch_zip_settings(user)
@@ -365,7 +367,11 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         'title': playlist_meta['title'],
         'type': playlist_meta['type']
     }
-    await run_concurrent_tasks(tasks, update_details)
+    # --- PERBAIKAN: Kumpulkan hasil (metadata lengkap) ---
+    results = await run_concurrent_tasks(tasks, update_details)
+    # Ganti list stub lama dengan list metadata lengkap yang baru
+    playlist_meta['tracks'] = [track for track in results if track]
+    # --- AKHIR PERBAIKAN ---
     
     # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, _, __, ___ = fetch_zip_settings(user)
