@@ -6,6 +6,7 @@ import re
 import traceback
 import aiohttp
 import aiofiles
+import math # <-- PERBAIKAN: Impor math
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -19,7 +20,9 @@ from .utils import create_temp_filename
 from ..uploder import *
 from ..metadata import set_metadata, create_cover_file
 from ..message import edit_message
-from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
+# --- PERBAIKAN: Impor zip_handler ---
+from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string, zip_handler
+# --- BATAS PERBAIKAN ---
 from bot.logger import LOGGER
 import bot.helpers.translations as lang
 
@@ -189,7 +192,7 @@ async def process_track_metadata(track_data: dict, album_data: dict, user: dict)
             continue
             
     if not stream_data:
-        raise NugsError(f"Tidak ada stream yang valid ditemukan untuk track {metadata['title']}")
+        raise NugsNotAvailableError(f"Tidak ada stream yang valid ditemukan untuk track {metadata['title']}")
         
     # Urutkan berdasarkan prioritas (tertinggi dulu)
     stream_data = sorted(stream_data, key=lambda k: k['priority'], reverse=True)
@@ -382,7 +385,9 @@ async def start_album(album_id: str, user: dict, upload=True):
     tasks = []
     
     if track_one_meta: # Hanya jika pemrosesan track pertama berhasil
+        # --- PERBAIKAN: Ubah 'track_one_meta' menjadi (track_one_meta) ---
         tasks.append(start_track(track_one_meta, user, False))
+        # --- BATAS PERBAIKAN ---
 
     # Loop sisa track (mulai dari track kedua, indeks 1)
     for track_data in tracks_list[1:]: 
@@ -411,7 +416,9 @@ async def start_album(album_id: str, user: dict, upload=True):
     if successful_tracks_count == 0:
         raise Exception(f"Tidak ada lagu Nugs yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {successful_tracks_count} lagu menjadi .zip...")
