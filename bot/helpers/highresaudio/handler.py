@@ -20,7 +20,9 @@ from .manager import HighResAudioError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
+# --- PERBAIKAN: Impor zip_handler (meskipun sudah ada di uploder, lebih aman) ---
+from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string, zip_handler
+# --- AKHIR PERBAIKAN ---
 from ...settings import bot_set 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
@@ -240,7 +242,9 @@ async def start_album(album_url: str, user: dict, upload=True):
             booklet_path
         )
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
