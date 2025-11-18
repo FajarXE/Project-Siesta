@@ -168,7 +168,9 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
     if upload:
         await track_upload(track_meta, user, disable_link)
 
+    # --- PERBAIKAN: Kembalikan True jika sukses (untuk run_concurrent_tasks) ---
     return True
+    # --- AKHIR PERBAIKAN ---
 
 
 async def start_album_or_playlist(item_id: str, user: dict, pre_data: dict, media_type: str, upload=True):
@@ -221,7 +223,9 @@ async def start_album_or_playlist(item_id: str, user: dict, pre_data: dict, medi
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu SC yang berhasil diunduh untuk {multi_meta['title']}.")
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     is_zip = (media_type == 'album' and album_zip) or (media_type == 'playlist' and playlist_zip)
 
