@@ -192,7 +192,7 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
 
 
         if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "ON":
-            LOGGER.info(f"Mengonversi M4A ke FLAC & Menulis Tag untuk user {user['user_id']} Sesuai pengaturan.")
+            LOGGER.info(f"Mengonversi M4A ke FLAC & Menulis Tag untuk user {user['userid']} Sesuai pengaturan.")
             
             await ffmpeg_convert_and_tag(filepath, track_meta)
             
@@ -394,18 +394,25 @@ async def start_artist(artist_id:int, user:dict):
     
     albums.extend(ep_singles)
 
+    # --- PERBAIKAN: Gunakan pengaturan zip artis PENGGUNA, bukan admin ---
+    # Ambil pengaturan zip artis milik pengguna
+    _, __, user_artist_zip = fetch_zip_settings(user)
+
     upload_album = True
     
     if bot_set.artist_batch:
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
-    if bot_set.artist_zip:
-        upload_album = False 
+    
+    # Cek pengaturan PENGGUNA (user_artist_zip), bukan admin (bot_set.artist_zip)
+    if user_artist_zip: 
+        upload_album = False
+    # --- AKHIR PERBAIKAN ---
 
     for album in albums:
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        _, __, artist_zip = fetch_zip_settings(user)
+        _, __, artist_zip = fetch_zip_settings(user) # Baca lagi (meskipun sudah ada di user_artist_zip)
         if artist_zip: 
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
             artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
