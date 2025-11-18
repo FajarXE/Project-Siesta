@@ -87,27 +87,38 @@ from ..helpers.message import send_message, edit_message, check_user, fetch_user
 async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
     if not await check_user(msg=m):
         return
+    
+    # --- PERBAIKAN: Tambahkan ARTIST_ZIP ke template ---
     USETTING_TEXT = """
 <blockquote>
 PLAYLIST_ZIP  : {playlist}
-ART_POSTER    : {poster}
 ALBUM_ZIP     : {album}
+ARTIST_ZIP    : {artist}
+ART_POSTER    : {poster}
 </blockquote>
 {date}
 Choose Menu option bellow:
 """
+    # --- AKHIR PERBAIKAN ---
+    
     user = await fetch_user_details(m)
     user_data = users_
     if not users_:
         user_data = user
-    PLAYLIST_ZIP, ART_POSTER, ALBUM_ZIP = await asyncio.to_thread(fetch_zip_settings, user_data)
+        
+    # --- PERBAIKAN: Unpack 4 nilai dalam urutan yang benar ---
+    PLAYLIST_ZIP, ALBUM_ZIP, ARTIST_ZIP, ART_POSTER = await asyncio.to_thread(fetch_zip_settings, user_data)
+    # --- AKHIR PERBAIKAN ---
     
+    # --- PERBAIKAN: Tambahkan 'artist' ke format map ---
     text = USETTING_TEXT.format_map({
-        "album".lower(): ALBUM_ZIP,
-        "poster": ART_POSTER,
         "playlist".lower(): PLAYLIST_ZIP,
+        "album".lower(): ALBUM_ZIP,
+        "artist".lower(): ARTIST_ZIP,
+        "poster": ART_POSTER,
         "date": m.date.now().strftime("%d/%m/%Y %H:%M:%S"),
     })
+    # --- AKHIR PERBAIKAN ---
     
     if not edit:
         await send_message(user, text, markup=usetting_button())
@@ -150,8 +161,9 @@ async def uset_cb(client, query, datatype=""):
             convert_m4a=main_user_dict.get("tidal_convert_m4a")
         )
         # Sekarang kita baca dari manager
+        # --- PERBAIKAN: Sesuaikan unpacking untuk MQA fix ---
         user_qual, user_spatial, _, __ = tidal_manager.get_user_quality_settings(user_id)
-        # --- BATAS MODIFIKASI ---
+        # --- BATAS PERBAIKAN ---
         
         if any(c.mobile_hires for c in tidal_manager.clients):
             qualities['HI_RES'] = 'MAX'
