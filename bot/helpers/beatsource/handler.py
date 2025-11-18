@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/beatsource/handler.py]
+# [GANTI FILE: bot/helpers/beatsource/handler.py]
 
 import aiohttp
 import aiofiles
@@ -155,7 +155,9 @@ async def start_album(album_id: str, user: dict, upload=True):
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Beatsource yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
@@ -199,7 +201,9 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Beatsource yang berhasil diunduh untuk playlist {play_meta['title']}.")
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
