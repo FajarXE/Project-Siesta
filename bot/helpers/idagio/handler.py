@@ -9,6 +9,7 @@ import os
 import traceback
 import asyncio
 import requests # Diperlukan untuk unduhan sinkron
+import math # Diperlukan untuk progress bar (PERBAIKAN)
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -26,7 +27,9 @@ from .manager import IdagioError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string
+# --- PERBAIKAN: Impor zip_handler (meskipun sudah ada di uploder, lebih aman) ---
+from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string, zip_handler
+# --- AKHIR PERBAIKAN ---
 
 # --- PERBAIKAN: Hapus impor 'bot_set' ---
 # from ...settings import bot_set 
@@ -41,9 +44,11 @@ async def start_idagio(url: str, user: dict):
         media_type, item_id, extra_kwargs = custom_url_parse(url)
         
         if media_type == 'track':
-            success = await start_track(item_id, user, None)
-            if not success:
-                raise Exception("Gagal mengunduh atau memproses track.")
+            # --- PERBAIKAN: Ubah 'success = await ...' menjadi 'await ...' ---
+            # start_track (versi baru) akan memunculkan Exception jika gagal,
+            # kita tidak perlu memeriksa 'success == False'
+            await start_track(item_id, user, None)
+            # --- BATAS PERBAIKAN ---
         
         elif media_type == 'album':
             await start_album(item_id, user)
@@ -69,7 +74,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             # --- PERBAIKAN: Tambahkan logging traceback lengkap ---
             LOGGER.error(f"Idagio track {item_id} gagal di process_track_metadata: {e}\n{traceback.format_exc()}")
             # --- BATAS PERBAIKAN ---
-            return False
+            # --- PERBAIKAN: Ubah 'return False' menjadi 'raise e' ---
+            raise e
+            # --- BATAS PERBAIKAN ---
             
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
         filepath = sanitize_filepath(filepath)
@@ -79,7 +86,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     
     if not quality_tier or not stream_track_id:
         LOGGER.error(f"Metadata tidak lengkap untuk unduhan Idagio track {item_id} (Tier: {quality_tier}, StreamID: {stream_track_id})")
-        return False
+        # --- PERBAIKAN: Ubah 'return False' menjadi 'raise Error' ---
+        raise IdagioError(f"Metadata tidak lengkap untuk track {item_id}")
+        # --- BATAS PERBAIKAN ---
 
     track_meta['folderpath'] = filepath
     
@@ -113,14 +122,18 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         # --- PERBAIKAN: Tambahkan logging traceback lengkap ---
         LOGGER.error(f"Idagio dl_track gagal untuk {item_id}: {e}\n{traceback.format_exc()}")
         # --- BATAS PERBAIKAN ---
-        return False
+        # --- PERBAIKAN: Ubah 'return False' menjadi 'raise e' ---
+        raise e
+        # --- BATAS PERBAIKAN ---
     # --- BATAS LOGIKA UNDUH ---
 
     try:
         await set_metadata(track_meta)
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Idagio: {filepath}")
-        return False
+        # --- PERBAIKAN: Ubah 'return False' menjadi 'raise Error' ---
+        raise IdagioError(f"File tidak ditemukan setelah diunduh: {filepath}")
+        # --- BATAS PERBAIKAN ---
     except Exception as e:
         # --- PERBAIKAN: Tambahkan logging traceback lengkap ---
         LOGGER.error(f"Gagal memproses metadata Idagio: {filepath} -> {e}\n{traceback.format_exc()}")
@@ -129,12 +142,16 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             os.remove(filepath)
         except:
             pass
-        return False
+        # --- PERBAIKAN: Ubah 'return False' menjadi 'raise e' ---
+        raise e
+        # --- BATAS PERBAIKAN ---
 
     if upload:
         await track_upload(track_meta, user, disable_link)
 
+    # --- PERBAIKAN: Kembalikan True agar run_concurrent_tasks tahu ini sukses ---
     return True
+    # --- BATAS PERBAIKAN ---
 
 
 def download_track_encrypted(client, track_id, quality_tier, temp_location):
@@ -234,7 +251,14 @@ async def start_album(album_id: str, user: dict, upload=True):
         nonlocal completed_count
         async with sem:
             # 'task_coro' adalah 'start_track(...)'
-            result = await task_coro
+            # --- PERBAIKAN: Ubah logika agar sesuai dengan run_concurrent_tasks ---
+            result = False # Default ke Gagal
+            try:
+                result = await task_coro # Akan menjadi True jika sukses, atau memunculkan Exception
+            except Exception as e:
+                LOGGER.warning(f"Idagio: Gagal mengunduh 1 track: {e} (Ditangani)")
+                result = False # Pastikan gagal jika ada exception
+            # --- BATAS PERBAIKAN ---
             
             # Update progres
             completed_count += 1
@@ -242,15 +266,27 @@ async def start_album(album_id: str, user: dict, upload=True):
             if completed_count % 1 == 0 or completed_count == total_tracks: # Update setiap 1 lagu
             # --- BATAS PERBAIKAN ---
                 try:
+                    # --- PERBAIKAN: Gunakan format 5-argumen dari utils.py ---
+                    
+                    # 1. Buat persentase & bar (logika dari utils.py)
+                    percentage_int = int((completed_count/total_tracks)*100)
+                    bar = "{0}{1}".format(
+                        ''.join(["▰" for _ in range(math.floor(percentage_int / 10))]),
+                        ''.join(["▱" for _ in range(10 - math.floor(percentage_int / 10))])
+                    )
+                    
+                    # 2. Panggil edit_message dengan 5 argumen yang benar
                     await edit_message(
                         user['bot_msg'],
                         lang.s.DOWNLOAD_PROGRESS.format(
-                            completed_count,
-                            total_tracks,
-                            album_meta['title'],
-                            f"{int((completed_count/total_tracks)*100)}%"
+                            bar,                 # {0}
+                            completed_count,     # {1}
+                            total_tracks,        # {2}
+                            album_meta['title'], # {3}
+                            "Tracks"             # {4} (Tipe, seperti di utils.py)
                         )
                     )
+                    # --- BATAS PERBAIKAN ---
                 except:
                     pass # Jangan gagalkan semua jika edit pesan gagal
             
@@ -280,7 +316,9 @@ async def start_album(album_id: str, user: dict, upload=True):
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Idagio yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
