@@ -155,10 +155,8 @@ async def start_album(album_id: str, user: dict, upload=True):
         'type': album_meta['type']
     }
     
-    # --- PERBAIKAN: Tambahkan 'limit=8' untuk menghindari blokir server ---
-    # [span_0](start_span)[span_1](start_span)[span_2](start_span)Server Bugs memutus koneksi jika kita mencoba > 10 koneksi sekaligus[span_0](end_span)[span_1](end_span)[span_2](end_span)
+    # Server Bugs memutus koneksi jika kita mencoba > 10 koneksi sekaligus
     task_results = await run_concurrent_tasks(tasks, update_details, limit=8)
-    # --- BATAS PERBAIKAN ---
     
     successful_tracks = [album_meta['tracks'][i] for i, result in enumerate(task_results) if result]
     album_meta['tracks'] = successful_tracks
@@ -167,7 +165,9 @@ async def start_album(album_id: str, user: dict, upload=True):
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Bugs yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
