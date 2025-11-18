@@ -148,8 +148,8 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         LOGGER.error(f"Tidak ada lagu yang berhasil diunduh untuk album {album_meta['title']}.")
         return
 
-    # --- PERBAIKAN: Ambil 'album_zip' (item ke-3 / indeks 2) ---
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     # --- AKHIR PERBAIKAN ---
     
     if album_zip: # <-- Sekarang ini menggunakan variabel yang benar
@@ -219,8 +219,8 @@ async def start_artist(albums, user, artist):
 
     upload_album = True
     
-    # --- PERBAIKAN: Ambil pengaturan zip artis dari bot_set (karena tidak ada per-user) ---
-    artist_zip = bot_set.artist_zip 
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     # --- AKHIR PERBAIKAN ---
     
     if bot_set.artist_batch:
@@ -271,8 +271,8 @@ async def start_playlist(tracks, playlist, user):
     play_meta['poster_msg'] = await post_art_poster(user, play_meta)
 
     upload = True
-    # --- PERBAIKAN: Ambil 'playlist_zip' (item ke-1 / indeks 0) ---
-    playlist_zip, art_poster, album_zip = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     # --- AKHIR PERBAIKAN ---
     
     if bot_set.playlist_conc:
