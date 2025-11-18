@@ -410,7 +410,10 @@ async def post_art_poster(user:dict, meta:dict):
     else:
         caption = await format_string(lang.s.PLAYLIST_TEMPLATE, meta, user)
     
-    _, art_poster, __ = fetch_zip_settings(user)
+    # --- PERBAIKAN: Unpack 4 nilai dengan benar ---
+    _, __, ___, art_poster = fetch_zip_settings(user)
+    # --- AKHIR PERBAIKAN ---
+    
     if art_poster:
         msg = await send_message(user, photo, 'pic', caption)
         return msg
@@ -555,19 +558,21 @@ async def cleanup(user=None, metadata=None, user_dict: dict=None):
         except Exception as e:
             LOGGER.info(e)
 
-def fetch_zip_settings(users: typing.Dict) -> typing.Union[bool, bool, bool]:
+# --- FUNGSI DIPERBAIKI ---
+def fetch_zip_settings(users: typing.Dict) -> typing.Tuple[bool, bool, bool, bool]:
     """
     Args: Users (typing.Dict)
     
     Returns:
-      bool (playlist_zip, art_poster, album_zip)
+      tuple (playlist_zip, album_zip, artist_zip, art_poster)
     """
-    #import logging
-    playlist_zip, art_poster, album_zip = [False] * 3
-    
     user_dict = bot_set.user_data.get(users.get("user_id", 0), {})
+    
+    # Ambil pengaturan pengguna, ATAU fallback ke pengaturan admin global
     playlist_zip = user_dict.get("playlist_zip", bot_set.playlist_zip)
-    art_poster = user_dict.get("art_poster", bot_set.art_poster)
     album_zip = user_dict.get("album_zip", bot_set.album_zip)
-    #logging.info((user_dict))
-    return playlist_zip, art_poster, album_zip
+    artist_zip = user_dict.get("artist_zip", bot_set.artist_zip) # <-- INI YANG HILANG
+    art_poster = user_dict.get("art_poster", bot_set.art_poster)
+    
+    return playlist_zip, album_zip, artist_zip, art_poster # <-- URUTAN BARU
+# --- AKHIR PERBAIKAN ---
