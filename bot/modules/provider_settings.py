@@ -10,8 +10,7 @@ from config import Config
 
 from ..logger import LOGGER
 from ..settings import bot_set
-from ..helpers.buttons.settings import * # Ini sekarang akan mengimpor bugs_button juga
-from ..helpers.database.mongo_async import database
+from ..helpers.buttons.settings import * from ..helpers.database.mongo_async import database
 from ..helpers.tidal.tidal_api import TidalApi
 from ..helpers.message import edit_message, check_user
 
@@ -37,45 +36,35 @@ except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor kkbox_manager.")
     kkbox_manager = None
 
-# --- TAMBAHAN: Impor Manajer Beatsource ---
 try:
     from ..helpers.beatsource.manager import beatsource_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor beatsource_manager.")
     beatsource_manager = None
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN: Impor Manajer Soundcloud ---
 try:
     from ..helpers.soundcloud.manager import soundcloud_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor soundcloud_manager.")
     soundcloud_manager = None
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Napster ---
 try:
     from ..helpers.napster.manager import napster_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor napster_manager.")
     napster_manager = None
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Idagio ---
 try:
     from ..helpers.idagio.manager import idagio_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor idagio_manager.")
     idagio_manager = None
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Bugs ---
 try:
     from ..helpers.bugs.manager import bugs_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor bugs_manager.")
     bugs_manager = None
-# --- BATAS TAMBAHAN ---
 
 
 @Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
@@ -93,11 +82,20 @@ async def provider_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^qbP"))
 async def qobuz_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
+        # Pastikan Key Dictionary adalah INTEGER
+        quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ', 27:'24B>96KHZ'}
+        
         if not BOT_QOBUZ_CLIENTS:
             return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+        
         client_to_check = list(BOT_QOBUZ_CLIENTS.values())[0]
-        current = client_to_check.quality
+        
+        # --- PERBAIKAN: Paksa baca sebagai Integer ---
+        try:
+            current = int(client_to_check.quality)
+        except:
+            current = 6 # Default fallback
+        
         if current in quality:
             quality[current] = quality[current] + '✅'
         await edit_message(cb.message, lang.s.QOBUZ_QUALITY_PANEL, markup=qb_button(quality))
@@ -105,14 +103,20 @@ async def qobuz_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^qbQ"))
 async def qobuz_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
+        qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ', 27:'24B>96KHZ'}
         to_set = cb.data.split('_')[1]
+        
+        # Ambil Key integer dari value string
         qobuz_qual = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
+        
         if not BOT_QOBUZ_CLIENTS:
             return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+        
         for client in BOT_QOBUZ_CLIENTS.values():
-            client.quality = qobuz_qual
-        await database.set_variable('QOBUZ_QUALITY', qobuz_qual)
+            # --- PERBAIKAN UTAMA: Simpan sebagai Integer ---
+            client.quality = int(qobuz_qual)
+            
+        await database.set_variable('QOBUZ_QUALITY', int(qobuz_qual))
         await qobuz_cb(c, cb)
 
 
@@ -263,11 +267,10 @@ async def beatport_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('BEATPORT_QUALITY', to_set)
         await beatport_cb(c, cb)
 
-# --- TAMBAHAN: Handler Admin Beatsource ---
 #----------------
 # BEATSOURCE
 #----------------
-@Client.on_callback_query(filters.regex(pattern=r"^bsP")) # Beatsource Panel
+@Client.on_callback_query(filters.regex(pattern=r"^bsP")) 
 async def beatsource_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
@@ -288,7 +291,7 @@ async def beatsource_cb(c, cb:CallbackQuery):
             markup=bs_button(quality) 
         )
 
-@Client.on_callback_query(filters.regex(pattern=r"^bsQ")) # Beatsource Quality Set
+@Client.on_callback_query(filters.regex(pattern=r"^bsQ")) 
 async def beatsource_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
@@ -304,16 +307,14 @@ async def beatsource_quality_cb(c, cb:CallbackQuery):
             return await edit_message(cb.message, "Layanan Beatsource tidak aktif (tidak ada klien yang login).")
         
         beatsource_manager.quality = to_set
-        await database.set_variable('BEATSOURCE_QUALITY', to_set) # Simpan ke DB
+        await database.set_variable('BEATSOURCE_QUALITY', to_set)
         
         await beatsource_cb(c, cb)
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN: Handler Admin Soundcloud ---
 #----------------
 # SOUNDCLOUD
 #----------------
-@Client.on_callback_query(filters.regex(pattern=r"^scP")) # Soundcloud Panel
+@Client.on_callback_query(filters.regex(pattern=r"^scP")) 
 async def soundcloud_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
@@ -333,7 +334,7 @@ async def soundcloud_cb(c, cb:CallbackQuery):
             markup=sc_button(quality) 
         )
 
-@Client.on_callback_query(filters.regex(pattern=r"^scQ")) # Soundcloud Quality Set
+@Client.on_callback_query(filters.regex(pattern=r"^scQ")) 
 async def soundcloud_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
@@ -348,10 +349,9 @@ async def soundcloud_quality_cb(c, cb:CallbackQuery):
             return await edit_message(cb.message, "Layanan Soundcloud tidak aktif.")
         
         soundcloud_manager.quality = to_set
-        await database.set_variable('SOUNDCLOUD_QUALITY', to_set) # Simpan ke DB
+        await database.set_variable('SOUNDCLOUD_QUALITY', to_set)
         
         await soundcloud_cb(c, cb)
-# --- BATAS TAMBAHAN ---
 
 #----------------
 # DEEZER
@@ -429,11 +429,10 @@ async def kkbox_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('KKBOX_QUALITY', to_set)
         await kkbox_cb(c, cb)
 
-# --- TAMBAHAN BARU: Handler Admin Napster ---
 #----------------
 # NAPSTER
 #----------------
-@Client.on_callback_query(filters.regex(pattern=r"^npP")) # Napster Panel
+@Client.on_callback_query(filters.regex(pattern=r"^npP")) 
 async def napster_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
@@ -456,7 +455,7 @@ async def napster_cb(c, cb:CallbackQuery):
             markup=np_button(quality)
         )
 
-@Client.on_callback_query(filters.regex(pattern=r"^npQ")) # Napster Quality Set
+@Client.on_callback_query(filters.regex(pattern=r"^npQ")) 
 async def napster_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
@@ -474,16 +473,14 @@ async def napster_quality_cb(c, cb:CallbackQuery):
             return await edit_message(cb.message, "Layanan Napster tidak aktif.")
         
         napster_manager.quality = to_set
-        await database.set_variable('NAPSTER_QUALITY', to_set) # Simpan ke DB
+        await database.set_variable('NAPSTER_QUALITY', to_set)
         
         await napster_cb(c, cb)
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Handler Admin Idagio ---
 #----------------
 # IDAGIO
 #----------------
-@Client.on_callback_query(filters.regex(pattern=r"^idP")) # Idagio Panel
+@Client.on_callback_query(filters.regex(pattern=r"^idP")) 
 async def idagio_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
@@ -504,7 +501,7 @@ async def idagio_cb(c, cb:CallbackQuery):
             markup=id_button(quality)
         )
 
-@Client.on_callback_query(filters.regex(pattern=r"^idQ")) # Idagio Quality Set
+@Client.on_callback_query(filters.regex(pattern=r"^idQ")) 
 async def idagio_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
@@ -520,26 +517,22 @@ async def idagio_quality_cb(c, cb:CallbackQuery):
             return await edit_message(cb.message, "Layanan Idagio tidak aktif.")
         
         idagio_manager.quality = to_set
-        await database.set_variable('IDAGIO_QUALITY', to_set) # Simpan ke DB
+        await database.set_variable('IDAGIO_QUALITY', to_set)
         
         await idagio_cb(c, cb)
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Handler Admin Bugs ---
 #----------------
 # BUGS
 #----------------
-@Client.on_callback_query(filters.regex(pattern=r"^bgP")) # Bugs Panel
+@Client.on_callback_query(filters.regex(pattern=r"^bgP")) 
 async def bugs_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
         quality = {
             "flac": "FLAC 16-bit",
-            "aac256": "AAC 320k", # <--- PERBAIKAN DI SINI
+            "aac256": "AAC 320k",
             "320k": "MP3 320k",
             "aac": "AAC 128k"
         }
-        # --- BATAS PERBAIKAN ---
         
         if not bugs_manager or not bugs_manager.clients:
             return await edit_message(cb.message, "Layanan Bugs tidak aktif (tidak ada klien yang login).")
@@ -554,17 +547,15 @@ async def bugs_cb(c, cb:CallbackQuery):
             markup=bugs_button(quality)
         )
 
-@Client.on_callback_query(filters.regex(pattern=r"^bgQ")) # Bugs Quality Set
+@Client.on_callback_query(filters.regex(pattern=r"^bgQ")) 
 async def bugs_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
         qual_map_display = {
             "FLAC 16-bit": "flac",
-            "AAC 320k": "aac256", # <--- PERBAIKAN DI SINI
+            "AAC 320k": "aac256",
             "MP3 320k": "320k",
             "AAC 128k": "aac"
         }
-        # --- BATAS PERBAIKAN ---
         
         to_set_display = cb.data.split('_')[1]
         to_set = qual_map_display.get(to_set_display)
@@ -574,7 +565,6 @@ async def bugs_quality_cb(c, cb:CallbackQuery):
             return await edit_message(cb.message, "Layanan Bugs tidak aktif.")
         
         bugs_manager.quality = to_set
-        await database.set_variable('BUGS_QUALITY', to_set) # Simpan ke DB
+        await database.set_variable('BUGS_QUALITY', to_set)
         
         await bugs_cb(c, cb)
-# --- BATAS TAMBAHAN ---
