@@ -70,10 +70,9 @@ class QoClient:
                 "extra": "albums",
             }
         elif epoint == "favorite/getUserFavorites":
-            # --- PERBAIKAN 1: Gunakan timestamp integer ---
+            # --- FIX: Gunakan timestamp integer ---
             unix = int(time.time())
             r_sig = "favoritegetUserFavorites" + str(unix) + kwargs["sec"]
-            # --- BATAS PERBAIKAN ---
             
             r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
             params = {
@@ -84,18 +83,19 @@ class QoClient:
                 "request_sig": r_sig_hashed,
             }
         elif epoint == "track/getFileUrl":
-            # --- PERBAIKAN 2: Gunakan timestamp integer ---
+            # --- FIX: Gunakan timestamp integer ---
             unix = int(time.time())
             track_id = kwargs["id"]
             fmt_id = kwargs["fmt_id"]
-            if int(fmt_id) not in (5, 6, 7, 27):
-                raise Exception("QOBUZ : Invalid quality id: choose between 5, 6, 7 or 27")
             
-            # --- PERBAIKAN: Kembalikan ke self.sec DAN gunakan timestamp int ---
+            # Validasi format ID agar tidak error jika input aneh
+            if int(fmt_id) not in (5, 6, 7, 27):
+                LOGGER.warning(f"QOBUZ: Format ID {fmt_id} tidak valid, fallback ke 6 (Lossless).")
+                fmt_id = 6
+            
             r_sig = "trackgetFileUrlformat_id{}intentstreamtrack_id{}{}{}".format(
                 fmt_id, track_id, unix, kwargs.get("sec", self.sec)
             )
-            # --- BATAS PERBAIKAN ---
             
             r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
             params = {
@@ -122,8 +122,7 @@ class QoClient:
                     epoint in ["track/getFileUrl", "favorite/getUserFavorites"]
                     and r.status == 400
                 ):
-                    # --- PERBAIKAN: Pesan error yang lebih akurat ---
-                    raise Exception(f"QOBUZ : HTTP 400 (Bad Request) saat memanggil {epoint}. Ini bisa berarti App Secret salah ATAU akun tidak punya akses ke item ini.")
+                    raise Exception(f"QOBUZ : HTTP 400 (Bad Request) saat memanggil {epoint}. Cek App Secret atau akses akun.")
                 
                 if r.status == 403:
                     raise Exception(f"{r.status}, message='Akses ditolak (Forbidden). Kemungkinan IP server diblokir.', url='{r.url}'")
@@ -132,12 +131,10 @@ class QoClient:
                     return await r.json()
                 except aiohttp.ContentTypeError:
                     LOGGER.error(f"QOBUZ: Respons bukan JSON diterima dari {epoint} (Status: {r.status})")
-                    return None # Kembalikan None jika bukan JSON
+                    return None
 
 
-    # --- FUNGSI DIPERBARUI UNTUK MENGUBAH LEVEL LOG ---
     async def multi_meta(self, epoint, key, id, type):
-        # type akan menjadi "tracks" (untuk playlist) atau "albums" (untuk artist/label)
         total = 1
         offset = 0
         while total > 0:
@@ -152,9 +149,7 @@ class QoClient:
                 if type in ["tracks", "albums"]:
                     j_iterable = j.get(type)
                     if j_iterable is None:
-                        # --- PERBAIKAN: Ubah dari .error() menjadi .warning() ---
                         LOGGER.warning(f"QOBUZ Info: Respons untuk {epoint} tidak memiliki kunci '{type}'. Mengembalikan hasil kosong.")
-                        # --- BATAS PERBAIKAN ---
                         yield {type: {'items': [], key: 0}}
                         return
                 else:
@@ -163,10 +158,8 @@ class QoClient:
                 if offset == 0:
                     total_items = j_iterable.get(key)
                     if total_items is None:
-                        # --- PERBAIKAN: Ubah dari .error() menjadi .warning() ---
                         LOGGER.warning(f"QOBUZ Info: Objek respons tidak memiliki kunci total '{key}' di {epoint}. Mengembalikan hasil kosong.")
-                        # --- BATAS PERBAIKAN ---
-                        yield j # Kembalikan apa yang kita punya, tapi hentikan loop
+                        yield j 
                         return
                         
                     yield j 
@@ -179,7 +172,6 @@ class QoClient:
             except Exception as e:
                 LOGGER.error(f"QOBUZ Multi-Meta Parsing Gagal untuk {epoint}: {e}")
                 return 
-    # --- BATAS FUNGSI DIPERBARUI ---
             
 
     async def auth(self):
@@ -194,10 +186,9 @@ class QoClient:
                 userid=self.user_id,
                 usertoken=self.user_token)
         else:
-            raise Exception("QOBUZ : No credentials (email/password or user_id/token) provided for this client instance.")
+            raise Exception("QOBUZ : No credentials provided.")
         
         if not usr_info:
-            # Panggilan API gagal (misal 404/500)
             raise Exception("QOBUZ : Gagal login, respons API kosong.")
             
         if not usr_info.get("user"):
@@ -216,12 +207,10 @@ class QoClient:
     async def test_secret(self, sec):
         test_epoint = "track/getFileUrl"
         
-        # --- PERBAIKAN 3: Gunakan timestamp integer ---
+        # --- FIX: Gunakan timestamp integer ---
         unix = int(time.time())
         
         r_sig = "trackgetFileUrlformat_id5intentstreamtrack_id5966783{}{}".format(unix, sec)
-        # --- BATAS PERBAIKAN ---
-
         r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
         
         params = {
@@ -240,7 +229,7 @@ class QoClient:
                     return False
         
         except Exception as e:
-            LOGGER.debug(f"Test Secret Failed due to connection/timeout for secret: {e}")
+            LOGGER.debug(f"Test Secret Failed: {e}")
             return False
 
     def get_tokens(self):
@@ -273,10 +262,26 @@ class QoClient:
         if self.sec is None:
             raise Exception("QOBUZ : Can't find any valid app secret") 
 
+    # --- FIX UTAMA: Baca User ID sebagai Integer ---
     async def get_track_url(self, id, user: dict):
-        user_dict = self.user_data.get(user["user_id"], {})
-        quality = user_dict.get("qobuz_qual", self.quality)
+        # Pastikan user_id adalah integer agar cocok dengan key di user_data
+        try:
+            u_id = int(user.get("user_id", 0))
+        except:
+            u_id = 0
+
+        user_dict = self.user_data.get(u_id, {})
+        quality = user_dict.get("qobuz_qual")
+        
+        # Jika tidak ada setting user, gunakan default global
+        if not quality:
+            quality = self.quality
+            
         fmt_id = quality
+        
+        # Debug log opsional untuk memastikan kualitas yang diminta
+        # LOGGER.info(f"QOBUZ: Meminta Track {id} dengan Quality ID {fmt_id} untuk User {u_id}")
+        
         return await self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
 
     async def get_album_meta(self, id):
@@ -303,15 +308,24 @@ class QoClient:
             res.append(data)
         return res
 
+    # --- FIX UTAMA: Simpan User ID sebagai Integer ---
     async def setup_quality(self, user_id: int=0, qual: int=0) -> None:
+        try:
+            user_id = int(user_id) # Paksa jadi Integer
+        except (ValueError, TypeError):
+            LOGGER.error(f"QOBUZ: Setup quality gagal, user_id invalid: {user_id}")
+            return
+
         data = {}
-        self.user_data.setdefault(user_id, {})
+        if user_id not in self.user_data:
+            self.user_data[user_id] = {}
+            
         if qual:
-            data["qobuz_qual"] = qual
+            data["qobuz_qual"] = int(qual) # Paksa quality jadi Integer
+        
         self.user_data[user_id].update(data)
 
     async def close_session(self):
         """Menutup sesi aiohttp jika ada."""
         if self.session and not self.session.closed:
             await self.session.close()
-
