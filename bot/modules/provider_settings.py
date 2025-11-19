@@ -15,6 +15,8 @@ from ..helpers.tidal.tidal_api import TidalApi
 from ..helpers.message import edit_message, check_user
 
 from bot import BOT_QOBUZ_CLIENTS
+
+# --- IMPORT MANAGERS ---
 try:
     from ..helpers.beatport.manager import beatport_manager
 except ImportError:
@@ -35,31 +37,26 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor kkbox_manager.")
     kkbox_manager = None
-
 try:
     from ..helpers.beatsource.manager import beatsource_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor beatsource_manager.")
     beatsource_manager = None
-
 try:
     from ..helpers.soundcloud.manager import soundcloud_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor soundcloud_manager.")
     soundcloud_manager = None
-
 try:
     from ..helpers.napster.manager import napster_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor napster_manager.")
     napster_manager = None
-
 try:
     from ..helpers.idagio.manager import idagio_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor idagio_manager.")
     idagio_manager = None
-
 try:
     from ..helpers.bugs.manager import bugs_manager
 except ImportError:
@@ -77,12 +74,12 @@ async def provider_cb(c, cb:CallbackQuery):
         )
 
 #----------------
-# QOBUZ
+# QOBUZ (DIPERBAIKI)
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^qbP"))
 async def qobuz_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # Pastikan Key Dictionary adalah INTEGER
+        # Key harus Integer agar sesuai dengan logika di qopy.py
         quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ', 27:'24B>96KHZ'}
         
         if not BOT_QOBUZ_CLIENTS:
@@ -90,11 +87,11 @@ async def qobuz_cb(c, cb:CallbackQuery):
         
         client_to_check = list(BOT_QOBUZ_CLIENTS.values())[0]
         
-        # --- PERBAIKAN: Paksa baca sebagai Integer ---
+        # FIX: Pastikan current dibaca sebagai Integer
         try:
             current = int(client_to_check.quality)
         except:
-            current = 6 # Default fallback
+            current = 6 # Fallback default
         
         if current in quality:
             quality[current] = quality[current] + '✅'
@@ -106,16 +103,17 @@ async def qobuz_quality_cb(c, cb:CallbackQuery):
         qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ', 27:'24B>96KHZ'}
         to_set = cb.data.split('_')[1]
         
-        # Ambil Key integer dari value string
+        # Ambil Key Integer
         qobuz_qual = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
         
         if not BOT_QOBUZ_CLIENTS:
             return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
         
         for client in BOT_QOBUZ_CLIENTS.values():
-            # --- PERBAIKAN UTAMA: Simpan sebagai Integer ---
+            # FIX: Paksa simpan sebagai Integer
             client.quality = int(qobuz_qual)
             
+        # Simpan ke DB sebagai Integer
         await database.set_variable('QOBUZ_QUALITY', int(qobuz_qual))
         await qobuz_cb(c, cb)
 
@@ -231,6 +229,7 @@ async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
         await c.answer_callback_query(cb.id, "Semua akun Tidal telah dihapus.", True)
         await tidal_auth_cb(c, cb)
 
+
 #----------------
 # BEATPORT
 #----------------
@@ -266,6 +265,7 @@ async def beatport_quality_cb(c, cb:CallbackQuery):
         beatport_manager.quality = to_set
         await database.set_variable('BEATPORT_QUALITY', to_set)
         await beatport_cb(c, cb)
+
 
 #----------------
 # BEATSOURCE
@@ -311,6 +311,7 @@ async def beatsource_quality_cb(c, cb:CallbackQuery):
         
         await beatsource_cb(c, cb)
 
+
 #----------------
 # SOUNDCLOUD
 #----------------
@@ -353,6 +354,7 @@ async def soundcloud_quality_cb(c, cb:CallbackQuery):
         
         await soundcloud_cb(c, cb)
 
+
 #----------------
 # DEEZER
 #----------------
@@ -388,6 +390,7 @@ async def deezer_quality_cb(c, cb:CallbackQuery):
         deezer_manager.quality = to_set
         await database.set_variable('DEEZER_QUALITY', to_set)
         await deezer_cb(c, cb)
+
 
 #----------------
 # KKBOX
@@ -428,6 +431,7 @@ async def kkbox_quality_cb(c, cb:CallbackQuery):
         kkbox_manager.quality = to_set
         await database.set_variable('KKBOX_QUALITY', to_set)
         await kkbox_cb(c, cb)
+
 
 #----------------
 # NAPSTER
@@ -477,6 +481,7 @@ async def napster_quality_cb(c, cb:CallbackQuery):
         
         await napster_cb(c, cb)
 
+
 #----------------
 # IDAGIO
 #----------------
@@ -521,12 +526,14 @@ async def idagio_quality_cb(c, cb:CallbackQuery):
         
         await idagio_cb(c, cb)
 
+
 #----------------
 # BUGS
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^bgP")) 
 async def bugs_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
+        # PERBAIKAN: Sesuaikan label dengan tombol (AAC 320k)
         quality = {
             "flac": "FLAC 16-bit",
             "aac256": "AAC 320k",
@@ -552,7 +559,7 @@ async def bugs_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
             "FLAC 16-bit": "flac",
-            "AAC 320k": "aac256",
+            "AAC 320k": "aac256", # FIX
             "MP3 320k": "320k",
             "AAC 128k": "aac"
         }
