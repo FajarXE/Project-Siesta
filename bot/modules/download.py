@@ -261,7 +261,7 @@ async def start_link(link: str, user: dict) -> None:
     deezer = ["https://link.deezer.com", "https://deezer.com", "deezer.com", "https://www.deezer.com", "link.deezer.com"]
     qobuz = ["https://play.qobuz.com", "https://open.qobuz.com", "https://www.qobuz.com"]
     spotify = ["https://open.spotify.com"]
-    beatport = ["https://www.beatport.com", "beatport.com"]
+    beatport = ["https://www.beatport.com", "http://www.beatport.com", "beatport.com"]
     beatsource = ["https://www.beatsource.com", "beatsource.com"]
     
     soundcloud = [
