@@ -88,7 +88,7 @@ class QoClient:
             track_id = kwargs["id"]
             fmt_id = kwargs["fmt_id"]
             
-            # Validasi format ID agar tidak error jika input aneh
+            # Validasi format ID agar tidak error (5=MP3, 6=FLAC, 7/27=HiRes)
             if int(fmt_id) not in (5, 6, 7, 27):
                 LOGGER.warning(f"QOBUZ: Format ID {fmt_id} tidak valid, fallback ke 6 (Lossless).")
                 fmt_id = 6
@@ -138,7 +138,6 @@ class QoClient:
         total = 1
         offset = 0
         while total > 0:
-            
             j = await self.api_call(epoint, id=id, offset=offset, type=type)
             
             if j is None:
@@ -195,21 +194,18 @@ class QoClient:
              raise Exception(f"QOBUZ : Gagal login, respons tidak terduga: {usr_info}")
 
         if not usr_info["user"].get("credential") or not usr_info["user"]["credential"].get("parameters"):
-            raise Exception("QOBUZ : Free accounts are not eligible to download tracks from QOBUZ. Disabling QOBUZ for now")
+            raise Exception("QOBUZ : Free accounts are not eligible to download tracks from QOBUZ.")
         
         self.uat = usr_info["user_auth_token"]
         self.session.headers.update({"X-User-Auth-Token": self.uat})
         self.label = usr_info["user"]["credential"]["parameters"]["short_label"]
         
         user_identifier = self.email or self.user_id
-        LOGGER.info(f"QOBUZ : Logged in as {user_identifier}. Membership Status: {self.label}")
+        LOGGER.info(f"QOBUZ : Logged in as {user_identifier}. Status: {self.label}")
 
     async def test_secret(self, sec):
         test_epoint = "track/getFileUrl"
-        
-        # --- FIX: Gunakan timestamp integer ---
         unix = int(time.time())
-        
         r_sig = "trackgetFileUrlformat_id5intentstreamtrack_id5966783{}{}".format(unix, sec)
         r_sig_hashed = hashlib.md5(r_sig.encode("utf-8")).hexdigest()
         
@@ -227,7 +223,6 @@ class QoClient:
                     if r.status == 200:
                         return True
                     return False
-        
         except Exception as e:
             LOGGER.debug(f"Test Secret Failed: {e}")
             return False
@@ -242,7 +237,6 @@ class QoClient:
     async def login(self):
         self.get_tokens()
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) 
-        
         self.session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0",
@@ -262,7 +256,7 @@ class QoClient:
         if self.sec is None:
             raise Exception("QOBUZ : Can't find any valid app secret") 
 
-    # --- FIX UTAMA: Baca User ID sebagai Integer ---
+    # --- PERBAIKAN UTAMA: Konsistensi User ID Integer ---
     async def get_track_url(self, id, user: dict):
         # Pastikan user_id adalah integer agar cocok dengan key di user_data
         try:
@@ -273,15 +267,14 @@ class QoClient:
         user_dict = self.user_data.get(u_id, {})
         quality = user_dict.get("qobuz_qual")
         
-        # Jika tidak ada setting user, gunakan default global
+        # Fallback: Jika tidak ada di memori, gunakan default class
         if not quality:
             quality = self.quality
-            
+
+        # Log untuk debugging
+        LOGGER.info(f"QOBUZ_DEBUG: UserID={u_id} | TrackID={id} | QualityRequested={quality}")
+
         fmt_id = quality
-        
-        # Debug log opsional untuk memastikan kualitas yang diminta
-        # LOGGER.info(f"QOBUZ: Meminta Track {id} dengan Quality ID {fmt_id} untuk User {u_id}")
-        
         return await self.api_call("track/getFileUrl", id=id, fmt_id=fmt_id)
 
     async def get_album_meta(self, id):
@@ -308,12 +301,14 @@ class QoClient:
             res.append(data)
         return res
 
-    # --- FIX UTAMA: Simpan User ID sebagai Integer ---
+    # --- PERBAIKAN UTAMA: Konsistensi User ID saat menyimpan ---
     async def setup_quality(self, user_id: int=0, qual: int=0) -> None:
+        # Paksa user_id dan qual menjadi integer
         try:
-            user_id = int(user_id) # Paksa jadi Integer
+            user_id = int(user_id)
+            qual = int(qual)
         except (ValueError, TypeError):
-            LOGGER.error(f"QOBUZ: Setup quality gagal, user_id invalid: {user_id}")
+            LOGGER.error(f"QOBUZ: Setup quality gagal, input invalid. User: {user_id}, Qual: {qual}")
             return
 
         data = {}
@@ -321,7 +316,8 @@ class QoClient:
             self.user_data[user_id] = {}
             
         if qual:
-            data["qobuz_qual"] = int(qual) # Paksa quality jadi Integer
+            data["qobuz_qual"] = qual
+            LOGGER.info(f"QOBUZ: Quality diset untuk UserID {user_id} -> {qual}")
         
         self.user_data[user_id].update(data)
 
