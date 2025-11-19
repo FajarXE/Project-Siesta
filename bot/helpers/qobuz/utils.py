@@ -6,8 +6,8 @@ import bot.helpers.translations as lang
 import logging
 import aiohttp
 import urllib.parse
-import os # <-- Impor OS
-from config import Config # <-- Impor Config
+import os
+from config import Config
 
 from ..message import send_message, edit_message
 from ..utils import format_string
@@ -280,7 +280,7 @@ async def check_type(url, user: dict):
     try:
         url_info = await get_url_info(url)
         if url_info is None:
-            raise TypeError # Ini akan ditangkap oleh blok except di bawah
+            raise TypeError
             
         url_type, item_id = url_info
         
@@ -289,7 +289,6 @@ async def check_type(url, user: dict):
     except (KeyError, IndexError):
         raise Exception(f"URL tidak dapat dikenali: {url}")
     except TypeError:
-        # Ini akan menangani error jika get_url_info mengembalikan None
         raise Exception(f"URL Qobuz tidak valid atau tidak dapat di-parse: {url}")
         
     content = None
@@ -331,92 +330,54 @@ async def check_type(url, user: dict):
         return None, item_id, type_dict, content
 
 
-# --- FUNGSI DIPERBARUI UNTUK MENG-SCRAPE HTML (FIX 5) ---
 async def get_url_info(url):
-    # Pola regex standar (pola utama)
     regex_pattern = (
         r"(?:https:\/\/(?:w{3}|open|play)\.qobuz\.com)?(?:\/[a-z]{2}-[a-z]{2})?"
         r"?\/(album|artist|track|playlist|label|interpreter)(?:\/[-\w\d]+)?\/([\w\d]+)"
     )
-    
-    # 1. Coba regex standar (cara cepat)
     r = re.search(regex_pattern, url)
     if r:
-        return r.groups() # (type, id)
+        return r.groups()
 
-    # 2. Jika gagal, coba G-E-T H-T-M-L dan scrape og:type (cara lambat)
     logging.info(f"Qobuz URL tidak dikenali, mencoba scrape HTML untuk: {url}")
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9' # Meminta bahasa Inggris
+            'Accept-Language': 'en-US,en;q=0.9'
         }
         async with aiohttp.ClientSession(headers=headers) as session:
-            # --- PERBAIKAN: Gunakan allow_redirects=True (default) ---
-            # Biarkan aiohttp menangani redirect. Kita akan scrape dari URL final.
             async with session.get(url, allow_redirects=True, timeout=10) as response:
-                
                 final_url = str(response.url)
-                logging.info(f"Qobuz URL diselesaikan ke: {final_url} (Status: {response.status})")
-
-                # Jika status bukan 200, gagal
                 if response.status != 200:
-                    logging.error(f"Gagal mengambil URL Qobuz, server merespons {response.status}")
                     return None
 
-                # 2a. Coba regex lagi pada URL final (jika redirect-nya berhasil)
                 r_final = re.search(regex_pattern, final_url)
                 if r_final:
-                    logging.info("Regex URL final berhasil.")
-                    return r_final.groups() # (type, id)
+                    return r_final.groups()
 
-                # 2b. Jika regex final gagal, scrape HTML dari URL final
-                logging.warning(f"Regex URL final gagal, meng-scrape HTML dari {final_url}")
                 html_content = await response.text()
-                
-                # Pola regex untuk og:type dan ID dari URL
-                # <meta property="og:type" content="music.artist"> atau music.song atau music.album
                 og_type_match = re.search(r'<meta\s+property="og:type"\s+content="music\.(album|artist|song|playlist)"', html_content)
-                # Ambil ID dari URL (cari angka di akhir)
                 id_match = re.search(r"\/(\d+)(?:\?.*)?$", final_url.split('?')[0])
                 
                 if og_type_match and id_match:
                     og_type = og_type_match.group(1)
                     item_id = id_match.group(1)
-                    
-                    # Terjemahkan og:type ke tipe internal kita
-                    if og_type == "song":
-                        og_type = "track"
+                    if og_type == "song": og_type = "track"
                     elif og_type == "artist":
-                        # Cek apakah ini 'interpreter' dari URL final
-                        if "/interpreter/" in final_url:
-                            og_type = "interpreter"
-                        else:
-                            og_type = "artist"
-                            
-                    logging.info(f"Scrape HTML Qobuz berhasil: Tipe={og_type}, ID={item_id}")
+                        if "/interpreter/" in final_url: og_type = "interpreter"
+                        else: og_type = "artist"
                     return (og_type, item_id)
 
-                # Fallback jika og:type tidak ada TAPI URL-nya /interpreter/ (seperti kasus Serj Tankian)
                 if "/interpreter/" in final_url and id_match:
-                     logging.info(f"Scrape HTML Qobuz fallback: Tipe=interpreter, ID={id_match.group(1)}")
                      return ("interpreter", id_match.group(1))
-
-                logging.error(f"Gagal meng-scrape tipe/ID dari HTML Qobuz: {final_url}")
                 return None
-
     except Exception as e:
         logging.error(f"Gagal meng-scrape HTML Qobuz: {e}")
         return None
-
-    # 4. Jika semua gagal
     return None
-# --- BATAS FUNGSI DIPERBARUI ---
 
 
-def smart_discography_filter(
-    contents: list, save_space: bool = False, skip_extras: bool = False
-) -> list:
+def smart_discography_filter(contents: list, save_space: bool = False, skip_extras: bool = False) -> list:
     TYPE_REGEXES = {
         "remaster": r"(?i)(re)?master(ed)?",
         "extra": r"(?i)(anniversary|deluxe|live|collector|demo|expanded)",
@@ -428,8 +389,7 @@ def smart_discography_filter(
         return re.search(regex, f"{title} {version}") is not None
     def essence(album: dict) -> str:
         r = re.match(r"([^\(]+)(?:\s*[\(\[][^\)][\)\]])*", album)
-        if not r:
-            return album.lower()
+        if not r: return album.lower()
         return r.group(1).strip().lower()
     requested_artist = contents[0]['name']
     items = []
@@ -469,9 +429,27 @@ def smart_discography_filter(
     
 async def get_quality(meta: dict, user: dict):
     client = user['qobuz_api'] 
-    user_dict = client.user_data.get(user.get("user_id", 0), {})
+    
+    # --- PERBAIKAN UTAMA: Paksa user_id ke Integer ---
+    try:
+        u_id = int(user.get("user_id", 0))
+    except:
+        u_id = 0
+        
+    # Ambil setting dari qopy.py user_data (yang kuncinya Integer)
+    user_dict = client.user_data.get(u_id, {})
     quality = user_dict.get("qobuz_qual", client.quality)
+    
+    # Format ID 5 = MP3 320
     if quality == 5:
         return 'mp3', '320K'
     else:
-        return 'flac', f'{meta["bit_depth"]}B - {meta["sampling_rate"]}k'
+        # Format ID 6, 7, 27 = FLAC
+        bit_depth = meta.get("bit_depth", 16)
+        sampling_rate = meta.get("sampling_rate", 44.1)
+        
+        # Rapikan tampilan (misal 96.0 -> 96)
+        if isinstance(sampling_rate, float) and sampling_rate.is_integer():
+            sampling_rate = int(sampling_rate)
+
+        return 'flac', f'{bit_depth}B - {sampling_rate}k'
