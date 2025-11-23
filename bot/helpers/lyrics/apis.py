@@ -7,7 +7,6 @@ import uuid
 import hmac
 import base64
 import logging
-import json
 from urllib.parse import quote, urlencode
 from datetime import datetime
 
@@ -23,7 +22,6 @@ class MusixmatchAPI:
         self.token = None
 
     def sign_request(self, method, params, timestamp):
-        # Pastikan urutan parameter konsisten jika diperlukan, tapi untuk HMAC ini biasanya cukup
         to_hash = self.API_URL + method + '?' + urlencode(params)
         key = ("IEJ5E8XFaH" "QvIQNfs7IC").encode()
         signature = hmac.digest(key, (to_hash + timestamp).encode(), digest='SHA1')
@@ -45,12 +43,18 @@ class MusixmatchAPI:
         params['signature'] = self.sign_request(method, params, signature_timestamp)
         params['signature_protocol'] = 'sha1'
 
-        async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
-            # PERBAIKAN: Tambahkan content_type=None agar tidak error saat menerima text/plain
-            data = await r.json(content_type=None) 
-            if data['message']['header']['status_code'] == 200:
-                self.token = data['message']['body']['user_token']
-                return self.token
+        try:
+            async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
+                # Tambahkan try-except untuk JSON decode
+                try:
+                    data = await r.json(content_type=None)
+                    if data['message']['header']['status_code'] == 200:
+                        self.token = data['message']['body']['user_token']
+                        return self.token
+                except:
+                    LOGGER.warning("Musixmatch: Gagal decode JSON saat get_token")
+        except Exception as e:
+            LOGGER.error(f"Musixmatch Token Error: {e}")
         return None
 
     async def get_lyrics(self, title, artist, album, duration=None):
@@ -70,15 +74,14 @@ class MusixmatchAPI:
             }
             
             track_id = None
-            async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
-                # PERBAIKAN: Tambahkan content_type=None
-                data = await r.json(content_type=None)
-                try:
+            try:
+                async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
+                    data = await r.json(content_type=None)
                     track_list = data['message']['body']['track_list']
                     if track_list:
                         track_id = track_list[0]['track']['track_id']
-                except:
-                    pass
+            except:
+                pass
 
             if not track_id:
                 return None, None
@@ -87,7 +90,6 @@ class MusixmatchAPI:
             plain = None
             synced = None
             
-            # Fetch Macro (All in one)
             method = 'macro.subtitles.get'
             params = {
                 'format': 'json',
@@ -99,26 +101,19 @@ class MusixmatchAPI:
                 'optional_calls': 'track.richsync,track.lyrics.get'
             }
             
-            async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
-                # PERBAIKAN: Tambahkan content_type=None
-                data = await r.json(content_type=None)
-                body = data['message']['body']['macro_calls']
-                
-                # Extract Plain
-                if body.get('track.lyrics.get', {}).get('message', {}).get('header', {}).get('status_code') == 200:
-                    plain = body['track.lyrics.get']['message']['body']['lyrics']['lyrics_body']
+            try:
+                async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
+                    data = await r.json(content_type=None)
+                    body = data['message']['body']['macro_calls']
+                    
+                    if body.get('track.lyrics.get', {}).get('message', {}).get('header', {}).get('status_code') == 200:
+                        plain = body['track.lyrics.get']['message']['body']['lyrics']['lyrics_body']
 
-                # Extract Synced (Richsync) - Ini format JSON khusus Musixmatch
-                if body.get('track.richsync.get', {}).get('message', {}).get('header', {}).get('status_code') == 200:
-                    richsync = body['track.richsync.get']['message']['body']['richsync']
-                    if richsync:
-                         # Konversi Richsync ke LRC sederhana (Sangat basic)
-                         # Richsync adalah daftar karakter dengan offset waktu.
-                         # Kita coba ambil teks utuhnya saja jika pengguna meminta synced, 
-                         # atau biarkan None karena konversinya rumit.
-                         # Untuk amannya, kita kembalikan JSON string jika Anda ingin memprosesnya nanti,
-                         # atau biarkan None. Di sini saya biarkan None untuk stabilitas kecuali Anda punya parser.
-                         synced = None 
+                    if body.get('track.richsync.get', {}).get('message', {}).get('header', {}).get('status_code') == 200:
+                        richsync = body['track.richsync.get']['message']['body']['richsync']
+                        #Synced logic placeholder
+            except:
+                pass
             
             return plain, synced
 
@@ -139,19 +134,25 @@ class LRCLibAPI:
                 'duration': duration
             }
             
-            # Try Cached
-            async with session.get(f'{self.base_url}/get', params=params, headers=self.headers) as r:
-                if r.status == 200:
-                    data = await r.json(content_type=None)
-                    return data.get('plainLyrics'), data.get('syncedLyrics')
+            # --- Try Cached ---
+            try:
+                async with session.get(f'{self.base_url}/get', params=params, headers=self.headers) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        return data.get('plainLyrics'), data.get('syncedLyrics')
+            except Exception:
+                pass # Lanjut ke Search jika cached gagal/error
             
-            # Try Search if Get fails
+            # --- Try Search ---
+            # Hapus parameter duration saat search umum agar hasil lebih fleksibel
             params_search = {'q': f"{title} {artist}"}
-            async with session.get(f'{self.base_url}/search', params=params_search, headers=self.headers) as r:
-                if r.status == 200:
-                    data = await r.json(content_type=None)
-                    if data and isinstance(data, list):
-                        # Ambil hasil pertama yang paling relevan
-                        return data[0].get('plainLyrics'), data[0].get('syncedLyrics')
+            try:
+                async with session.get(f'{self.base_url}/search', params=params_search, headers=self.headers) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        if data and isinstance(data, list) and len(data) > 0:
+                            return data[0].get('plainLyrics'), data[0].get('syncedLyrics')
+            except Exception:
+                pass
             
             return None, None
