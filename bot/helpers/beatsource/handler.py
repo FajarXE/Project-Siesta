@@ -32,6 +32,14 @@ from ...settings import bot_set
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
+
+
 async def start_beatsource(url: str, user: dict):
     """Handler utama untuk link Beatsource."""
     try:
@@ -103,7 +111,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         return False
 
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Beatsource: {filepath}")
         return False
@@ -161,7 +171,9 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
+        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
@@ -207,7 +219,9 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
+        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
+        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
