@@ -19,12 +19,17 @@ from .metadata import *
 from .mqa_identifier import MqaIdentifier 
 
 from ..utils import *
-# --- MODIFIKASI: Impor ffmpeg_convert_and_tag ---
 from .utils import ffmpeg_convert_and_tag
-# --- AKHIR MODIFIKASI ---
 from ..metadata import set_metadata, get_audio_extension
 from ..uploder import *
 from ..message import send_message, edit_message 
+
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
 
 from ...settings import bot_set
 import bot.helpers.translations as lang
@@ -60,10 +65,8 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         # 1. SELALU ambil data track lengkap
         track_data = await client.get_track(track_id)
     except Exception as e:
-        # --- PERBAIKAN: Kembalikan None jika gagal ---
         LOGGER.error(f"start_track (get_track) gagal: {e}")
         return None
-        # --- AKHIR PERBAIKAN --- 
 
     # 2. Ambil cover/thumb dari stub (jika ada)
     cover = track_meta.get('cover') if track_meta else None
@@ -114,9 +117,7 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         if 'Asset is not ready for playback' in str(e):
             error = f'Track [{track_id}] is not available in your region'
         LOGGER.error(error)
-        # --- PERBAIKAN: Kembalikan None jika gagal ---
         return None
-        # --- AKHIR PERBAIKAN ---
     
 
     if stream_data is not None:
@@ -157,39 +158,43 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
                 temp_path = f"{filepath}.{i}"
                 err = await download_file(url, temp_path)
                 if err:
-                    # --- PERBAIKAN: Kembalikan None jika gagal ---
                     LOGGER.error(f"Download_file gagal (list): {err}")
                     return None
-                    # --- AKHIR PERBAIKAN ---
                 i+=1
                 temp_files.append(temp_path)
             await merge_tracks(temp_files, filepath)
         else:
             err = await download_file(urls, filepath)
             if err:
-                # --- PERBAIKAN: Kembalikan None jika gagal ---
                 LOGGER.error(f"Download_file gagal (single): {err}")
                 return None
-                # --- AKHIR PERBAIKAN ---
 
         # File sekarang ada di `filepath` (tanpa ekstensi)
         track_meta['extension'] = await get_audio_extension(filepath)
         
         try:
-            _, __, ___, user_convert_m4a = tidal_manager.get_user_quality_settings(user['user_id']) # <-- PERBAIKAN: MQA dihapus, convert_m4a di pos 4
+            _, __, ___, user_convert_m4a = tidal_manager.get_user_quality_settings(user['user_id']) 
         except Exception:
             user_convert_m4a = "OFF" 
         
         metadata_written = False
         
-        # --- PERBAIKAN: Logika MQA dihapus karena tidak ada di log Anda ---
-        # (Jika Anda membutuhkannya kembali, logika MQA harus ditempatkan di sini)
-        # --- AKHIR PERBAIKAN ---
-
-
+        # --- PERBAIKAN PENTING: Penanganan Lirik untuk Jalur Konversi FFmpeg ---
         if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "ON":
             LOGGER.info(f"Mengonversi M4A ke FLAC & Menulis Tag untuk user {user['user_id']} Sesuai pengaturan.")
             
+            # Jika menggunakan jalur ini, set_metadata (mutagen) dilewati.
+            # Jadi kita HARUS mengambil lirik secara manual di sini agar FFmpeg bisa menulisnya.
+            if lyrics_manager:
+                try:
+                    # Ambil lirik dari API
+                    lyrics_text = await lyrics_manager.fetch_lyrics(track_meta, user['user_id'])
+                    if lyrics_text:
+                        track_meta['lyrics'] = lyrics_text # Masukkan ke dict agar dibaca ffmpeg_convert_and_tag
+                        LOGGER.info("Lirik berhasil diambil untuk jalur FFmpeg.")
+                except Exception as e:
+                    LOGGER.error(f"Gagal mengambil lirik untuk jalur FFmpeg: {e}")
+
             await ffmpeg_convert_and_tag(filepath, track_meta)
             
             track_meta['filepath'] = track_meta['filepath'] + '.flac'
@@ -207,7 +212,9 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             
         if not metadata_written:
             LOGGER.info(f"Menjalankan set_metadata (Mutagen) untuk: {track_meta['filepath']}")
-            await set_metadata(track_meta) 
+            # --- MODIFIKASI: Kirim user_id ke set_metadata agar lirik diambil ---
+            await set_metadata(track_meta, user['user_id']) 
+            # --- BATAS MODIFIKASI ---
         else:
             LOGGER.info(f"Melewatkan set_metadata (Mutagen), FFmpeg sudah menulis tag.")
 
@@ -215,9 +222,7 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         if upload:
             await track_upload(track_meta, user, False)
 
-    # --- PERBAIKAN: Kembalikan metadata lengkap ---
     return track_meta
-    # --- AKHIR PERBAIKAN ---
 
 
 async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
@@ -281,15 +286,11 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
         'title': album_meta['title'],
         'type': album_meta['type']
     }
-    # --- PERBAIKAN: Kumpulkan hasil (metadata lengkap) ---
-    results = await run_concurrent_tasks(tasks, update_details)
-    # Ganti list stub lama dengan list metadata lengkap yang baru
-    album_meta['tracks'] = [track for track in results if track]
-    # --- AKHIR PERBAIKAN ---
     
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    results = await run_concurrent_tasks(tasks, update_details)
+    album_meta['tracks'] = [track for track in results if track]
+    
     _, album_zip, __, ___ = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
     
     if album_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
@@ -367,15 +368,11 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
         'title': playlist_meta['title'],
         'type': playlist_meta['type']
     }
-    # --- PERBAIKAN: Kumpulkan hasil (metadata lengkap) ---
-    results = await run_concurrent_tasks(tasks, update_details)
-    # Ganti list stub lama dengan list metadata lengkap yang baru
-    playlist_meta['tracks'] = [track for track in results if track]
-    # --- AKHIR PERBAIKAN ---
     
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
+    results = await run_concurrent_tasks(tasks, update_details)
+    playlist_meta['tracks'] = [track for track in results if track]
+    
     playlist_zip, _, __, ___ = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
 
     if playlist_zip:
         await edit_message(user['bot_msg'], lang.s.ZIPPING)
@@ -405,28 +402,22 @@ async def start_artist(artist_id:int, user:dict):
     
     albums.extend(ep_singles)
 
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     _, __, artist_zip, ___ = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
 
     upload_album = True
     
     if bot_set.artist_batch:
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
     
-    # Cek pengaturan PENGGUNA (artist_zip)
     if artist_zip: 
         upload_album = False
-    # --- AKHIR PERBAIKAN ---
 
     for album in albums:
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
         _, __, artist_zip_check, ___ = fetch_zip_settings(user) 
         if artist_zip_check: 
-        # --- AKHIR PERBAIKAN ---
             await edit_message(user['bot_msg'], lang.s.ZIPPING)
             artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
         
