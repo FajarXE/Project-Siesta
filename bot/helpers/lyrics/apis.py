@@ -1,4 +1,4 @@
-# [SIMPAN SEBAGAI: bot/helpers/lyrics/apis.py]
+# [GANTI FILE: bot/helpers/lyrics/apis.py]
 
 import aiohttp
 import asyncio
@@ -7,6 +7,7 @@ import uuid
 import hmac
 import base64
 import logging
+import json
 from urllib.parse import quote, urlencode
 from datetime import datetime
 
@@ -16,11 +17,13 @@ class MusixmatchAPI:
     def __init__(self):
         self.API_URL = 'https://apic-desktop.musixmatch.com/ws/1.1/'
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Musixmatch/0.19.4 Chrome/58.0.3029.110 Electron/1.7.6 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Musixmatch/0.19.4 Chrome/58.0.3029.110 Electron/1.7.6 Safari/537.36',
+            'Cookie': 'AWSELB=unknown; AWSELBCORS=unknown' 
         }
         self.token = None
 
     def sign_request(self, method, params, timestamp):
+        # Pastikan urutan parameter konsisten jika diperlukan, tapi untuk HMAC ini biasanya cukup
         to_hash = self.API_URL + method + '?' + urlencode(params)
         key = ("IEJ5E8XFaH" "QvIQNfs7IC").encode()
         signature = hmac.digest(key, (to_hash + timestamp).encode(), digest='SHA1')
@@ -43,7 +46,8 @@ class MusixmatchAPI:
         params['signature_protocol'] = 'sha1'
 
         async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
-            data = await r.json()
+            # PERBAIKAN: Tambahkan content_type=None agar tidak error saat menerima text/plain
+            data = await r.json(content_type=None) 
             if data['message']['header']['status_code'] == 200:
                 self.token = data['message']['body']['user_token']
                 return self.token
@@ -67,7 +71,8 @@ class MusixmatchAPI:
             
             track_id = None
             async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
-                data = await r.json()
+                # PERBAIKAN: Tambahkan content_type=None
+                data = await r.json(content_type=None)
                 try:
                     track_list = data['message']['body']['track_list']
                     if track_list:
@@ -95,73 +100,27 @@ class MusixmatchAPI:
             }
             
             async with session.get(self.API_URL + method, params=params, headers=self.headers) as r:
-                data = await r.json()
+                # PERBAIKAN: Tambahkan content_type=None
+                data = await r.json(content_type=None)
                 body = data['message']['body']['macro_calls']
                 
                 # Extract Plain
                 if body.get('track.lyrics.get', {}).get('message', {}).get('header', {}).get('status_code') == 200:
                     plain = body['track.lyrics.get']['message']['body']['lyrics']['lyrics_body']
 
-                # Extract Synced
+                # Extract Synced (Richsync) - Ini format JSON khusus Musixmatch
                 if body.get('track.richsync.get', {}).get('message', {}).get('header', {}).get('status_code') == 200:
                     richsync = body['track.richsync.get']['message']['body']['richsync']
                     if richsync:
-                         # Convert richsync json to LRC format simple
-                         import json
-                         synced = json.dumps(richsync) # Complex conversion skipped for brevity, raw json or simple text
-                         # Note: Musixmatch Synced is JSON, not LRC. Converting to LRC is complex.
-                         # We will return None for synced if user wants strict LRC, 
-                         # or we can just return plain text if synced not available easily in LRC.
-                         synced = None # Disabled synced for MM for now as it requires complex parsing
+                         # Konversi Richsync ke LRC sederhana (Sangat basic)
+                         # Richsync adalah daftar karakter dengan offset waktu.
+                         # Kita coba ambil teks utuhnya saja jika pengguna meminta synced, 
+                         # atau biarkan None karena konversinya rumit.
+                         # Untuk amannya, kita kembalikan JSON string jika Anda ingin memprosesnya nanti,
+                         # atau biarkan None. Di sini saya biarkan None untuk stabilitas kecuali Anda punya parser.
+                         synced = None 
             
             return plain, synced
-
-
-class GeniusAPI:
-    def __init__(self):
-        self.API_URL = "https://api.genius.com/"
-        self.access_token = 'ZTejoT_ojOEasIkT9WrMBhBQOz6eYKK5QULCMECmOhvwqjRZ6WbpamFe3geHnvp3'
-
-    def headers(self):
-        return {
-            'Authorization': f'Bearer {self.access_token}',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-        }
-
-    async def get_lyrics(self, title, artist):
-        async with aiohttp.ClientSession() as session:
-            # 1. Search
-            params = {'q': f"{title} {artist}"}
-            song_path = None
-            async with session.get(f'{self.API_URL}search', params=params, headers=self.headers()) as r:
-                data = await r.json()
-                try:
-                    for hit in data['response']['hits']:
-                        if hit['type'] == 'song':
-                            song_path = hit['result']['path'] # e.g. /songs/1234
-                            break
-                except:
-                    pass
-            
-            if not song_path:
-                return None, None
-
-            # 2. Scrape Lyrics (Genius API doesn't give lyric text directly, usually requires scraping)
-            # But the provided file used 'songs/id' with text_format.
-            # Let's try to get ID first.
-            
-            # Simple fallback: Genius requires scraping HTML for full lyrics usually.
-            # However, I will implement a simpler scraper since the API provided earlier was incomplete for full text.
-            
-            # We will return None for now to avoid errors if scraping fails, 
-            # or try to use a public scraper URL if possible.
-            # For strictness:
-            return None, None 
-
-# --- PERBAIKAN GENIUS ---
-# Karena Genius API resmi tidak memberikan teks lirik, kita gunakan library ringan 'lyricsgenius' logic
-# atau parsing HTML sederhana. Untuk stabilitas, kita akan fokus ke LRCLib dan Musixmatch dulu.
-# Jika Anda butuh Genius, kita perlu parsing HTML dari URL genius.com.
 
 
 class LRCLibAPI:
@@ -183,15 +142,16 @@ class LRCLibAPI:
             # Try Cached
             async with session.get(f'{self.base_url}/get', params=params, headers=self.headers) as r:
                 if r.status == 200:
-                    data = await r.json()
+                    data = await r.json(content_type=None)
                     return data.get('plainLyrics'), data.get('syncedLyrics')
             
             # Try Search if Get fails
             params_search = {'q': f"{title} {artist}"}
             async with session.get(f'{self.base_url}/search', params=params_search, headers=self.headers) as r:
                 if r.status == 200:
-                    data = await r.json()
+                    data = await r.json(content_type=None)
                     if data and isinstance(data, list):
+                        # Ambil hasil pertama yang paling relevan
                         return data[0].get('plainLyrics'), data[0].get('syncedLyrics')
             
             return None, None
