@@ -27,6 +27,14 @@ from ...settings import bot_set
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
+
+
 async def start_highresaudio(url: str, user: dict):
     """Handler utama untuk link HighResAudio."""
     try:
@@ -90,7 +98,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     # --- END DOWNLOAD LOGIC ---
 
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
     except Exception as e:
         LOGGER.error(f"Gagal memproses metadata HighResAudio: {filepath} -> {e}\n{traceback.format_exc()}")
         try:
