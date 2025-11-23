@@ -159,7 +159,7 @@ async def sort_album_from_artist(album_data: dict, user: dict):
 
 async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     """
-    Mengonversi M4A (ALAC) ke FLAC dan menulis semua tag metadata
+    Mengonversi M4A (ALAC) ke FLAC dan menulis semua tag metadata + COVER ART
     menggunakan FFmpeg dalam satu perintah.
     """
     
@@ -174,7 +174,22 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     input_file_escaped = escape_str(input_file)
     output_file_escaped = f"{input_file_escaped}.flac"
     
-    # 1. Bangun string metadata
+    # --- MODIFIKASI: Logika Cover Art ---
+    cover_cmd = ""
+    map_cmd = "-map 0:a" # Default: Ambil audio dari input ke-0 (file audio)
+    
+    # Cek apakah ada cover art di metadata dan file-nya ada
+    cover_path = track_meta.get('cover')
+    if cover_path and os.path.exists(cover_path):
+        # Input ke-1 adalah gambar
+        cover_cmd = f'-i "{escape_str(cover_path)}"' 
+        # Petakan input ke-1 sebagai stream video (cover art)
+        # -c:v copy: Jangan re-encode JPG/PNG (biarkan aslinya)
+        # -disposition:v attached_pic: Tandai sebagai cover art untuk player (seperti Poweramp)
+        map_cmd += " -map 1 -c:v copy -disposition:v attached_pic -metadata:s:v title=\"Album cover\" -metadata:s:v comment=\"Cover (front)\""
+    # --- BATAS MODIFIKASI ---
+
+    # 1. Bangun string metadata teks
     metadata_cmd = ""
     
     tags_to_write = {
@@ -211,15 +226,15 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
         if value is not None and value != '':
             metadata_cmd += f' -metadata {key}="{escape_str(value)}"'
 
-    # 2. Bangun perintah FFmpeg
+    # 2. Bangun perintah FFmpeg LENGKAP
+    # Urutan: ffmpeg -i audio -i cover (opsional) -map audio -map cover (opsional) -codec -metadata output
     cmd = (
-        f'ffmpeg -i "{input_file_escaped}" '
-        f'-c:a flac -compression_level 8 ' # Konversi ke FLAC
-        f'{metadata_cmd} ' # Tambahkan semua tag metadata
-        f'-loglevel error -y "{output_file_escaped}"' # Output
+        f'ffmpeg -i "{input_file_escaped}" {cover_cmd} '
+        f'{map_cmd} '
+        f'-c:a flac -compression_level 8 ' 
+        f'{metadata_cmd} ' 
+        f'-loglevel error -y "{output_file_escaped}"' 
     )
     
-    # Log diagnostik FFMPEG CMD telah dihapus
-
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
