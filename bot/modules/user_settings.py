@@ -63,7 +63,7 @@ from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
-    bugs_button
+    bugs_button, lyrics_button # <-- TAMBAHAN: lyrics_button
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -666,6 +666,48 @@ async def uset_bugs(client, query):
     await database.save_user_settings(user_id, {'bugs_qual': to_set})
 
     await uset_cb(client, query, "bugs")
+
+
+# --- HANDLER CALLBACK BARU UNTUK LIRIK ---
+@Client.on_callback_query(filters.regex("^uset_ly"))
+async def uset_lyrics_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    data = query.data
+    user_id = query.from_user.id
+    
+    # Inisialisasi dictionary jika belum ada
+    if user_id not in bot_set.user_data:
+        bot_set.user_data[user_id] = {}
+    
+    # 1. Masuk Menu
+    if data == "uset_lyrics":
+        pass # Langsung render di bawah
+
+    # 2. Toggle ON/OFF
+    elif data == "uset_ly_on":
+        bot_set.user_data[user_id]['lyrics_status'] = True
+        await database.save_user_settings(user_id, {'lyrics_status': True})
+    elif data == "uset_ly_off":
+        bot_set.user_data[user_id]['lyrics_status'] = False
+        await database.save_user_settings(user_id, {'lyrics_status': False})
+
+    # 3. Ganti Provider
+    elif data.startswith("uset_ly_p_"):
+        prov = data.split("_")[-1]
+        bot_set.user_data[user_id]['lyrics_provider'] = prov
+        await database.save_user_settings(user_id, {'lyrics_provider': prov})
+
+    # 4. Ganti Tipe
+    elif data.startswith("uset_ly_t_"):
+        typ = data.split("_")[-1]
+        bot_set.user_data[user_id]['lyrics_type'] = typ
+        await database.save_user_settings(user_id, {'lyrics_type': typ})
+
+    # Render Menu
+    text = "<b>Lyrics Settings</b>\n\nConfigure how you want to download lyrics."
+    await edit_message(query.message, text, markup=lyrics_button(bot_set.user_data[user_id], user_id))
 
 
 # --- HANDLER ZIP SETTINGS ---
