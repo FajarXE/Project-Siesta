@@ -11,8 +11,7 @@ from config import Config
 
 from .metadata import (
     process_track_metadata, 
-    process_album_metadata, # --- DITAMBAHKAN ---
-    # process_playlist_metadata,
+    process_album_metadata,
     custom_url_parse
 )
 from .manager import KKBoxError
@@ -21,12 +20,18 @@ from .manager import KKBoxError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-# --- PERBAIKAN: Impor zip_handler dan format_string ---
 from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string, zip_handler
-# --- AKHIR PERBAIKAN ---
 from ...settings import bot_set 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
+
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 async def start_kkbox(url: str, user: dict):
     """Handler utama untuk link KKBox."""
@@ -38,20 +43,11 @@ async def start_kkbox(url: str, user: dict):
             if not success:
                 raise Exception("Gagal mengunduh atau memproses track.")
         
-        # --- MODIFIKASI DIMULAI ---
         elif media_type == 'album':
             await start_album(item_id, user)
-        # --- MODIFIKASI SELESAI ---
-            
-        # elif media_type == 'playlist':
-            # raise NotImplementedError(f"Tipe media KKBox '{media_type}' belum didukung.")
             
         else:
             raise NotImplementedError(f"Tipe media KKBox '{media_type}' belum didukung.")
-        
-        # --- PERBAIKAN: Hapus 'TASK_COMPLETED' agar tidak menimpa status akhir ---
-        # await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
-        # --- AKHIR PERBAIKAN ---
         
     except Exception as e:
         LOGGER.error(f"Error fatal di KKBox handler: {e}\n{traceback.format_exc()}")
@@ -139,7 +135,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     # --- BATAS LOGIKA UNDUH ---
 
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download KKBox: {filepath}")
         return False
@@ -156,10 +154,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
     return True
 
-# --- FUNGSI BARU ---
 async def start_album(album_id: str, user: dict, upload=True):
     """
-    Handler untuk unduhan album (didasarkan pada handler.py Beatport)
+    Handler untuk unduhan album KKBox
     """
     try:
         album_meta = await process_album_metadata(album_id, user['r_id'], user)
@@ -208,4 +205,3 @@ async def start_album(album_id: str, user: dict, upload=True):
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await album_upload(album_meta, user)
-# --- BATAS FUNGSI BARU ---
