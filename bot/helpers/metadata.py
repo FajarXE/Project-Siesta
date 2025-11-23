@@ -15,6 +15,13 @@ from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
 
 from bot.logger import LOGGER
 
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
+
 metadata = {
         'itemid': '',
         'copyright': '',
@@ -51,12 +58,26 @@ metadata = {
     }
 
 
-async def set_metadata(metadata:dict):
+async def set_metadata(metadata:dict, user_id: int = None): # <-- MODIFIKASI: Tambah parameter user_id
     audio_path = metadata['filepath']
     handle = File(audio_path)
     
     if metadata['duration'] == '':
         metadata['duration'] = handle.info.length
+
+    # --- TAMBAHAN BARU: AMBIL LIRIK ---
+    # Kita cek apakah lyrics_manager tersedia dan user_id diberikan
+    if lyrics_manager and user_id:
+        try:
+            lyrics_text = await lyrics_manager.fetch_lyrics(metadata, user_id)
+            if lyrics_text:
+                metadata['lyrics'] = lyrics_text
+                LOGGER.info(f"Lirik ditemukan dan ditambahkan untuk: {metadata['title']}")
+            else:
+                LOGGER.info(f"Tidak ada lirik ditemukan untuk: {metadata['title']}")
+        except Exception as e:
+            LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
+    # --- BATAS TAMBAHAN ---
 
     try:
         if 'audio/x-flac' in handle.mime:
@@ -224,6 +245,11 @@ async def set_m4a(data, handle):
     handle.tags['trkn'] = [(track_number, totaltracks)]
     handle.tags['disk'] = [(volume, totalvolume)]
     
+    # --- TAMBAHAN BARU: Lirik untuk M4A ---
+    if data.get('lyrics'):
+        handle.tags['\u00a9lyr'] = data['lyrics']
+    # --------------------------------------
+
     if data.get('bit_depth'):
         handle.tags['----:com.apple.iTunes:BITS PER SAMPLE'] = str(data['bit_depth']).encode('utf-8')
     if data.get('sample_rate'):
