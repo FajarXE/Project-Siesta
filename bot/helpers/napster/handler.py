@@ -20,12 +20,18 @@ from .manager import NapsterError
 from ..uploder import *
 from ..metadata import set_metadata
 from ..message import edit_message
-# --- PERBAIKAN: Impor zip_handler (meskipun sudah ada di uploder, lebih aman) ---
 from ..utils import fetch_zip_settings, run_concurrent_tasks, format_string, zip_handler
-# --- BATAS PERBAIKAN ---
 from ...settings import bot_set 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
+
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 async def start_napster(url: str, user: dict):
     """Handler utama untuk link Napster."""
@@ -122,7 +128,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     # --- BATAS PERBAIKAN 1 ---
 
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         # Kita masih mungkin mendapatkan error ini jika file gagal diunduh (karena 404)
         LOGGER.debug(f"[Errno 2] File not found setelah download Napster (diredam): {filepath}")
