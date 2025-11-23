@@ -3,12 +3,9 @@
 from pathvalidate import sanitize_filepath
 from config import Config
 import traceback
-import os # <--- Impor os
+import os 
 
 from .metadata import *
-# --- MODIFIKASI: Hapus impor global ---
-# from .dzapi import deezerapi 
-# --- BATAS MODIFIKASI ---
 
 from ..utils import *
 from ..uploder import *
@@ -20,6 +17,13 @@ import bot.helpers.translations as lang
 from bot.logger import LOGGER 
 from ..utils import fetch_zip_settings 
 from ..message import edit_message
+
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
 
 
 async def start_deezer(url:str, user: dict):
@@ -46,10 +50,6 @@ async def start_deezer(url:str, user: dict):
         elif media_type == 'playlist':
             # --- MODIFIKASI: Kirim 'user' ke start_playlist ---
             await start_playlist(item_id, user)
-        
-        # --- PERBAIKAN: Hapus pesan 'TASK_COMPLETED' agar tidak menimpa status akhir ---
-        # await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
-        # --- AKHIR PERBAIKAN ---
         
     except Exception as e:
         LOGGER.error(f"Error fatal di Deezer handler: {e}\n{traceback.format_exc()}")
@@ -101,7 +101,9 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         return False
 
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Deezer: {filepath}")
         return False
@@ -119,7 +121,7 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     return True
 
 
-async def start_album(album_id:int, user:dict, upload=True, basefolder=None): # <-- PERBAIKAN: Tambahkan 'basefolder'
+async def start_album(album_id:int, user:dict, upload=True, basefolder=None): 
     # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
     deezerapi = user['deezer_api']
     # --- BATAS MODIFIKASI ---
@@ -219,7 +221,6 @@ async def start_artist(artist_id, user):
 
     # --- PERBAIKAN: Unpack 4 nilai dan gunakan 'artist_zip' yang benar ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # Hapus baris lama yang salah: artist_zip = bot_set.user_data.get(user.get("user_id", 0), {}).get("artist_zip", bot_set.artist_zip)
     # --- AKHIR PERBAIKAN ---
     
     upload_album = True
