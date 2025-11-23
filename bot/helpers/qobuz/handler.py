@@ -14,7 +14,7 @@ import traceback
 
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
 
-# Exception kustom (pastikan diimpor dari utils.py atau didefinisikan)
+# Exception kustom
 try:
     from .utils import QobuzContentUnavailableError
 except ImportError:
@@ -42,19 +42,14 @@ async def start_qobuz(url:str, user:dict):
             if items is None and item_id is None:
                  raise QobuzContentUnavailableError("Gagal mendapatkan item atau ID yang valid dari tautan.")
 
-            # --- PERBAIKAN: Gunakan 'if items is not None' ---
-            # Ini membedakan antara artist/playlist (items=[]) dan track/album (items=None)
             if items is not None:
-                
-                # --- PERBAIKAN: Tangani artist/playlist kosong ---
                 if not items:
                     artist_name = "N/A"
                     if content and isinstance(content, list) and len(content) > 0:
                         artist_name = content[0].get('name', item_id)
                     
                     await edit_message(user['bot_msg'], f"Sukses, tapi artis/playlist '{artist_name}' tidak memiliki item (album/trek) untuk diunduh.")
-                    return # Keluar dengan sukses
-                # --- BATAS PERBAIKAN ---
+                    return 
 
                 if type_dict['iterable_key'] == 'albums':
                     await start_artist(items, user, content)
@@ -67,9 +62,7 @@ async def start_qobuz(url:str, user:dict):
                 elif type_dict.get("album") is False:
                     await start_track(item_id, user, None)
                 else:
-                    # Ini seharusnya tidak dapat dijangkau sekarang
                     raise Exception(f"Tipe konten tidak diketahui (items=None, tapi type_dict aneh): {type_dict}")
-            # --- BATAS PERBAIKAN ---
             
             await edit_message(user['bot_msg'], f"Sukses mengunduh dengan Akun {client_label}!")
             return 
@@ -83,7 +76,7 @@ async def start_qobuz(url:str, user:dict):
             # Ini menangkap KeyError atau error fatal lain
             last_error = f"Error fatal di Akun {client_label}: {e}"
             LOGGER.error(f"{last_error}\n{traceback.format_exc()}")
-            break # Hentikan loop jika terjadi error fatal (seperti KeyError)
+            break 
 
     try:
         await edit_message(user['bot_msg'], f"Semua {len(clients_list)} akun Qobuz gagal.\nKesalahan terakhir: {last_error}")
@@ -148,15 +141,11 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
         LOGGER.error(f"Tidak ada lagu yang berhasil diunduh untuk album {album_meta['title']}.")
         return
 
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
     
-    if album_zip: # <-- Sekarang ini menggunakan variabel yang benar
+    if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
-        # --- PERBAIKAN: Gunakan 'zip_path' untuk Qobuz juga agar konsisten ---
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await album_upload(album_meta, user)
@@ -196,7 +185,9 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         return False
     
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
 
         if upload:
             await track_upload(track_meta, user, disable_link)
@@ -219,24 +210,20 @@ async def start_artist(albums, user, artist):
 
     upload_album = True
     
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
     
     if bot_set.artist_batch:
         upload_album = True if bot_set.upload_mode == 'Telegram' else False
-    if artist_zip: # <-- Gunakan variabel yang benar
+    if artist_zip: 
         upload_album = False 
 
     for album in albums:
         await start_album(album['id'], user, upload_album, artist_meta['folderpath'])
 
     if not upload_album:
-        if artist_zip: # <-- Gunakan variabel yang benar
+        if artist_zip: 
             await edit_message(user['bot_msg'], f"Menyiapkan folder artis {artist_meta['title']} menjadi .zip...")
-            # --- PERBAIKAN: Gunakan 'zip_path' untuk Qobuz juga ---
             artist_meta['zip_path'] = await zip_handler(artist_meta['folderpath'])
-            # --- AKHIR PERBAIKAN ---
         
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await artist_upload(artist_meta, user)
@@ -271,9 +258,7 @@ async def start_playlist(tracks, playlist, user):
     play_meta['poster_msg'] = await post_art_poster(user, play_meta)
 
     upload = True
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
     
     if bot_set.playlist_conc:
         upload = False
@@ -307,13 +292,11 @@ async def start_playlist(tracks, playlist, user):
         play_meta['tracks'] = successful_tracks_non_conc
         play_meta['totaltracks'] = len(successful_tracks_non_conc)
 
-    if playlist_zip: # <-- Sekarang menggunakan variabel yang benar
+    if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
         if playlist_sort:
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
-        # --- PERBAIKAN: Gunakan 'zip_path' untuk Qobuz juga ---
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
        
     if not upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
