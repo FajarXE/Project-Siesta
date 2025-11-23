@@ -1,4 +1,4 @@
-# [GANTI SELURUH FILE: bot/helpers/beatport/handler.py]
+# [GANTI FILE: bot/helpers/beatport/handler.py]
 
 import aiohttp
 import aiofiles
@@ -36,6 +36,14 @@ from ...settings import bot_set # Tiga titik untuk settings.py (bot/settings.py)
 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
+
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 async def start_beatport(url: str, user: dict):
     """Handler utama untuk link Beatport."""
@@ -116,7 +124,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         return False
 
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Beatport: {filepath}")
         return False
