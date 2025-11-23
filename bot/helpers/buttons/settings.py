@@ -4,6 +4,7 @@ import bot.helpers.translations as lang
 
 from bot.settings import bot_set
 from bot import BOT_QOBUZ_CLIENTS
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # Definisikan kelas fallback *sekali*
 class _DummyManager:
@@ -74,14 +75,11 @@ except ImportError:
 # --- BATAS TAMBAHAN ---
 
 
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
 def fetch_base_buttons():
     main_button = [[InlineKeyboardButton(text=lang.s.MAIN_MENU_BUTTON, callback_data="main_menu")]]
     close_button = [[InlineKeyboardButton(text=lang.s.CLOSE_BUTTON, callback_data="close")]]
     return main_button, close_button
 
-# ... (Salin fungsi main_menu, providers_button, tg_button, core_buttons, language_buttons dari file Anda) ...
 def main_menu():
     inline_keyboard = [
         [
@@ -149,7 +147,6 @@ def providers_button():
             ]
         )
         
-    # --- TAMBAHAN: Tombol Admin Beatsource ---
     if beatsource_manager and beatsource_manager.clients:
         inline_keyboard.append(
             [
@@ -159,9 +156,7 @@ def providers_button():
                 )
             ]
         )
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN: Tombol Admin Soundcloud ---
     if soundcloud_manager and soundcloud_manager.get_client():
         inline_keyboard.append(
             [
@@ -171,7 +166,6 @@ def providers_button():
                 )
             ]
         )
-    # --- BATAS TAMBAHAN ---
         
     if kkbox_manager and kkbox_manager.clients:
         inline_keyboard.append(
@@ -183,7 +177,6 @@ def providers_button():
             ]
         )
     
-    # --- TAMBAHAN BARU: Tombol Admin Napster ---
     if napster_manager and napster_manager.clients:
         inline_keyboard.append(
             [
@@ -193,9 +186,7 @@ def providers_button():
                 )
             ]
         )
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: Tombol Admin Idagio ---
     if idagio_manager and idagio_manager.clients:
         inline_keyboard.append(
             [
@@ -205,9 +196,7 @@ def providers_button():
                 )
             ]
         )
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: Tombol Admin Bugs ---
     if bugs_manager and bugs_manager.clients:
         inline_keyboard.append(
             [
@@ -217,7 +206,6 @@ def providers_button():
                 )
             ]
         )
-    # --- BATAS TAMBAHAN ---
         
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
@@ -312,7 +300,6 @@ def core_buttons():
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
-
 
 
 def language_buttons(languages, selected):
@@ -485,8 +472,7 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
     return InlineKeyboardMarkup(inline_keyboard)
 # --- AKHIR MODIFIKASI ---
 
-# ... (Salin sisa file buttons/settings.py Anda, 
-#  semua fungsi lain tidak berubah) ...
+
 # Beatport Button
 def bp_button(quality: dict, user_id: int = None):
     buttons = []
@@ -516,14 +502,12 @@ def bp_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN: Tombol Beatsource (Salinan dari Beatport) ---
+# --- TAMBAHAN: Tombol Beatsource ---
 def bs_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Beatsource."""
     buttons = []
     usetting = user_id is not None
-    prefix = "bsQ" if not usetting else f"usbs" # Beatsource Quality / User Beatsource Set
+    prefix = "bsQ" if not usetting else f"usbs" 
     row = []
-    # Peta ini sama dengan Beatport
     display_text_map = {
         "lossless": "Lossless (FLAC)",
         "high": "High (AAC 256)",
@@ -546,16 +530,13 @@ def bs_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
 
 # --- TAMBAHAN: Tombol Soundcloud ---
 def sc_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Soundcloud."""
     buttons = []
     usetting = user_id is not None
-    prefix = "scQ" if not usetting else f"uscs" # Soundcloud Quality / User Soundcloud Set
+    prefix = "scQ" if not usetting else f"uscs" 
     
-    # Peta Kualitas Soundcloud
     display_text_map = {
         "original": "Original (Jika Ada)",
         "stream": "Stream (Default AAC/MP3)"
@@ -576,7 +557,7 @@ def sc_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
+
 
 # Deezer Button
 def dz_button(quality: dict, user_id: int = None):
@@ -641,10 +622,9 @@ def kk_button(quality: dict, user_id: int = None):
 
 # --- TAMBAHAN BARU: Tombol Napster ---
 def np_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Napster."""
     buttons = []
     usetting = user_id is not None
-    prefix = "npQ" if not usetting else f"unps" # Napster Quality / User Napster Set
+    prefix = "npQ" if not usetting else f"unps"
     row = []
     display_text_map = {
         "FLAC": "FLAC (HiRes/Lossless)",
@@ -670,14 +650,12 @@ def np_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
 
 # --- TAMBAHAN BARU: Tombol Idagio ---
 def id_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Idagio."""
     buttons = []
     usetting = user_id is not None
-    prefix = "idQ" if not usetting else f"uids" # Idagio Quality / User Idagio Set
+    prefix = "idQ" if not usetting else f"uids"
     row = []
     display_text_map = {
         "FLAC": "FLAC",
@@ -701,36 +679,29 @@ def id_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
 
 # --- TAMBAHAN BARU: Tombol Bugs ---
 def bugs_button(quality: dict, user_id: int = None):
-    """Membuat tombol untuk pengaturan kualitas Bugs."""
     buttons = []
     usetting = user_id is not None
-    prefix = "bgQ" if not usetting else f"ubgs" # Bugs Quality / User Bugs Set
+    prefix = "bgQ" if not usetting else f"ubgs"
     row = []
     
-    # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
     display_text_map = {
         "flac": "FLAC 16-bit",
-        "aac256": "AAC 320k", # <--- PERBAIKAN DI SINI
+        "aac256": "AAC 320k",
         "320k": "MP3 320k",
         "aac": "AAC 128k"
     }
     
-    # --- PERBAIKAN: Layout 2x2 ---
-    # Baris 1: FLAC / AAC 320
     row.append(InlineKeyboardButton(quality.get("flac", "FLAC 16-bit"), callback_data=f"{prefix}_{display_text_map['flac']}"))
-    row.append(InlineKeyboardButton(quality.get("aac256", "AAC 320k"), callback_data=f"{prefix}_{display_text_map['aac256']}")) # <--- PERBAIKAN DI SINI
+    row.append(InlineKeyboardButton(quality.get("aac256", "AAC 320k"), callback_data=f"{prefix}_{display_text_map['aac256']}")) 
     buttons.append(row)
     row = []
     
-    # Baris 2: MP3 320 / AAC 128
     row.append(InlineKeyboardButton(quality.get("320k", "MP3 320k"), callback_data=f"{prefix}_{display_text_map['320k']}"))
     row.append(InlineKeyboardButton(quality.get("aac", "AAC 128k"), callback_data=f"{prefix}_{display_text_map['aac']}"))
     buttons.append(row)
-    # --- BATAS PERBAIKAN ---
 
     if usetting:
         buttons.append(
@@ -741,6 +712,35 @@ def bugs_button(quality: dict, user_id: int = None):
         return InlineKeyboardMarkup(buttons)
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+
+# --- TAMBAHAN BARU: Tombol Lyrics ---
+def lyrics_button(user_settings: dict, user_id):
+    buttons = []
+    
+    # 1. Status ON/OFF
+    status = user_settings.get('lyrics_status', False)
+    status_text = "✅ Status: ON" if status else "❌ Status: OFF"
+    status_cb = "uset_ly_off" if status else "uset_ly_on"
+    buttons.append([InlineKeyboardButton(text=status_text, callback_data=status_cb)])
+
+    if status:
+        # 2. Provider (LRCLib / Musixmatch / Genius)
+        prov = user_settings.get('lyrics_provider', 'lrclib')
+        row_prov = []
+        row_prov.append(InlineKeyboardButton(text=f"{'✅ ' if prov=='lrclib' else ''}LRCLib", callback_data="uset_ly_p_lrclib"))
+        row_prov.append(InlineKeyboardButton(text=f"{'✅ ' if prov=='musixmatch' else ''}Musixmatch", callback_data="uset_ly_p_musixmatch"))
+        row_prov.append(InlineKeyboardButton(text=f"{'✅ ' if prov=='genius' else ''}Genius", callback_data="uset_ly_p_genius"))
+        buttons.append(row_prov)
+        
+        # 3. Type (Synced / Plain)
+        l_type = user_settings.get('lyrics_type', 'plain')
+        row_type = []
+        row_type.append(InlineKeyboardButton(text=f"{'✅ ' if l_type=='plain' else ''}Plain (Text)", callback_data="uset_ly_t_plain"))
+        row_type.append(InlineKeyboardButton(text=f"{'✅ ' if l_type=='synced' else ''}Synced (LRC)", callback_data="uset_ly_t_synced"))
+        buttons.append(row_type)
+
+    buttons.append([InlineKeyboardButton(text="Back", callback_data="uset_back")])
     return InlineKeyboardMarkup(buttons)
 # --- BATAS TAMBAHAN ---
 
@@ -757,15 +757,11 @@ def usetting_button() -> InlineKeyboardMarkup:
     if beatport_manager and beatport_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Beatport Quality", callback_data=f"uset_beatport")])
 
-    # --- TAMBAHAN: Tombol Pengguna Beatsource ---
     if beatsource_manager and beatsource_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Beatsource Quality", callback_data=f"uset_beatsource")])
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN: Tombol Pengguna Soundcloud ---
     if soundcloud_manager and soundcloud_manager.get_client():
         buttons.append([InlineKeyboardButton(text=f"Soundcloud Quality", callback_data=f"uset_soundcloud")])
-    # --- BATAS TAMBAHAN ---
     
     if deezer_manager and deezer_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Deezer Quality", callback_data=f"uset_deezer")])
@@ -773,19 +769,17 @@ def usetting_button() -> InlineKeyboardMarkup:
     if kkbox_manager and kkbox_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"KKBox Quality", callback_data=f"uset_kkbox")])
     
-    # --- TAMBAHAN BARU: Tombol Pengguna Napster ---
     if napster_manager and napster_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Napster Quality", callback_data=f"uset_napster")])
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: Tombol Pengguna Idagio ---
     if idagio_manager and idagio_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Idagio Quality", callback_data=f"uset_idagio")])
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: Tombol Pengguna Bugs ---
     if bugs_manager and bugs_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Bugs Quality", callback_data=f"uset_bugs")])
+
+    # --- TAMBAHAN BARU: Tombol Lyrics ---
+    buttons.append([InlineKeyboardButton(text="LYRICS SETTINGS", callback_data="uset_lyrics")])
     # --- BATAS TAMBAHAN ---
     
     buttons.append([InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")])
