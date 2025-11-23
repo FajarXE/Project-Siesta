@@ -30,6 +30,13 @@ from ..utils import fetch_zip_settings
 from ...settings import bot_set
 import bot.helpers.translations as lang
 
+# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
+try:
+    from bot.helpers.lyrics.manager import lyrics_manager
+except ImportError:
+    lyrics_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 async def download_soundcloud_track(download_url: str, download_type: str, filepath: str):
     """
@@ -155,7 +162,9 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
         raise SoundcloudError(f"Gagal mengunduh track: {err}")
 
     try:
-        await set_metadata(track_meta)
+        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
+        await set_metadata(track_meta, user['user_id'])
+        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download SC: {filepath}")
         raise SoundcloudError(f"File tidak ditemukan setelah diunduh (path: {filepath})")
