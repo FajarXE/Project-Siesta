@@ -29,7 +29,7 @@ QUALITY_MAP = {
 }
 
 # --- FUNGSI HELPER BARU UNTUK MEMOTONG NAMA ---
-def truncate_artist_list(artist_str: str, max_len: int = 200) -> str: # <-- DIUBAH KE 200
+def truncate_artist_list(artist_str: str, max_len: int = 200) -> str: 
     """Memotong daftar artis agar tidak terlalu panjang untuk nama file."""
     if len(artist_str) > max_len:
         return artist_str[:max_len] + "..."
@@ -48,7 +48,6 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                         if artwork_url:
                             return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
         if metadata.get('albumartist') and metadata.get('album'):
-            # Gunakan 'artist_raw' jika ada (nama yang belum dipotong)
             artist_to_search = metadata.get('artist_raw', metadata.get('albumartist'))
             search_term = urllib.parse.quote(f"{artist_to_search} {metadata['album']}")
             search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
@@ -60,7 +59,7 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                             itunes_album = result.get('collectionName', '').lower()
                             itunes_artist = result.get('artistName', '').lower()
                             local_album = metadata['album'].lower()
-                            local_artist = artist_to_search.lower() # Cari menggunakan nama mentah
+                            local_artist = artist_to_search.lower()
                             if (local_album in itunes_album or itunes_album in local_album) and \
                                (local_artist in itunes_artist):
                                 artwork_url = result.get('artworkUrl100')
@@ -72,12 +71,22 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
 
 
 def custom_url_parse(link: str):
-    """Mengekstrak Tipe dan ID dari URL Beatport."""
-    match = re.search(r"https?://(www.)?beatport.com/(?:[a-z]{2}/)?.*?"
-                      r"(?P<type>track|release|artist|playlists|chart)/.*?/?(?P<id>\d+)", link)
+    """
+    Mengekstrak Tipe dan ID dari URL Beatport.
+    PERBAIKAN REGEX: Memastikan ID diambil setelah slash terakhir, menghindari angka tahun di slug.
+    Format umum: beatport.com/type/slug-name/id
+    """
+    # Regex lama yang bermasalah: .*?/?(?P<id>\d+) <- Ini bisa menangkap "2013" dari "album-2013"
+    
+    # Regex baru: Mewajibkan adanya slug (/.+?/) sebelum ID
+    match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/.+?/(?P<id>\d+)(?:$|[?#])", link)
     
     if not match:
-        raise BeatportError("URL Beatport tidak valid atau tidak dikenali.")
+        # Fallback regex untuk kasus URL tanpa slug (jarang, tapi mungkin)
+        match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/(?P<id>\d+)(?:$|[?#])", link)
+    
+    if not match:
+        raise BeatportError(f"URL Beatport tidak valid atau format tidak dikenali: {link}")
 
     media_type_str = match.group("type")
     media_id = match.group("id")
@@ -95,7 +104,6 @@ def custom_url_parse(link: str):
 
 
 async def _generate_artwork_url(dynamic_uri: str, size: int = 1400):
-    """Membuat URL sampul resolusi tinggi dari URL dinamis Beatport."""
     res_pattern = re.compile(r"\d{3,4}x\d{3,4}")
     match = re.search(res_pattern, dynamic_uri)
     if match:
@@ -104,7 +112,6 @@ async def _generate_artwork_url(dynamic_uri: str, size: int = 1400):
 
 
 async def _process_cover(metadata: dict, beatport_url: str):
-    """Alur kerja sampul: iTunes -> Beatport -> Fallback Lokal."""
     cover_url = None
     try:
         async with aiohttp.ClientSession() as session:
@@ -129,26 +136,46 @@ async def _process_cover(metadata: dict, beatport_url: str):
 
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None):
-    """Memproses metadata untuk satu lagu."""
-    client: BeatportAPI = user['beatport_api']
+    """Memproses metadata untuk satu lagu dengan MULTI-ACCOUNT FALLBACK."""
+    
+    primary_client = user['beatport_api']
+    available_clients = [primary_client]
+    if beatport_manager and beatport_manager.clients:
+        for other_client in beatport_manager.clients:
+            if other_client != primary_client:
+                available_clients.append(other_client)
+
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
+    track_data = pre_data
+    if not track_data:
+        for client in available_clients:
+            try:
+                track_data = await client.get_track(track_id)
+                break
+            except Exception:
+                continue
+    
+    if not track_data:
+        raise BeatportError(f"Gagal mendapatkan metadata dasar track {track_id} (cek ID atau Region).")
+
     try:
-        track_data = pre_data if pre_data else await client.get_track(track_id)
         if not track_data.get("is_available_for_streaming"):
              raise BeatportError(f"Track '{track_data.get('name')}' tidak streamable!")
         if track_data.get("preorder"):
             raise BeatportError(f"Track '{track_data.get('name')}' adalah pre-order!")
     except Exception as e:
-        LOGGER.error(f"Beatport: Gagal mendapatkan metadata track {track_id}: {e}")
+        LOGGER.error(f"Beatport: Validasi track {track_id} gagal: {e}")
         raise e
 
     album_id = track_data.get("release").get("id")
-    try:
-        album_data = await client.get_release(album_id)
-    except Exception:
-        album_data = {} 
+    album_data = {}
+    for client in available_clients:
+        try:
+            album_data = await client.get_release(album_id)
+            break
+        except: pass
     
     metadata['itemid'] = track_id
     
@@ -157,16 +184,14 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         title += f" ({track_data.get('mix_name')})"
     metadata['title'] = title
     
-    # --- PERBAIKAN: Potong nama artis yang panjang ---
     artist_raw = ", ".join([a.get("name") for a in track_data.get("artists", [])])
     albumartist_raw = ", ".join([a.get("name") for a in album_data.get("artists", [])])
 
     metadata['artist'] = truncate_artist_list(artist_raw)
     metadata['albumartist'] = truncate_artist_list(albumartist_raw)
-    metadata['artist_raw'] = artist_raw # Simpan nama asli untuk pencarian iTunes
-    # --- AKHIR PERBAIKAN ---
+    metadata['artist_raw'] = artist_raw 
     
-    metadata['album'] = album_data.get("name")
+    metadata['album'] = album_data.get("name", "Unknown Album")
     metadata['date'] = track_data.get("publish_date")
     metadata['tracknumber'] = str(track_data.get("number", 1))
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
@@ -191,99 +216,109 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['provider'] = 'Beatport'
     metadata['type'] = 'track'
     
-    bp_cover_url = await _generate_artwork_url(track_data.get("release").get("image").get("dynamic_uri"))
+    bp_cover_url = ""
+    if track_data.get("release", {}).get("image", {}).get("dynamic_uri"):
+        bp_cover_url = await _generate_artwork_url(track_data.get("release").get("image").get("dynamic_uri"))
     metadata['cover'] = await _process_cover(metadata, bp_cover_url)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
     user_id = user.get('user_id')
     if not user_id:
-        LOGGER.warning(f"Beatport: user_id tidak ditemukan untuk track {track_id}, menggunakan kualitas default.")
         preferred_quality = beatport_manager.quality
     else:
         preferred_quality = beatport_manager.get_user_quality(user_id)
-
-    LOGGER.debug(f"Beatport: Menggunakan kualitas preferensi '{preferred_quality}' untuk user {user_id} (Track: {track_id})")
     
     quality_order = []
     if preferred_quality == "lossless":
         quality_order = ["lossless", "high", "medium"]
     elif preferred_quality == "high":
         quality_order = ["high", "medium"]
-    else: # medium
+    else: 
         quality_order = ["medium"]
     
-    stream_data = None
     quality_map_display = {
         "lossless": ("FLAC", "flac"),
         "high": ("AAC 256", "m4a"),
         "medium": ("AAC 128", "m4a")
     }
     
-    for quality_key in quality_order:
-        try:
-            stream_data_json = await client.get_track_download(track_id, QUALITY_MAP[quality_key])
-            metadata['quality'], metadata['extension'] = quality_map_display[quality_key]
-            stream_data = stream_data_json 
-            LOGGER.debug(f"Beatport: Berhasil mendapatkan URL untuk kualitas {quality_key} (Track: {track_id})")
-            break 
-        except Exception as e:
-            LOGGER.warning(f"Beatport: Gagal mendapatkan kualitas '{quality_key}' for track {track_id}. Mencoba fallback... Error: {e}")
-            continue
-    
+    stream_data = None
+
+    for idx, current_client in enumerate(available_clients):
+        for quality_key in quality_order:
+            try:
+                stream_data_json = await current_client.get_track_download(track_id, QUALITY_MAP[quality_key])
+                metadata['quality'], metadata['extension'] = quality_map_display[quality_key]
+                stream_data = stream_data_json 
+                LOGGER.info(f"Beatport: URL didapat! Akun #{idx+1}, Q: {quality_key}, ID: {track_id}")
+                break 
+            except Exception:
+                continue 
+
+        if stream_data:
+            break
+
     if not stream_data:
-        raise BeatportError(f"Gagal mendapatkan URL download untuk semua kualitas yang dicoba (Track: {track_id}). Mungkin masalah langganan atau region.")
+        raise BeatportError(f"Gagal mendapatkan URL download track {track_id} di semua akun (Region Lock?).")
         
     metadata['download_url'] = stream_data.get("location")
     if not metadata['download_url']:
-        raise BeatportError(f"Gagal mendapatkan URL download (Track: {track_id}). Respons API valid, tapi URL tidak ada.")
+        raise BeatportError(f"Respons API valid tapi URL kosong (Track: {track_id}).")
 
     return metadata
 
 
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
-    """Memproses metadata untuk satu album (release)."""
-    client: BeatportAPI = user['beatport_api']
+    """Memproses metadata untuk satu album (release) dengan FALLBACK AKUN."""
+    
+    primary_client = user['beatport_api']
+    available_clients = [primary_client]
+    if beatport_manager and beatport_manager.clients:
+        for c in beatport_manager.clients:
+            if c != primary_client: available_clients.append(c)
+            
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # 1. Ambil data album utama
-    album_data = await client.get_release(album_id)
+    album_data = None
+    active_client = None
     
-    # 2. Ambil daftar link track (string) dari data album
+    for idx, client in enumerate(available_clients):
+        try:
+            LOGGER.debug(f"Beatport: Mencoba metadata album {album_id} dengan Akun #{idx+1}...")
+            album_data = await client.get_release(album_id)
+            active_client = client
+            LOGGER.info(f"Beatport: Metadata album {album_id} ditemukan di Akun #{idx+1}")
+            break
+        except Exception as e:
+            LOGGER.warning(f"Beatport: Akun #{idx+1} gagal memuat album {album_id}: {e}")
+            continue
+            
+    if not active_client or not album_data:
+        raise BeatportError(f"Gagal mendapatkan metadata album {album_id}. Mungkin tidak tersedia di SEMUA region akun Anda.")
+    
+    client = active_client
+
     track_links_or_dicts = album_data.get("tracks", [])
     
     if not track_links_or_dicts:
-        LOGGER.warning(f"Beatport: Daftar track tidak ada di get_release untuk {album_id}. Mencoba fallback ke get_release_tracks...")
+        LOGGER.warning(f"Beatport: Daftar track kosong di get_release. Mencoba fallback...")
         try:
              tracks_list_from_fallback = []
              page = 1
              per_page = 25 
-
              while True:
-                 LOGGER.debug(f"Beatport: Mengambil fallback halaman {page} (per_page=25)...")
                  tracks_data_page = await client.get_release_tracks(album_id, page=page, per_page=per_page)
-                 
                  page_results = tracks_data_page.get("results", [])
-                 if not page_results:
-                     break 
-                 
+                 if not page_results: break 
                  tracks_list_from_fallback.extend(page_results)
-                 
-                 if not tracks_data_page.get("next"):
-                     break
-                     
+                 if not tracks_data_page.get("next"): break
                  page += 1
-                 if page > 20: 
-                     LOGGER.warning(f"Beatport: Album {album_id} memiliki lebih dari 20 halaman, berhenti.")
-                     break
-             
+                 if page > 20: break
              track_links_or_dicts = tracks_list_from_fallback 
-             
-             if not track_links_or_dicts:
-                 raise BeatportError("Fallback get_release_tracks juga gagal (hasil kosong).")
+             if not track_links_or_dicts: raise BeatportError("Fallback track gagal.")
         except Exception as e:
-             LOGGER.error(f"Beatport: Gagal total mendapatkan daftar track untuk {album_id}: {e}")
-             raise BeatportError(f"Album {album_id} tidak memiliki track atau API gagal.")
+             raise BeatportError(f"Album {album_id} tidak memiliki track atau API gagal: {e}")
     
     total_tracks = len(track_links_or_dicts)
 
@@ -291,12 +326,10 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['title'] = album_data.get("name")
     metadata['album'] = album_data.get("name")
     
-    # --- PERBAIKAN: Potong nama artis yang panjang ---
     albumartist_raw = ", ".join([a.get("name") for a in album_data.get("artists", [])])
     metadata['albumartist'] = truncate_artist_list(albumartist_raw)
-    metadata['artist'] = metadata['albumartist'] # Gunakan nama yang sudah dipotong
-    metadata['artist_raw'] = albumartist_raw # Simpan nama asli untuk pencarian iTunes
-    # --- AKHIR PERBAIKAN ---
+    metadata['artist'] = metadata['albumartist'] 
+    metadata['artist_raw'] = albumartist_raw
 
     metadata['upc'] = album_data.get("upc")
     metadata['date'] = album_data.get("publish_date")
@@ -318,21 +351,15 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         try:
             track_data_full = None
             track_id_str = None
-            
             if isinstance(track_item, str):
                 track_id_str = track_item.split('/')[-2]
-                if not track_id_str.isdigit():
-                    LOGGER.warning(f"Beatport: Melewatkan link track tidak valid: {track_item}")
-                    continue 
+                if not track_id_str.isdigit(): continue 
                 track_data_full = await client.get_track(track_id_str)
-            
             elif isinstance(track_item, dict):
                 track_data_full = track_item
                 track_id_str = track_data_full.get('id')
             
-            if not track_data_full or not track_id_str:
-                LOGGER.warning(f"Beatport: Gagal mendapatkan data track untuk item: {track_item}")
-                continue
+            if not track_data_full or not track_id_str: continue
 
             total_duration_ms += track_data_full.get("length_ms", 0)
             
@@ -345,11 +372,10 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             metadata['tracks'].append(track_meta)
             
         except Exception as e:
-           LOGGER.warning(f"Beatport: Gagal memproses track (Item: {track_item}) di album: {e}", exc_info=True)
+           LOGGER.warning(f"Beatport: Gagal memproses track (Item: {track_item}) di album: {e}")
            continue
 
     metadata['duration'] = total_duration_ms // 1000
-
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
     
@@ -358,15 +384,38 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
-    """Memproses metadata untuk playlist atau chart."""
-    client: BeatportAPI = user['beatport_api']
+    """Memproses metadata untuk playlist/chart dengan FALLBACK AKUN."""
+    
+    primary_client = user['beatport_api']
+    available_clients = [primary_client]
+    if beatport_manager and beatport_manager.clients:
+        for c in beatport_manager.clients:
+            if c != primary_client: available_clients.append(c)
+
+    active_client = None
+    playlist_data = None
     is_chart = extra.get("is_chart", False)
     
+    for idx, client in enumerate(available_clients):
+        try:
+            if is_chart:
+                playlist_data = await client.get_chart(playlist_id)
+            else:
+                playlist_data = await client.get_playlist(playlist_id)
+            active_client = client
+            LOGGER.info(f"Beatport: Playlist/Chart ditemukan di Akun #{idx+1}")
+            break
+        except Exception:
+            continue
+            
+    if not active_client or not playlist_data:
+        raise BeatportError(f"Gagal mendapatkan metadata Playlist/Chart {playlist_id} di semua akun.")
+
+    client = active_client
+
     if is_chart:
-        playlist_data = await client.get_chart(playlist_id)
         tracks_data = await client.get_chart_tracks(playlist_id, per_page=100)
     else:
-        playlist_data = await client.get_playlist(playlist_id)
         tracks_data = await client.get_playlist_tracks(playlist_id, per_page=100)
 
     tracks = tracks_data.get("results", [])
@@ -412,7 +461,7 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
             metadata['tracks'].append(track_meta)
         except Exception as e:
-           LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di playlist: {e}", exc_info=True)
+           LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di playlist: {e}")
            continue
 
     if not metadata['tracks']:
