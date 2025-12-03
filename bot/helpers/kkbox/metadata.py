@@ -223,6 +223,10 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             if album_data_more and 'info' in album_data_more and 'song_list' in album_data_more:
                 alb_info = album_data_more['info']
                 tracks_list = album_data_more['song_list']['song']
+                
+                # --- PERBAIKAN: Hitung total tracks manual agar tidak 'None' ---
+                alb_info['num_tracks'] = len(tracks_list)
+                # -------------------------------------------------------------
             else:
                 LOGGER.warning(f"KKBox: Respons 'get_album_more' invalid untuk {album_id}. Beralih ke fallback V1.")
         except Exception as e_more:
@@ -271,7 +275,11 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['artist'] = alb_info.get('artist_name')
     metadata['albumartist'] = alb_info.get('artist_name')
     metadata['date'] = alb_info.get('album_date')
-    metadata['totaltracks'] = str(alb_info.get('num_tracks'))
+    
+    # --- PERBAIKAN: Tambahkan default '1' jika key kosong ---
+    metadata['totaltracks'] = str(alb_info.get('num_tracks', 1))
+    # -------------------------------------------------------
+    
     metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
     metadata['explicit'] = bool(alb_info.get('album_is_explicit', False))
     metadata['provider'] = 'KKBox'
