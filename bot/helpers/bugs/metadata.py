@@ -16,7 +16,7 @@ from bot.logger import LOGGER
 # --- PERBAIKAN: Ubah 'AAC 256k' menjadi 'AAC 320k' ---
 QUALITY_MAP_DISPLAY = {
     'flac': ("FLAC 16-bit", "flac"),
-    'aac256': ("AAC 320k", "m4a"), # <--- PERBAIKAN DI SINI
+    'aac256': ("AAC 320k", "m4a"), 
     '320k': ("MP3 320k", "mp3"),
     'aac': ("AAC 128k", "m4a")
 }
@@ -240,9 +240,22 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['artist'] = album_data.get('artists')[0].get('artist_nm')
     metadata['albumartist'] = album_data.get('artists')[0].get('artist_nm')
     
+    # --- PERBAIKAN: Logika Tanggal yang Lebih Kuat ---
     release_date_str = album_data.get('release_ymd')
     if release_date_str:
-        metadata['date'] = datetime.strptime(release_date_str, '%Y%m%d').strftime('%Y-%m-%d')
+        try:
+            # Handle format YYYYMM (6 digit) dengan menambahkan tanggal 01
+            if len(release_date_str) == 6:
+                release_date_str += '01'
+            
+            release_date_obj = datetime.strptime(release_date_str, '%Y%m%d')
+            metadata['date'] = release_date_obj.strftime('%Y-%m-%d')
+            metadata['year'] = release_date_obj.strftime('%Y')
+        except ValueError:
+            LOGGER.warning(f"Bugs: Gagal mem-parsing tanggal rilis album: {release_date_str}")
+            metadata['date'] = None
+            metadata['year'] = None
+    # --- BATAS PERBAIKAN ---
     
     metadata['totaltracks'] = str(album_data.get('track_count'))
     
