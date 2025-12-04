@@ -57,13 +57,10 @@ async def _process_cover(metadata: dict, url_template: str):
     
     return await create_cover_file(url, metadata)
 
-# --- PERBAIKAN: iTunes Fetcher ---
+# --- HELPER: iTunes Fetcher ---
 async def _fetch_itunes_date(artist_name: str, album_name: str):
-    """
-    Mencari tanggal rilis di iTunes jika KKBox kosong.
-    """
+    """Mencari tanggal rilis di iTunes (Fallback Level 2)."""
     try:
-        # Bersihkan nama untuk pencarian
         term = f"{artist_name} {album_name}"
         term = re.sub(r'[^\w\s-]', '', term) 
         
@@ -78,32 +75,42 @@ async def _fetch_itunes_date(artist_name: str, album_name: str):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as resp:
                 if resp.status == 200:
-                    # FIX: content_type=None agar tidak error saat iTunes kirim 'text/javascript'
+                    # content_type=None wajib agar tidak error text/javascript
                     data = await resp.json(content_type=None)
-                    
                     if data.get('resultCount', 0) > 0:
-                        # Format iTunes: 2025-08-20T07:00:00Z -> Ambil 2025-08-20
                         raw_date = data['results'][0].get('releaseDate', '')
                         if raw_date:
                             return raw_date.split('T')[0]
     except Exception as e:
         LOGGER.warning(f"iTunes Fallback Error: {e}")
     return None
-# --------------------------------
 
+# --- HELPER: KKBox Scraper ---
 async def _scrape_kkbox_date(album_id: str):
-    """Fallback Scrape"""
+    """Mencari tanggal rilis di Web KKBox (Fallback Level 1 - Prioritas)."""
+    # Coba beberapa variasi URL region jika perlu, default 'tw/en' biasanya paling lengkap
     url = f"https://www.kkbox.com/tw/en/album/{album_id}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     html = await resp.text()
+                    # Cari pola JSON-LD yang akurat
                     match = re.search(r'"datePublished":\s*"(\d{4}-\d{2}-\d{2})"', html)
                     if match: return match.group(1)
-    except:
-        pass
+                    
+                    # Cari pola Meta Tag
+                    match = re.search(r'property="music:release_date"\s+content="(\d{4}-\d{2}-\d{2})"', html)
+                    if match: return match.group(1)
+                    
+                    # Cari pola Teks Tampilan
+                    match = re.search(r'Release Date\s*:\s*(\d{4}-\d{2}-\d{2})', html)
+                    if match: return match.group(1)
+    except Exception as e:
+        LOGGER.warning(f"Web Scrape Error: {e}")
     return None
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, alb_info_pre: dict = None):
@@ -292,24 +299,34 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata album {album_id}: {e}")
         raise e
 
-    # --- CEK TANGGAL & CARI EXTERNAL (ITUNES) ---
+    # --- PERBAIKAN URUTAN PRIORITAS TANGGAL ---
+    # Prioritas 1: API sudah lengkap? (YYYY-MM-DD) -> OK
+    # Prioritas 2: Web Scraping KKBox (Agar sesuai tampilan KKBox)
+    # Prioritas 3: iTunes (Terakhir, jika KKBox gagal total)
+    
     current_date = alb_info.get('album_date', '')
     
     if not current_date or len(current_date) < 10:
-        LOGGER.info(f"KKBox: Tanggal tidak lengkap ('{current_date}'). Mencari di iTunes...")
+        LOGGER.info(f"KKBox: Tanggal API tidak lengkap ('{current_date}').")
         
-        itunes_date = await _fetch_itunes_date(alb_info['artist_name'], alb_info['album_name'])
+        # 1. Coba Scrape KKBox DULU
+        LOGGER.info("KKBox: Mencoba Web Scraping KKBox (Prioritas Utama)...")
+        scraped_date = await _scrape_kkbox_date(album_id)
         
-        if itunes_date:
-            alb_info['album_date'] = itunes_date
-            LOGGER.info(f"KKBox: Tanggal ditemukan di iTunes! -> {itunes_date}")
+        if scraped_date:
+            alb_info['album_date'] = scraped_date
+            LOGGER.info(f"KKBox: Scrape Berhasil! Menggunakan tanggal KKBox: {scraped_date}")
         else:
-            LOGGER.warning("KKBox: iTunes Fallback gagal/kosong. Mencoba Scraping...")
-            scraped_date = await _scrape_kkbox_date(album_id)
-            if scraped_date:
-                alb_info['album_date'] = scraped_date
-                LOGGER.info(f"KKBox: Scrape Berhasil! -> {scraped_date}")
+            # 2. Jika Scrape Gagal, baru ke iTunes
+            LOGGER.warning("KKBox: Scrape gagal. Mencoba iTunes (Fallback Terakhir)...")
+            itunes_date = await _fetch_itunes_date(alb_info['artist_name'], alb_info['album_name'])
             
+            if itunes_date:
+                alb_info['album_date'] = itunes_date
+                LOGGER.info(f"KKBox: Tanggal ditemukan di iTunes: {itunes_date}")
+            else:
+                LOGGER.warning("KKBox: Semua metode pencarian tanggal gagal.")
+
     # ---------------------------------------------
 
     metadata['itemid'] = album_id
