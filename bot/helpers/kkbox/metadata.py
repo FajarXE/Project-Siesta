@@ -57,50 +57,52 @@ async def _process_cover(metadata: dict, url_template: str):
     
     return await create_cover_file(url, metadata)
 
-# --- HELPER: Multi-Region KKBox Scraper (Improved) ---
+# --- HELPER: Multi-Region KKBox Scraper (Robust Version) ---
 async def _scrape_kkbox_date(album_id: str):
     """
-    Mencoba mengambil tanggal rilis dari halaman web KKBox (SG, MY, TW).
+    Mencoba mengambil tanggal rilis dari halaman web KKBox dengan header lengkap.
     """
-    # Prioritaskan SG dan MY untuk region English yang konsisten
     regions = ['sg', 'my', 'tw', 'hk', 'jp']
     
+    # Header lengkap agar dianggap browser asli
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.google.com/"
     }
 
     async with aiohttp.ClientSession() as session:
         for region in regions:
             url = f"https://www.kkbox.com/{region}/en/album/{album_id}"
             try:
-                async with session.get(url, headers=headers) as resp:
+                async with session.get(url, headers=headers, timeout=10) as resp:
                     if resp.status == 200:
                         html = await resp.text()
                         
-                        # Pola 1: JSON-LD (Paling Akurat)
+                        # Pattern 1: JSON-LD (Paling presisi)
                         match = re.search(r'"datePublished":\s*"(\d{4}-\d{2}-\d{2})"', html)
                         if match: 
-                            LOGGER.info(f"KKBox Scrape: Tanggal JSON ({region}): {match.group(1)}")
+                            LOGGER.info(f"KKBox Scrape ({region}): Found JSON Date {match.group(1)}")
                             return match.group(1)
                         
-                        # Pola 2: Teks Tampilan "Release Date : YYYY-MM-DD"
+                        # Pattern 2: Meta Tag Standard
+                        match = re.search(r'<meta\s+property="music:release_date"\s+content="(\d{4}-\d{2}-\d{2})"', html)
+                        if match: 
+                            LOGGER.info(f"KKBox Scrape ({region}): Found Meta Date {match.group(1)}")
+                            return match.group(1)
+
+                        # Pattern 3: Visible Text (Release Date : YYYY-MM-DD)
                         match = re.search(r'Release Date\s*[:：]\s*(\d{4}-\d{2}-\d{2})', html, re.IGNORECASE)
                         if match: 
-                            LOGGER.info(f"KKBox Scrape: Tanggal Teks ({region}): {match.group(1)}")
+                            LOGGER.info(f"KKBox Scrape ({region}): Found Text Date {match.group(1)}")
                             return match.group(1)
-
-                        # Pola 3: Meta Tag
-                        match = re.search(r'property="music:release_date"\s+content="(\d{4}-\d{2}-\d{2})"', html)
-                        if match: 
-                            LOGGER.info(f"KKBox Scrape: Tanggal Meta ({region}): {match.group(1)}")
-                            return match.group(1)
-
-            except Exception:
+            except Exception as e:
+                # LOGGER.debug(f"Scrape failed for {region}: {e}")
                 continue
                 
     return None
-# ------------------------------------------
+# -----------------------------------------------------------
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, alb_info_pre: dict = None):
     """Memproses metadata untuk satu lagu."""
@@ -162,23 +164,31 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['artist'] = ", ".join(artists)
     metadata['album'] = alb_info.get('album_name', 'Unknown Album')
     
-    # --- LOGIKA TANGGAL TRACK ---
-    # Gunakan tanggal yang dipassing dari alb_info (karena ini mungkin sudah diperbaiki di level album)
-    # Jika tidak ada, cek tanggal track itu sendiri
+    # --- LOGIKA TANGGAL TRACK (STRICT) ---
+    # Prioritas: 
+    # 1. Tanggal Album yang sudah diproses/scrape (alb_info)
+    # 2. Tanggal Track API
+    # 3. Apapun yang ada (jangan kosong)
     
     fixed_alb_date = alb_info.get('album_date')
     track_date = track_data.get('release_date')
     
+    # Default
+    final_date = ""
+
+    # Coba ambil yang paling panjang
     if fixed_alb_date and len(fixed_alb_date) >= 10:
-        metadata['date'] = fixed_alb_date
+        final_date = fixed_alb_date
     elif track_date and len(track_date) >= 10:
-        metadata['date'] = track_date
-    else:
-        # Fallback terakhir, jangan sampai None
-        metadata['date'] = fixed_alb_date or track_date or ""
+        final_date = track_date
+    elif fixed_alb_date: # Walaupun cuma YYYY-MM
+        final_date = fixed_alb_date
+    elif track_date:
+        final_date = track_date
         
-    metadata['year'] = metadata['date'][:4] if metadata['date'] else ""
-    # ----------------------------
+    metadata['date'] = final_date
+    metadata['year'] = final_date[:4] if final_date else ""
+    # -------------------------------------
 
     metadata['tracknumber'] = str(track_data.get('song_idx', 1))
     metadata['totaltracks'] = str(alb_info.get('num_tracks', 1))
@@ -292,23 +302,26 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata album {album_id}: {e}")
         raise e
 
-    # --- PENENTUAN TANGGAL FINAL (ANTI-HILANG) ---
-    # 1. Mulai dengan tanggal API (Baseline)
-    baseline_date = alb_info.get('album_date', '')
+    # --- TANGGAL FINALISASI (NON-DESTRUCTIVE) ---
+    # 1. Simpan apa yang sudah kita punya dari API (Baseline)
+    api_date = alb_info.get('album_date', '')
+    if not api_date: api_date = ""
     
-    # 2. Coba Scraping jika tanggal kurang lengkap
-    if not baseline_date or len(str(baseline_date)) < 10:
-        LOGGER.info(f"KKBox: Tanggal API '{baseline_date}'. Memulai Scraping...")
+    final_date = api_date
+    
+    # 2. Jika tanggal API kurang dari 10 digit, coba Scrape
+    if len(final_date) < 10:
+        LOGGER.info(f"KKBox: Tanggal API '{final_date}'. Memulai Scraping...")
         scraped_date = await _scrape_kkbox_date(album_id)
+        
         if scraped_date:
-            alb_info['album_date'] = scraped_date
-            LOGGER.info(f"KKBox: Tanggal Web Scrape dipakai: {scraped_date}")
+            final_date = scraped_date
+            LOGGER.info(f"KKBox: Scrape Berhasil! Update ke: {scraped_date}")
         else:
-            LOGGER.warning("KKBox: Web Scrape gagal. Tanggal tetap menggunakan baseline.")
+            LOGGER.warning("KKBox: Scrape gagal. Mempertahankan tanggal API.")
     
-    # Update baseline jika berhasil scrape
-    final_date_candidate = alb_info.get('album_date', '')
-    
+    # Penting: Update alb_info agar dipakai oleh proses track di bawah
+    alb_info['album_date'] = final_date
     # ---------------------------------------------
 
     metadata['itemid'] = album_id
@@ -317,9 +330,9 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['artist'] = alb_info.get('artist_name')
     metadata['albumartist'] = alb_info.get('artist_name')
     
-    # Set tanggal. Jangan biarkan None.
-    metadata['date'] = final_date_candidate or ""
-    metadata['year'] = metadata['date'][:4] if metadata['date'] else ""
+    # Set Metadata Utama
+    metadata['date'] = final_date
+    metadata['year'] = final_date[:4] if final_date else ""
     
     metadata['totaltracks'] = str(alb_info.get('num_tracks', 1))
     metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
@@ -338,7 +351,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             track_id = song_data['song_more_url'].split('/')[-1]
             use_pre_data = None if is_fallback_mode else song_data
 
-            # Kirim alb_info yang sudah berisi tanggal hasil scrape
+            # alb_info yang dikirim sudah membawa tanggal final (baik itu lengkap atau parsial)
             track_meta = await process_track_metadata(
                 track_id, r_id, user, 
                 pre_data=use_pre_data, 
@@ -356,20 +369,15 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     
     metadata['quality'] = metadata['tracks'][0]['quality']
 
-    # 3. Final Check: Harvest dari Track jika masih belum lengkap
-    # Ini langkah terakhir. Jika scrape gagal, tapi salah satu track punya tanggal lengkap,
-    # kita ambil tanggal track itu dan timpa tanggal album.
-    if len(str(metadata['date'])) < 10:
-        best_track_date = ""
+    # 3. Final Check: Jika masih belum lengkap, coba cari di track yang baru saja didownload
+    # (Siapa tahu API Track memberikan tanggal lengkap padahal API Album tidak)
+    if len(metadata['date']) < 10:
         for t in metadata['tracks']:
             td = t.get('date', '')
             if td and len(td) >= 10:
-                best_track_date = td
-                break # Cukup ambil satu
-        
-        if best_track_date:
-            metadata['date'] = best_track_date
-            metadata['year'] = best_track_date[:4]
-            LOGGER.info(f"KKBox: Tanggal Album diselamatkan dari Track: {best_track_date}")
+                metadata['date'] = td
+                metadata['year'] = td[:4]
+                LOGGER.info(f"KKBox: Tanggal Album diperbarui dari metadata Track: {td}")
+                break
 
     return metadata
