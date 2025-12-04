@@ -119,14 +119,12 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        # --- PASTIKAN 'release_date' ADA DI SINI ---
         fields_req = 'album,release_date,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
         
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
             'fields': fields_req
         })
-        # -------------------------------------------
         if resp['status']['type'] != 'OK':
             raise self.exception('Track not found')
         return resp['data']['songs']
@@ -135,7 +133,9 @@ class KkboxAPI:
         return self.api_call('ds', f'v1/song/{id}/lyrics')
 
     def get_album(self, id):
-        resp = self.api_call('ds', f'v1/album/{id}')
+        # --- PERBAIKAN: Upgrade ke V2 ---
+        resp = self.api_call('ds', f'v2/album/{id}')
+        # -------------------------------
         if resp['status']['type'] != 'OK':
             raise self.exception('Album not found')
         return resp['data']
@@ -231,6 +231,5 @@ class KkboxAPI:
                 f.write(rc4.decrypt(chunk))
 
     def close_session(self):
-        """Menutup sesi 'requests' internal."""
         if self.s:
             self.s.close()
