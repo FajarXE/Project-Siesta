@@ -45,7 +45,7 @@ async def _process_cover(metadata: dict, url_template: str):
     file_type = "jpg"
     
     url = url_template
-    if not url: return None # Handle jika url kosong
+    if not url: return None 
 
     if size > 2048:
         url = url.replace('fit/{width}x{height}', 'original')
@@ -87,9 +87,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             except Exception as e:
                 LOGGER.warning(f"KKBox (Track): Gagal fetch album info via legacy API. Mencoba fallback ke data track V2.")
                 
-                # --- PERBAIKAN LOGIKA FALLBACK TRACK ---
-                # Menggunakan 'album' dari track_data (yang sudah kita fix di api.py)
-                # Jika masih tidak ada, gunakan dummy agar tidak crash
                 alb_obj = track_data.get('album', {})
                 alb_info = {
                     'album_name': alb_obj.get('name', 'Unknown Album'),
@@ -98,7 +95,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                     'num_tracks': 1, 
                     'album_photo_info': {'url_template': alb_obj.get('images', [{}])[0].get('url', '')}
                 }
-                # ---------------------------------------
 
     except Exception as e:
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata track {track_id}: {e}")
@@ -179,7 +175,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     return metadata
 
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
-    """Memproses metadata untuk satu album (dengan Fallback V1)."""
+    """Memproses metadata untuk satu album (dengan Fallback V1 + Enrichment V2)."""
     client = user['kkbox_api']
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -206,28 +202,17 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 tracks_list = album_data_more['song_list']['song']
                 alb_info['num_tracks'] = len(tracks_list)
             else:
-                LOGGER.warning(f"KKBox: Respons 'get_album_more' invalid untuk {album_id}. Beralih ke fallback V1.")
+                LOGGER.warning(f"KKBox: Respons 'get_album_more' invalid untuk {album_id}. Beralih ke fallback.")
         except Exception as e_more:
-             LOGGER.warning(f"KKBox: Gagal akses 'get_album_more' ({e_more}). Beralih ke fallback V1.")
+             LOGGER.warning(f"KKBox: Gagal akses 'get_album_more' ({e_more}). Beralih ke fallback.")
 
-        # 3. Fallback Logic
+        # 3. Fallback Logic dengan Enrichment (PENTING UNTUK TANGGAL)
         if not alb_info:
             is_fallback_mode = True
-            LOGGER.info(f"KKBox: Menggunakan metadata Fallback (V1) untuk album {album_id}")
+            LOGGER.info(f"KKBox: Memulai Mode Fallback untuk album {album_id}")
             
-            alb_info = {
-                'album_name': v1_data.get('name'),
-                'artist_name': v1_data.get('artist', {}).get('name'),
-                'album_date': v1_data.get('release_date'),
-                'album_is_explicit': v1_data.get('explicit', False),
-                'album_photo_info': {
-                    'url_template': v1_data.get('images', [{}])[0].get('url', '')
-                }
-            }
-            
-            # --- PERBAIKAN LOGIKA EXTRAKSI TRACK V1 ---
+            # A. Ambil list track dari V1
             raw_tracks = v1_data.get('tracks', {})
-            # Handle jika tracks langsung list atau dibungkus 'data'
             if isinstance(raw_tracks, dict) and 'data' in raw_tracks:
                 data_tracks = raw_tracks['data']
             elif isinstance(raw_tracks, list):
@@ -235,23 +220,51 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             else:
                 data_tracks = []
 
+            # B. Coba perkaya data album menggunakan Track Pertama (V2 API)
+            # Ini mengatasi masalah tanggal yang hanya YYYY-MM di V1
+            enriched_alb_data = {}
+            try:
+                if data_tracks:
+                    first_track_id = data_tracks[0].get('id')
+                    if first_track_id:
+                        # Panggil V2 untuk satu lagu saja guna mengambil objek 'album' yang lengkap
+                        v2_songs = await asyncio.to_thread(client.get_songs, [first_track_id])
+                        if v2_songs and 'album' in v2_songs[0]:
+                            enriched_alb_data = v2_songs[0]['album']
+                            LOGGER.info(f"KKBox: Berhasil memperkaya data album dari V2 (Date: {enriched_alb_data.get('release_date')})")
+            except Exception as e_enrich:
+                LOGGER.warning(f"KKBox: Gagal enrichment V2: {e_enrich}")
+
+            # C. Gabungkan data V1 dan Enrichment V2
+            alb_info = {
+                # Gunakan nama dari V2 jika ada, fallback ke V1
+                'album_name': enriched_alb_data.get('name') or v1_data.get('name'),
+                'artist_name': enriched_alb_data.get('artist', {}).get('name') or v1_data.get('artist', {}).get('name'),
+                # INI PERBAIKAN TANGGALNYA: Prioritas V2 Release Date (biasanya lengkap YYYY-MM-DD)
+                'album_date': enriched_alb_data.get('release_date') or v1_data.get('release_date'),
+                'album_is_explicit': v1_data.get('explicit', False),
+                # Gunakan cover art dari V2 (biasanya template resolusi tinggi)
+                'album_photo_info': {
+                    'url_template': enriched_alb_data.get('images', [{}])[0].get('url', '') or v1_data.get('images', [{}])[0].get('url', '')
+                }
+            }
+            
+            # D. Siapkan list track untuk iterasi
             for rt in data_tracks:
                 if 'id' in rt:
                     rt['song_more_url'] = f"https://kkbox.com/song/{rt['id']}"
-                    # Pastikan kita bawa nama artis dari album jika track tidak punya
                     if 'artist' not in rt: 
                         rt['artist'] = {'name': alb_info['artist_name']}
                     tracks_list.append(rt)
             
             alb_info['num_tracks'] = len(tracks_list)
-            # ------------------------------------------
 
     except Exception as e:
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata album {album_id}: {e}")
         raise e
 
     if not alb_info or not tracks_list:
-        raise Exception(f"Gagal mengumpulkan metadata album KKBox (Mode Fallback: {is_fallback_mode}). Cek ketersediaan album di region akun.")
+        raise Exception(f"Gagal mengumpulkan metadata album KKBox (Mode Fallback: {is_fallback_mode}).")
 
     metadata['itemid'] = album_id
     metadata['title'] = alb_info.get('album_name')
@@ -274,8 +287,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         try:
             track_id = song_data['song_more_url'].split('/')[-1]
             
-            # Jika mode fallback, kita set pre_data=None agar process_track_metadata
-            # mengambil data fresh dari V2 (yang sekarang sudah include field 'album')
+            # Set pre_data=None agar process_track_metadata mengambil data fresh dari V2
             use_pre_data = None if is_fallback_mode else song_data
 
             track_meta = await process_track_metadata(
