@@ -6,7 +6,7 @@ import aiohttp
 import asyncio
 import logging
 import os 
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -57,61 +57,54 @@ async def _process_cover(metadata: dict, url_template: str):
     
     return await create_cover_file(url, metadata)
 
-# --- HELPER: iTunes Fetcher ---
-async def _fetch_itunes_date(artist_name: str, album_name: str):
-    """Mencari tanggal rilis di iTunes (Fallback Level 2)."""
-    try:
-        term = f"{artist_name} {album_name}"
-        term = re.sub(r'[^\w\s-]', '', term) 
-        
-        url = "https://itunes.apple.com/search"
-        params = {
-            "term": term,
-            "media": "music",
-            "entity": "album",
-            "limit": 1
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as resp:
-                if resp.status == 200:
-                    # content_type=None wajib agar tidak error text/javascript
-                    data = await resp.json(content_type=None)
-                    if data.get('resultCount', 0) > 0:
-                        raw_date = data['results'][0].get('releaseDate', '')
-                        if raw_date:
-                            return raw_date.split('T')[0]
-    except Exception as e:
-        LOGGER.warning(f"iTunes Fallback Error: {e}")
-    return None
-
-# --- HELPER: KKBox Scraper ---
+# --- HELPER: Multi-Region KKBox Scraper ---
 async def _scrape_kkbox_date(album_id: str):
-    """Mencari tanggal rilis di Web KKBox (Fallback Level 1 - Prioritas)."""
-    # Coba beberapa variasi URL region jika perlu, default 'tw/en' biasanya paling lengkap
-    url = f"https://www.kkbox.com/tw/en/album/{album_id}"
+    """
+    Mencoba mengambil tanggal rilis dari halaman web KKBox.
+    Melakukan iterasi ke berbagai region (SG, MY, TW, HK, JP) untuk mencari tanggal lengkap.
+    """
+    # Urutan prioritas region. 'sg' dan 'my' seringkali memiliki tanggal bahasa Inggris yang jelas.
+    regions = ['sg', 'my', 'tw', 'hk', 'jp']
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
     }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    html = await resp.text()
-                    # Cari pola JSON-LD yang akurat
-                    match = re.search(r'"datePublished":\s*"(\d{4}-\d{2}-\d{2})"', html)
-                    if match: return match.group(1)
-                    
-                    # Cari pola Meta Tag
-                    match = re.search(r'property="music:release_date"\s+content="(\d{4}-\d{2}-\d{2})"', html)
-                    if match: return match.group(1)
-                    
-                    # Cari pola Teks Tampilan
-                    match = re.search(r'Release Date\s*:\s*(\d{4}-\d{2}-\d{2})', html)
-                    if match: return match.group(1)
-    except Exception as e:
-        LOGGER.warning(f"Web Scrape Error: {e}")
+
+    async with aiohttp.ClientSession() as session:
+        for region in regions:
+            url = f"https://www.kkbox.com/{region}/en/album/{album_id}"
+            try:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        html = await resp.text()
+                        
+                        # Pola 1: Teks Tampilan "Release Date : YYYY-MM-DD" (Paling umum di SG/MY)
+                        # Menangani spasi yang mungkin bervariasi
+                        match = re.search(r'Release Date\s*[:：]\s*(\d{4}-\d{2}-\d{2})', html, re.IGNORECASE)
+                        if match: 
+                            LOGGER.info(f"KKBox Scrape: Tanggal ditemukan di region '{region}': {match.group(1)}")
+                            return match.group(1)
+
+                        # Pola 2: JSON-LD Schema
+                        match = re.search(r'"datePublished":\s*"(\d{4}-\d{2}-\d{2})"', html)
+                        if match: 
+                            LOGGER.info(f"KKBox Scrape: Tanggal JSON ditemukan di region '{region}': {match.group(1)}")
+                            return match.group(1)
+                        
+                        # Pola 3: Meta Tag
+                        match = re.search(r'property="music:release_date"\s+content="(\d{4}-\d{2}-\d{2})"', html)
+                        if match: 
+                            LOGGER.info(f"KKBox Scrape: Tanggal Meta ditemukan di region '{region}': {match.group(1)}")
+                            return match.group(1)
+
+            except Exception as e:
+                # Lanjut ke region berikutnya jika error
+                continue
+                
+    LOGGER.warning(f"KKBox Scrape: Gagal menemukan tanggal lengkap di semua region.")
     return None
+# ------------------------------------------
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, alb_info_pre: dict = None):
     """Memproses metadata untuk satu lagu."""
@@ -174,6 +167,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['album'] = alb_info.get('album_name', 'Unknown Album')
     
     # --- LOGIKA TANGGAL TRACK ---
+    # Prioritaskan tanggal yang sudah di-fix di alb_info (hasil scrape)
     fixed_alb_date = alb_info.get('album_date')
     track_date = track_data.get('release_date')
     
@@ -299,34 +293,22 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata album {album_id}: {e}")
         raise e
 
-    # --- PERBAIKAN URUTAN PRIORITAS TANGGAL ---
-    # Prioritas 1: API sudah lengkap? (YYYY-MM-DD) -> OK
-    # Prioritas 2: Web Scraping KKBox (Agar sesuai tampilan KKBox)
-    # Prioritas 3: iTunes (Terakhir, jika KKBox gagal total)
-    
+    # --- CEK TANGGAL (STRATEGI MULTI-REGION SCRAPING) ---
+    # Jika tanggal API kurang dari 10 digit, paksa cari di web
     current_date = alb_info.get('album_date', '')
     
     if not current_date or len(current_date) < 10:
-        LOGGER.info(f"KKBox: Tanggal API tidak lengkap ('{current_date}').")
+        LOGGER.info(f"KKBox: Tanggal API tidak lengkap ('{current_date}'). Memulai Multi-Region Scraping...")
         
-        # 1. Coba Scrape KKBox DULU
-        LOGGER.info("KKBox: Mencoba Web Scraping KKBox (Prioritas Utama)...")
         scraped_date = await _scrape_kkbox_date(album_id)
         
         if scraped_date:
             alb_info['album_date'] = scraped_date
-            LOGGER.info(f"KKBox: Scrape Berhasil! Menggunakan tanggal KKBox: {scraped_date}")
+            LOGGER.info(f"KKBox: Tanggal diperbarui ke: {scraped_date}")
         else:
-            # 2. Jika Scrape Gagal, baru ke iTunes
-            LOGGER.warning("KKBox: Scrape gagal. Mencoba iTunes (Fallback Terakhir)...")
-            itunes_date = await _fetch_itunes_date(alb_info['artist_name'], alb_info['album_name'])
+            LOGGER.warning("KKBox: Gagal menemukan tanggal lengkap via Scraping. Menggunakan tanggal API apa adanya.")
+            # Tidak ada Fallback iTunes agar data konsisten dengan KKBox saja
             
-            if itunes_date:
-                alb_info['album_date'] = itunes_date
-                LOGGER.info(f"KKBox: Tanggal ditemukan di iTunes: {itunes_date}")
-            else:
-                LOGGER.warning("KKBox: Semua metode pencarian tanggal gagal.")
-
     # ---------------------------------------------
 
     metadata['itemid'] = album_id
