@@ -57,13 +57,13 @@ async def _process_cover(metadata: dict, url_template: str):
     
     return await create_cover_file(url, metadata)
 
-# --- FUNGSI TAMBAHAN: CEK ITUNES ---
+# --- PERBAIKAN: iTunes Fetcher ---
 async def _fetch_itunes_date(artist_name: str, album_name: str):
     """
     Mencari tanggal rilis di iTunes jika KKBox kosong.
     """
     try:
-        # Bersihkan nama untuk pencarian (hapus karakter aneh)
+        # Bersihkan nama untuk pencarian
         term = f"{artist_name} {album_name}"
         term = re.sub(r'[^\w\s-]', '', term) 
         
@@ -78,8 +78,10 @@ async def _fetch_itunes_date(artist_name: str, album_name: str):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    if data['resultCount'] > 0:
+                    # FIX: content_type=None agar tidak error saat iTunes kirim 'text/javascript'
+                    data = await resp.json(content_type=None)
+                    
+                    if data.get('resultCount', 0) > 0:
                         # Format iTunes: 2025-08-20T07:00:00Z -> Ambil 2025-08-20
                         raw_date = data['results'][0].get('releaseDate', '')
                         if raw_date:
@@ -87,6 +89,7 @@ async def _fetch_itunes_date(artist_name: str, album_name: str):
     except Exception as e:
         LOGGER.warning(f"iTunes Fallback Error: {e}")
     return None
+# --------------------------------
 
 async def _scrape_kkbox_date(album_id: str):
     """Fallback Scrape"""
@@ -102,7 +105,6 @@ async def _scrape_kkbox_date(album_id: str):
     except:
         pass
     return None
-# -----------------------------------
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, alb_info_pre: dict = None):
     """Memproses metadata untuk satu lagu."""
@@ -165,9 +167,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['album'] = alb_info.get('album_name', 'Unknown Album')
     
     # --- LOGIKA TANGGAL TRACK ---
-    # Prioritas: 1. Tanggal yang sudah di-fix di alb_info (misal dari iTunes)
-    # 2. Tanggal di Track API
-    
     fixed_alb_date = alb_info.get('album_date')
     track_date = track_data.get('release_date')
     
@@ -293,21 +292,19 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata album {album_id}: {e}")
         raise e
 
-    # --- FINAL: CEK TANGGAL & CARI EXTERNAL (ITUNES) ---
+    # --- CEK TANGGAL & CARI EXTERNAL (ITUNES) ---
     current_date = alb_info.get('album_date', '')
     
     if not current_date or len(current_date) < 10:
         LOGGER.info(f"KKBox: Tanggal tidak lengkap ('{current_date}'). Mencari di iTunes...")
         
-        # Panggil iTunes Fallback
         itunes_date = await _fetch_itunes_date(alb_info['artist_name'], alb_info['album_name'])
         
         if itunes_date:
             alb_info['album_date'] = itunes_date
             LOGGER.info(f"KKBox: Tanggal ditemukan di iTunes! -> {itunes_date}")
         else:
-            LOGGER.warning("KKBox: iTunes Fallback gagal. Mencoba Scraping...")
-            # Coba scraping jika iTunes gagal
+            LOGGER.warning("KKBox: iTunes Fallback gagal/kosong. Mencoba Scraping...")
             scraped_date = await _scrape_kkbox_date(album_id)
             if scraped_date:
                 alb_info['album_date'] = scraped_date
