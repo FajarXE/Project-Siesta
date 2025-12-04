@@ -119,15 +119,14 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        # --- PERBAIKAN UTAMA DI SINI ---
-        # Menambahkan 'album' ke dalam fields agar tersedia saat fallback
-        fields_req = 'album,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
+        # --- PERBAIKAN: Tambahkan 'release_date' ke fields ---
+        fields_req = 'album,release_date,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
         
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
             'fields': fields_req
         })
-        # -------------------------------
+        # -----------------------------------------------------
         if resp['status']['type'] != 'OK':
             raise self.exception('Track not found')
         return resp['data']['songs']
