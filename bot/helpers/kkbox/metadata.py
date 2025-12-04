@@ -69,7 +69,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         else:
             songs_list = await asyncio.to_thread(client.get_songs, [track_id])
             if not songs_list:
-                raise KKBoxError(f"Track {track_id} tidak ditemukan (get_songs empty).")
+                raise KKBoxError(f"Track {track_id} tidak ditemukan.")
             track_data = songs_list[0]
 
         if alb_info_pre:
@@ -85,13 +85,12 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                 alb_info = album_data_more['info']
                 alb_info['num_tracks'] = len(album_data_more.get('song_list', {}).get('song', []))
             except Exception as e:
-                LOGGER.warning(f"KKBox (Track): Gagal fetch album info via legacy API. Mencoba fallback ke data track V2.")
-                
+                # LOGGER.warning(f"KKBox: Fallback album info from track data.")
                 alb_obj = track_data.get('album', {})
                 alb_info = {
                     'album_name': alb_obj.get('name', 'Unknown Album'),
                     'artist_name': alb_obj.get('artist', {}).get('name', 'Unknown Artist'),
-                    'album_date': alb_obj.get('release_date', ''),
+                    'album_date': track_data.get('release_date') or alb_obj.get('release_date', ''),
                     'num_tracks': 1, 
                     'album_photo_info': {'url_template': alb_obj.get('images', [{}])[0].get('url', '')}
                 }
@@ -121,16 +120,16 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['artist'] = ", ".join(artists)
     metadata['album'] = alb_info.get('album_name', 'Unknown Album')
     
-    # --- LOGIKA PRIORITAS TANGGAL (TRACK > ALBUM) ---
-    track_date = track_data.get('release_date', '')
-    album_date = alb_info.get('album_date', '')
+    # Prioritaskan Tanggal dari Track jika tersedia
+    t_date = track_data.get('release_date')
+    a_date = alb_info.get('album_date')
     
-    # Pilih tanggal yang paling panjang (YYYY-MM-DD > YYYY-MM > Kosong)
-    if len(track_date) >= len(album_date):
-        metadata['date'] = track_date
+    if t_date and len(t_date) > len(str(a_date or "")):
+         metadata['date'] = t_date
     else:
-        metadata['date'] = album_date
-    # ------------------------------------------------
+         metadata['date'] = a_date
+         
+    metadata['year'] = metadata['date'][:4] if metadata['date'] else ""
 
     metadata['tracknumber'] = str(track_data.get('song_idx', 1))
     metadata['totaltracks'] = str(alb_info.get('num_tracks', 1))
@@ -186,7 +185,10 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     return metadata
 
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
-    """Memproses metadata untuk satu album (dengan Fallback V1 + Aggressive Date Sync)."""
+    """
+    Memproses metadata untuk satu album.
+    Memaksa pencarian tanggal rilis jika data V1 tidak lengkap.
+    """
     client = user['kkbox_api']
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -210,15 +212,13 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 tracks_list = album_data_more['song_list']['song']
                 alb_info['num_tracks'] = len(tracks_list)
             else:
-                LOGGER.warning(f"KKBox: Respons 'get_album_more' invalid untuk {album_id}. Beralih ke fallback.")
-        except Exception as e_more:
-             LOGGER.warning(f"KKBox: Gagal akses 'get_album_more' ({e_more}). Beralih ke fallback.")
+                LOGGER.warning(f"KKBox: Legacy API invalid untuk {album_id}. Menggunakan Fallback.")
+        except Exception:
+             LOGGER.warning(f"KKBox: Legacy API Error. Menggunakan Fallback.")
 
-        # 3. Fallback Logic
+        # 3. Fallback Construction
         if not alb_info:
             is_fallback_mode = True
-            LOGGER.info(f"KKBox: Memulai Mode Fallback untuk album {album_id}")
-            
             raw_tracks = v1_data.get('tracks', {})
             if isinstance(raw_tracks, dict) and 'data' in raw_tracks:
                 data_tracks = raw_tracks['data']
@@ -227,49 +227,72 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             else:
                 data_tracks = []
 
-            # Enrichment awal (opsional, karena nanti akan ditimpa oleh track processing)
-            enriched_alb_name = None
-            enriched_artist_name = None
-            enriched_cover = None
-
-            try:
-                if data_tracks:
-                    first_track_id = data_tracks[0].get('id')
-                    if first_track_id:
-                        v2_songs = await asyncio.to_thread(client.get_songs, [first_track_id])
-                        if v2_songs:
-                            s_data = v2_songs[0]
-                            enriched_alb_name = s_data.get('album', {}).get('name')
-                            enriched_artist_name = s_data.get('album', {}).get('artist', {}).get('name')
-                            enriched_cover = s_data.get('album', {}).get('images', [{}])[0].get('url', '')
-            except Exception:
-                pass
-
             alb_info = {
-                'album_name': enriched_alb_name or v1_data.get('name'),
-                'artist_name': enriched_artist_name or v1_data.get('artist', {}).get('name'),
-                'album_date': v1_data.get('release_date', ''), # Placeholder awal
+                'album_name': v1_data.get('name'),
+                'artist_name': v1_data.get('artist', {}).get('name'),
+                'album_date': v1_data.get('release_date', ''),
                 'album_is_explicit': v1_data.get('explicit', False),
                 'album_photo_info': {
-                    'url_template': enriched_cover or v1_data.get('images', [{}])[0].get('url', '')
+                    'url_template': v1_data.get('images', [{}])[0].get('url', '')
                 }
             }
             
+            # Buat list track dasar
             for rt in data_tracks:
                 if 'id' in rt:
                     rt['song_more_url'] = f"https://kkbox.com/song/{rt['id']}"
                     if 'artist' not in rt: 
                         rt['artist'] = {'name': alb_info['artist_name']}
                     tracks_list.append(rt)
-            
             alb_info['num_tracks'] = len(tracks_list)
 
     except Exception as e:
         LOGGER.error(f"KKBox: Gagal mendapatkan metadata album {album_id}: {e}")
         raise e
 
-    if not alb_info or not tracks_list:
-        raise Exception(f"Gagal mengumpulkan metadata album KKBox (Mode Fallback: {is_fallback_mode}).")
+    # --- BAGIAN KRUSIAL: PERBAIKAN TANGGAL (Brute Force Check) ---
+    current_date = alb_info.get('album_date', '')
+    
+    # Jika tanggal kosong ATAU panjangnya kurang dari 10 (misal "2025-08"), kita cari yang lengkap
+    if not current_date or len(current_date) < 10:
+        LOGGER.info(f"KKBox: Tanggal album tidak lengkap ('{current_date}'). Mencari di detail lagu...")
+        
+        # Cek track pertama (biasanya cukup)
+        if tracks_list:
+            try:
+                # Ambil ID track pertama
+                first_track_id = None
+                if 'id' in tracks_list[0]:
+                    first_track_id = tracks_list[0]['id']
+                elif 'song_more_url' in tracks_list[0]:
+                    first_track_id = tracks_list[0]['song_more_url'].split('/')[-1]
+                
+                if first_track_id:
+                    # Request Metadata V2 untuk track ini
+                    track_details = await asyncio.to_thread(client.get_songs, [first_track_id])
+                    
+                    if track_details:
+                        t_meta = track_details[0]
+                        
+                        # Cek tanggal di berbagai tempat
+                        date_candidates = []
+                        if t_meta.get('release_date'): 
+                            date_candidates.append(t_meta['release_date'])
+                        if t_meta.get('album', {}).get('release_date'): 
+                            date_candidates.append(t_meta['album']['release_date'])
+                            
+                        # Urutkan dari yang terpanjang (YYYY-MM-DD > YYYY-MM)
+                        full_dates = [d for d in date_candidates if len(d) >= 10]
+                        
+                        if full_dates:
+                            new_date = full_dates[0]
+                            alb_info['album_date'] = new_date
+                            LOGGER.info(f"KKBox: DITEMUKAN Tanggal Lengkap: {new_date}")
+                        else:
+                            LOGGER.warning("KKBox: Tidak ada tanggal lengkap ditemukan di track V2.")
+            except Exception as e:
+                LOGGER.error(f"KKBox: Gagal mencari tanggal track: {e}")
+    # -------------------------------------------------------------
 
     metadata['itemid'] = album_id
     metadata['title'] = alb_info.get('album_name')
@@ -277,8 +300,8 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['artist'] = alb_info.get('artist_name')
     metadata['albumartist'] = alb_info.get('artist_name')
     
-    # Tanggal sementara (akan di-update setelah loop tracks)
     metadata['date'] = alb_info.get('album_date')
+    metadata['year'] = metadata['date'][:4] if metadata['date'] else ""
     
     metadata['totaltracks'] = str(alb_info.get('num_tracks', 1))
     metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
@@ -291,17 +314,16 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['thumbnail'] = await create_cover_file(cover_template.replace('{width}', '80').replace('{height}', '80').replace('{format}', 'jpg'), metadata, True)
 
     metadata['tracks'] = []
-    
-    # --- PROSES TRACKS ---
     for song_data in tracks_list:
         try:
             track_id = song_data['song_more_url'].split('/')[-1]
+            # Kirim alb_info yang sudah diperbaiki tanggalnya ke process_track_metadata
             use_pre_data = None if is_fallback_mode else song_data
 
             track_meta = await process_track_metadata(
                 track_id, r_id, user, 
                 pre_data=use_pre_data, 
-                alb_info_pre=alb_info
+                alb_info_pre=alb_info 
             )
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
@@ -312,20 +334,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
-    
-    # --- LOGIKA FINAL: UPDATE TANGGAL ALBUM DARI TRACKS TERBAIK ---
-    # Cari tanggal dengan format terpanjang di antara semua lagu yang berhasil diunduh
-    best_date = metadata['date']
-    for t in metadata['tracks']:
-        t_date = t.get('date', '')
-        # Jika track punya tanggal lebih lengkap (misal: YYYY-MM-DD vs YYYY-MM), ambil itu
-        if t_date and len(t_date) > len(best_date or ""):
-            best_date = t_date
-    
-    if best_date and best_date != metadata['date']:
-        LOGGER.info(f"KKBox: Mengupdate tanggal album dari {metadata['date']} ke {best_date} (berdasarkan track)")
-        metadata['date'] = best_date
-    # -------------------------------------------------------------
     
     metadata['quality'] = metadata['tracks'][0]['quality']
     return metadata
