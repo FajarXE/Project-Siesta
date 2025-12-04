@@ -2,13 +2,12 @@
 
 import json
 import re
-import requests # Impor requests standar
-from requests.adapters import HTTPAdapter # --- PENINGKATAN POOL ---
+import requests 
+from requests.adapters import HTTPAdapter
 from time import time, sleep
 from random import randrange
 from Cryptodome.Cipher import ARC4
 from Cryptodome.Hash import MD5
-# Hapus 'from tqdm import tqdm'
 
 class KkboxAPI:
     def __init__(self, exception, kc1_key, secret_key, kkid = None):
@@ -25,12 +24,9 @@ class KkboxAPI:
         
         self.s = requests.Session() 
         
-        # --- PENINGKATAN POOL ---
-        # Tingkatkan ukuran pool untuk menangani unduhan album bersamaan
         adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
         self.s.mount('http://', adapter)
         self.s.mount('https://', adapter)
-        # --- BATAS PENINGKATAN ---
         
         self.s.headers.update({
             'user-agent': 'okhttp/3.14.9'
@@ -123,12 +119,15 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        # --- PERBAIKAN: Menghapus 'fields' composer yang tidak berguna ---
+        # --- PERBAIKAN UTAMA DI SINI ---
+        # Menambahkan 'album' ke dalam fields agar tersedia saat fallback
+        fields_req = 'album,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
+        
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
-            'fields': 'artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
+            'fields': fields_req
         })
-        # --- BATAS PERBAIKAN ---
+        # -------------------------------
         if resp['status']['type'] != 'OK':
             raise self.exception('Track not found')
         return resp['data']['songs']
@@ -232,11 +231,7 @@ class KkboxAPI:
             for chunk in resp.iter_content(chunk_size=4096):
                 f.write(rc4.decrypt(chunk))
 
-    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
     def close_session(self):
         """Menutup sesi 'requests' internal."""
         if self.s:
             self.s.close()
-            # LOGGER.debug(f"KKBoxAPI (SID: {self.sid[:5]}...): Sesi 'requests' ditutup.")
-            # Tidak bisa log dari sini karena tidak punya akses ke LOGGER
-    # --- AKHIR TAMBAHAN ---
