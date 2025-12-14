@@ -22,7 +22,6 @@ from ..metadata import set_metadata
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    """Membersihkan nama file dari karakter ilegal."""
     return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -72,7 +71,6 @@ async def start_album(album_id, user, upload=True):
     }
     
     task_results = await run_concurrent_tasks(tasks, update_details)
-    
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
     album_meta['tracks'] = successful_tracks
     
@@ -118,20 +116,18 @@ async def download_track(track_meta, user, folderpath):
     # 3. Pathing
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
     safe_filename = safe_name(raw_filename)
-    filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     
-    meta['filepath'] = filepath
+    # Path Akhir (FLAC)
+    final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
+    # Path Sementara (TS Encrypted Container) - Kita gabung manual ke sini dulu
+    temp_ts_path = os.path.join(folderpath, f"{safe_filename}_temp.ts")
     
-    # Folder temporary untuk menyimpan segmen pecahan
-    temp_seg_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
-    if os.path.exists(temp_seg_dir):
-        shutil.rmtree(temp_seg_dir)
-    os.makedirs(temp_seg_dir, exist_ok=True)
-
+    meta['filepath'] = final_filepath
+    
     if not os.path.isdir(folderpath):
         os.makedirs(folderpath, exist_ok=True)
 
-    # 4. Download & Decrypt Loop
+    # 4. Download Loop
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -139,23 +135,8 @@ async def download_track(track_meta, user, folderpath):
                 return False
             m3u8_content = await resp.text()
             
-        # DEBUG: Log Key line untuk memastikan IV
-        for line in m3u8_content.splitlines():
-            if line.startswith("#EXT-X-KEY"):
-                LOGGER.info(f"[DEBUG M3U8] {meta['title']} Key Line: {line}")
-
-        # Cari Sequence Awal
-        start_seq = 1
-        custom_iv = None
-        
-        # Cek apakah ada IV eksplisit di M3U8
-        # Contoh: #EXT-X-KEY:METHOD=AES-128,URI="...",IV=0x123...
-        key_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
-        if key_match:
-            iv_hex = key_match.group(1)
-            custom_iv = bytes.fromhex(iv_hex)
-            LOGGER.info(f"[DEBUG IV] Found Explicit IV in M3U8: {iv_hex}")
-
+        # Parse Sequence
+        start_seq = 0 # DEFAULT 0 (Ini penting!)
         for line in m3u8_content.splitlines():
             if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
                 try:
@@ -163,102 +144,91 @@ async def download_track(track_meta, user, folderpath):
                 except:
                     pass
                 break
+                
+        # Parse Explicit IV (Jaga-jaga)
+        custom_iv = None
+        iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
+        if iv_match:
+            custom_iv = bytes.fromhex(iv_match.group(1))
 
         segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
-        segment_files = []
-
-        for index, seg_url in enumerate(segments):
-            seg_filename = os.path.join(temp_seg_dir, f"{index:04d}.ts")
-            success = False
-            
-            for _ in range(3): # Retry logic
-                try:
-                    async with client.session.get(seg_url) as seg_resp:
-                        if seg_resp.status == 200:
-                            encrypted_data = await seg_resp.read()
-                            
-                            # LOGIKA IV:
-                            # 1. Jika ada IV di M3U8, gunakan itu (Static).
-                            # 2. Jika tidak, gunakan Sequence Number (Dynamic per segmen).
-                            if custom_iv:
-                                iv = custom_iv
-                            else:
-                                current_seq = start_seq + index
-                                iv = current_seq.to_bytes(16, byteorder='big')
-                            
-                            # Reset Cipher untuk setiap segmen (Standard HLS untuk file pecahan)
-                            cipher = AES.new(key, AES.MODE_CBC, iv)
-                            decrypted_data = cipher.decrypt(encrypted_data)
-                            
-                            async with aiofiles.open(seg_filename, 'wb') as f_seg:
-                                await f_seg.write(decrypted_data)
-                            
-                            segment_files.append(seg_filename)
-                            success = True
-                            break
-                except Exception as e:
-                    # LOGGER.error(f"Seg dl error: {e}")
-                    pass
-            
-            if not success:
-                LOGGER.error(f"Failed to download segment {index} for {meta['title']}")
-                # Clean up and fail
-                shutil.rmtree(temp_seg_dir)
-                return False
-
-        # 5. FFmpeg Concatenation (Stitching)
-        # Ini akan menggabungkan semua segmen menjadi satu file FLAC utuh
-        list_txt_path = os.path.join(temp_seg_dir, "list.txt")
-        async with aiofiles.open(list_txt_path, 'w') as f_list:
-            for seg_file in segment_files:
-                # Escape single quotes in filename just in case
-                safe_seg = seg_file.replace("'", "'\\''")
-                await f_list.write(f"file '{safe_seg}'\n")
-
-        # Command FFmpeg
-        # -f concat: format gabung
-        # -safe 0: izinkan path absolut
-        # -c copy: jangan transcode (hanya copy stream audio), sangat cepat
-        cmd = [
-            'ffmpeg', '-y', 
-            '-f', 'concat', 
-            '-safe', '0', 
-            '-i', list_txt_path, 
-            '-c', 'copy', 
-            filepath
-        ]
         
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE
-        )
-        _, stderr = await process.communicate()
+        # Buka file temp .ts untuk ditulis (append mode)
+        async with aiofiles.open(temp_ts_path, 'wb') as f_out:
+            for index, seg_url in enumerate(segments):
+                # Hitung IV untuk segmen ini
+                if custom_iv:
+                    iv = custom_iv
+                else:
+                    # Logic IV Standar HLS: Sequence Number sebagai Big Endian Bytes
+                    current_seq = start_seq + index
+                    iv = current_seq.to_bytes(16, byteorder='big')
+                
+                # Download Retries
+                seg_success = False
+                for _ in range(3):
+                    try:
+                        async with client.session.get(seg_url) as seg_resp:
+                            if seg_resp.status == 200:
+                                encrypted_data = await seg_resp.read()
+                                
+                                # Reset Cipher Setiap Segmen!
+                                cipher = AES.new(key, AES.MODE_CBC, iv)
+                                decrypted_data = cipher.decrypt(encrypted_data)
+                                
+                                await f_out.write(decrypted_data)
+                                seg_success = True
+                                break
+                    except:
+                        continue
+                
+                if not seg_success:
+                    LOGGER.error(f"Gagal download segmen {index} - {meta['title']}")
+                    # Jangan return False, coba lanjut siapa tau segmen lain bisa (best effort)
+                    # Atau return False jika ingin strict.
 
-        if process.returncode != 0:
-            LOGGER.error(f"FFmpeg Error for {meta['title']}: {stderr.decode()}")
-            shutil.rmtree(temp_seg_dir)
-            return False
+        # 5. Convert TS -> FLAC dengan FFmpeg
+        # Ini akan memperbaiki header dan container
+        if os.path.exists(temp_ts_path) and os.path.getsize(temp_ts_path) > 0:
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', temp_ts_path,
+                '-c', 'copy', # Copy stream tanpa re-encode (Cepat)
+                final_filepath
+            ]
             
-        # Hapus folder temporary
-        shutil.rmtree(temp_seg_dir)
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await process.communicate()
+            
+            # Hapus file temp
+            os.remove(temp_ts_path)
+            
+            if process.returncode != 0:
+                LOGGER.error(f"FFmpeg Error: {stderr.decode()}")
+                return False
+        else:
+            return False
 
     except Exception as e:
         LOGGER.error(f"DL Logic Error {meta['title']}: {e}")
-        if os.path.exists(temp_seg_dir):
-            shutil.rmtree(temp_seg_dir)
+        if os.path.exists(temp_ts_path):
+            os.remove(temp_ts_path)
         return False
 
     # 6. Validasi Akhir
-    if not os.path.exists(filepath) or os.path.getsize(filepath) < 1024 * 100: 
-        LOGGER.error(f"File final too small/missing: {filepath}")
+    if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 1024 * 50: 
+        LOGGER.error(f"File final too small/missing: {final_filepath}")
         return False
 
     # 7. Lyrics & Tagging
     try:
         lyrics = await client.get_lyrics(meta['itemid'])
         if lyrics:
-            lrc_path = filepath.rsplit('.', 1)[0] + ".lrc"
+            lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
             async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
                 await f.write(lyrics)
     except:
@@ -267,7 +237,7 @@ async def download_track(track_meta, user, folderpath):
     try:
         await set_metadata(meta, user['user_id'])
     except Exception as e:
-        LOGGER.error(f"Tagging Error {filepath}: {e}")
+        LOGGER.error(f"Tagging Error: {e}")
         pass 
         
     return meta
