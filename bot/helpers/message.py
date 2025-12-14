@@ -144,7 +144,10 @@ async def send_message(user, item, itype='text',
         elif itype == 'doc':
             thumb_path = None
             if meta and meta.get('cover'): 
-                thumb_path = meta['cover']
+                # --- PERBAIKAN: Validasi path cover sebelum dikirim ---
+                if os.path.exists(meta['cover']):
+                    thumb_path = meta['cover']
+                # ----------------------------------------------------
 
             last_update_time = [0] 
 
@@ -182,6 +185,21 @@ async def send_message(user, item, itype='text',
 
         elif itype == 'audio':
             
+            # --- FIX CRITICAL: Validasi Thumbnail Audio ---
+            # Mengatasi error: [Errno 2] No such file or directory: ''
+            thumb_path = None
+            # Cek 'cover' (standar) atau 'thumbnail' (legacy)
+            cover_candidate = meta.get('cover') or meta.get('thumbnail')
+            
+            # Pastikan bukan None dan bukan string kosong, dan file ada di disk
+            if cover_candidate and isinstance(cover_candidate, str):
+                if os.path.exists(cover_candidate):
+                    thumb_path = cover_candidate
+                else:
+                    # LOGGER.warning(f"Thumbnail path not found on disk: {cover_candidate}")
+                    pass
+            # --------------------------------------------
+
             progress_callback = None 
             
             if meta and not meta.get('batch_mode', False) and user.get('bot_msg'):
@@ -221,10 +239,10 @@ async def send_message(user, item, itype='text',
                 chat_id=chat_id,
                 audio=item,
                 caption=caption,
-                duration=int(meta['duration']),
-                performer=meta['artist'],
-                title=meta['title'],
-                thumb=meta['thumbnail'],
+                duration=int(meta.get('duration', 0)),
+                performer=meta.get('artist'),
+                title=meta.get('title'),
+                thumb=thumb_path, # Gunakan thumb_path yang sudah divalidasi
                 reply_to_message_id=user['r_id'],
                 progress=progress_callback
             )
