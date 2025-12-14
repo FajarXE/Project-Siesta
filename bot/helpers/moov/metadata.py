@@ -2,22 +2,54 @@
 
 import copy
 import re
+import urllib.parse
+import aiohttp
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .manager import moov_manager
 from bot.logger import LOGGER
 
-def get_high_res_cover(url):
+async def fetch_itunes_meta(artist, album):
+    """
+    Mencari Metadata & Cover High-Res dari iTunes API
+    """
+    if not artist or not album: return None
+    
+    term = f"{artist} {album}"
+    query = urllib.parse.quote(term)
+    url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=1"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data['resultCount'] > 0:
+                        res = data['results'][0]
+                        
+                        # Ambil Cover HD (Ubah 100x100 menjadi 3000x3000)
+                        raw_art = res.get('artworkUrl100', '')
+                        hd_cover = raw_art.replace('100x100bb', '3000x3000bb')
+                        
+                        return {
+                            'cover_url': hd_cover,
+                            'genre': res.get('primaryGenreName', ''),
+                            'year': res.get('releaseDate', '')[:4], # Ambil tahun saja 2024
+                            'copyright': res.get('copyright', ''),
+                            'composer': '' # iTunes jarang expose composer di level album
+                        }
+    except Exception as e:
+        LOGGER.error(f"iTunes Search Error: {e}")
+        
+    return None
+
+def get_moov_cover(url):
     if not url: return None
-    
+    # Bersihkan query params
     clean_url = url.split("?")[0]
-    
-    # Logic: Ganti resolusi apapun menjadi 1000x1000
-    # Moov pattern: .../resize/350x350/...
+    # Coba paksa resolusi jika pola dikenali, tapi jangan agresif
     if "resize" in clean_url:
-        clean_url = re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
-    
-    # Jika tidak ada resize pattern, biarkan (biasanya sudah source)
+        return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
     return clean_url
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
@@ -34,50 +66,48 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['disk'] = str(track_data.get('discNo', 1))
     metadata['tracknumber'] = str(track_data.get('trackNo', 1))
     
-    # --- COMPOSER EXTRACTION ---
-    composers = track_data.get('composers', [])
-    if composers:
-        metadata['composer'] = ", ".join([c.get('name') for c in composers])
-    elif track_data.get('author'):
-        metadata['composer'] = track_data.get('author')
-    else:
-        # Coba wariskan dari album jika tidak ada di track
-        metadata['composer'] = ""
+    # --- COMPOSER ---
+    # Cek di Moov dulu
+    comp_list = []
+    for c in track_data.get('composers', []):
+        comp_list.append(c.get('name'))
+    
+    if not comp_list and track_data.get('author'):
+        comp_list.append(track_data.get('author'))
         
+    metadata['composer'] = ", ".join(comp_list)
+    
     raw_copyright = track_data.get('cnote')
     metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
 
-    # Wariskan data Album
+    # Wariskan data Album (yang mungkin sudah diperkaya iTunes)
     if album_meta:
         metadata['albumartist'] = album_meta.get('artist', '')
+        # Gunakan data album jika track kosong
         metadata['year'] = album_meta.get('year', '')
         metadata['genre'] = album_meta.get('genre', '')
-        # Jika track tidak punya cover, pakai cover album
+        if not metadata['copyright']:
+            metadata['copyright'] = album_meta.get('copyright', '')
+            
+        # Inherit Cover URL dari Album (Prioritas iTunes)
         if not cover and album_meta.get('cover_url'):
              metadata['cover_url'] = album_meta.get('cover_url')
     
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- COVER LOGIC ---
-    # Kita simpan URL High Res secara terpisah untuk Handler
+    # Jika track punya cover spesifik (jarang), proses disini
     if cover:
         metadata['cover'] = cover
-        # Jika cover sudah didownload di level album, URLnya mungkin ada di album_meta
-        if album_meta:
-            metadata['cover_url'] = album_meta.get('cover_url')
-    else:
+    elif not metadata.get('cover_url'):
         images = track_data.get('images', [])
         if images:
             raw_url = images[0].get('path')
-            hd_url = get_high_res_cover(raw_url)
-            
-            # PENTING: Simpan URL ini!
-            metadata['cover_url'] = hd_url 
-            # Download file lokal untuk Poster Telegram
-            metadata['cover'] = await create_cover_file(hd_url, metadata)
-    # -------------------
+            metadata['cover_url'] = get_moov_cover(raw_url)
+            # Download lokal
+            metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
+    # Quality Logic
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
     
@@ -107,25 +137,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['title'] = titles[0] if titles else "Unknown Album"
     metadata['album'] = metadata['title']
     
-    # Parsing Year
-    metadata['year'] = ""
-    if len(titles) > 2:
-        try:
-            metadata['year'] = titles[2].split('-')[0]
-        except: pass
-    if not metadata['year']:
-        pdate = str(album_data.get('publishDate', ''))
-        if pdate: metadata['year'] = pdate.split('-')[0]
-
-    # --- GENRE EXTRACTION ---
-    genres = album_data.get('genres', [])
-    if genres:
-        metadata['genre'] = ", ".join([g.get('name') for g in genres])
-    elif album_data.get('category'):
-        metadata['genre'] = album_data.get('category')
-    else:
-        metadata['genre'] = ""
-
     artists = album_data.get('artists', [])
     metadata['artist'] = ", ".join([a.get('name') for a in artists])
     metadata['albumartist'] = metadata['artist']
@@ -133,16 +144,51 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['provider'] = 'Moov'
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
-    
+
+    # --- AMBIL DATA MOOV BASIC ---
+    moov_year = ""
+    if len(titles) > 2:
+        try: moov_year = titles[2].split('-')[0]
+        except: pass
+    if not moov_year:
+        pdate = str(album_data.get('publishDate', ''))
+        if pdate: moov_year = pdate.split('-')[0]
+    metadata['year'] = moov_year
+
+    genres = album_data.get('genres', [])
+    if genres:
+        metadata['genre'] = ", ".join([g.get('name') for g in genres])
+    else:
+        metadata['genre'] = album_data.get('category', "")
+        
+    # Ambil Cover Moov Original (350x350) sebagai cadangan
+    moov_cover_url = None
     images = album_data.get('images', [])
     if images:
-        raw_url = images[0].get('path')
-        hd_url = get_high_res_cover(raw_url)
+        moov_cover_url = get_moov_cover(images[0].get('path'))
+
+    # --- INTELLIGENT SEARCH (ITUNES FALLBACK) ---
+    # Jika Genre kosong ATAU Cover kemungkinan kecil -> Cari di iTunes
+    itunes_data = await fetch_itunes_meta(metadata['artist'], metadata['album'])
+    
+    if itunes_data:
+        LOGGER.info(f"[ITUNES] Found match for {metadata['album']}")
+        # Prioritas Data iTunes (lebih lengkap/HD)
+        metadata['cover_url'] = itunes_data['cover_url']
         
-        # PENTING: Simpan URL High Res
-        metadata['cover_url'] = hd_url
-        # Download untuk poster
-        metadata['cover'] = await create_cover_file(hd_url, metadata)
+        if not metadata['genre']: 
+            metadata['genre'] = itunes_data['genre']
+        if not metadata['year']: 
+            metadata['year'] = itunes_data['year']
+        if not metadata.get('copyright'):
+            metadata['copyright'] = itunes_data['copyright']
+    else:
+        # Fallback ke Moov jika iTunes tidak ketemu
+        metadata['cover_url'] = moov_cover_url
+
+    # Download Cover (Entah dari iTunes atau Moov) untuk Poster
+    if metadata.get('cover_url'):
+        metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
         
     metadata['tracks'] = []
     modules = album_data.get('modules', [])
