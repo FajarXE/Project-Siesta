@@ -123,7 +123,7 @@ async def download_track(track_meta, user, folderpath):
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     meta['filepath'] = final_filepath
     
-    # Simpan Key (untuk dibaca FFmpeg)
+    # Simpan Key
     key_filepath = os.path.join(track_temp_dir, "key.bin")
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
@@ -135,7 +135,6 @@ async def download_track(track_meta, user, folderpath):
             if resp.status != 200: return False
             m3u8_content = await resp.text()
 
-        # Parse M3U8 Asli
         target_duration = 10
         media_sequence = 0
         
@@ -148,11 +147,8 @@ async def download_track(track_meta, user, folderpath):
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
-        # Download segmen mentah (Terenkripsi)
         for index, seg_url in enumerate(remote_segments):
-            # PERBAIKAN PENTING: Ekstensi harus .flac agar FFmpeg mengenalinya sebagai FLAC setelah dekripsi
-            # FFmpeg HLS demuxer akan memeriksa header setelah dekripsi. Jika header FLAC tapi ekstensi .ts, dia error.
-            # Jika ekstensi .flac, dia akan terima.
+            # Kita gunakan ekstensi .flac agar FFmpeg tahu ini adalah stream FLAC
             seg_name = f"seg_{index:04d}.flac"
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
@@ -171,14 +167,13 @@ async def download_track(track_meta, user, folderpath):
                     continue
             
             if not success:
-                LOGGER.error(f"Gagal download segmen RAW {index}")
                 shutil.rmtree(track_temp_dir)
                 return False
 
         # 5. Buat Local M3U8
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         
-        # Cek IV di M3U8 asli
+        # IV logic
         iv_line = ""
         iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
         if iv_match:
@@ -189,7 +184,6 @@ async def download_track(track_meta, user, folderpath):
             await f.write("#EXT-X-VERSION:3\n")
             await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
             await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
-            # Point to local key
             await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
             
             for seg_name in local_segment_names:
@@ -198,14 +192,16 @@ async def download_track(track_meta, user, folderpath):
             
             await f.write("#EXT-X-ENDLIST\n")
 
-        # 6. FFmpeg Processing
-        # -allowed_extensions ALL: Wajib agar FFmpeg mau membaca ekstensi .flac dalam list m3u8
+        # 6. FFmpeg Processing (RE-ENCODE)
+        # --- PERUBAHAN PENTING ---
+        # Menghapus '-c copy'. Kita biarkan FFmpeg men-decode dan meng-encode ulang.
+        # Ini akan membersihkan header berulang dan menjamin file durasi penuh.
         cmd = [
             'ffmpeg', '-y',
-            '-allowed_extensions', 'ALL', 
+            '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-            '-c', 'copy', # Copy stream (menjahit FLAC frames tanpa re-encode)
+            # '-c', 'copy',  <-- DIBUANG AGAR RE-ENCODE
             final_filepath
         ]
         
@@ -216,11 +212,11 @@ async def download_track(track_meta, user, folderpath):
         )
         _, stderr = await process.communicate()
         
-        # Bersihkan temp
+        # Bersihkan folder temp
         shutil.rmtree(track_temp_dir)
         
         if process.returncode != 0:
-            LOGGER.error(f"FFmpeg HLS Error {meta['title']}: {stderr.decode()}")
+            LOGGER.error(f"FFmpeg Error {meta['title']}: {stderr.decode()}")
             return False
 
     except Exception as e:
@@ -228,7 +224,7 @@ async def download_track(track_meta, user, folderpath):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
 
-    # 7. Validasi & Tagging
+    # 7. Validasi
     if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 1024 * 50: 
         LOGGER.error(f"File final too small/missing: {final_filepath}")
         return False
