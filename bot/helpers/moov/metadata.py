@@ -16,12 +16,12 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None)
     metadata['artist'] = ", ".join([a.get('name') for a in artists])
     
     # Album & Copyright
-    metadata['album'] = track_data.get('albumTitle')
+    metadata['album'] = track_data.get('albumTitle') or ""
     
     raw_copyright = track_data.get('cnote')
     metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
 
-    metadata['label'] = track_data.get('albumLabel')
+    metadata['label'] = track_data.get('albumLabel') or ""
     
     # Track Number
     # Note: Moov tidak selalu return track number eksplisit di list produk, 
