@@ -6,7 +6,6 @@ import shutil
 import asyncio
 import aiofiles
 import hashlib
-from Cryptodome.Cipher import AES 
 from config import Config
 from bot.logger import LOGGER
 from ..message import edit_message
@@ -18,7 +17,8 @@ from ..utils import (
 from ..uploder import album_upload
 from ..metadata import set_metadata
 
-# Rahasia statis
+# Rahasia statis (Masih diperlukan untuk Key Derivation jika Moov pakai custom logic, 
+# tapi di sini kita ambil key dari API dan simpan ke file)
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
@@ -105,11 +105,11 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"Failed stream {meta['title']}: {e}")
         return False
 
-    # 2. Key Derivation
+    # 2. Key Processing (Simpan Key ke file fisik untuk FFmpeg)
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
-        key = bytes.fromhex(m.hexdigest())
+        key_bytes = bytes.fromhex(m.hexdigest())
     except:
         return False
 
@@ -117,114 +117,130 @@ async def download_track(track_meta, user, folderpath):
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
     safe_filename = safe_name(raw_filename)
     
-    # Path Akhir (FLAC)
+    # Folder sementara untuk menyimpan M3U8, Key, dan Segmen
+    track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
+    if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
+    os.makedirs(track_temp_dir, exist_ok=True)
+
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
-    # Path Sementara (TS Encrypted Container) - Kita gabung manual ke sini dulu
-    temp_ts_path = os.path.join(folderpath, f"{safe_filename}_temp.ts")
-    
     meta['filepath'] = final_filepath
     
-    if not os.path.isdir(folderpath):
-        os.makedirs(folderpath, exist_ok=True)
+    # Simpan Key ke file bin
+    key_filepath = os.path.join(track_temp_dir, "key.bin")
+    async with aiofiles.open(key_filepath, 'wb') as f:
+        await f.write(key_bytes)
 
-    # 4. Download Loop
+    # 4. Download Segments (RAW ENCRYPTED)
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
-            if resp.status != 200:
-                return False
+            if resp.status != 200: return False
             m3u8_content = await resp.text()
-            
-        # Parse Sequence
-        start_seq = 0 # DEFAULT 0 (Ini penting!)
+
+        # Ambil Metadata HLS (Sequence, Target Duration, dll)
+        # Kita akan membangun ulang M3U8 lokal yang bersih
+        
+        target_duration = 10
+        media_sequence = 0
+        
         for line in m3u8_content.splitlines():
-            if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+            if line.startswith("#EXT-X-TARGETDURATION"):
+                target_duration = line.split(":")[1].strip()
+            if line.startswith("#EXT-X-MEDIA-SEQUENCE"):
+                media_sequence = int(line.split(":")[1].strip())
+
+        # Ambil semua segmen URL
+        remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
+        local_segment_names = []
+        
+        # Download Loop (Tanpa Dekripsi Python)
+        for index, seg_url in enumerate(remote_segments):
+            seg_name = f"seg_{index:04d}.ts"
+            seg_path = os.path.join(track_temp_dir, seg_name)
+            local_segment_names.append(seg_name)
+            
+            success = False
+            for _ in range(3):
                 try:
-                    start_seq = int(line.split(":")[1].strip())
+                    async with client.session.get(seg_url) as seg_resp:
+                        if seg_resp.status == 200:
+                            data = await seg_resp.read()
+                            async with aiofiles.open(seg_path, 'wb') as f:
+                                await f.write(data)
+                            success = True
+                            break
                 except:
-                    pass
-                break
-                
-        # Parse Explicit IV (Jaga-jaga)
-        custom_iv = None
+                    continue
+            
+            if not success:
+                LOGGER.error(f"Gagal download segmen RAW {index}")
+                shutil.rmtree(track_temp_dir)
+                return False
+
+        # 5. Buat Local M3U8
+        # Ini triknya: Kita buat M3U8 yang menunjuk ke Key lokal dan Segmen lokal
+        # FFmpeg akan membaca ini dan menangani dekripsi secara otomatis & benar.
+        
+        local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
+        
+        # Cek apakah ada IV manual di original m3u8
+        iv_line = ""
         iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
         if iv_match:
-            custom_iv = bytes.fromhex(iv_match.group(1))
+            iv_line = f",IV=0x{iv_match.group(1)}"
+            
+        async with aiofiles.open(local_m3u8_path, 'w') as f:
+            await f.write("#EXTM3U\n")
+            await f.write("#EXT-X-VERSION:3\n")
+            await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
+            await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
+            
+            # Key Definition (Local File)
+            # PENTING: URI="key.bin" agar FFmpeg mengambil dari folder yang sama
+            await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
+            
+            for seg_name in local_segment_names:
+                await f.write(f"#EXTINF:{target_duration},\n")
+                await f.write(f"{seg_name}\n")
+            
+            await f.write("#EXT-X-ENDLIST\n")
 
-        segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
+        # 6. FFmpeg Processing (Decrypt & Stitch)
+        # -allowed_extensions ALL: Mengizinkan FFmpeg membaca .bin dan .ts lokal
+        # -protocol_whitelist: Keamanan FFmpeg, kita izinkan file lokal
+        cmd = [
+            'ffmpeg', '-y',
+            '-allowed_extensions', 'ALL',
+            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+            '-i', local_m3u8_path,
+            '-c', 'copy', # Stream copy (Lossless, cepat)
+            final_filepath
+        ]
         
-        # Buka file temp .ts untuk ditulis (append mode)
-        async with aiofiles.open(temp_ts_path, 'wb') as f_out:
-            for index, seg_url in enumerate(segments):
-                # Hitung IV untuk segmen ini
-                if custom_iv:
-                    iv = custom_iv
-                else:
-                    # Logic IV Standar HLS: Sequence Number sebagai Big Endian Bytes
-                    current_seq = start_seq + index
-                    iv = current_seq.to_bytes(16, byteorder='big')
-                
-                # Download Retries
-                seg_success = False
-                for _ in range(3):
-                    try:
-                        async with client.session.get(seg_url) as seg_resp:
-                            if seg_resp.status == 200:
-                                encrypted_data = await seg_resp.read()
-                                
-                                # Reset Cipher Setiap Segmen!
-                                cipher = AES.new(key, AES.MODE_CBC, iv)
-                                decrypted_data = cipher.decrypt(encrypted_data)
-                                
-                                await f_out.write(decrypted_data)
-                                seg_success = True
-                                break
-                    except:
-                        continue
-                
-                if not seg_success:
-                    LOGGER.error(f"Gagal download segmen {index} - {meta['title']}")
-                    # Jangan return False, coba lanjut siapa tau segmen lain bisa (best effort)
-                    # Atau return False jika ingin strict.
-
-        # 5. Convert TS -> FLAC dengan FFmpeg
-        # Ini akan memperbaiki header dan container
-        if os.path.exists(temp_ts_path) and os.path.getsize(temp_ts_path) > 0:
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', temp_ts_path,
-                '-c', 'copy', # Copy stream tanpa re-encode (Cepat)
-                final_filepath
-            ]
-            
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, stderr = await process.communicate()
-            
-            # Hapus file temp
-            os.remove(temp_ts_path)
-            
-            if process.returncode != 0:
-                LOGGER.error(f"FFmpeg Error: {stderr.decode()}")
-                return False
-        else:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await process.communicate()
+        
+        # Cleanup Temp Folder
+        shutil.rmtree(track_temp_dir)
+        
+        if process.returncode != 0:
+            LOGGER.error(f"FFmpeg HLS Error {meta['title']}: {stderr.decode()}")
             return False
 
     except Exception as e:
         LOGGER.error(f"DL Logic Error {meta['title']}: {e}")
-        if os.path.exists(temp_ts_path):
-            os.remove(temp_ts_path)
+        if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
 
-    # 6. Validasi Akhir
+    # 7. Validasi & Tagging
     if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 1024 * 50: 
         LOGGER.error(f"File final too small/missing: {final_filepath}")
         return False
 
-    # 7. Lyrics & Tagging
     try:
         lyrics = await client.get_lyrics(meta['itemid'])
         if lyrics:
