@@ -350,6 +350,22 @@ class Config:
 #-------------------- 
 # --- BATAS TAMBAHAN ---
 
+# MOOV ACCOUNTS
+     MOOV_ACCOUNTS = []
+     i = 1
+     while True:
+         email = getenv(f"MOOV_EMAIL_{i}")
+         password = getenv(f"MOOV_PASSWORD_{i}")
+         proxy = getenv(f"MOOV_PROXY_{i}") # Format: http://user:pass@host:port
+
+         if email and password and proxy:
+             MOOV_ACCOUNTS.append({"email": email, "password": password, "proxy": proxy})
+             i += 1
+         else:
+             break
+#-------------------- 
+# --- BATAS TAMBAHAN ---
+
 # CONCURRENT
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
