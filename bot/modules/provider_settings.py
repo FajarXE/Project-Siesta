@@ -64,6 +64,14 @@ except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor bugs_manager.")
     bugs_manager = None
 
+# --- TAMBAHAN BARU: Moov Manager ---
+try:
+    from ..helpers.moov.manager import moov_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor moov_manager.")
+    moov_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 @Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
 async def provider_cb(c, cb:CallbackQuery):
@@ -576,3 +584,44 @@ async def bugs_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('BUGS_QUALITY', to_set)
         
         await bugs_cb(c, cb)
+
+
+#----------------
+# MOOV
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^mvP")) 
+async def moov_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "FLAC": "Max (24bit/HR)",
+            "MP3_320": "Std (16bit/LL)"
+        }
+        
+        if not moov_manager or not moov_manager.clients:
+            return await edit_message(cb.message, "Layanan Moov tidak aktif (tidak ada akun).")
+        
+        current = moov_manager.quality 
+
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        acc_info = f"{len(moov_manager.clients)} akun aktif."
+        
+        await edit_message(
+            cb.message,
+            f"**MOOV PANEL**\n\n{acc_info}\nProxy aktif: {bool(moov_manager.clients[0].proxy)}\n\nPilih kualitas default bot:",
+            markup=mv_button(quality)
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^mvQ")) 
+async def moov_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        to_set = cb.data.split('_')[1] # FLAC atau MP3_320
+        
+        if not moov_manager:
+            return await edit_message(cb.message, "Layanan Moov tidak aktif.")
+        
+        moov_manager.quality = to_set
+        await database.set_variable('MOOV_QUALITY', to_set)
+        
+        await moov_cb(c, cb)
