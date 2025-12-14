@@ -184,19 +184,16 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- DEBUG LOG METADATA ---
-        LOGGER.info(f"[DEBUG META] Track: {meta.get('title')} | Year: {meta.get('year')} | Genre: {meta.get('genre')} | Disc: {meta.get('disk')}")
-
-        # --- FFMPEG COMMAND UTAMA (FIX TAGS FLAC) ---
+        # --- FFMPEG COMMAND UTAMA ---
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-            '-i', local_m3u8_path, # Input 0
+            '-i', local_m3u8_path,
         ]
 
         if cover_path and os.path.exists(cover_path):
-            cmd.extend(['-i', cover_path]) # Input 1
+            cmd.extend(['-i', cover_path])
             cmd.extend(['-map', '0:a', '-map', '1:0'])
             cmd.extend(['-disposition:v', 'attached_pic'])
             cmd.extend(['-metadata:s:v', 'title="Album cover"'])
@@ -204,7 +201,8 @@ async def download_track(track_meta, user, folderpath):
         else:
             cmd.extend(['-map', '0:a'])
 
-        # Gunakan TAGS FLAC/VORBIS Standard (Huruf Kapital)
+        # Suntikan Metadata FLAC (Vorbis Comments)
+        # Gunakan huruf besar untuk key agar lebih kompatibel
         cmd.extend([
             '-metadata', f'TITLE={meta.get("title", "")}',
             '-metadata', f'ARTIST={meta.get("artist", "")}',
@@ -212,8 +210,8 @@ async def download_track(track_meta, user, folderpath):
             '-metadata', f'ALBUMARTIST={meta.get("albumartist", "")}',
             '-metadata', f'TRACKNUMBER={meta.get("tracknumber", "")}',
             '-metadata', f'GENRE={meta.get("genre", "")}',
-            '-metadata', f'DATE={meta.get("year", "")}',       # VORBIS: DATE
-            '-metadata', f'DISCNUMBER={meta.get("disk", "")}', # VORBIS: DISCNUMBER
+            '-metadata', f'DATE={meta.get("year", "")}',
+            '-metadata', f'DISCNUMBER={meta.get("disk", "")}',
             '-metadata', f'COMPOSER={meta.get("composer", "")}',
             '-metadata', f'COPYRIGHT={meta.get("copyright", "")}',
             final_filepath
@@ -245,9 +243,12 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(lyrics)
     except: pass
     
-    # Tagging sekunder MUTAGEN (Optional, sebagai backup)
-    try:
-        await set_metadata(meta, user['user_id'])
-    except: pass 
+    # --- NON-AKTIFKAN MUTAGEN ---
+    # Ini untuk memastikan FFmpeg tags tidak tertimpa.
+    # Jika Anda yakin script set_metadata Anda aman, boleh di-uncomment.
+    # Tapi untuk tes ini, biarkan mati.
+    # try:
+    #     await set_metadata(meta, user['user_id'])
+    # except: pass 
         
     return meta
