@@ -1,6 +1,7 @@
 # [GANTI FILE: bot/helpers/moov/handler.py]
 
 import os
+import re
 import aiofiles
 import hashlib
 import traceback
@@ -15,10 +16,15 @@ from ..utils import (
 )
 from ..uploder import album_upload
 from ..metadata import set_metadata
-from pathvalidate import sanitize_filename # Gunakan sanitize_filename, bukan filepath
 
 # Rahasia statis
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
+
+# --- FUNGSI SANITASI MANUAL ---
+def safe_name(name):
+    """Membersihkan nama file dari karakter ilegal (Windows/Linux compatible)."""
+    # Ganti karakter ilegal dengan underscore
+    return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
     if "/album/" not in url:
@@ -44,16 +50,19 @@ async def start_album(album_id, user, upload=True):
     except Exception as e:
         raise Exception(f"Gagal mengambil metadata Moov: {e}")
 
-    # --- PERBAIKAN PATH: Sanitasi per komponen, bukan full path ---
-    # Sanitasi nama artis dan album secara terpisah
-    safe_artist = sanitize_filename(album_meta['artist'])
-    safe_title = sanitize_filename(album_meta['title'])
+    # --- SETUP PATH ABSOLUT ---
+    # Gunakan path absolut penuh agar tidak ada keraguan lokasi file
+    base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
     
-    # Gabungkan dengan base dir tanpa merusak slash '/'
-    album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Moov/{safe_artist}/{safe_title}"
+    # Sanitasi nama folder
+    safe_artist = safe_name(album_meta['artist'])
+    safe_title = safe_name(album_meta['title'])
     
+    # Rakit folder path
+    album_folder = os.path.join(base_dir, str(user['r_id']), "Moov", safe_artist, safe_title)
+    
+    # Simpan ke metadata
     album_meta['folderpath'] = album_folder
-    # -------------------------------------------------------------
 
     if upload:
         from ..utils import post_art_poster
@@ -117,15 +126,15 @@ async def download_track(track_meta, user, folderpath):
         return False
 
     # 3. Pathing & Download
+    # Format nama file dari config
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
+    # Sanitasi manual
+    safe_filename = safe_name(raw_filename)
     
-    # Sanitasi nama file saja
-    safe_filename = sanitize_filename(raw_filename)
-    
-    # Gabung folder dan filename
+    # Path absolut file
     filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     
-    # PENTING: Update metadata dengan path yang benar agar uploader bisa menemukannya
+    # PENTING: Update metadata di memori agar uploader membacanya
     track_meta['filepath'] = filepath
     
     if not os.path.isdir(folderpath):
@@ -134,7 +143,6 @@ async def download_track(track_meta, user, folderpath):
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         
-        # Proxy sudah dihandle oleh connector di mvapi.py, tidak perlu argumen proxy=...
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200:
                 LOGGER.error(f"M3U8 fetch failed: {resp.status}")
@@ -167,8 +175,13 @@ async def download_track(track_meta, user, folderpath):
         return False
 
     # 4. Validasi File Fisik
-    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
-        LOGGER.error(f"File ZONK (0 bytes atau hilang): {filepath}")
+    if not os.path.exists(filepath):
+        LOGGER.error(f"File NOT FOUND on disk after write: {filepath}")
+        return False
+        
+    if os.path.getsize(filepath) == 0:
+        LOGGER.error(f"File EMPTY (0 bytes): {filepath}")
+        os.remove(filepath) # Hapus file kosong
         return False
 
     # 5. Lirik
@@ -183,13 +196,11 @@ async def download_track(track_meta, user, folderpath):
 
     # 6. Tagging
     try:
-        # Pastikan metadata.py SUDAH DIPERBAIKI (copyright issue) 
-        # agar ini tidak fail
         await set_metadata(track_meta, user['user_id'])
     except Exception as e:
         LOGGER.error(f"Tagging failed for {filepath}: {e}")
-        # Jangan return False jika tagging gagal tapi file ada, 
-        # biarkan upload berjalan (file mungkin tanpa cover/meta tapi audio aman)
+        # Jangan return False, biarkan upload berjalan meskipun tagging gagal
+        # (asalkan file audio ada dan bisa diputar)
         pass 
         
     return True
