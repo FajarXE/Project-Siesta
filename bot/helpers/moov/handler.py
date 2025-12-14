@@ -20,10 +20,8 @@ from ..metadata import set_metadata
 # Rahasia statis
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
-# --- FUNGSI SANITASI MANUAL ---
 def safe_name(name):
-    """Membersihkan nama file dari karakter ilegal (Windows/Linux compatible)."""
-    # Ganti karakter ilegal dengan underscore
+    """Membersihkan nama file dari karakter ilegal."""
     return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -45,23 +43,16 @@ async def start_album(album_id, user, upload=True):
         raw_data = await client.get_album_meta(album_id)
         if not raw_data:
             raise Exception("Metadata album kosong/tidak ditemukan.")
-        
         album_meta = await process_album_metadata(raw_data, user['r_id'], user)
     except Exception as e:
         raise Exception(f"Gagal mengambil metadata Moov: {e}")
 
-    # --- SETUP PATH ABSOLUT ---
-    # Gunakan path absolut penuh agar tidak ada keraguan lokasi file
+    # SETUP PATH
     base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
-    
-    # Sanitasi nama folder
     safe_artist = safe_name(album_meta['artist'])
     safe_title = safe_name(album_meta['title'])
-    
-    # Rakit folder path
     album_folder = os.path.join(base_dir, str(user['r_id']), "Moov", safe_artist, safe_title)
     
-    # Simpan ke metadata
     album_meta['folderpath'] = album_folder
 
     if upload:
@@ -69,6 +60,7 @@ async def start_album(album_id, user, upload=True):
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     tasks = []
+    # Kirim referensi track dictionary agar bisa diupdate
     for track in album_meta['tracks']:
         tasks.append(download_track(track, user, album_folder))
 
@@ -81,11 +73,16 @@ async def start_album(album_id, user, upload=True):
     
     task_results = await run_concurrent_tasks(tasks, update_details)
     
+    # Filter sukses
     successful_tracks = [t for t, success in zip(album_meta['tracks'], task_results) if success]
     album_meta['tracks'] = successful_tracks
     
+    # DEBUG: Cek apakah filepath tersimpan di objek metadata sebelum dikirim ke uploader
+    if successful_tracks:
+        LOGGER.info(f"[DEBUG HANDLER] Sample Track Filepath: {successful_tracks[0].get('filepath')}")
+
     if not successful_tracks:
-        raise Exception("Gagal mengunduh semua lagu (File kosong atau gagal decrypt).")
+        raise Exception("Gagal mengunduh semua lagu.")
 
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
@@ -100,91 +97,75 @@ async def start_album(album_id, user, upload=True):
 async def download_track(track_meta, user, folderpath):
     client = user['moov_api']
     
-    # 1. Dapatkan info stream
+    # 1. Stream Info
     try:
         file_meta = await client.get_track_file_meta(track_meta['itemid'], track_meta['moov_quality_code'])
         play_url = file_meta.get('playUrl')
         content_key = file_meta.get('contentKey')
-        
         if not play_url or not content_key:
-            LOGGER.warning(f"Stream info missing for {track_meta['title']}")
             return False
-            
     except Exception as e:
-        LOGGER.error(f"Failed get stream {track_meta['title']}: {e}")
+        LOGGER.error(f"Failed stream {track_meta['title']}: {e}")
         return False
 
-    # 2. Setup Key
+    # 2. Crypto
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
         key = bytes.fromhex(m.hexdigest())
         iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01'
         cipher = AES.new(key, AES.MODE_CBC, iv)
-    except Exception as e:
-        LOGGER.error(f"Crypto setup failed: {e}")
+    except:
         return False
 
-    # 3. Pathing & Download
-    # Format nama file dari config
+    # 3. Pathing
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    # Sanitasi manual
     safe_filename = safe_name(raw_filename)
-    
-    # Path absolut file
     filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     
-    # PENTING: Update metadata di memori agar uploader membacanya
+    # UPDATE METADATA (CRITICAL)
     track_meta['filepath'] = filepath
     
     if not os.path.isdir(folderpath):
         os.makedirs(folderpath, exist_ok=True)
 
+    # 4. Download
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
-        
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200:
-                LOGGER.error(f"M3U8 fetch failed: {resp.status}")
                 return False
             m3u8_content = await resp.text()
             
         segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         
-        if not segments:
-            LOGGER.error(f"No segments found for {track_meta['title']}")
-            return False
-
         async with aiofiles.open(filepath, 'wb') as f_out:
             for seg_url in segments:
                 for _ in range(3):
                     try:
                         async with client.session.get(seg_url) as seg_resp:
                             if seg_resp.status == 200:
-                                encrypted_data = await seg_resp.read()
-                                decrypted_data = cipher.decrypt(encrypted_data)
-                                await f_out.write(decrypted_data)
+                                enc = await seg_resp.read()
+                                dec = cipher.decrypt(enc)
+                                await f_out.write(dec)
                                 break
                     except:
                         continue
-                        
     except Exception as e:
-        LOGGER.error(f"Download loop failed for {track_meta['title']}: {e}")
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        LOGGER.error(f"DL Error {track_meta['title']}: {e}")
         return False
 
-    # 4. Validasi File Fisik
-    if not os.path.exists(filepath):
-        LOGGER.error(f"File NOT FOUND on disk after write: {filepath}")
-        return False
-        
-    if os.path.getsize(filepath) == 0:
-        LOGGER.error(f"File EMPTY (0 bytes): {filepath}")
-        os.remove(filepath) # Hapus file kosong
+    # 5. DEBUGGING & VALIDASI
+    if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+        # LOGGER.info(f"[DEBUG] File Saved: {filepath}")
+        pass
+    else:
+        LOGGER.error(f"[DEBUG] File Missing/Empty: {filepath}")
+        if os.path.exists(folderpath):
+            LOGGER.info(f"[DEBUG] Isi Folder {folderpath}: {os.listdir(folderpath)}")
         return False
 
-    # 5. Lirik
+    # 6. Lyrics & Tagging
     try:
         lyrics = await client.get_lyrics(track_meta['itemid'])
         if lyrics:
@@ -194,13 +175,11 @@ async def download_track(track_meta, user, folderpath):
     except:
         pass
 
-    # 6. Tagging
     try:
         await set_metadata(track_meta, user['user_id'])
     except Exception as e:
-        LOGGER.error(f"Tagging failed for {filepath}: {e}")
-        # Jangan return False, biarkan upload berjalan meskipun tagging gagal
-        # (asalkan file audio ada dan bisa diputar)
+        LOGGER.error(f"Tagging Error {filepath}: {e}")
+        # Tetap return True agar diupload meski tanpa tag
         pass 
         
     return True
