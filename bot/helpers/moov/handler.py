@@ -83,14 +83,16 @@ async def start_album(album_id, user, upload=True):
         await album_upload(album_meta, user)
 
 async def apply_mutagen_tags(filepath, meta, cover_path):
-    """Fungsi khusus untuk menanamkan metadata & cover menggunakan Mutagen"""
+    """
+    Fungsi Tagging Mutagen - Ini akan memaksa penulisan tag dan cover.
+    """
     try:
         audio = FLAC(filepath)
         
-        # 1. Hapus tag lama agar bersih
+        # Bersihkan tag lama
         audio.delete()
         
-        # 2. Tulis Tag Standar
+        # Tulis Tag FLAC Standard (Vorbis Comment)
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
         audio['ALBUM'] = meta.get('album', '')
@@ -102,7 +104,7 @@ async def apply_mutagen_tags(filepath, meta, cover_path):
         audio['COMPOSER'] = meta.get('composer', '')
         audio['COPYRIGHT'] = meta.get('copyright', '')
         
-        # 3. Tanam Cover Art
+        # Embed Cover Art
         if cover_path and os.path.exists(cover_path):
             p = Picture()
             with open(cover_path, 'rb') as f:
@@ -111,11 +113,12 @@ async def apply_mutagen_tags(filepath, meta, cover_path):
             p.mime = 'image/jpeg'
             p.desc = 'Front Cover'
             audio.add_picture(p)
+        else:
+            LOGGER.warning(f"Cover path not found for tagging: {cover_path}")
             
         audio.save()
         
-        # 4. Ambil Durasi Asli untuk Telegram
-        # Ini memperbaiki masalah durasi "-:--" atau "0"
+        # Return durasi asli dari file fisik untuk update metadata Telegram
         return int(audio.info.length)
         
     except Exception as e:
@@ -126,7 +129,6 @@ async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     client = user['moov_api']
     
-    # --- 1. SETUP ---
     try:
         file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
         play_url = file_meta.get('playUrl')
@@ -145,7 +147,6 @@ async def download_track(track_meta, user, folderpath):
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
     safe_filename = safe_name(raw_filename)
     
-    # Direktori Temporary
     track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
     if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
     os.makedirs(track_temp_dir, exist_ok=True)
@@ -153,12 +154,12 @@ async def download_track(track_meta, user, folderpath):
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     meta['filepath'] = final_filepath
     
-    # Key File
     key_filepath = os.path.join(track_temp_dir, "key.bin")
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
 
-    # Cover File (Download Lokal)
+    # --- DOWNLOAD COVER LOKAL ---
+    # Kita download sendiri covernya agar Mutagen bisa memakainya
     cover_local_path = None
     if meta.get('cover'):
         cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
@@ -172,8 +173,9 @@ async def download_track(track_meta, user, folderpath):
                     cover_local_path = None
         except:
             cover_local_path = None
+    # ----------------------------
 
-    # --- 2. DOWNLOAD SEGMENTS ---
+    # DOWNLOAD SEGMENTS
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -228,14 +230,13 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- 3. FFMPEG STITCHING (Clean Audio Only) ---
-        # Kita tidak pasang metadata di sini, biar Mutagen yang handle agar lebih rapi.
+        # --- FFMPEG: HANYA STITCHING (AUDIO BERSIH) ---
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-            '-c', 'flac', # Pastikan re-encode ke FLAC murni
+            '-c', 'flac', # Re-encode untuk audio bersih
             final_filepath
         ]
         
@@ -251,25 +252,21 @@ async def download_track(track_meta, user, folderpath):
 
         if not os.path.exists(final_filepath): return False
 
-        # --- 4. TAGGING (Mutagen) ---
-        # Ini memperbaiki Genre, Composer, dan Cover Art yang hilang
+        # --- TAGGING UTAMA (MUTAGEN) ---
+        # Ini langkah krusial. Tagging dilakukan SETELAH file audio jadi.
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path)
         
-        # --- 5. UPDATE META UNTUK UPLOAD ---
-        # Update durasi agar Telegram menampilkan "3:45" bukan "-:--"
+        # Update metadata untuk Telegram Uploader
         if real_duration > 0:
             meta['duration'] = real_duration
             
-        # Update path cover ke file lokal agar message.py bisa membuat thumbnail
+        # Pindahkan cover ke folder utama (opsional, untuk dikirim sebagai thumbnail terpisah)
         if cover_local_path and os.path.exists(cover_local_path):
-            # Pindahkan cover ke folder utama agar tidak terhapus saat temp dihapus
             final_cover_path = os.path.join(folderpath, f"cover_{meta['itemid']}.jpg")
             shutil.move(cover_local_path, final_cover_path)
             meta['cover'] = final_cover_path
-        else:
-            meta['cover'] = None
 
-        # Tambahan Lirik
+        # Lirik
         try:
             lyrics = await client.get_lyrics(meta['itemid'])
             if lyrics:
