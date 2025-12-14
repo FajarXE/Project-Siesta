@@ -58,12 +58,23 @@ except ImportError:
     logging.warning("UserSettings: Gagal mengimpor bugs_manager.")
     bugs_manager = None
 
+# --- TAMBAHAN BARU: Impor Moov Manager ---
+try:
+    from ..helpers.moov.manager import moov_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor moov_manager.")
+    moov_manager = None
+# --- BATAS TAMBAHAN ---
+
 # --- IMPORT BUTTONS ---
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
-    bugs_button, lyrics_button # <-- TAMBAHAN: lyrics_button
+    bugs_button, lyrics_button,
+    # --- TAMBAHAN BARU: mv_button ---
+    mv_button 
+    # --- BATAS TAMBAHAN ---
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -110,7 +121,7 @@ Choose Menu option bellow:
 
 
 # --- HANDLER UTAMA TOMBOL MENU ---
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs)"))
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs|moov)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -341,6 +352,27 @@ async def uset_cb(client, query, datatype=""):
         if current in quality:
             quality[current] = quality[current] + '✅'
         return await edit_message(query.message, text + "\n(Kualitas FLAC tergantung langganan akun bot)", markup=bugs_button(quality, user_id))
+
+    # --- TAMBAHAN BARU: MOOV MENU ---
+    if data[1] == "moov" or datatype == "moov":
+        text = f"Choose Moov Audio Quality bellow:\n(Moov menyediakan FLAC 16bit & 24bit)"
+        quality = {
+            "FLAC": "Max (24bit/HR)",
+            "MP3_320": "Std (16bit/LL)" # Mapping LL Moov ke tombol MP3_320 agar konsisten UI
+        }
+        if not moov_manager or not moov_manager.clients:
+            return await edit_message(query.message, "Layanan Moov tidak aktif.")
+        
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        current = main_user_dict.get("moov_qual", moov_manager.quality) 
+        
+        await moov_manager.setup_quality(user_id, current)
+        
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        return await edit_message(query.message, text, markup=mv_button(quality, user_id))
+    # --- BATAS TAMBAHAN ---
 
 
 # --- HANDLER SETTING TIDAL SPECIFIC ---
@@ -668,6 +700,31 @@ async def uset_bugs(client, query):
     await uset_cb(client, query, "bugs")
 
 
+# --- TAMBAHAN BARU: HANDLER MOOV SPECIFIC ---
+@Client.on_callback_query(filters.regex("^umvs"))
+async def uset_moov_handler(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    
+    # Data format: umvs_FLAC, umvs_MP3_320
+    to_set = query.data.split('_')[1]
+    
+    if not moov_manager or not moov_manager.clients:
+        await query.answer("Layanan Moov tidak aktif!", show_alert=True)
+        return
+
+    user_id = query.from_user.id
+    
+    # Simpan ke Manager & DB
+    await moov_manager.setup_quality(user_id, to_set) 
+    bot_set.user_data.setdefault(user_id, {})['moov_qual'] = to_set 
+    await database.save_user_settings(user_id, {'moov_qual': to_set})
+    
+    await uset_cb(client, query, "moov")
+# --- BATAS TAMBAHAN ---
+
+
 # --- HANDLER CALLBACK BARU UNTUK LIRIK ---
 @Client.on_callback_query(filters.regex("^uset_ly"))
 async def uset_lyrics_handler(client, query):
@@ -866,11 +923,20 @@ async def debug(c, m):
     else:
         dt_bg += "Tidak ada klien Bugs yang aktif."
 
+    # MOOV DEBUG
+    dt_mv = "\n\nMOOV:\n"
+    if moov_manager and moov_manager.clients:
+        dt_mv += f"{len(moov_manager.clients)} klien Moov aktif.\n"
+        dt_mv += f"Kualitas Default: {moov_manager.quality}\n"
+        dt_mv += f"Cache User (Global): {len([u for u in bot_set.user_data if 'moov_qual' in bot_set.user_data[u]])} pengguna"
+    else:
+        dt_mv += "Tidak ada klien Moov yang aktif."
+
     # ZIP SETTINGS DEBUG
     zips = f"\n\nAlbum Zip (Global): {bot_set.album_zip}"
     
     # Combine all debug texts
-    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + zips
+    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + dt_mv + zips
     
     # Reply safely
     await m.reply(final_debug_text, True)
