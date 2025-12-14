@@ -60,7 +60,6 @@ async def start_album(album_id, user, upload=True):
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
     tasks = []
-    # Kirim referensi track dictionary agar bisa diupdate
     for track in album_meta['tracks']:
         tasks.append(download_track(track, user, album_folder))
 
@@ -71,15 +70,22 @@ async def start_album(album_id, user, upload=True):
         'type': 'album'
     }
     
+    # --- PERBAIKAN UTAMA DI SINI ---
+    # run_concurrent_tasks mengembalikan hasil dari fungsi download_track.
+    # Kita harus memodifikasi download_track agar mengembalikan DICT METADATA jika sukses, bukan cuma True.
     task_results = await run_concurrent_tasks(tasks, update_details)
     
-    # Filter sukses
-    successful_tracks = [t for t, success in zip(album_meta['tracks'], task_results) if success]
+    # Filter dan ambil metadata yang sudah diperbarui (berisi filepath)
+    successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
+    
+    # Ganti list tracks lama dengan list baru yang berisi path file
     album_meta['tracks'] = successful_tracks
     
-    # DEBUG: Cek apakah filepath tersimpan di objek metadata sebelum dikirim ke uploader
+    # DEBUG: Verifikasi path sebelum upload
     if successful_tracks:
-        LOGGER.info(f"[DEBUG HANDLER] Sample Track Filepath: {successful_tracks[0].get('filepath')}")
+        LOGGER.info(f"[HANDLER FIX] Metadata Updated. Sample Path: {successful_tracks[0]['filepath']}")
+    else:
+        LOGGER.error("[HANDLER FIX] No successful tracks returned from workers.")
 
     if not successful_tracks:
         raise Exception("Gagal mengunduh semua lagu.")
@@ -95,17 +101,19 @@ async def start_album(album_id, user, upload=True):
         await album_upload(album_meta, user)
 
 async def download_track(track_meta, user, folderpath):
+    # Salin meta agar tidak konflik thread (meski Python GIL aman, ini best practice)
+    meta = track_meta.copy()
     client = user['moov_api']
     
     # 1. Stream Info
     try:
-        file_meta = await client.get_track_file_meta(track_meta['itemid'], track_meta['moov_quality_code'])
+        file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
         play_url = file_meta.get('playUrl')
         content_key = file_meta.get('contentKey')
         if not play_url or not content_key:
             return False
     except Exception as e:
-        LOGGER.error(f"Failed stream {track_meta['title']}: {e}")
+        LOGGER.error(f"Failed stream {meta['title']}: {e}")
         return False
 
     # 2. Crypto
@@ -119,12 +127,12 @@ async def download_track(track_meta, user, folderpath):
         return False
 
     # 3. Pathing
-    raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
+    raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
     safe_filename = safe_name(raw_filename)
     filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     
     # UPDATE METADATA (CRITICAL)
-    track_meta['filepath'] = filepath
+    meta['filepath'] = filepath
     
     if not os.path.isdir(folderpath):
         os.makedirs(folderpath, exist_ok=True)
@@ -152,22 +160,16 @@ async def download_track(track_meta, user, folderpath):
                     except:
                         continue
     except Exception as e:
-        LOGGER.error(f"DL Error {track_meta['title']}: {e}")
+        LOGGER.error(f"DL Error {meta['title']}: {e}")
         return False
 
-    # 5. DEBUGGING & VALIDASI
-    if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-        # LOGGER.info(f"[DEBUG] File Saved: {filepath}")
-        pass
-    else:
-        LOGGER.error(f"[DEBUG] File Missing/Empty: {filepath}")
-        if os.path.exists(folderpath):
-            LOGGER.info(f"[DEBUG] Isi Folder {folderpath}: {os.listdir(folderpath)}")
+    # 5. VALIDASI
+    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
         return False
 
     # 6. Lyrics & Tagging
     try:
-        lyrics = await client.get_lyrics(track_meta['itemid'])
+        lyrics = await client.get_lyrics(meta['itemid'])
         if lyrics:
             lrc_path = filepath.rsplit('.', 1)[0] + ".lrc"
             async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
@@ -176,10 +178,10 @@ async def download_track(track_meta, user, folderpath):
         pass
 
     try:
-        await set_metadata(track_meta, user['user_id'])
+        await set_metadata(meta, user['user_id'])
     except Exception as e:
         LOGGER.error(f"Tagging Error {filepath}: {e}")
-        # Tetap return True agar diupload meski tanpa tag
         pass 
         
-    return True
+    # --- PERBAIKAN PENTING: Return Metadata Object, bukan True ---
+    return meta
