@@ -17,7 +17,10 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None)
     
     # Album & Copyright
     metadata['album'] = track_data.get('albumTitle')
-    metadata['copyright'] = track_data.get('cnote')
+    
+    raw_copyright = track_data.get('cnote')
+    metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
+
     metadata['label'] = track_data.get('albumLabel')
     
     # Track Number
