@@ -5,23 +5,18 @@ import re
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .manager import moov_manager
-from bot.logger import LOGGER
 
 def get_high_res_cover(url):
     if not url: return None
     
-    # 1. Bersihkan query parameter (biasanya ?resize=... atau ?crop=...)
+    # 1. Bersihkan query parameter (misal ?resize=... atau ?crop=...)
     clean_url = url.split("?")[0]
     
     # 2. Ganti pola resolusi path (misal .../350x350/...)
-    # Kita ganti menjadi 1000x1000
+    # Kita ganti menjadi 1000x1000 untuk memaksa CDN memberikan high res
     if re.search(r'\/\d+x\d+\/', clean_url):
         clean_url = re.sub(r'\/\d+x\d+\/', '/1000x1000/', clean_url)
-    elif "resize" in clean_url:
-        # Jika ada kata 'resize' tapi pola aneh, coba hilangkan segmen itu
-        # Ini upaya tebak-tebakan, tapi sering berhasil untuk CDN
-        clean_url = clean_url.replace("/resize", "")
-        
+    
     return clean_url
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
@@ -40,19 +35,19 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['disk'] = str(track_data.get('discNo', 1))
     metadata['tracknumber'] = str(track_data.get('trackNo', 1))
     
-    # Composer: Cek berbagai kemungkinan key
+    # Composer
     composers = track_data.get('composers', [])
     if composers:
         metadata['composer'] = ", ".join([c.get('name') for c in composers])
     else:
-        # Kadang ada di 'author'
+        # Fallback ke field 'author' jika composer kosong
         metadata['composer'] = track_data.get('author', "")
         
     raw_copyright = track_data.get('cnote')
     metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
     # ------------------
 
-    # Wariskan data dari Album (Year, Genre, Album Artist)
+    # Wariskan data dari Album Meta
     if album_meta:
         metadata['albumartist'] = album_meta.get('artist', '')
         metadata['year'] = album_meta.get('year', '')
@@ -61,7 +56,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- COVER ART LOGIC ---
+    # --- COVER ART ---
     if cover:
         metadata['cover'] = cover
     else:
@@ -70,7 +65,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             raw_url = images[0].get('path')
             hd_url = get_high_res_cover(raw_url)
             metadata['cover'] = await create_cover_file(hd_url, metadata)
-    # -----------------------
+    # -----------------
 
     # Quality Logic
     avail_qualities = track_data.get('qualities', [])
@@ -98,7 +93,9 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    titles = album_data.get('engTitle', [])
+    meta_lang_key = 'engTitle' 
+    titles = album_data.get(meta_lang_key, [])
+    # titles biasanya: [Nama Album, Nama Artis, Tanggal Rilis]
     metadata['title'] = titles[0] if titles else "Unknown Album"
     metadata['album'] = metadata['title']
     
@@ -119,7 +116,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     if genres:
         metadata['genre'] = ", ".join([g.get('name') for g in genres])
     else:
-        # Coba key 'category' jika genre kosong
         metadata['genre'] = album_data.get('category', "")
 
     artists = album_data.get('artists', [])
@@ -130,7 +126,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
     
-    # Cover Album High Res
     images = album_data.get('images', [])
     if images:
         raw_url = images[0].get('path')
