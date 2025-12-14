@@ -72,11 +72,12 @@ async def start_album(album_id, user, upload=True):
     
     task_results = await run_concurrent_tasks(tasks, update_details)
     
+    # Ambil hasil metadata yang sukses (yang sudah punya filepath)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
     album_meta['tracks'] = successful_tracks
     
     if successful_tracks:
-        LOGGER.info(f"[HANDLER FIX] Metadata Updated. Sample Path: {successful_tracks[0]['filepath']}")
+        LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
 
     if not successful_tracks:
         raise Exception("Gagal mengunduh semua lagu.")
@@ -106,7 +107,7 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"Failed stream {meta['title']}: {e}")
         return False
 
-    # 2. Key Derivation (Key tetap sama untuk satu lagu)
+    # 2. Key Derivation
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
@@ -124,7 +125,7 @@ async def download_track(track_meta, user, folderpath):
     if not os.path.isdir(folderpath):
         os.makedirs(folderpath, exist_ok=True)
 
-    # 4. Download & Decrypt Loop
+    # 4. Download & Decrypt Loop (LOGIKA BARU)
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -132,35 +133,28 @@ async def download_track(track_meta, user, folderpath):
                 return False
             m3u8_content = await resp.text()
             
-        # Cari Sequence Number Awal (Penting untuk IV)
-        start_seq = 1
-        for line in m3u8_content.splitlines():
-            if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
-                try:
-                    start_seq = int(line.split(":")[1].strip())
-                except:
-                    pass
-                break
-
         segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         
+        # --- PERBAIKAN DEKRIPSI ---
+        # Kita inisialisasi cipher SATU KALI SAJA di luar loop.
+        # Moov menggunakan Continuous AES Stream.
+        # IV awal biasanya 1 (Big Endian) atau 0. Kita pakai 1 sesuai standar mereka.
+        iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01'
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        # --------------------------
+
         async with aiofiles.open(filepath, 'wb') as f_out:
-            for index, seg_url in enumerate(segments):
-                for _ in range(3):
+            for seg_url in segments:
+                for _ in range(3): # Retry logic
                     try:
                         async with client.session.get(seg_url) as seg_resp:
                             if seg_resp.status == 200:
                                 encrypted_data = await seg_resp.read()
                                 
-                                # --- PERBAIKAN UTAMA: IV Dinamis ---
-                                # IV direset setiap segmen berdasarkan nomor urut (Big Endian 128-bit)
-                                current_seq = start_seq + index
-                                iv = current_seq.to_bytes(16, byteorder='big')
-                                
-                                # Buat cipher baru untuk setiap segmen
-                                cipher = AES.new(key, AES.MODE_CBC, iv)
-                                
+                                # Jangan buat cipher baru! Gunakan yang sudah ada.
+                                # Cipher akan mengingat state dari segmen sebelumnya.
                                 decrypted_data = cipher.decrypt(encrypted_data)
+                                
                                 await f_out.write(decrypted_data)
                                 break
                     except:
@@ -169,10 +163,11 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"DL Error {meta['title']}: {e}")
         return False
 
-    # 5. Validasi Ukuran File (Minimal 1MB untuk memastikan bukan cuma 4 detik)
+    # 5. Validasi
     if not os.path.exists(filepath):
         return False
-    if os.path.getsize(filepath) < 1024 * 100: # < 100KB berarti gagal
+    # Cek ukuran file, harusnya sekarang > 1MB untuk lagu full
+    if os.path.getsize(filepath) < 1024 * 100: 
         LOGGER.error(f"File too small (Decryption failed?): {filepath}")
         return False
 
