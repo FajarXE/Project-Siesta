@@ -111,7 +111,6 @@ async def download_track(track_meta, user, folderpath):
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     meta['filepath'] = final_filepath
     
-    # Simpan Key
     key_filepath = os.path.join(track_temp_dir, "key.bin")
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
@@ -121,6 +120,7 @@ async def download_track(track_meta, user, folderpath):
     if meta.get('cover'):
         try:
             cover_path = os.path.join(track_temp_dir, "cover.jpg")
+            # Cover URL sudah high-res dari metadata.py
             async with client.session.get(meta['cover']) as resp:
                 if resp.status == 200:
                     data = await resp.read()
@@ -186,27 +186,24 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- FFMPEG COMMAND UTAMA (Embed Metadata & Cover) ---
+        # --- FFMPEG COMMAND UTAMA (Tags Lengkap) ---
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-            '-i', local_m3u8_path, # Input 0: Audio
+            '-i', local_m3u8_path, # Input 0
         ]
 
-        # Tambahkan Input Cover jika ada
         if cover_path and os.path.exists(cover_path):
-            cmd.extend(['-i', cover_path]) # Input 1: Cover
-            # Mapping agar cover masuk sebagai video stream (standar FLAC)
+            cmd.extend(['-i', cover_path]) # Input 1
             cmd.extend(['-map', '0:a', '-map', '1:0'])
             cmd.extend(['-disposition:v', 'attached_pic'])
             cmd.extend(['-metadata:s:v', 'title="Album cover"'])
             cmd.extend(['-metadata:s:v', 'comment="Cover (front)"'])
         else:
-            # Jika tidak ada cover, map audio saja
             cmd.extend(['-map', '0:a'])
 
-        # Tambahkan Metadata Tags
+        # Suntikan Metadata Lengkap
         cmd.extend([
             '-metadata', f'title={meta.get("title", "")}',
             '-metadata', f'artist={meta.get("artist", "")}',
@@ -214,7 +211,12 @@ async def download_track(track_meta, user, folderpath):
             '-metadata', f'album_artist={meta.get("albumartist", "")}',
             '-metadata', f'track={meta.get("tracknumber", "")}',
             '-metadata', f'copyright={meta.get("copyright", "")}',
-            # Output File
+            # --- TAGS BARU ---
+            '-metadata', f'date={meta.get("year", "")}',      # Year
+            '-metadata', f'genre={meta.get("genre", "")}',    # Genre
+            '-metadata', f'disc={meta.get("disk", "")}',      # Disc No
+            '-metadata', f'composer={meta.get("composer", "")}', # Composer
+            # -----------------
             final_filepath
         ])
         
@@ -236,7 +238,6 @@ async def download_track(track_meta, user, folderpath):
     if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 1024 * 50: 
         return False
 
-    # Tambahan Lirik
     try:
         lyrics = await client.get_lyrics(meta['itemid'])
         if lyrics:
@@ -245,8 +246,6 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(lyrics)
     except: pass
     
-    # Post-tagging opsional (Mutagen)
-    # FFmpeg seharusnya sudah cukup, tapi biarkan ini sebagai cadangan
     try:
         await set_metadata(meta, user['user_id'])
     except: pass 
