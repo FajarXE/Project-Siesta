@@ -111,6 +111,14 @@ except ImportError:
     highresaudio_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Moov ---
+try:
+    from .helpers.moov.manager import moov_manager
+except ImportError:
+    logging.critical("Gagal mengimpor 'moov_manager'!")
+    moov_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 # --- FUNGSI BARU UNTUK MEMUAT PENGATURAN PENGGUNA ---
 
@@ -135,10 +143,10 @@ async def load_all_user_settings_into_managers():
             'soundcloud_qual': soundcloud_manager,
             'napster_qual': napster_manager,
             'idagio_qual': idagio_manager,
-            # --- TAMBAHAN BARU ---
             'bugs_qual': bugs_manager,
+            # --- TAMBAHAN BARU: Moov ---
+            'moov_qual': moov_manager,
             # --- BATAS TAMBAHAN ---
-            # Tidak perlu highresaudio_qual karena tidak ada pengaturan kualitas
         }
 
         # Loop melalui cache global bot_set yang SEKARANG SUDAH DIISI oleh initialize_users()
@@ -356,6 +364,16 @@ async def main():
             logging.warning("PERINGATAN: Tidak ada akun HIGHRESAUDIO yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
+    # --- TAMBAHAN BARU: Login Moov ---
+    if moov_manager:
+        logging.info("Memulai inisialisasi Manajer Moov...")
+        await moov_manager.initialize_clients()
+        if moov_manager.clients:
+            logging.info(f"Manajer Moov berhasil diinisialisasi dengan {len(moov_manager.clients)} klien.")
+        else:
+            logging.warning("PERINGATAN: Tidak ada akun Moov yang berhasil login!")
+    # --- BATAS TAMBAHAN ---
+
     logging.info("Menginisialisasi data pengguna...")
     await bot_set.initialize_users()
     
@@ -401,6 +419,7 @@ async def shutdown_all_services(loop):
         "Nugs": nugs_manager,
         "Bugs": bugs_manager,
         "HIGHRESAUDIO": highresaudio_manager,
+        "Moov": moov_manager, # Tambahan Moov
     }
 
     for name, manager in all_managers.items():
