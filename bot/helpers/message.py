@@ -7,9 +7,7 @@ import math
 import traceback 
 
 from pyrogram.types import Message
-# --- PERBAIKAN: Tambahkan MessageIdInvalid ke impor ---
 from pyrogram.errors import MessageNotModified, FloodWait, MessageIdInvalid
-# --- BATAS PERBAIKAN ---
 
 from bot.tgclient import aio
 from bot.settings import bot_set
@@ -20,14 +18,14 @@ current_user = []
 
 user_details = {
     'user_id': None,
-    'name': None, # Name of the user 
-    'user_name': None, # Username of the user
-    'r_id': None, # Reply to message id
+    'name': None, 
+    'user_name': None, 
+    'r_id': None, 
     'chat_id': None,
     'provider': None,
     'bot_msg': None,
     'link': None,
-    'override' : None # To skip checking media exist
+    'override' : None 
 }
 
 
@@ -144,10 +142,8 @@ async def send_message(user, item, itype='text',
         elif itype == 'doc':
             thumb_path = None
             if meta and meta.get('cover'): 
-                # --- PERBAIKAN: Validasi path cover sebelum dikirim ---
                 if os.path.exists(meta['cover']):
                     thumb_path = meta['cover']
-                # ----------------------------------------------------
 
             last_update_time = [0] 
 
@@ -185,20 +181,23 @@ async def send_message(user, item, itype='text',
 
         elif itype == 'audio':
             
-            # --- FIX CRITICAL: Validasi Thumbnail Audio ---
-            # Mengatasi error: [Errno 2] No such file or directory: ''
+            # --- FIX: Validasi Cover/Thumbnail ---
             thumb_path = None
-            # Cek 'cover' (standar) atau 'thumbnail' (legacy)
             cover_candidate = meta.get('cover') or meta.get('thumbnail')
-            
-            # Pastikan bukan None dan bukan string kosong, dan file ada di disk
             if cover_candidate and isinstance(cover_candidate, str):
                 if os.path.exists(cover_candidate):
                     thumb_path = cover_candidate
-                else:
-                    # LOGGER.warning(f"Thumbnail path not found on disk: {cover_candidate}")
-                    pass
-            # --------------------------------------------
+            
+            # --- FIX: Konversi Durasi Aman ---
+            # Menangani string kosong atau format float (misal '123.45')
+            duration = 0
+            raw_duration = meta.get('duration')
+            if raw_duration:
+                try:
+                    duration = int(float(str(raw_duration)))
+                except:
+                    duration = 0
+            # ---------------------------------
 
             progress_callback = None 
             
@@ -239,10 +238,10 @@ async def send_message(user, item, itype='text',
                 chat_id=chat_id,
                 audio=item,
                 caption=caption,
-                duration=int(meta.get('duration', 0)),
+                duration=duration, # Gunakan durasi yang sudah diamankan
                 performer=meta.get('artist'),
                 title=meta.get('title'),
-                thumb=thumb_path, # Gunakan thumb_path yang sudah divalidasi
+                thumb=thumb_path, 
                 reply_to_message_id=user['r_id'],
                 progress=progress_callback
             )
@@ -278,15 +277,8 @@ async def edit_message(msg: Message, text, markup=None, antiflood=True):
             return await edit_message(msg, text, markup, antiflood)
         else:
             return None
-    
-    # --- PERBAIKAN: Tangani 'MessageIdInvalid' secara diam-diam ---
     except MessageIdInvalid:
-        # Ini terjadi jika pesan dihapus (misal, menu ditutup) sebelum diedit.
-        # Ini BUKAN error kritis, jadi kita abaikan (pass) secara diam-diam.
-        LOGGER.debug(f"Gagal mengedit pesan: MessageIdInvalid (pesan mungkin sudah dihapus).")
         pass
     except Exception as e:
-        # Tangkap semua error *lainnya* dan catat sebagai ERROR
         LOGGER.error(f"Gagal mengedit pesan (Tipe msg: {type(msg)}). Error: {e}\n{traceback.format_exc()}")
         pass
-    # --- BATAS PERBAIKAN ---
