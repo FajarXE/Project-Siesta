@@ -85,11 +85,9 @@ async def start_album(album_id, user, upload=True):
 async def apply_mutagen_tags(filepath, meta, cover_path):
     try:
         audio = FLAC(filepath)
-        audio.delete()
+        audio.delete() # Bersihkan tag lama
         
-        # --- DEBUG LOG METADATA ---
-        # LOGGER.info(f"[TAGGING] Writing Tags -> G: {meta.get('genre')} | C: {meta.get('composer')}")
-        
+        # Write Tags
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
         audio['ALBUM'] = meta.get('album', '')
@@ -101,6 +99,7 @@ async def apply_mutagen_tags(filepath, meta, cover_path):
         audio['COMPOSER'] = meta.get('composer', '')
         audio['COPYRIGHT'] = meta.get('copyright', '')
         
+        # Embed Cover
         if cover_path and os.path.exists(cover_path):
             p = Picture()
             with open(cover_path, 'rb') as f:
@@ -110,13 +109,13 @@ async def apply_mutagen_tags(filepath, meta, cover_path):
             p.desc = 'Front Cover'
             audio.add_picture(p)
         else:
-            LOGGER.warning(f"Cover path MISSING during tagging: {cover_path}")
+            LOGGER.warning(f"[TAG] No cover found for {meta['title']}")
             
         audio.save()
         return int(audio.info.length)
         
     except Exception as e:
-        LOGGER.error(f"Mutagen Tagging Error: {e}")
+        LOGGER.error(f"Mutagen Error: {e}")
         return 0
 
 async def download_track(track_meta, user, folderpath):
@@ -152,38 +151,36 @@ async def download_track(track_meta, user, folderpath):
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
 
-    # --- DOWNLOAD COVER KHUSUS TAGGING ---
+    # --- DOWNLOAD COVER (Priority: Metadata URL > Local File) ---
     cover_local_path = None
-    
-    # Prioritas 1: Gunakan URL High Res yang kita simpan di metadata.py
-    target_url = meta.get('cover_url')
-    
-    # Prioritas 2: Jika tidak ada URL, cek apakah meta['cover'] adalah path lokal yang valid
-    if not target_url and meta.get('cover') and os.path.exists(meta.get('cover')):
-        # Copy file lokal yang sudah ada ke temp
-        cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
-        shutil.copy(meta['cover'], cover_local_path)
-    
-    # Jika ada URL, download!
-    elif target_url:
+    target_url = meta.get('cover_url') # Ini sekarang mungkin URL iTunes High Res
+
+    if target_url:
         cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
         try:
-            # LOGGER.info(f"[COVER DOWNLOAD] {target_url}")
-            async with client.session.get(target_url) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    async with aiofiles.open(cover_local_path, 'wb') as f:
-                        await f.write(data)
-                else:
-                    LOGGER.warning(f"Failed to download cover: {resp.status}")
-                    cover_local_path = None
+            # Gunakan session khusus untuk download cover external (iTunes/CDN)
+            # agar tidak crash dengan session Moov API
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(target_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        async with aiofiles.open(cover_local_path, 'wb') as f:
+                            await f.write(data)
+                    else:
+                        LOGGER.warning(f"Failed to download cover from {target_url}: {resp.status}")
+                        cover_local_path = None
         except Exception as e:
             LOGGER.error(f"Cover Download Error: {e}")
             cover_local_path = None
-            
-    # -------------------------------------
+    
+    # Fallback: Jika download gagal, cek apakah sudah ada cover lokal dari proses album
+    if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
+         cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
+         shutil.copy(meta['cover'], cover_local_path)
+    # -----------------------------------------------------------
 
-    # DOWNLOAD SEGMENTS & M3U8
+    # DOWNLOAD SEGMENTS
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
