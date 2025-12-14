@@ -5,7 +5,7 @@ from pyrogram import Client, filters
 import asyncio 
 import traceback
 import random
-import aiohttp # Pastikan impor ini ada
+import aiohttp 
 
 from bot import CMD
 from bot.logger import LOGGER
@@ -21,6 +21,14 @@ from bot.helpers.tidal.manager import tidal_manager
 from bot.helpers.kkbox.manager import kkbox_manager
 from bot.helpers.beatsource.manager import beatsource_manager
 from bot.helpers.soundcloud.manager import soundcloud_manager
+
+# --- TAMBAHAN BARU: Impor Manajer Moov ---
+try:
+    from bot.helpers.moov.manager import moov_manager
+except ImportError:
+    moov_manager = None
+# --- BATAS TAMBAHAN ---
+
 # --- TAMBAHAN BARU: Impor Manajer Napster ---
 try:
     from bot.helpers.napster.manager import napster_manager
@@ -92,6 +100,14 @@ except ImportError:
     async def start_beatsource(*args, **kwargs):
         raise NotImplementedError("Modul Beatsource ('handler.py') belum diimplementasikan.")
 
+# --- TAMBAHAN BARU: Impor Handler Moov ---
+try:
+    from ..helpers.moov.handler import start_moov
+except ImportError:
+    async def start_moov(*args, **kwargs):
+        raise NotImplementedError("Modul Moov ('handler.py') belum diimplementasikan.")
+# --- BATAS TAMBAHAN ---
+
 # --- TAMBAHAN BARU: Impor Handler Napster ---
 try:
     from ..helpers.napster.handler import start_napster
@@ -139,23 +155,20 @@ async def resolve_shortlink(link: str) -> str:
     if "2nu.gs" in link:
         try:
             # --- MODIFIKASI: Tambahkan User-Agent browser ---
-            # Ini penting agar Nugs mengarahkan kita ke halaman web, bukan API
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'
             }
             # --- BATAS MODIFIKASI ---
             
             async with aiohttp.ClientSession(headers=headers) as session:
-                # Cukup lakukan HEAD request dan biarkan ia mengikuti redirect
                 async with session.head(link, allow_redirects=True) as response:
-                    # response.url akan menjadi URL final setelah semua redirect
                     final_url = str(response.url)
                     LOGGER.info(f"Shortlink terdeteksi: {link} -> dialihkan ke -> {final_url}")
                     return final_url
         except Exception as e:
             LOGGER.error(f"Gagal me-resolve shortlink {link}: {e}")
-            return link # Kembalikan link asli jika gagal
-    return link # Bukan shortlink, kembalikan seperti semula
+            return link 
+    return link 
 # --- BATAS FUNGSI BARU ---
 
 
@@ -246,9 +259,9 @@ async def download_track(c, msg:Message):
         try:
             resolved_link = await resolve_shortlink(link)
             if resolved_link != link:
-                link = resolved_link # Perbarui variabel link
+                link = resolved_link 
         except Exception:
-            pass # Failsafe, gunakan link asli jika gagal
+            pass 
         # --- BATAS MODIFIKASI ---
         
         user['link'] = link
@@ -272,8 +285,11 @@ async def start_link(link: str, user: dict) -> None:
     
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
+    # --- TAMBAHAN BARU: URL Moov ---
+    moov = ["https://moov.hk", "moov.hk"]
+    # --- BATAS TAMBAHAN ---
+
     # --- TAMBAHAN BARU: URL Napster ---
-    # --- PERBAIKAN: Menambahkan 'web.napster.com' dari log error ---
     napster = [
         "https://app.napster.com", "napster.com", "http://app.napster.com", 
         "https://play.napster.com", "play.napster.com", 
@@ -286,7 +302,6 @@ async def start_link(link: str, user: dict) -> None:
     # --- BATAS TAMBAHAN ---
     
     # --- MODIFIKASI: URL Nugs.net ---
-    # Menambahkan domain API yang didapat dari redirect
     nugs = ["https://play.nugs.net", "play.nugs.net", "https://streamapi.nugs.net"]
     # --- BATAS MODIFIKASI ---
 
@@ -345,12 +360,10 @@ async def start_link(link: str, user: dict) -> None:
                 LOGGER.info(f"Deezer: Unduhan berhasil menggunakan ARL ID {client.user['USER']['USER_ID']}")
                 return 
             except Exception as e:
-                # --- PERBAIKAN: Tangkap DeezerError secara eksplisit ---
                 if isinstance(e, DeezerError):
                     LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Dapat Ditangani): {e}. Mencoba ARL berikutnya...")
                     last_error = e
                     continue
-                # --- BATAS PERBAIKAN ---
 
                 error_str = str(e).lower()
                 if "not available in your country" in error_str or \
@@ -361,7 +374,7 @@ async def start_link(link: str, user: dict) -> None:
                     continue 
                 else:
                     LOGGER.error(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Fatal): {e}")
-                    raise e # Lempar error (seperti "URL tidak valid") sebagai fatal
+                    raise e 
         if last_error:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Deezer yang dicoba. Error terakhir: {last_error}")
         else:
@@ -495,6 +508,27 @@ async def start_link(link: str, user: dict) -> None:
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun KKBox yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
+
+    # --- TAMBAHAN BARU: Blok Moov ---
+    elif link.startswith(tuple(moov)):
+        user['provider'] = 'Moov'
+        
+        if not moov_manager or not moov_manager.clients:
+            raise Exception("Maaf, tidak ada akun Moov bot yang aktif saat ini.")
+
+        client = moov_manager.get_client()
+        if not client:
+             raise Exception("Tidak ada klien Moov yang tersedia (semua gagal login?).")
+
+        try:
+            user['moov_api'] = client
+            await start_moov(link, user)
+            LOGGER.info(f"Moov: Unduhan berhasil menggunakan akun.")
+            return
+        except Exception as e:
+            LOGGER.error(f"Moov: Tugas gagal (Fatal): {e}")
+            raise e
+    # --- BATAS TAMBAHAN ---
 
     # --- TAMBAHAN BARU: Blok Napster ---
     elif link.startswith(tuple(napster)):
