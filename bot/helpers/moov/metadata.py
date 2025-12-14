@@ -10,19 +10,19 @@ from bot.logger import LOGGER
 def get_high_res_cover(url):
     if not url: return None
     
-    # 1. Coba replace langsung string resolusi umum Moov
-    new_url = url.replace("350x350", "1000x1000")
+    # 1. Bersihkan query parameter (biasanya ?resize=... atau ?crop=...)
+    clean_url = url.split("?")[0]
     
-    # 2. Jika tidak ada perubahan, coba regex untuk format lain (misal /resize/500x500/)
-    if new_url == url:
-        new_url = re.sub(r'\/resize\/\d+x\d+\/', '/resize/1000x1000/', url)
+    # 2. Ganti pola resolusi path (misal .../350x350/...)
+    # Kita ganti menjadi 1000x1000
+    if re.search(r'\/\d+x\d+\/', clean_url):
+        clean_url = re.sub(r'\/\d+x\d+\/', '/1000x1000/', clean_url)
+    elif "resize" in clean_url:
+        # Jika ada kata 'resize' tapi pola aneh, coba hilangkan segmen itu
+        # Ini upaya tebak-tebakan, tapi sering berhasil untuk CDN
+        clean_url = clean_url.replace("/resize", "")
         
-    # 3. Hapus parameter cropping jika ada (agar gambar full)
-    # Contoh: ?crop=...
-    if "?" in new_url:
-        new_url = new_url.split("?")[0]
-        
-    return new_url
+    return clean_url
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
     metadata = copy.deepcopy(base_meta)
@@ -40,12 +40,13 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['disk'] = str(track_data.get('discNo', 1))
     metadata['tracknumber'] = str(track_data.get('trackNo', 1))
     
-    # Composer
+    # Composer: Cek berbagai kemungkinan key
     composers = track_data.get('composers', [])
     if composers:
         metadata['composer'] = ", ".join([c.get('name') for c in composers])
     else:
-        metadata['composer'] = ""
+        # Kadang ada di 'author'
+        metadata['composer'] = track_data.get('author', "")
         
     raw_copyright = track_data.get('cnote')
     metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
@@ -60,7 +61,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- LOGIKA COVER BARU ---
+    # --- COVER ART LOGIC ---
     if cover:
         metadata['cover'] = cover
     else:
@@ -68,9 +69,8 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         if images:
             raw_url = images[0].get('path')
             hd_url = get_high_res_cover(raw_url)
-            # LOGGER.info(f"[DEBUG COVER] Track Cover: {hd_url}")
             metadata['cover'] = await create_cover_file(hd_url, metadata)
-    # -------------------------
+    # -----------------------
 
     # Quality Logic
     avail_qualities = track_data.get('qualities', [])
@@ -98,14 +98,11 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # Parsing Judul & Tanggal
-    meta_lang_key = 'engTitle' 
-    titles = album_data.get(meta_lang_key, [])
-    # titles biasanya: [Nama Album, Nama Artis, Tanggal Rilis]
+    titles = album_data.get('engTitle', [])
     metadata['title'] = titles[0] if titles else "Unknown Album"
     metadata['album'] = metadata['title']
     
-    # Parsing Year (Lebih Robust)
+    # Parsing Year
     metadata['year'] = ""
     if len(titles) > 2:
         try:
@@ -113,7 +110,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         except: pass
         
     if not metadata['year']:
-        # Fallback ke publishDate jika ada
         pdate = str(album_data.get('publishDate', ''))
         if pdate:
             metadata['year'] = pdate.split('-')[0]
@@ -123,7 +119,8 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     if genres:
         metadata['genre'] = ", ".join([g.get('name') for g in genres])
     else:
-        metadata['genre'] = ""
+        # Coba key 'category' jika genre kosong
+        metadata['genre'] = album_data.get('category', "")
 
     artists = album_data.get('artists', [])
     metadata['artist'] = ", ".join([a.get('name') for a in artists])
@@ -133,12 +130,11 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
     
-    # --- COVER ALBUM HIGH RES ---
+    # Cover Album High Res
     images = album_data.get('images', [])
     if images:
         raw_url = images[0].get('path')
         hd_url = get_high_res_cover(raw_url)
-        # LOGGER.info(f"[DEBUG COVER] Album Cover: {hd_url}")
         metadata['cover'] = await create_cover_file(hd_url, metadata)
         
     metadata['tracks'] = []
@@ -149,7 +145,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         
         for idx, track_raw in enumerate(products, 1):
             track_raw['trackNo'] = idx 
-            # Kirim 'metadata' album sebagai parent
             t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
             metadata['tracks'].append(t_meta)
             
