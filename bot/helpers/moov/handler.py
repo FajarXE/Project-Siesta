@@ -6,6 +6,7 @@ import shutil
 import asyncio
 import aiofiles
 import hashlib
+from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
 from ..message import edit_message
@@ -15,7 +16,6 @@ from ..utils import (
     fetch_zip_settings, post_art_poster
 )
 from ..uploder import album_upload
-from ..metadata import set_metadata
 
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
@@ -82,17 +82,58 @@ async def start_album(album_id, user, upload=True):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
+async def apply_mutagen_tags(filepath, meta, cover_path):
+    """Fungsi khusus untuk menanamkan metadata & cover menggunakan Mutagen"""
+    try:
+        audio = FLAC(filepath)
+        
+        # 1. Hapus tag lama agar bersih
+        audio.delete()
+        
+        # 2. Tulis Tag Standar
+        audio['TITLE'] = meta.get('title', '')
+        audio['ARTIST'] = meta.get('artist', '')
+        audio['ALBUM'] = meta.get('album', '')
+        audio['ALBUMARTIST'] = meta.get('albumartist', '')
+        audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
+        audio['DISCNUMBER'] = str(meta.get('disk', ''))
+        audio['GENRE'] = meta.get('genre', '')
+        audio['DATE'] = str(meta.get('year', ''))
+        audio['COMPOSER'] = meta.get('composer', '')
+        audio['COPYRIGHT'] = meta.get('copyright', '')
+        
+        # 3. Tanam Cover Art
+        if cover_path and os.path.exists(cover_path):
+            p = Picture()
+            with open(cover_path, 'rb') as f:
+                p.data = f.read()
+            p.type = 3 # Front Cover
+            p.mime = 'image/jpeg'
+            p.desc = 'Front Cover'
+            audio.add_picture(p)
+            
+        audio.save()
+        
+        # 4. Ambil Durasi Asli untuk Telegram
+        # Ini memperbaiki masalah durasi "-:--" atau "0"
+        return int(audio.info.length)
+        
+    except Exception as e:
+        LOGGER.error(f"Mutagen Tagging Error: {e}")
+        return 0
+
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     client = user['moov_api']
     
+    # --- 1. SETUP ---
     try:
         file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
         play_url = file_meta.get('playUrl')
         content_key = file_meta.get('contentKey')
         if not play_url or not content_key: return False
     except Exception as e:
-        LOGGER.error(f"Failed stream {meta['title']}: {e}")
+        LOGGER.error(f"Stream Error: {e}")
         return False
 
     try:
@@ -104,6 +145,7 @@ async def download_track(track_meta, user, folderpath):
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
     safe_filename = safe_name(raw_filename)
     
+    # Direktori Temporary
     track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
     if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
     os.makedirs(track_temp_dir, exist_ok=True)
@@ -111,25 +153,27 @@ async def download_track(track_meta, user, folderpath):
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     meta['filepath'] = final_filepath
     
+    # Key File
     key_filepath = os.path.join(track_temp_dir, "key.bin")
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
 
-    # --- DOWNLOAD COVER UNTUK FFMPEG ---
-    cover_path = None
+    # Cover File (Download Lokal)
+    cover_local_path = None
     if meta.get('cover'):
+        cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
         try:
-            cover_path = os.path.join(track_temp_dir, "cover.jpg")
             async with client.session.get(meta['cover']) as resp:
                 if resp.status == 200:
                     data = await resp.read()
-                    async with aiofiles.open(cover_path, 'wb') as f:
+                    async with aiofiles.open(cover_local_path, 'wb') as f:
                         await f.write(data)
                 else:
-                    cover_path = None
-        except: cover_path = None
-    # -----------------------------------
+                    cover_local_path = None
+        except:
+            cover_local_path = None
 
+    # --- 2. DOWNLOAD SEGMENTS ---
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -184,71 +228,62 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- FFMPEG COMMAND UTAMA ---
+        # --- 3. FFMPEG STITCHING (Clean Audio Only) ---
+        # Kita tidak pasang metadata di sini, biar Mutagen yang handle agar lebih rapi.
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-        ]
-
-        if cover_path and os.path.exists(cover_path):
-            cmd.extend(['-i', cover_path])
-            cmd.extend(['-map', '0:a', '-map', '1:0'])
-            cmd.extend(['-disposition:v', 'attached_pic'])
-            cmd.extend(['-metadata:s:v', 'title="Album cover"'])
-            cmd.extend(['-metadata:s:v', 'comment="Cover (front)"'])
-        else:
-            cmd.extend(['-map', '0:a'])
-
-        # Suntikan Metadata FLAC (Vorbis Comments)
-        # Gunakan huruf besar untuk key agar lebih kompatibel
-        cmd.extend([
-            '-metadata', f'TITLE={meta.get("title", "")}',
-            '-metadata', f'ARTIST={meta.get("artist", "")}',
-            '-metadata', f'ALBUM={meta.get("album", "")}',
-            '-metadata', f'ALBUMARTIST={meta.get("albumartist", "")}',
-            '-metadata', f'TRACKNUMBER={meta.get("tracknumber", "")}',
-            '-metadata', f'GENRE={meta.get("genre", "")}',
-            '-metadata', f'DATE={meta.get("year", "")}',
-            '-metadata', f'DISCNUMBER={meta.get("disk", "")}',
-            '-metadata', f'COMPOSER={meta.get("composer", "")}',
-            '-metadata', f'COPYRIGHT={meta.get("copyright", "")}',
+            '-c', 'flac', # Pastikan re-encode ke FLAC murni
             final_filepath
-        ])
+        ]
         
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
         )
         _, stderr = await process.communicate()
-        shutil.rmtree(track_temp_dir)
         
         if process.returncode != 0:
-            LOGGER.error(f"FFmpeg HLS Error: {stderr.decode()}")
+            LOGGER.error(f"FFmpeg Error: {stderr.decode()}")
+            shutil.rmtree(track_temp_dir)
             return False
+
+        if not os.path.exists(final_filepath): return False
+
+        # --- 4. TAGGING (Mutagen) ---
+        # Ini memperbaiki Genre, Composer, dan Cover Art yang hilang
+        real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path)
+        
+        # --- 5. UPDATE META UNTUK UPLOAD ---
+        # Update durasi agar Telegram menampilkan "3:45" bukan "-:--"
+        if real_duration > 0:
+            meta['duration'] = real_duration
+            
+        # Update path cover ke file lokal agar message.py bisa membuat thumbnail
+        if cover_local_path and os.path.exists(cover_local_path):
+            # Pindahkan cover ke folder utama agar tidak terhapus saat temp dihapus
+            final_cover_path = os.path.join(folderpath, f"cover_{meta['itemid']}.jpg")
+            shutil.move(cover_local_path, final_cover_path)
+            meta['cover'] = final_cover_path
+        else:
+            meta['cover'] = None
+
+        # Tambahan Lirik
+        try:
+            lyrics = await client.get_lyrics(meta['itemid'])
+            if lyrics:
+                lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
+                async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
+                    await f.write(lyrics)
+        except: pass
+
+        # Bersihkan temp
+        shutil.rmtree(track_temp_dir)
 
     except Exception as e:
         LOGGER.error(f"DL Logic Error: {e}")
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
-
-    if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 1024 * 50: 
-        return False
-
-    try:
-        lyrics = await client.get_lyrics(meta['itemid'])
-        if lyrics:
-            lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
-            async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
-                await f.write(lyrics)
-    except: pass
-    
-    # --- NON-AKTIFKAN MUTAGEN ---
-    # Ini untuk memastikan FFmpeg tags tidak tertimpa.
-    # Jika Anda yakin script set_metadata Anda aman, boleh di-uncomment.
-    # Tapi untuk tes ini, biarkan mati.
-    # try:
-    #     await set_metadata(meta, user['user_id'])
-    # except: pass 
         
     return meta
