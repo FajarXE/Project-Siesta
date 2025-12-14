@@ -120,7 +120,6 @@ async def download_track(track_meta, user, folderpath):
     if meta.get('cover'):
         try:
             cover_path = os.path.join(track_temp_dir, "cover.jpg")
-            # Cover URL sudah high-res dari metadata.py
             async with client.session.get(meta['cover']) as resp:
                 if resp.status == 200:
                     data = await resp.read()
@@ -128,8 +127,7 @@ async def download_track(track_meta, user, folderpath):
                         await f.write(data)
                 else:
                     cover_path = None
-        except:
-            cover_path = None
+        except: cover_path = None
     # -----------------------------------
 
     try:
@@ -186,7 +184,10 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- FFMPEG COMMAND UTAMA (Tags Lengkap) ---
+        # --- DEBUG LOG METADATA ---
+        LOGGER.info(f"[DEBUG META] Track: {meta.get('title')} | Year: {meta.get('year')} | Genre: {meta.get('genre')} | Disc: {meta.get('disk')}")
+
+        # --- FFMPEG COMMAND UTAMA (FIX TAGS FLAC) ---
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
@@ -203,20 +204,18 @@ async def download_track(track_meta, user, folderpath):
         else:
             cmd.extend(['-map', '0:a'])
 
-        # Suntikan Metadata Lengkap
+        # Gunakan TAGS FLAC/VORBIS Standard (Huruf Kapital)
         cmd.extend([
-            '-metadata', f'title={meta.get("title", "")}',
-            '-metadata', f'artist={meta.get("artist", "")}',
-            '-metadata', f'album={meta.get("album", "")}',
-            '-metadata', f'album_artist={meta.get("albumartist", "")}',
-            '-metadata', f'track={meta.get("tracknumber", "")}',
-            '-metadata', f'copyright={meta.get("copyright", "")}',
-            # --- TAGS BARU ---
-            '-metadata', f'date={meta.get("year", "")}',      # Year
-            '-metadata', f'genre={meta.get("genre", "")}',    # Genre
-            '-metadata', f'disc={meta.get("disk", "")}',      # Disc No
-            '-metadata', f'composer={meta.get("composer", "")}', # Composer
-            # -----------------
+            '-metadata', f'TITLE={meta.get("title", "")}',
+            '-metadata', f'ARTIST={meta.get("artist", "")}',
+            '-metadata', f'ALBUM={meta.get("album", "")}',
+            '-metadata', f'ALBUMARTIST={meta.get("albumartist", "")}',
+            '-metadata', f'TRACKNUMBER={meta.get("tracknumber", "")}',
+            '-metadata', f'GENRE={meta.get("genre", "")}',
+            '-metadata', f'DATE={meta.get("year", "")}',       # VORBIS: DATE
+            '-metadata', f'DISCNUMBER={meta.get("disk", "")}', # VORBIS: DISCNUMBER
+            '-metadata', f'COMPOSER={meta.get("composer", "")}',
+            '-metadata', f'COPYRIGHT={meta.get("copyright", "")}',
             final_filepath
         ])
         
@@ -246,6 +245,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(lyrics)
     except: pass
     
+    # Tagging sekunder MUTAGEN (Optional, sebagai backup)
     try:
         await set_metadata(meta, user['user_id'])
     except: pass 
