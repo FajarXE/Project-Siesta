@@ -11,7 +11,7 @@ from bot.logger import LOGGER
 
 async def fetch_itunes_meta(artist, album):
     """
-    Mencari Metadata & Cover High-Res dari iTunes API
+    Mencari Metadata (Genre, Year, Copyright) & Cover High-Res dari iTunes API
     """
     if not artist or not album: return None
     
@@ -23,20 +23,21 @@ async def fetch_itunes_meta(artist, album):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    # FIX: iTunes return text/javascript, non-aktifkan validasi content-type
+                    # --- FIX UTAMA: Disable content-type check ---
+                    # iTunes sering mengembalikan 'text/javascript', yang bikin error jika tidak di-bypass
                     data = await resp.json(content_type=None)
                     
                     if data['resultCount'] > 0:
                         res = data['results'][0]
                         
-                        # Ambil Cover HD (Ubah 100x100 menjadi 3000x3000)
+                        # Ambil Cover HD (3000x3000)
                         raw_art = res.get('artworkUrl100', '')
                         hd_cover = raw_art.replace('100x100bb', '3000x3000bb')
                         
                         return {
                             'cover_url': hd_cover,
                             'genre': res.get('primaryGenreName', ''),
-                            'year': res.get('releaseDate', '')[:4], # Ambil tahun saja
+                            'year': res.get('releaseDate', '')[:4], 
                             'copyright': res.get('copyright', ''),
                             'composer': '' 
                         }
@@ -60,32 +61,40 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['title'] = track_data.get('productTitle')
     
     artists = track_data.get('artists', [])
-    metadata['artist'] = ", ".join([a.get('name') for a in artists])
+    # Ambil artis 'Main' saja jika ada, agar rapi
+    main_artists = [a.get('name') for a in artists if a.get('role') == 'Main']
+    if not main_artists: main_artists = [a.get('name') for a in artists]
+    metadata['artist'] = ", ".join(main_artists)
     
     metadata['album'] = track_data.get('albumTitle') or ""
     metadata['disk'] = str(track_data.get('discNo', 1))
     metadata['tracknumber'] = str(track_data.get('trackNo', 1))
     
-    # --- COMPOSER ---
-    comp_list = []
-    for c in track_data.get('composers', []):
-        comp_list.append(c.get('name'))
-    
-    if not comp_list and track_data.get('author'):
-        comp_list.append(track_data.get('author'))
-        
-    metadata['composer'] = ", ".join(comp_list)
-    
+    # --- LABEL & COPYRIGHT ---
+    metadata['label'] = track_data.get('albumLabel', '') # Ambil Label dari Moov
     raw_copyright = track_data.get('cnote')
     metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
+    
+    # --- COMPOSER ---
+    comp_list = []
+    # 1. Cek field composers
+    for c in track_data.get('composers', []):
+        comp_list.append(c.get('name'))
+    # 2. Cek author
+    if not comp_list and track_data.get('author'):
+        comp_list.append(track_data.get('author'))
+    
+    metadata['composer'] = ", ".join(comp_list)
 
     # Wariskan data Album
     if album_meta:
         metadata['albumartist'] = album_meta.get('artist', '')
         metadata['year'] = album_meta.get('year', '')
         metadata['genre'] = album_meta.get('genre', '')
-        if not metadata['copyright']:
-            metadata['copyright'] = album_meta.get('copyright', '')
+        
+        # Wariskan Label/Copyright jika di track kosong
+        if not metadata['label']: metadata['label'] = album_meta.get('label', '')
+        if not metadata['copyright']: metadata['copyright'] = album_meta.get('copyright', '')
             
         if not cover and album_meta.get('cover_url'):
              metadata['cover_url'] = album_meta.get('cover_url')
@@ -141,7 +150,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
 
-    # --- AMBIL DATA MOOV BASIC ---
+    # --- DATA MOOV BASIC ---
     moov_year = ""
     if len(titles) > 2:
         try: moov_year = titles[2].split('-')[0]
@@ -157,6 +166,10 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     else:
         metadata['genre'] = album_data.get('category', "")
         
+    # Ambil Label Album dari Moov (Biasanya ada disini)
+    # Moov API structure for label might vary, check 'recordLabel' or 'albumLabel'
+    metadata['label'] = album_data.get('recordLabel') or album_data.get('albumLabel') or ""
+
     moov_cover_url = None
     images = album_data.get('images', [])
     if images:
@@ -166,16 +179,15 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     itunes_data = await fetch_itunes_meta(metadata['artist'], metadata['album'])
     
     if itunes_data:
-        LOGGER.info(f"[ITUNES] Found match for {metadata['album']}")
+        LOGGER.info(f"[ITUNES] Match Found: {metadata['album']}")
         metadata['cover_url'] = itunes_data['cover_url']
         
-        if not metadata['genre']: 
-            metadata['genre'] = itunes_data['genre']
-        if not metadata['year']: 
-            metadata['year'] = itunes_data['year']
-        if not metadata.get('copyright'):
-            metadata['copyright'] = itunes_data['copyright']
+        # Prioritas iTunes untuk Genre & Year karena lebih rapi
+        if itunes_data['genre']: metadata['genre'] = itunes_data['genre']
+        if itunes_data['year']: metadata['year'] = itunes_data['year']
+        if itunes_data['copyright']: metadata['copyright'] = itunes_data['copyright']
     else:
+        LOGGER.warning(f"[ITUNES] No match/Fail for {metadata['album']}")
         metadata['cover_url'] = moov_cover_url
 
     if metadata.get('cover_url'):
