@@ -18,7 +18,7 @@ class MoovAPI:
         self.session = None
         self.token = None
         self.user_id = None
-        self.proxy = proxy  # Proxy string (socks5h://user:pass@host:port)
+        self.proxy = proxy  # Proxy string
         
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10.0.0; PIXEL 2XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36/Moov'
@@ -26,13 +26,25 @@ class MoovAPI:
 
     async def _get_session(self):
         if not self.session or self.session.closed:
-            # --- MODIFIKASI: Logika Konektor Proxy ---
+            # --- MODIFIKASI: Logika Konektor Proxy dengan Penanganan socks5h ---
             if self.proxy:
                 if not ProxyConnector:
                     raise ImportError("Anda menggunakan Proxy SOCKS5 tapi 'aiohttp-socks' belum diinstal.")
                 
-                # Menggunakan Connector memungkinkan support SOCKS4/5 & HTTP secara otomatis
-                connector = ProxyConnector.from_url(self.proxy)
+                proxy_url = self.proxy
+                use_rdns = False # Default Remote DNS False
+
+                # FIX: Deteksi manual socks5h untuk menghindari error "Invalid scheme"
+                if proxy_url.startswith("socks5h://"):
+                    # Ubah header ke socks5 biasa agar parser tidak error
+                    proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                    # Tapi aktifkan Remote DNS (efeknya sama dengan socks5h)
+                    use_rdns = True
+                
+                LOGGER.info(f"MoovAPI: Menggunakan ProxyConnector (RDNS={use_rdns})")
+                
+                # Buat connector dengan setting yang sudah diperbaiki
+                connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
                 self.session = aiohttp.ClientSession(connector=connector)
             else:
                 self.session = aiohttp.ClientSession()
@@ -61,7 +73,8 @@ class MoovAPI:
         }
         
         try:
-            # Hapus argumen 'proxy=...' karena sudah ditangani oleh Connector di _get_session
+            # PENTING: Jangan masukkan argumen proxy=... di sini
+            # Proxy sudah ditangani oleh self.session (connector)
             async with session.post(
                 f"{self.base_url}/user/loginstatuscheck", 
                 headers=self.headers, 
@@ -70,6 +83,10 @@ class MoovAPI:
                 if resp.headers.get('Content-Type') == "application/xml;charset=UTF-8":
                     self.email = email
                     return True
+                
+                # Debug jika gagal
+                text = await resp.text()
+                LOGGER.error(f"Moov Login Failed Response: {text}")
                 return False
         except Exception as e:
             LOGGER.error(f"Moov Login Error: {e}")
@@ -84,7 +101,6 @@ class MoovAPI:
             'refType': 'PAB',
             'checksum': ''
         }
-        # Hapus argumen 'proxy=...'
         async with session.get(f"{self.base_url}/profile/getProfile", headers=self.headers, params=params) as resp:
             data = await resp.json()
             return data.get('dataObject')
@@ -112,7 +128,6 @@ class MoovAPI:
             'isStudioMaster': 'true'
         }
         
-        # Hapus argumen 'proxy=...'
         async with session.get(f"{self.base_url}/content/checkout", headers=stream_headers, params=params) as resp:
             data = await resp.json()
             return data.get('result', {}).get('dataObject')
@@ -120,7 +135,6 @@ class MoovAPI:
     async def get_lyrics(self, track_id):
         session = await self._get_session()
         params = {'pid': track_id}
-        # Hapus argumen 'proxy=...'
         async with session.get(f"{self.base_url}/lyric/getLyric", headers=self.headers, params=params) as resp:
             data = await resp.json()
             return data.get('dataObject', {}).get('lyric')
