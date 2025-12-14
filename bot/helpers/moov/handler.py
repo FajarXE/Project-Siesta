@@ -122,7 +122,7 @@ async def download_track(track_meta, user, folderpath):
         # [span_16](start_span)Header user-agent khusus stream[span_16](end_span)
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         
-        async with client.session.get(play_url, headers=hls_headers, proxy=client.proxy) as resp:
+        async with client.session.get(play_url, headers=hls_headers) as resp:
             m3u8_content = await resp.text()
             
         # Parse segments (baris yang tidak diawali #)
@@ -134,13 +134,12 @@ async def download_track(track_meta, user, folderpath):
         # Download loop (Sequential writing to file)
         async with aiofiles.open(filepath, 'wb') as f_out:
             for seg_url in segments:
-                # Retry logic sederhana
                 for _ in range(3):
                     try:
-                        async with client.session.get(seg_url, proxy=client.proxy) as seg_resp:
+                        # Proxy sudah dihandle oleh session connector
+                        async with client.session.get(seg_url) as seg_resp: 
                             if seg_resp.status == 200:
                                 encrypted_data = await seg_resp.read()
-                                # [span_17](start_span)Decrypt[span_17](end_span)
                                 decrypted_data = cipher.decrypt(encrypted_data)
                                 await f_out.write(decrypted_data)
                                 break
