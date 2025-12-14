@@ -74,6 +74,13 @@ except ImportError:
     bugs_manager = _DummyManager()
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer Moov ---
+try:
+    from bot.helpers.moov.manager import moov_manager
+except ImportError:
+    moov_manager = _DummyManager()
+# --- BATAS TAMBAHAN ---
+
 
 def fetch_base_buttons():
     main_button = [[InlineKeyboardButton(text=lang.s.MAIN_MENU_BUTTON, callback_data="main_menu")]]
@@ -206,6 +213,18 @@ def providers_button():
                 )
             ]
         )
+
+    # --- TAMBAHAN BARU: Tombol Moov ---
+    if moov_manager and moov_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="MOOV", 
+                    callback_data='mvP' # Moov Panel
+                )
+            ]
+        )
+    # --- BATAS TAMBAHAN ---
         
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
@@ -714,6 +733,38 @@ def bugs_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
+# --- TAMBAHAN BARU: Tombol Moov ---
+def mv_button(quality: dict, user_id: int = None):
+    buttons = []
+    usetting = user_id is not None
+    # Prefix 'mvQ' untuk admin/global, 'umvs' untuk user setting
+    prefix = "mvQ" if not usetting else f"umvs"
+    
+    row = []
+    for i, (key, value) in enumerate(quality.items()):
+        raw_key = key 
+        row.append(InlineKeyboardButton(value, callback_data=f"{prefix}_{raw_key}"))
+        
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+            
+    if row:
+        buttons.append(row)
+
+    if usetting:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+        
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+# --- BATAS TAMBAHAN ---
+
 # --- TAMBAHAN BARU: Tombol Lyrics ---
 def lyrics_button(user_settings: dict, user_id):
     buttons = []
@@ -777,6 +828,9 @@ def usetting_button() -> InlineKeyboardMarkup:
     
     if bugs_manager and bugs_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Bugs Quality", callback_data=f"uset_bugs")])
+
+    if moov_manager and moov_manager.clients:
+        buttons.append([InlineKeyboardButton(text=f"Moov Quality", callback_data=f"uset_moov")])
 
     # --- TAMBAHAN BARU: Tombol Lyrics ---
     buttons.append([InlineKeyboardButton(text="LYRICS SETTINGS", callback_data="uset_lyrics")])
