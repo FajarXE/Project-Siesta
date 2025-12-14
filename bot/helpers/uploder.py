@@ -184,43 +184,26 @@ async def local_upload(metadata, user):
     
     shutil.rmtree(to_move)
 
-
 async def telegram_upload(track, user, batch_mode=False): 
     meta = track.copy()
     meta['batch_mode'] = batch_mode
+    
+    # --- FIX CRITICAL: Pastikan cover bukan string kosong ---
+    if 'cover' in meta and (not meta['cover'] or not os.path.exists(meta['cover'])):
+        meta['cover'] = None # Paksa None jika string kosong atau file hilang
+    # --------------------------------------------------------
     
     user_copy = user
     if batch_mode and 'bot_msg' in user:
         user_copy = user.copy()
         del user_copy['bot_msg']
     
-    # --- DEBUGGING FINAL ---
     filepath = track.get('filepath')
-    
-    # LOGGER.info(f"[UPLOAD ATTEMPT] Trying to upload: {filepath}")
 
-    if not filepath:
-        LOGGER.error(f"[UPLOAD FAIL] Metadata 'filepath' is missing/empty for: {track.get('title')}")
-        raise FileNotFoundError("Filepath missing in metadata")
+    if not filepath or not os.path.exists(filepath):
+        LOGGER.error(f"[UPLOAD FAIL] Path does not exist: '{filepath}'")
+        raise FileNotFoundError(f"File not found: {filepath}")
 
-    if not os.path.exists(filepath):
-        # Coba cek apakah ada karakter aneh yang tersembunyi atau masalah encoding
-        LOGGER.error(f"[UPLOAD FAIL] Path does not exist on disk: '{filepath}'")
-        
-        # List folder induk untuk melihat apa isinya (untuk debugging)
-        parent_dir = os.path.dirname(filepath)
-        if os.path.exists(parent_dir):
-            try:
-                files_in_dir = os.listdir(parent_dir)
-                LOGGER.info(f"[DEBUG FOLDER] Isi folder '{parent_dir}': {files_in_dir}")
-            except Exception as e:
-                LOGGER.error(f"[DEBUG FOLDER] Gagal list folder: {e}")
-        else:
-            LOGGER.error(f"[DEBUG FOLDER] Folder induk juga tidak ada: '{parent_dir}'")
-            
-        raise FileNotFoundError(f"File not found on disk: {filepath}")
-
-    # Jika lolos check, upload
     try:
         await send_message(user_copy, filepath, 'audio', meta=meta)
     except Exception as e:
