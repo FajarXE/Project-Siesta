@@ -15,7 +15,7 @@ from ..utils import (
 )
 from ..uploder import album_upload
 from ..metadata import set_metadata
-from pathvalidate import sanitize_filepath
+from pathvalidate import sanitize_filename # Gunakan sanitize_filename, bukan filepath
 
 # Rahasia statis
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
@@ -44,13 +44,16 @@ async def start_album(album_id, user, upload=True):
     except Exception as e:
         raise Exception(f"Gagal mengambil metadata Moov: {e}")
 
-    # Gunakan path absolut untuk menghindari kebingungan direktori kerja
-    base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
-    album_folder = f"{base_dir}/{user['r_id']}/Moov/{album_meta['artist']}/{album_meta['title']}"
-    # Sanitasi folder path
-    album_folder = sanitize_filepath(album_folder, platform="auto")
+    # --- PERBAIKAN PATH: Sanitasi per komponen, bukan full path ---
+    # Sanitasi nama artis dan album secara terpisah
+    safe_artist = sanitize_filename(album_meta['artist'])
+    safe_title = sanitize_filename(album_meta['title'])
+    
+    # Gabungkan dengan base dir tanpa merusak slash '/'
+    album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Moov/{safe_artist}/{safe_title}"
     
     album_meta['folderpath'] = album_folder
+    # -------------------------------------------------------------
 
     if upload:
         from ..utils import post_art_poster
@@ -115,11 +118,14 @@ async def download_track(track_meta, user, folderpath):
 
     # 3. Pathing & Download
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    # Sanitasi nama file dengan aman
-    safe_filename = sanitize_filepath(raw_filename, platform="auto")
+    
+    # Sanitasi nama file saja
+    safe_filename = sanitize_filename(raw_filename)
+    
+    # Gabung folder dan filename
     filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     
-    # Update metadata dengan path absolut yang benar
+    # PENTING: Update metadata dengan path yang benar agar uploader bisa menemukannya
     track_meta['filepath'] = filepath
     
     if not os.path.isdir(folderpath):
@@ -128,6 +134,7 @@ async def download_track(track_meta, user, folderpath):
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         
+        # Proxy sudah dihandle oleh connector di mvapi.py, tidak perlu argumen proxy=...
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200:
                 LOGGER.error(f"M3U8 fetch failed: {resp.status}")
@@ -159,7 +166,7 @@ async def download_track(track_meta, user, folderpath):
             os.remove(filepath)
         return False
 
-    # 4. Validasi File Fisik (PENTING)
+    # 4. Validasi File Fisik
     if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
         LOGGER.error(f"File ZONK (0 bytes atau hilang): {filepath}")
         return False
@@ -176,12 +183,13 @@ async def download_track(track_meta, user, folderpath):
 
     # 6. Tagging
     try:
+        # Pastikan metadata.py SUDAH DIPERBAIKI (copyright issue) 
+        # agar ini tidak fail
         await set_metadata(track_meta, user['user_id'])
     except Exception as e:
-        # Jika tagging gagal, jangan hapus file, tapi log errornya
-        # agar kita tahu kenapa uploader mungkin gagal membaca metadata nantinya
         LOGGER.error(f"Tagging failed for {filepath}: {e}")
-        # Kembalikan False agar uploader tidak mencoba upload file rusak
-        return False
+        # Jangan return False jika tagging gagal tapi file ada, 
+        # biarkan upload berjalan (file mungkin tanpa cover/meta tapi audio aman)
+        pass 
         
     return True
