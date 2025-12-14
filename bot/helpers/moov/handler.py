@@ -17,7 +17,6 @@ from ..utils import (
 from ..uploder import album_upload
 from ..metadata import set_metadata
 
-# Rahasia statis
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
@@ -27,7 +26,6 @@ async def start_moov(url: str, user: dict):
     if "/album/" not in url:
         await edit_message(user['bot_msg'], "Saat ini hanya mendukung link Album Moov.")
         return
-    
     try:
         album_id = url.split("/album/")[-1].split("?")[0]
         await start_album(album_id, user)
@@ -37,16 +35,13 @@ async def start_moov(url: str, user: dict):
 
 async def start_album(album_id, user, upload=True):
     client = user['moov_api']
-    
     try:
         raw_data = await client.get_album_meta(album_id)
-        if not raw_data:
-            raise Exception("Metadata album kosong/tidak ditemukan.")
+        if not raw_data: raise Exception("Metadata album kosong.")
         album_meta = await process_album_metadata(raw_data, user['r_id'], user)
     except Exception as e:
-        raise Exception(f"Gagal mengambil metadata Moov: {e}")
+        raise Exception(f"Gagal metadata Moov: {e}")
 
-    # SETUP PATH
     base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
     safe_artist = safe_name(album_meta['artist'])
     safe_title = safe_name(album_meta['title'])
@@ -64,9 +59,8 @@ async def start_album(album_id, user, upload=True):
 
     update_details = {
         'text': "Downloading: {0} {1}/{2}\n{3} ({4})", 
-        'msg': user['bot_msg'],
-        'title': album_meta['title'],
-        'type': 'album'
+        'msg': user['bot_msg'], 
+        'title': album_meta['title'], 'type': 'album'
     }
     
     task_results = await run_concurrent_tasks(tasks, update_details)
@@ -75,8 +69,7 @@ async def start_album(album_id, user, upload=True):
     
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
-
-    if not successful_tracks:
+    else:
         raise Exception("Gagal mengunduh semua lagu.")
 
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
@@ -93,26 +86,21 @@ async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     client = user['moov_api']
     
-    # 1. Stream Info
     try:
         file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
         play_url = file_meta.get('playUrl')
         content_key = file_meta.get('contentKey')
-        if not play_url or not content_key:
-            return False
+        if not play_url or not content_key: return False
     except Exception as e:
         LOGGER.error(f"Failed stream {meta['title']}: {e}")
         return False
 
-    # 2. Key Processing
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
         key_bytes = bytes.fromhex(m.hexdigest())
-    except:
-        return False
+    except: return False
 
-    # 3. Pathing
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
     safe_filename = safe_name(raw_filename)
     
@@ -123,12 +111,10 @@ async def download_track(track_meta, user, folderpath):
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     meta['filepath'] = final_filepath
     
-    # Simpan Key
     key_filepath = os.path.join(track_temp_dir, "key.bin")
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
 
-    # 4. Download Segments
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -137,7 +123,6 @@ async def download_track(track_meta, user, folderpath):
 
         target_duration = 10
         media_sequence = 0
-        
         for line in m3u8_content.splitlines():
             if line.startswith("#EXT-X-TARGETDURATION"):
                 target_duration = line.split(":")[1].strip()
@@ -148,7 +133,6 @@ async def download_track(track_meta, user, folderpath):
         local_segment_names = []
         
         for index, seg_url in enumerate(remote_segments):
-            # Kita gunakan ekstensi .flac agar FFmpeg tahu ini adalah stream FLAC
             seg_name = f"seg_{index:04d}.flac"
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
@@ -163,21 +147,16 @@ async def download_track(track_meta, user, folderpath):
                                 await f.write(data)
                             success = True
                             break
-                except:
-                    continue
+                except: continue
             
             if not success:
                 shutil.rmtree(track_temp_dir)
                 return False
 
-        # 5. Buat Local M3U8
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
-        
-        # IV logic
         iv_line = ""
         iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
-        if iv_match:
-            iv_line = f",IV=0x{iv_match.group(1)}"
+        if iv_match: iv_line = f",IV=0x{iv_match.group(1)}"
             
         async with aiofiles.open(local_m3u8_path, 'w') as f:
             await f.write("#EXTM3U\n")
@@ -185,48 +164,45 @@ async def download_track(track_meta, user, folderpath):
             await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
             await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
             await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
-            
             for seg_name in local_segment_names:
                 await f.write(f"#EXTINF:{target_duration},\n")
                 await f.write(f"{seg_name}\n")
-            
             await f.write("#EXT-X-ENDLIST\n")
 
-        # 6. FFmpeg Processing (RE-ENCODE)
-        # --- PERUBAHAN PENTING ---
-        # Menghapus '-c copy'. Kita biarkan FFmpeg men-decode dan meng-encode ulang.
-        # Ini akan membersihkan header berulang dan menjamin file durasi penuh.
+        # --- PERBAIKAN METADATA DI SINI ---
+        # Suntikkan metadata langsung ke FFmpeg saat re-encode
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-            # '-c', 'copy',  <-- DIBUANG AGAR RE-ENCODE
+            # Metadata Flags
+            '-metadata', f'title={meta.get("title", "")}',
+            '-metadata', f'artist={meta.get("artist", "")}',
+            '-metadata', f'album={meta.get("album", "")}',
+            '-metadata', f'album_artist={meta.get("albumartist", "")}',
+            '-metadata', f'track={meta.get("tracknumber", "")}',
+            '-metadata', f'copyright={meta.get("copyright", "")}',
+            # Output
             final_filepath
         ]
         
         process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
         )
         _, stderr = await process.communicate()
-        
-        # Bersihkan folder temp
         shutil.rmtree(track_temp_dir)
         
         if process.returncode != 0:
-            LOGGER.error(f"FFmpeg Error {meta['title']}: {stderr.decode()}")
+            LOGGER.error(f"FFmpeg HLS Error: {stderr.decode()}")
             return False
 
     except Exception as e:
-        LOGGER.error(f"DL Logic Error {meta['title']}: {e}")
+        LOGGER.error(f"DL Logic Error: {e}")
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
 
-    # 7. Validasi
     if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 1024 * 50: 
-        LOGGER.error(f"File final too small/missing: {final_filepath}")
         return False
 
     try:
@@ -235,13 +211,11 @@ async def download_track(track_meta, user, folderpath):
             lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
             async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
                 await f.write(lyrics)
-    except:
-        pass
+    except: pass
 
+    # Tagging sekunder (untuk cover art) tetap dijalankan
     try:
         await set_metadata(meta, user['user_id'])
-    except Exception as e:
-        LOGGER.error(f"Tagging Error: {e}")
-        pass 
+    except: pass 
         
     return meta
