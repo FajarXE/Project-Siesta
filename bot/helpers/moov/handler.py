@@ -70,22 +70,13 @@ async def start_album(album_id, user, upload=True):
         'type': 'album'
     }
     
-    # --- PERBAIKAN UTAMA DI SINI ---
-    # run_concurrent_tasks mengembalikan hasil dari fungsi download_track.
-    # Kita harus memodifikasi download_track agar mengembalikan DICT METADATA jika sukses, bukan cuma True.
     task_results = await run_concurrent_tasks(tasks, update_details)
     
-    # Filter dan ambil metadata yang sudah diperbarui (berisi filepath)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
-    
-    # Ganti list tracks lama dengan list baru yang berisi path file
     album_meta['tracks'] = successful_tracks
     
-    # DEBUG: Verifikasi path sebelum upload
     if successful_tracks:
         LOGGER.info(f"[HANDLER FIX] Metadata Updated. Sample Path: {successful_tracks[0]['filepath']}")
-    else:
-        LOGGER.error("[HANDLER FIX] No successful tracks returned from workers.")
 
     if not successful_tracks:
         raise Exception("Gagal mengunduh semua lagu.")
@@ -101,7 +92,6 @@ async def start_album(album_id, user, upload=True):
         await album_upload(album_meta, user)
 
 async def download_track(track_meta, user, folderpath):
-    # Salin meta agar tidak konflik thread (meski Python GIL aman, ini best practice)
     meta = track_meta.copy()
     client = user['moov_api']
     
@@ -116,13 +106,11 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"Failed stream {meta['title']}: {e}")
         return False
 
-    # 2. Crypto
+    # 2. Key Derivation (Key tetap sama untuk satu lagu)
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
         key = bytes.fromhex(m.hexdigest())
-        iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01'
-        cipher = AES.new(key, AES.MODE_CBC, iv)
     except:
         return False
 
@@ -131,13 +119,12 @@ async def download_track(track_meta, user, folderpath):
     safe_filename = safe_name(raw_filename)
     filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     
-    # UPDATE METADATA (CRITICAL)
     meta['filepath'] = filepath
     
     if not os.path.isdir(folderpath):
         os.makedirs(folderpath, exist_ok=True)
 
-    # 4. Download
+    # 4. Download & Decrypt Loop
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -145,17 +132,36 @@ async def download_track(track_meta, user, folderpath):
                 return False
             m3u8_content = await resp.text()
             
+        # Cari Sequence Number Awal (Penting untuk IV)
+        start_seq = 1
+        for line in m3u8_content.splitlines():
+            if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+                try:
+                    start_seq = int(line.split(":")[1].strip())
+                except:
+                    pass
+                break
+
         segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         
         async with aiofiles.open(filepath, 'wb') as f_out:
-            for seg_url in segments:
+            for index, seg_url in enumerate(segments):
                 for _ in range(3):
                     try:
                         async with client.session.get(seg_url) as seg_resp:
                             if seg_resp.status == 200:
-                                enc = await seg_resp.read()
-                                dec = cipher.decrypt(enc)
-                                await f_out.write(dec)
+                                encrypted_data = await seg_resp.read()
+                                
+                                # --- PERBAIKAN UTAMA: IV Dinamis ---
+                                # IV direset setiap segmen berdasarkan nomor urut (Big Endian 128-bit)
+                                current_seq = start_seq + index
+                                iv = current_seq.to_bytes(16, byteorder='big')
+                                
+                                # Buat cipher baru untuk setiap segmen
+                                cipher = AES.new(key, AES.MODE_CBC, iv)
+                                
+                                decrypted_data = cipher.decrypt(encrypted_data)
+                                await f_out.write(decrypted_data)
                                 break
                     except:
                         continue
@@ -163,8 +169,11 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"DL Error {meta['title']}: {e}")
         return False
 
-    # 5. VALIDASI
-    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+    # 5. Validasi Ukuran File (Minimal 1MB untuk memastikan bukan cuma 4 detik)
+    if not os.path.exists(filepath):
+        return False
+    if os.path.getsize(filepath) < 1024 * 100: # < 100KB berarti gagal
+        LOGGER.error(f"File too small (Decryption failed?): {filepath}")
         return False
 
     # 6. Lyrics & Tagging
@@ -183,5 +192,4 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"Tagging Error {filepath}: {e}")
         pass 
         
-    # --- PERBAIKAN PENTING: Return Metadata Object, bukan True ---
     return meta
