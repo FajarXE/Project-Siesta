@@ -2,9 +2,10 @@
 
 import os
 import re
+import shutil
+import asyncio
 import aiofiles
 import hashlib
-import traceback
 from Cryptodome.Cipher import AES 
 from config import Config
 from bot.logger import LOGGER
@@ -72,7 +73,6 @@ async def start_album(album_id, user, upload=True):
     
     task_results = await run_concurrent_tasks(tasks, update_details)
     
-    # Ambil hasil metadata yang sukses (yang sudah punya filepath)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
     album_meta['tracks'] = successful_tracks
     
@@ -122,10 +122,16 @@ async def download_track(track_meta, user, folderpath):
     
     meta['filepath'] = filepath
     
+    # Folder temporary untuk menyimpan segmen pecahan
+    temp_seg_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
+    if os.path.exists(temp_seg_dir):
+        shutil.rmtree(temp_seg_dir)
+    os.makedirs(temp_seg_dir, exist_ok=True)
+
     if not os.path.isdir(folderpath):
         os.makedirs(folderpath, exist_ok=True)
 
-    # 4. Download & Decrypt Loop (LOGIKA BARU)
+    # 4. Download & Decrypt Loop
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -133,45 +139,122 @@ async def download_track(track_meta, user, folderpath):
                 return False
             m3u8_content = await resp.text()
             
-        segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
+        # DEBUG: Log Key line untuk memastikan IV
+        for line in m3u8_content.splitlines():
+            if line.startswith("#EXT-X-KEY"):
+                LOGGER.info(f"[DEBUG M3U8] {meta['title']} Key Line: {line}")
+
+        # Cari Sequence Awal
+        start_seq = 1
+        custom_iv = None
         
-        # --- PERBAIKAN DEKRIPSI ---
-        # Kita inisialisasi cipher SATU KALI SAJA di luar loop.
-        # Moov menggunakan Continuous AES Stream.
-        # IV awal biasanya 1 (Big Endian) atau 0. Kita pakai 1 sesuai standar mereka.
-        iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01'
-        cipher = AES.new(key, AES.MODE_CBC, iv)
-        # --------------------------
+        # Cek apakah ada IV eksplisit di M3U8
+        # Contoh: #EXT-X-KEY:METHOD=AES-128,URI="...",IV=0x123...
+        key_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
+        if key_match:
+            iv_hex = key_match.group(1)
+            custom_iv = bytes.fromhex(iv_hex)
+            LOGGER.info(f"[DEBUG IV] Found Explicit IV in M3U8: {iv_hex}")
 
-        async with aiofiles.open(filepath, 'wb') as f_out:
-            for seg_url in segments:
-                for _ in range(3): # Retry logic
-                    try:
-                        async with client.session.get(seg_url) as seg_resp:
-                            if seg_resp.status == 200:
-                                encrypted_data = await seg_resp.read()
-                                
-                                # Jangan buat cipher baru! Gunakan yang sudah ada.
-                                # Cipher akan mengingat state dari segmen sebelumnya.
-                                decrypted_data = cipher.decrypt(encrypted_data)
-                                
-                                await f_out.write(decrypted_data)
-                                break
-                    except:
-                        continue
+        for line in m3u8_content.splitlines():
+            if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+                try:
+                    start_seq = int(line.split(":")[1].strip())
+                except:
+                    pass
+                break
+
+        segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
+        segment_files = []
+
+        for index, seg_url in enumerate(segments):
+            seg_filename = os.path.join(temp_seg_dir, f"{index:04d}.ts")
+            success = False
+            
+            for _ in range(3): # Retry logic
+                try:
+                    async with client.session.get(seg_url) as seg_resp:
+                        if seg_resp.status == 200:
+                            encrypted_data = await seg_resp.read()
+                            
+                            # LOGIKA IV:
+                            # 1. Jika ada IV di M3U8, gunakan itu (Static).
+                            # 2. Jika tidak, gunakan Sequence Number (Dynamic per segmen).
+                            if custom_iv:
+                                iv = custom_iv
+                            else:
+                                current_seq = start_seq + index
+                                iv = current_seq.to_bytes(16, byteorder='big')
+                            
+                            # Reset Cipher untuk setiap segmen (Standard HLS untuk file pecahan)
+                            cipher = AES.new(key, AES.MODE_CBC, iv)
+                            decrypted_data = cipher.decrypt(encrypted_data)
+                            
+                            async with aiofiles.open(seg_filename, 'wb') as f_seg:
+                                await f_seg.write(decrypted_data)
+                            
+                            segment_files.append(seg_filename)
+                            success = True
+                            break
+                except Exception as e:
+                    # LOGGER.error(f"Seg dl error: {e}")
+                    pass
+            
+            if not success:
+                LOGGER.error(f"Failed to download segment {index} for {meta['title']}")
+                # Clean up and fail
+                shutil.rmtree(temp_seg_dir)
+                return False
+
+        # 5. FFmpeg Concatenation (Stitching)
+        # Ini akan menggabungkan semua segmen menjadi satu file FLAC utuh
+        list_txt_path = os.path.join(temp_seg_dir, "list.txt")
+        async with aiofiles.open(list_txt_path, 'w') as f_list:
+            for seg_file in segment_files:
+                # Escape single quotes in filename just in case
+                safe_seg = seg_file.replace("'", "'\\''")
+                await f_list.write(f"file '{safe_seg}'\n")
+
+        # Command FFmpeg
+        # -f concat: format gabung
+        # -safe 0: izinkan path absolut
+        # -c copy: jangan transcode (hanya copy stream audio), sangat cepat
+        cmd = [
+            'ffmpeg', '-y', 
+            '-f', 'concat', 
+            '-safe', '0', 
+            '-i', list_txt_path, 
+            '-c', 'copy', 
+            filepath
+        ]
+        
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            LOGGER.error(f"FFmpeg Error for {meta['title']}: {stderr.decode()}")
+            shutil.rmtree(temp_seg_dir)
+            return False
+            
+        # Hapus folder temporary
+        shutil.rmtree(temp_seg_dir)
+
     except Exception as e:
-        LOGGER.error(f"DL Error {meta['title']}: {e}")
+        LOGGER.error(f"DL Logic Error {meta['title']}: {e}")
+        if os.path.exists(temp_seg_dir):
+            shutil.rmtree(temp_seg_dir)
         return False
 
-    # 5. Validasi
-    if not os.path.exists(filepath):
-        return False
-    # Cek ukuran file, harusnya sekarang > 1MB untuk lagu full
-    if os.path.getsize(filepath) < 1024 * 100: 
-        LOGGER.error(f"File too small (Decryption failed?): {filepath}")
+    # 6. Validasi Akhir
+    if not os.path.exists(filepath) or os.path.getsize(filepath) < 1024 * 100: 
+        LOGGER.error(f"File final too small/missing: {filepath}")
         return False
 
-    # 6. Lyrics & Tagging
+    # 7. Lyrics & Tagging
     try:
         lyrics = await client.get_lyrics(meta['itemid'])
         if lyrics:
