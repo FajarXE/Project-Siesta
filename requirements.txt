@@ -10,6 +10,7 @@ pathvalidate
 Pillow
 psutil
 psycopg2-binary
+aiohttp-socks
 pycryptodomex
 pyrofork
 python-dotenv
