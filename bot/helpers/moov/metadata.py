@@ -1,64 +1,69 @@
+# [GANTI FILE: bot/helpers/moov/metadata.py]
+
 import copy
+import re
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .manager import moov_manager
+
+# Fungsi bantuan untuk memaksa resolusi tinggi
+def get_high_res_cover(url):
+    if not url: return None
+    # Pola URL Moov biasanya mengandung resolusi, misal: .../resize/350x350/...
+    # Kita ubah menjadi 1000x1000 atau resolusi maksimal
+    if "350x350" in url:
+        return url.replace("350x350", "1000x1000")
+    # Jika pola lain, coba regex umum untuk angka resolusi
+    return re.sub(r'\/resize\/\d+x\d+\/', '/resize/1000x1000/', url)
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # [span_10](start_span)Mapping field dari response API[span_10](end_span)
     metadata['itemid'] = track_data.get('productId')
     metadata['title'] = track_data.get('productTitle')
     
-    # Artist
     artists = track_data.get('artists', [])
     metadata['artist'] = ", ".join([a.get('name') for a in artists])
     
-    # Album & Copyright
     metadata['album'] = track_data.get('albumTitle') or ""
     
     raw_copyright = track_data.get('cnote')
     metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
 
     metadata['label'] = track_data.get('albumLabel') or ""
-    
-    # Track Number
-    # Note: Moov tidak selalu return track number eksplisit di list produk, 
-    # seringkali urutan list adalah nomor track. Kita handle di handler.py jika perlu.
-    # Namun jika ada field 'discNo' atau 'trackNo', pakai itu.
     metadata['tracknumber'] = str(track_data.get('trackNo', 1))
     
-    # Provider
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # Cover Art
+    # --- PERBAIKAN COVER ART (High Res) ---
     if cover:
         metadata['cover'] = cover
     else:
-        # [span_11](start_span)Ambil gambar resolusi tertinggi dari list images[span_11](end_span)
         images = track_data.get('images', [])
         if images:
-            # Biasanya gambar terakhir adalah yang terbesar atau cari yang 'path' nya valid
-            cover_url = images[0].get('path') 
-            metadata['cover'] = await create_cover_file(cover_url, metadata)
+            # Ambil URL gambar pertama
+            raw_url = images[0].get('path')
+            # Manipulasi URL untuk mendapatkan resolusi tinggi
+            hd_url = get_high_res_cover(raw_url)
+            metadata['cover'] = await create_cover_file(hd_url, metadata)
+    # --------------------------------------
 
     # Quality Selection
-    # [span_12](start_span)Moov qualities: 'HR' (24bit), 'LL' (16bit)[span_12](end_span)
-    avail_qualities = track_data.get('qualities', []) # list seperti ['HR', 'LL', 'HD']
+    avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
     
-    target_quality = 'LL' # Default 16bit FLAC
+    target_quality = 'LL' 
     
-    if user_pref == "FLAC": # User wants Max (24bit if avail)
+    if user_pref == "FLAC": 
         if 'HR' in avail_qualities:
             target_quality = 'HR'
             metadata['quality'] = 'FLAC 24bit'
         elif 'LL' in avail_qualities:
             target_quality = 'LL'
             metadata['quality'] = 'FLAC 16bit'
-    else: # Fallback / MP3 preference -> Pakai LL (karena Moov focus FLAC) atau HD jika ada
+    else: 
         if 'LL' in avail_qualities:
             target_quality = 'LL'
             metadata['quality'] = 'FLAC 16bit'
@@ -72,42 +77,37 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # [span_13](start_span)Album Info[span_13](end_span)
-    # Moov return 'engTitle', 'chiTitle' list. Index 0 = Album Name.
-    meta_lang_key = 'engTitle' # Default English
-    
+    meta_lang_key = 'engTitle' 
     titles = album_data.get(meta_lang_key, [])
     metadata['title'] = titles[0] if titles else "Unknown Album"
     metadata['album'] = metadata['title']
     
-    # Artist
     artists = album_data.get('artists', [])
     metadata['artist'] = ", ".join([a.get('name') for a in artists])
     metadata['albumartist'] = metadata['artist']
     
-    # Date (Year)
     if len(titles) > 2:
-        metadata['date'] = titles[2].split('-')[0] # Format YYYY-MM-DD
+        metadata['date'] = titles[2].split('-')[0] 
         
     metadata['provider'] = 'Moov'
     metadata['type'] = 'album'
-    metadata['itemid'] = album_data.get('profileId') # atau ID dari URL
+    metadata['itemid'] = album_data.get('profileId') 
     
-    # Cover
     images = album_data.get('images', [])
     if images:
-        metadata['cover'] = await create_cover_file(images[0].get('path'), metadata)
+        # Terapkan High Res juga untuk cover album
+        raw_url = images[0].get('path')
+        hd_url = get_high_res_cover(raw_url)
+        metadata['cover'] = await create_cover_file(hd_url, metadata)
         
-    # Tracks
     metadata['tracks'] = []
-    # Tracks ada di modules -> products
     modules = album_data.get('modules', [])
     if modules:
         products = modules[0].get('products', [])
         metadata['totaltracks'] = len(products)
         
         for idx, track_raw in enumerate(products, 1):
-            track_raw['trackNo'] = idx # Inject nomor urut
+            track_raw['trackNo'] = idx 
             t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'])
             metadata['tracks'].append(t_meta)
             
