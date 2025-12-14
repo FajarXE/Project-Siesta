@@ -1,24 +1,26 @@
+# [GANTI FILE: bot/helpers/moov/handler.py]
+
 import os
 import aiofiles
 import hashlib
-from Cryptodome.Cipher import AES # Wajib install pycryptodomex
+import traceback
+from Cryptodome.Cipher import AES 
 from config import Config
 from bot.logger import LOGGER
 from ..message import edit_message
 from .metadata import process_album_metadata
 from ..utils import (
     format_string, run_concurrent_tasks, zip_handler, 
-    fetch_zip_settings, post_art_poster, progress_message
+    fetch_zip_settings, post_art_poster
 )
 from ..uploder import album_upload
 from ..metadata import set_metadata
 from pathvalidate import sanitize_filepath
 
-# [span_14](start_span)Rahasia statis dari moov-dl.py[span_14](end_span)
+# Rahasia statis
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 async def start_moov(url: str, user: dict):
-    # Parsing URL: https://moov.hk/#/album/ALBUM_ID
     if "/album/" not in url:
         await edit_message(user['bot_msg'], "Saat ini hanya mendukung link Album Moov.")
         return
@@ -36,18 +38,21 @@ async def start_album(album_id, user, upload=True):
     try:
         raw_data = await client.get_album_meta(album_id)
         if not raw_data:
-            raise Exception("Metadata album kosong.")
+            raise Exception("Metadata album kosong/tidak ditemukan.")
         
         album_meta = await process_album_metadata(raw_data, user['r_id'], user)
     except Exception as e:
         raise Exception(f"Gagal mengambil metadata Moov: {e}")
 
-    album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Moov/{album_meta['artist']}/{album_meta['title']}"
-    album_folder = sanitize_filepath(album_folder)
+    # Gunakan path absolut untuk menghindari kebingungan direktori kerja
+    base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
+    album_folder = f"{base_dir}/{user['r_id']}/Moov/{album_meta['artist']}/{album_meta['title']}"
+    # Sanitasi folder path
+    album_folder = sanitize_filepath(album_folder, platform="auto")
+    
     album_meta['folderpath'] = album_folder
 
     if upload:
-        # Import helper untuk post cover
         from ..utils import post_art_poster
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
@@ -56,7 +61,7 @@ async def start_album(album_id, user, upload=True):
         tasks.append(download_track(track, user, album_folder))
 
     update_details = {
-        'text': "Downloading: {0} {1}/{2}\n{3} ({4})", # Template standar
+        'text': "Downloading: {0} {1}/{2}\n{3} ({4})", 
         'msg': user['bot_msg'],
         'title': album_meta['title'],
         'type': 'album'
@@ -68,7 +73,7 @@ async def start_album(album_id, user, upload=True):
     album_meta['tracks'] = successful_tracks
     
     if not successful_tracks:
-        raise Exception("Gagal mengunduh semua lagu.")
+        raise Exception("Gagal mengunduh semua lagu (File kosong atau gagal decrypt).")
 
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
@@ -83,7 +88,7 @@ async def start_album(album_id, user, upload=True):
 async def download_track(track_meta, user, folderpath):
     client = user['moov_api']
     
-    # 1. Dapatkan info stream (m3u8 & Key)
+    # 1. Dapatkan info stream
     try:
         file_meta = await client.get_track_file_meta(track_meta['itemid'], track_meta['moov_quality_code'])
         play_url = file_meta.get('playUrl')
@@ -97,7 +102,7 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"Failed get stream {track_meta['title']}: {e}")
         return False
 
-    # 2. [span_15](start_span)Setup Decryption Key[span_15](end_span)
+    # 2. Setup Key
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
@@ -108,36 +113,38 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"Crypto setup failed: {e}")
         return False
 
-    # 3. Download & Decrypt Segments
-    # Moov menggunakan HLS. Kita perlu fetch m3u8, lalu download segmen, decrypt, dan gabung.
+    # 3. Pathing & Download
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    filepath = f"{folderpath}/{sanitize_filepath(raw_filename)}.flac"
+    # Sanitasi nama file dengan aman
+    safe_filename = sanitize_filepath(raw_filename, platform="auto")
+    filepath = os.path.join(folderpath, f"{safe_filename}.flac")
+    
+    # Update metadata dengan path absolut yang benar
     track_meta['filepath'] = filepath
     
     if not os.path.isdir(folderpath):
         os.makedirs(folderpath, exist_ok=True)
 
     try:
-        # Fetch playlist m3u8
-        # [span_16](start_span)Header user-agent khusus stream[span_16](end_span)
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         
         async with client.session.get(play_url, headers=hls_headers) as resp:
+            if resp.status != 200:
+                LOGGER.error(f"M3U8 fetch failed: {resp.status}")
+                return False
             m3u8_content = await resp.text()
             
-        # Parse segments (baris yang tidak diawali #)
         segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         
         if not segments:
+            LOGGER.error(f"No segments found for {track_meta['title']}")
             return False
 
-        # Download loop (Sequential writing to file)
         async with aiofiles.open(filepath, 'wb') as f_out:
             for seg_url in segments:
                 for _ in range(3):
                     try:
-                        # Proxy sudah dihandle oleh session connector
-                        async with client.session.get(seg_url) as seg_resp: 
+                        async with client.session.get(seg_url) as seg_resp:
                             if seg_resp.status == 200:
                                 encrypted_data = await seg_resp.read()
                                 decrypted_data = cipher.decrypt(encrypted_data)
@@ -147,12 +154,17 @@ async def download_track(track_meta, user, folderpath):
                         continue
                         
     except Exception as e:
-        LOGGER.error(f"Download/Decrypt loop failed for {track_meta['title']}: {e}")
+        LOGGER.error(f"Download loop failed for {track_meta['title']}: {e}")
         if os.path.exists(filepath):
             os.remove(filepath)
         return False
 
-    # 4. [span_18](start_span)Lirik[span_18](end_span)
+    # 4. Validasi File Fisik (PENTING)
+    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+        LOGGER.error(f"File ZONK (0 bytes atau hilang): {filepath}")
+        return False
+
+    # 5. Lirik
     try:
         lyrics = await client.get_lyrics(track_meta['itemid'])
         if lyrics:
@@ -162,11 +174,14 @@ async def download_track(track_meta, user, folderpath):
     except:
         pass
 
-    # 5. Tagging
+    # 6. Tagging
     try:
         await set_metadata(track_meta, user['user_id'])
     except Exception as e:
-        LOGGER.error(f"Tagging failed: {e}")
+        # Jika tagging gagal, jangan hapus file, tapi log errornya
+        # agar kita tahu kenapa uploader mungkin gagal membaca metadata nantinya
+        LOGGER.error(f"Tagging failed for {filepath}: {e}")
+        # Kembalikan False agar uploader tidak mencoba upload file rusak
         return False
         
     return True
