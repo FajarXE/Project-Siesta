@@ -6,15 +6,11 @@ from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .manager import moov_manager
 
-# Fungsi bantuan untuk memaksa resolusi tinggi
+# --- PERBAIKAN: Regex Agresif untuk High Res ---
 def get_high_res_cover(url):
     if not url: return None
-    # Pola URL Moov biasanya mengandung resolusi, misal: .../resize/350x350/...
-    # Kita ubah menjadi 1000x1000 atau resolusi maksimal
-    if "350x350" in url:
-        return url.replace("350x350", "1000x1000")
-    # Jika pola lain, coba regex umum untuk angka resolusi
-    return re.sub(r'\/resize\/\d+x\d+\/', '/resize/1000x1000/', url)
+    # Ganti angka berapapun (misal 350x350) menjadi 1000x1000
+    return re.sub(r'\d+x\d+', '1000x1000', url)
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None):
     metadata = copy.deepcopy(base_meta)
@@ -37,20 +33,18 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None)
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- PERBAIKAN COVER ART (High Res) ---
+    # --- PERBAIKAN COVER ART ---
     if cover:
         metadata['cover'] = cover
     else:
         images = track_data.get('images', [])
         if images:
-            # Ambil URL gambar pertama
             raw_url = images[0].get('path')
-            # Manipulasi URL untuk mendapatkan resolusi tinggi
+            # Paksa URL menjadi High Res
             hd_url = get_high_res_cover(raw_url)
             metadata['cover'] = await create_cover_file(hd_url, metadata)
-    # --------------------------------------
+    # ---------------------------
 
-    # Quality Selection
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
     
@@ -95,7 +89,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     
     images = album_data.get('images', [])
     if images:
-        # Terapkan High Res juga untuk cover album
         raw_url = images[0].get('path')
         hd_url = get_high_res_cover(raw_url)
         metadata['cover'] = await create_cover_file(hd_url, metadata)
