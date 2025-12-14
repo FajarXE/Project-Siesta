@@ -111,9 +111,26 @@ async def download_track(track_meta, user, folderpath):
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     meta['filepath'] = final_filepath
     
+    # Simpan Key
     key_filepath = os.path.join(track_temp_dir, "key.bin")
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
+
+    # --- DOWNLOAD COVER UNTUK FFMPEG ---
+    cover_path = None
+    if meta.get('cover'):
+        try:
+            cover_path = os.path.join(track_temp_dir, "cover.jpg")
+            async with client.session.get(meta['cover']) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    async with aiofiles.open(cover_path, 'wb') as f:
+                        await f.write(data)
+                else:
+                    cover_path = None
+        except:
+            cover_path = None
+    # -----------------------------------
 
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
@@ -169,23 +186,37 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- PERBAIKAN METADATA DI SINI ---
-        # Suntikkan metadata langsung ke FFmpeg saat re-encode
+        # --- FFMPEG COMMAND UTAMA (Embed Metadata & Cover) ---
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-            '-i', local_m3u8_path,
-            # Metadata Flags
+            '-i', local_m3u8_path, # Input 0: Audio
+        ]
+
+        # Tambahkan Input Cover jika ada
+        if cover_path and os.path.exists(cover_path):
+            cmd.extend(['-i', cover_path]) # Input 1: Cover
+            # Mapping agar cover masuk sebagai video stream (standar FLAC)
+            cmd.extend(['-map', '0:a', '-map', '1:0'])
+            cmd.extend(['-disposition:v', 'attached_pic'])
+            cmd.extend(['-metadata:s:v', 'title="Album cover"'])
+            cmd.extend(['-metadata:s:v', 'comment="Cover (front)"'])
+        else:
+            # Jika tidak ada cover, map audio saja
+            cmd.extend(['-map', '0:a'])
+
+        # Tambahkan Metadata Tags
+        cmd.extend([
             '-metadata', f'title={meta.get("title", "")}',
             '-metadata', f'artist={meta.get("artist", "")}',
             '-metadata', f'album={meta.get("album", "")}',
             '-metadata', f'album_artist={meta.get("albumartist", "")}',
             '-metadata', f'track={meta.get("tracknumber", "")}',
             '-metadata', f'copyright={meta.get("copyright", "")}',
-            # Output
+            # Output File
             final_filepath
-        ]
+        ])
         
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
@@ -205,6 +236,7 @@ async def download_track(track_meta, user, folderpath):
     if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 1024 * 50: 
         return False
 
+    # Tambahan Lirik
     try:
         lyrics = await client.get_lyrics(meta['itemid'])
         if lyrics:
@@ -212,8 +244,9 @@ async def download_track(track_meta, user, folderpath):
             async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
                 await f.write(lyrics)
     except: pass
-
-    # Tagging sekunder (untuk cover art) tetap dijalankan
+    
+    # Post-tagging opsional (Mutagen)
+    # FFmpeg seharusnya sudah cukup, tapi biarkan ini sebagai cadangan
     try:
         await set_metadata(meta, user['user_id'])
     except: pass 
