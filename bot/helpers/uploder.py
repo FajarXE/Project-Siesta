@@ -10,12 +10,7 @@ from .message import send_message, edit_message
 from .utils import *
 from bot.logger import LOGGER 
 
-#
-#
-#  TASK HANDLER
-#
-#
-#
+# --- TASK HANDLER ---
 
 async def track_upload(metadata, user, disable_link=False):
     if bot_set.upload_mode == 'Local':
@@ -30,9 +25,8 @@ async def track_upload(metadata, user, disable_link=False):
     try:
         if os.path.exists(metadata['filepath']):
             os.remove(metadata['filepath'])
-    except Exception:
+    except:
         pass
-        
 
 async def album_upload(metadata, user):
     user_dict = user.copy()
@@ -42,14 +36,9 @@ async def album_upload(metadata, user):
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'):
             zip_files = metadata['zip_path']
-            if isinstance(zip_files, str):
-                zip_files = [zip_files] 
-            
+            if isinstance(zip_files, str): zip_files = [zip_files] 
             for item in zip_files: 
-                await send_message(user, item, 'doc', 
-                    caption=await create_simple_text(metadata, user),
-                    meta=metadata
-                )
+                await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
         else:
             await batch_telegram_upload(metadata, user)
     else:
@@ -72,14 +61,9 @@ async def artist_upload(metadata, user):
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
             zip_files = metadata['zip_path']
-            if isinstance(zip_files, str):
-                zip_files = [zip_files]
-
+            if isinstance(zip_files, str): zip_files = [zip_files]
             for item in zip_files:
-                await send_message(user, item, 'doc', 
-                    caption=await create_simple_text(metadata, user),
-                    meta=metadata
-                )
+                await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
         else:
             pass 
     else:
@@ -91,7 +75,6 @@ async def artist_upload(metadata, user):
                 pass
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
-
     await cleanup(None, metadata, user_dict)
 
 
@@ -101,14 +84,9 @@ async def playlist_upload(metadata, user):
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
             zip_files = metadata['zip_path']
-            if isinstance(zip_files, str):
-                zip_files = [zip_files]
-                
+            if isinstance(zip_files, str): zip_files = [zip_files]
             for item in zip_files: 
-                await send_message(user, item, 'doc', 
-                    caption=await create_simple_text(metadata, user),
-                    meta=metadata
-                )
+                await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
         else:
             await batch_telegram_upload(metadata, user)
     else:
@@ -133,33 +111,22 @@ async def playlist_upload(metadata, user):
                     pass
             else:
                 await post_simple_message(user, metadata, rclone_link, index_link)
-
     await cleanup(None, metadata, user)
 
 
-#
-#
-#  CORE
-#
-#
-#
+# --- CORE ---
 
 async def rclone_upload(user, realpath):
     path_to_upload = realpath
     base_path = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/"
-
-    if isinstance(realpath, list):
-        path_to_upload = base_path
-    elif isinstance(realpath, str) and realpath.endswith('.zip'):
-        path_to_upload = realpath
-    else:
-        path_to_upload = realpath 
+    if isinstance(realpath, list): path_to_upload = base_path
+    elif isinstance(realpath, str) and realpath.endswith('.zip'): path_to_upload = realpath
+    else: path_to_upload = realpath 
 
     path = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/"
     cmd = f'rclone copy --config ./rclone.conf "{path}" "{Config.RCLONE_DEST}"'
     task = await asyncio.create_subprocess_shell(cmd)
     await task.wait()
-    
     r_link, i_link = await create_link(realpath, base_path)
     return r_link, i_link
 
@@ -167,20 +134,15 @@ async def rclone_upload(user, realpath):
 async def local_upload(metadata, user):
     to_move = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}"
     destination = os.path.join(Config.LOCAL_STORAGE, os.path.basename(to_move))
-
     if os.path.exists(destination):
         for item in os.listdir(to_move):
             src_item = os.path.join(to_move, item)
             dest_item = os.path.join(destination, item)
-
             if os.path.isdir(src_item):
-                if not os.path.exists(dest_item):
-                    shutil.copytree(src_item, dest_item)
-            else:
-                shutil.copy2(src_item, dest_item)
+                if not os.path.exists(dest_item): shutil.copytree(src_item, dest_item)
+            else: shutil.copy2(src_item, dest_item)
     else:
         shutil.copytree(to_move, destination)
-    
     shutil.rmtree(to_move)
 
 
@@ -193,47 +155,23 @@ async def telegram_upload(track, user, batch_mode=False):
         user_copy = user.copy()
         del user_copy['bot_msg']
     
-    # --- INTELLIGENT PATH FINDER ---
-    # Logika baru untuk memastikan file ditemukan sebelum diupload
+    # --- DEBUGGING & PATH CHECK ---
     filepath = track.get('filepath')
     
-    # 1. Cek path absolut yang diberikan handler
-    if filepath and os.path.exists(filepath):
-        final_path = filepath
-        
-    # 2. Fallback: Cari di folder jika path spesifik gagal
-    # Ini berguna jika handler.py menggunakan nama file yang disanitasi berbeda dengan ekspektasi
-    else:
-        # Coba format ulang nama file (fallback ke logika lama)
-        try:
-            filename = await format_string(Config.TRACK_NAME_FORMAT, track, user)
-            # Coba sanitasi sederhana jika logika format lama gagal
-            safe_filename = filename.replace('/', '_').replace(':', '_') 
-            
-            # Asumsikan track punya 'folderpath' dari parent album (jika ada)
-            # Jika tidak, kita harus menebak parent folder
-            parent_folder = os.path.dirname(filepath) if filepath else ""
-            
-            possible_path = os.path.join(parent_folder, f"{safe_filename}.flac")
-            
-            if os.path.exists(possible_path):
-                final_path = possible_path
-                LOGGER.info(f"Fallback path found: {final_path}")
-            else:
-                # Upaya terakhir: Scan folder untuk file FLAC apa saja yang cocok dengan track number?
-                # (Mungkin terlalu berisiko, jadi kita skip dan throw error)
-                LOGGER.error(f"Upload Failed: File not found at {filepath} OR {possible_path}")
-                raise FileNotFoundError(f"File {track.get('title')} not found.")
-        except Exception as e:
-            LOGGER.error(f"Path resolution failed: {e}")
-            raise FileNotFoundError(f"File {track.get('title')} not found.")
+    # Debug Log untuk melihat apa yang diterima uploader
+    # LOGGER.info(f"[DEBUG UPLOADER] Menerima path: {filepath}")
 
-    await send_message(user_copy, final_path, 'audio', meta=meta)
+    if not filepath or not os.path.exists(filepath):
+        LOGGER.error(f"[DEBUG UPLOADER] FILE HILANG: {filepath}")
+        raise FileNotFoundError(f"File hilang: {filepath}")
+
+    await send_message(user_copy, filepath, 'audio', meta=meta)
 
 
 async def batch_telegram_upload(metadata, user):
     tasks = []
-    if metadata['type'] == 'album' or metadata['type'] == 'playlist':
+    # Collect tasks
+    if metadata['type'] in ['album', 'playlist']:
         for track in metadata['tracks']:
             tasks.append(telegram_upload(track, user, batch_mode=True)) 
     elif metadata['type'] == 'artist':
@@ -241,13 +179,11 @@ async def batch_telegram_upload(metadata, user):
             for track in album['tracks']:
                 tasks.append(telegram_upload(track, user, batch_mode=True))
     
-    if not tasks:
-        return
+    if not tasks: return
 
     try:
         await edit_message(user['bot_msg'], f"Mengunggah {len(tasks)} lagu secara paralel...")
-    except:
-        pass
+    except: pass
 
     semaphore = asyncio.Semaphore(Config.MAX_WORKERS)
     
@@ -256,7 +192,7 @@ async def batch_telegram_upload(metadata, user):
             try:
                 await task 
             except FileNotFoundError:
-                # Log lebih detail agar tahu track mana yang hilang
+                # Ini akan tertangkap jika telegram_upload raise Error
                 LOGGER.warning(f"File not found during batch upload task.")
             except Exception as e:
                 LOGGER.error(f"Failed to upload one track during batch: {e}")
