@@ -17,8 +17,7 @@ from ..utils import (
 from ..uploder import album_upload
 from ..metadata import set_metadata
 
-# Rahasia statis (Masih diperlukan untuk Key Derivation jika Moov pakai custom logic, 
-# tapi di sini kita ambil key dari API dan simpan ke file)
+# Rahasia statis
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
@@ -105,7 +104,7 @@ async def download_track(track_meta, user, folderpath):
         LOGGER.error(f"Failed stream {meta['title']}: {e}")
         return False
 
-    # 2. Key Processing (Simpan Key ke file fisik untuk FFmpeg)
+    # 2. Key Processing
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
@@ -117,7 +116,6 @@ async def download_track(track_meta, user, folderpath):
     raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
     safe_filename = safe_name(raw_filename)
     
-    # Folder sementara untuk menyimpan M3U8, Key, dan Segmen
     track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
     if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
     os.makedirs(track_temp_dir, exist_ok=True)
@@ -125,21 +123,18 @@ async def download_track(track_meta, user, folderpath):
     final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
     meta['filepath'] = final_filepath
     
-    # Simpan Key ke file bin
+    # Simpan Key
     key_filepath = os.path.join(track_temp_dir, "key.bin")
     async with aiofiles.open(key_filepath, 'wb') as f:
         await f.write(key_bytes)
 
-    # 4. Download Segments (RAW ENCRYPTED)
+    # 4. Download Segments
     try:
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200: return False
             m3u8_content = await resp.text()
 
-        # Ambil Metadata HLS (Sequence, Target Duration, dll)
-        # Kita akan membangun ulang M3U8 lokal yang bersih
-        
         target_duration = 10
         media_sequence = 0
         
@@ -149,13 +144,13 @@ async def download_track(track_meta, user, folderpath):
             if line.startswith("#EXT-X-MEDIA-SEQUENCE"):
                 media_sequence = int(line.split(":")[1].strip())
 
-        # Ambil semua segmen URL
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
-        # Download Loop (Tanpa Dekripsi Python)
         for index, seg_url in enumerate(remote_segments):
-            seg_name = f"seg_{index:04d}.ts"
+            # --- PERBAIKAN: Ubah ekstensi .ts menjadi .flac ---
+            # Agar FFmpeg tahu isinya adalah raw FLAC setelah didekripsi
+            seg_name = f"seg_{index:04d}.flac" 
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
             
@@ -178,12 +173,8 @@ async def download_track(track_meta, user, folderpath):
                 return False
 
         # 5. Buat Local M3U8
-        # Ini triknya: Kita buat M3U8 yang menunjuk ke Key lokal dan Segmen lokal
-        # FFmpeg akan membaca ini dan menangani dekripsi secara otomatis & benar.
-        
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         
-        # Cek apakah ada IV manual di original m3u8
         iv_line = ""
         iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
         if iv_match:
@@ -194,26 +185,21 @@ async def download_track(track_meta, user, folderpath):
             await f.write("#EXT-X-VERSION:3\n")
             await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
             await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
-            
-            # Key Definition (Local File)
-            # PENTING: URI="key.bin" agar FFmpeg mengambil dari folder yang sama
             await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
             
             for seg_name in local_segment_names:
                 await f.write(f"#EXTINF:{target_duration},\n")
-                await f.write(f"{seg_name}\n")
+                await f.write(f"{seg_name}\n") # Ini sekarang menunjuk ke .flac
             
             await f.write("#EXT-X-ENDLIST\n")
 
-        # 6. FFmpeg Processing (Decrypt & Stitch)
-        # -allowed_extensions ALL: Mengizinkan FFmpeg membaca .bin dan .ts lokal
-        # -protocol_whitelist: Keamanan FFmpeg, kita izinkan file lokal
+        # 6. FFmpeg Processing
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-            '-c', 'copy', # Stream copy (Lossless, cepat)
+            '-c', 'copy', 
             final_filepath
         ]
         
@@ -224,7 +210,6 @@ async def download_track(track_meta, user, folderpath):
         )
         _, stderr = await process.communicate()
         
-        # Cleanup Temp Folder
         shutil.rmtree(track_temp_dir)
         
         if process.returncode != 0:
