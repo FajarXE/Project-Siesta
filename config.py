@@ -38,7 +38,7 @@ class Config:
     WORK_DIR = getenv("WORK_DIR", "./bot/")
     DOWNLOADS_FOLDER = getenv("DOWNLOADS_FOLDER", "DOWNLOADS")
     DOWNLOAD_BASE_DIR = WORK_DIR + DOWNLOADS_FOLDER
-    LOCAL_STORAGE = getenv("DOWNLOAD_BASE_DIR", DOWNLOAD_BASE_DIR) # Perbaikan dari file asli
+    LOCAL_STORAGE = getenv("DOWNLOAD_BASE_DIR", DOWNLOAD_BASE_DIR) 
 #--------------------
 
 # FILE/FOLDER NAMING
@@ -350,20 +350,30 @@ class Config:
 #-------------------- 
 # --- BATAS TAMBAHAN ---
 
-# MOOV ACCOUNTS
-     MOOV_ACCOUNTS = []
-     i = 1
-     while True:
-         email = getenv(f"MOOV_EMAIL_{i}")
-         password = getenv(f"MOOV_PASSWORD_{i}")
-         proxy = getenv(f"MOOV_PROXY_{i}") # Format: http://user:pass@host:port
+# --- TAMBAHAN BARU: Blok Moov ---
+#--------------------    
+# MOOV
+#--------------------
+    MOOV_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"MOOV_EMAIL_{i}")
+        password = getenv(f"MOOV_PASSWORD_{i}")
+        proxy = getenv(f"MOOV_PROXY_{i}") # Format: http://user:pass@host:port
+        
+        if email and password and proxy:
+            logging.info(f"Ditemukan Moov Akun #{i} (Email/Pass/Proxy)")
+            account_data = {"email": email, "password": password, "proxy": proxy, "id": i}
+            MOOV_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            if i > 1:
+                 logging.info(f"Selesai memuat {i-1} akun Moov.")
+            break
 
-         if email and password and proxy:
-             MOOV_ACCOUNTS.append({"email": email, "password": password, "proxy": proxy})
-             i += 1
-         else:
-             break
-#-------------------- 
+    if not MOOV_ACCOUNTS:
+        logging.warning("Tidak ada kredensial Moov (MOOV_EMAIL_1, dll.) ditemukan di .env")
+#--------------------
 # --- BATAS TAMBAHAN ---
 
 # CONCURRENT
