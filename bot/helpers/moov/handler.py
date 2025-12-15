@@ -24,21 +24,17 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
-    # Bersihkan URL dari fragment hash '#' agar split lebih aman
+    # Bersihkan URL dari fragment hash
     clean_url = url.replace("#/", "/") 
     
     if "/album/" in clean_url:
-        # Ambil bagian setelah /album/
         raw_id = clean_url.split("/album/")[-1]
-        # Bersihkan dari query params (?) dan path lanjutan (/)
         album_id = raw_id.split("?")[0].split("/")[0]
-        
         await start_album(album_id, user)
         
     elif "/song/" in clean_url:
         raw_id = clean_url.split("/song/")[-1]
         track_id = raw_id.split("?")[0].split("/")[0]
-        
         await start_track_single(track_id, user)
         
     else:
@@ -47,19 +43,15 @@ async def start_moov(url: str, user: dict):
 async def start_track_single(track_id, user):
     client = user['moov_api']
     try:
-        track_data = None
         try:
             track_data = await client.get_product_meta(track_id)
         except AttributeError:
              raise Exception("API Client Moov tidak mendukung 'get_product_meta'.")
         
-        if not track_data:
-            raise Exception("Data lagu tidak ditemukan.")
+        if not track_data: raise Exception("Data lagu tidak ditemukan.")
 
         album_id = track_data.get('albumId') or track_data.get('album', {}).get('id')
-        
-        if not album_id:
-             raise Exception("Gagal menemukan ID Album dari lagu ini.")
+        if not album_id: raise Exception("Gagal menemukan ID Album.")
 
         LOGGER.info(f"Downloading Single Track: {track_id} from Album: {album_id}")
         await start_album(album_id, user, filter_track_id=track_id)
@@ -81,9 +73,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             t for t in album_meta['tracks'] 
             if str(t.get('itemid')) == str(filter_track_id)
         ]
-        
         if not filtered_tracks:
-            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan di dalam album {album_id}.")
+            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
             
         album_meta['tracks'] = filtered_tracks
         album_meta['totaltracks'] = 1 
@@ -191,17 +182,14 @@ async def download_track(track_meta, user, folderpath):
             file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
             play_url = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
-            if not play_url or not content_key: 
-                return False
-        except Exception as e:
-            return False
+            if not play_url or not content_key: return False
+        except: return False
 
         try:
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
             key_bytes = bytes.fromhex(m.hexdigest())
-        except Exception as e:
-            return False
+        except: return False
 
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
@@ -225,7 +213,7 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
             try:
                 import aiohttp
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                headers = {'User-Agent': 'Mozilla/5.0'}
                 async with aiohttp.ClientSession() as session:
                     async with session.get(target_url, headers=headers, timeout=30) as resp:
                         if resp.status == 200:
@@ -317,26 +305,32 @@ async def download_track(track_meta, user, folderpath):
 
         if not os.path.exists(final_filepath): return False
 
-        # LYRICS & TAGGING
+        # LYRICS
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
-            if track_id:
-                lyrics_text = await client.get_lyrics(track_id)
+            if track_id: lyrics_text = await client.get_lyrics(track_id)
         except: lyrics_text = None
 
+        # TAGGING
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
-        
-        if real_duration > 0:
-            meta['duration'] = real_duration
+        if real_duration > 0: meta['duration'] = real_duration
             
+        # --- FIX: COVER CLEANUP ---
+        # 1. Simpan satu file cover.jpg di folder album (untuk Poster/Zip) jika belum ada
         if cover_local_path and os.path.exists(cover_local_path):
-            final_cover_path = os.path.join(folderpath, f"cover_{meta['itemid']}.jpg")
-            shutil.move(cover_local_path, final_cover_path)
-            meta['cover'] = final_cover_path
+            album_cover_path = os.path.join(folderpath, "cover.jpg")
+            if not os.path.exists(album_cover_path):
+                shutil.copy(cover_local_path, album_cover_path)
+            
+            # Gunakan path ini untuk uploader
+            meta['cover'] = album_cover_path
         else:
-            meta['cover'] = None 
+            meta['cover'] = None
 
+        # 2. Hapus folder temp (ini akan menghapus file cover_local_path yang duplikat)
+        # Jadi tidak ada lagi file 'cover_ID.jpg' yang menumpuk di folder output.
+        
         if lyrics_text and isinstance(lyrics_text, str):
             try:
                 lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
