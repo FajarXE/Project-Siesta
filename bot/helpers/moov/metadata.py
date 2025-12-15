@@ -31,7 +31,6 @@ async def fetch_itunes_meta(artist, album):
                         raw_art = res.get('artworkUrl100', '')
                         hd_cover = raw_art.replace('100x100bb', '3000x3000bb')
                         
-                        # Ambil Tanggal Lengkap (YYYY-MM-DD)
                         release_date = res.get('releaseDate', '')
                         if 'T' in release_date:
                             release_date = release_date.split('T')[0]
@@ -39,8 +38,8 @@ async def fetch_itunes_meta(artist, album):
                         return {
                             'cover_url': hd_cover,
                             'genre': res.get('primaryGenreName', ''),
-                            'date': release_date, # Full Date
-                            'year': release_date[:4] if release_date else '', # Year Only
+                            'date': release_date,
+                            'year': release_date[:4] if release_date else '',
                             'copyright': res.get('copyright', ''),
                             'composer': '',
                             'track_count': res.get('trackCount') 
@@ -73,28 +72,42 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['disk'] = str(track_data.get('discNo', 1))
     metadata['tracknumber'] = str(track_data.get('trackNo', 1))
     
-    # Label & Copyright
     metadata['label'] = track_data.get('albumLabel', '') 
     raw_copyright = track_data.get('cnote')
     metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
     
-    # Composer
+    # --- COMPOSER ---
     comp_list = []
     for c in track_data.get('composers', []):
         comp_list.append(c.get('name'))
     if not comp_list and track_data.get('author'):
         comp_list.append(track_data.get('author'))
-    
     metadata['composer'] = ", ".join(comp_list)
 
-    # Wariskan data Album
+    # --- TRACK DATE (Prioritas Utama) ---
+    track_date_raw = str(track_data.get('publishDate', ''))
+    if not track_date_raw:
+        track_date_raw = str(track_data.get('releaseDate', ''))
+    
+    # Bersihkan format tanggal (misal 2013-07-29T00:00...)
+    if 'T' in track_date_raw:
+        track_date_raw = track_date_raw.split('T')[0]
+        
+    if track_date_raw:
+        metadata['date'] = track_date_raw
+        metadata['year'] = track_date_raw[:4]
+    
+    # Wariskan data Album (Fallback atau pelengkap)
     if album_meta:
         metadata['albumartist'] = album_meta.get('artist', '')
-        metadata['year'] = album_meta.get('year', '')
-        metadata['date'] = album_meta.get('date', '') # Full Date
         metadata['genre'] = album_meta.get('genre', '')
-        metadata['totaltracks'] = album_meta.get('totaltracks', '') # Total Tracks
+        metadata['totaltracks'] = album_meta.get('totaltracks', '')
         
+        # Jika track tidak punya tanggal, baru pakai tanggal album
+        if not metadata.get('date'):
+            metadata['date'] = album_meta.get('date', '')
+            metadata['year'] = album_meta.get('year', '')
+            
         if not metadata['label']: metadata['label'] = album_meta.get('label', '')
         if not metadata['copyright']: metadata['copyright'] = album_meta.get('copyright', '')
             
@@ -150,25 +163,22 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
 
-    # --- DATA MOOV BASIC (Year/Date) ---
+    # --- ALBUM DATE ---
     moov_date = ""
     moov_year = ""
-    
     if len(titles) > 2:
-        # Moov format kadang: "Title", "Artist", "YYYY-MM-DD"
         moov_date = titles[2]
         try: moov_year = moov_date.split('-')[0]
         except: pass
-    
     if not moov_date:
-        # Fallback ke publishDate
-        moov_date = str(album_data.get('publishDate', ''))
-        if moov_date: 
-            try: moov_year = moov_date.split('-')[0]
-            except: pass
+        pdate = str(album_data.get('publishDate', ''))
+        if pdate: 
+            if 'T' in pdate: pdate = pdate.split('T')[0]
+            moov_date = pdate
+            moov_year = pdate.split('-')[0]
             
     metadata['year'] = moov_year
-    metadata['date'] = moov_date # Simpan full date
+    metadata['date'] = moov_date 
 
     genres = album_data.get('genres', [])
     if genres:
@@ -183,19 +193,20 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     if images:
         moov_cover_url = get_moov_cover(images[0].get('path'))
 
-    # --- INTELLIGENT SEARCH (ITUNES FALLBACK) ---
+    # iTunes Search
     itunes_data = await fetch_itunes_meta(metadata['artist'], metadata['album'])
     
     if itunes_data:
         LOGGER.info(f"[ITUNES] Match Found: {metadata['album']}")
         metadata['cover_url'] = itunes_data['cover_url']
-        
         if itunes_data['genre']: metadata['genre'] = itunes_data['genre']
-        if itunes_data['date']: metadata['date'] = itunes_data['date'] # Full Date iTunes
-        if itunes_data['year']: metadata['year'] = itunes_data['year']
         if itunes_data['copyright']: metadata['copyright'] = itunes_data['copyright']
+        # NOTE: Kita JANGAN menimpa Date Album dengan iTunes jika ingin mengandalkan date track Moov
+        # Kecuali jika Moov benar-benar kosong
+        if not metadata['date'] and itunes_data['date']:
+             metadata['date'] = itunes_data['date']
+             metadata['year'] = itunes_data['year']
     else:
-        LOGGER.warning(f"[ITUNES] No match/Fail for {metadata['album']}")
         metadata['cover_url'] = moov_cover_url
 
     if metadata.get('cover_url'):
@@ -205,7 +216,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     modules = album_data.get('modules', [])
     if modules:
         products = modules[0].get('products', [])
-        metadata['totaltracks'] = len(products) # TOTAL TRACKS
+        metadata['totaltracks'] = len(products)
         
         for idx, track_raw in enumerate(products, 1):
             track_raw['trackNo'] = idx 
