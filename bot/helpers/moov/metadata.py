@@ -2,7 +2,6 @@
 
 import copy
 import re
-import urllib.parse
 import aiohttp
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
@@ -12,61 +11,28 @@ from bot.logger import LOGGER
 def is_explicit_strict(data):
     """
     Fungsi bantu untuk mengecek status explicit secara ketat.
-    Menghindari error dimana string "0" dianggap True oleh Python.
     """
-    # Cek field 'explicit'
     val_exp = str(data.get('explicit', '')).lower()
     if val_exp in ['true', '1', 'yes', 'explicit']:
         return True
         
-    # Cek field 'parentalWarning'
     val_pw = str(data.get('parentalWarning', '')).lower()
     if val_pw in ['true', '1', 'yes', 'explicit']:
         return True
         
     return False
 
-async def fetch_itunes_meta(artist, album):
-    if not artist or not album: return None
-    
-    term = f"{artist} {album}"
-    query = urllib.parse.quote(term)
-    url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=1"
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    
-                    if data['resultCount'] > 0:
-                        res = data['results'][0]
-                        raw_art = res.get('artworkUrl100', '')
-                        hd_cover = raw_art.replace('100x100bb', '3000x3000bb')
-                        
-                        release_date = res.get('releaseDate', '')
-                        if 'T' in release_date:
-                            release_date = release_date.split('T')[0]
-                        
-                        return {
-                            'cover_url': hd_cover,
-                            'genre': res.get('primaryGenreName', ''),
-                            'date': release_date,
-                            'year': release_date[:4] if release_date else '',
-                            'copyright': res.get('copyright', ''),
-                            'composer': '',
-                            'track_count': res.get('trackCount')
-                        }
-    except Exception as e:
-        LOGGER.error(f"iTunes Search Error: {e}")
-        
-    return None
-
 def get_moov_cover(url):
+    """
+    Mengambil URL cover Moov dan mencoba menaikkan resolusi ke 1000x1000
+    """
     if not url: return None
     clean_url = url.split("?")[0]
+    
+    # Moov biasanya memiliki pola /resize/WIDTHxHEIGHT/ di URL gambarnya
     if "resize" in clean_url:
         return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
+        
     return clean_url
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
@@ -96,13 +62,11 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         comp_list.append(track_data.get('author'))
     metadata['composer'] = ", ".join(comp_list)
 
-    # --- FIX: STRICT CHECK EXPLICIT TRACK ---
-    # Gunakan fungsi bantu agar string "0" tidak dianggap True
+    # --- EXPLICIT TRACK ---
     is_track_explicit = is_explicit_strict(track_data)
     metadata['explicit'] = "True" if is_track_explicit else "False"
-    # ----------------------------------------
 
-    # Date Logic
+    # --- DATE LOGIC ---
     track_date_raw = str(track_data.get('publishDate', ''))
     if not track_date_raw: track_date_raw = str(track_data.get('releaseDate', ''))
     
@@ -112,12 +76,13 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         metadata['date'] = track_date_raw
         metadata['year'] = track_date_raw[:4]
     
-    # Wariskan data Album (KECUALI EXPLICIT)
+    # Wariskan data Album
     if album_meta:
         metadata['albumartist'] = album_meta.get('artist', '')
         metadata['genre'] = album_meta.get('genre', '')
         metadata['totaltracks'] = album_meta.get('totaltracks', '')
         
+        # Fallback date ke album jika track kosong
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
             metadata['year'] = album_meta.get('year', '')
@@ -125,12 +90,14 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         if not metadata['label']: metadata['label'] = album_meta.get('label', '')
         if not metadata['copyright']: metadata['copyright'] = album_meta.get('copyright', '')
             
+        # Gunakan Cover Album
         if not cover and album_meta.get('cover_url'):
              metadata['cover_url'] = album_meta.get('cover_url')
     
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
+    # Cover Handling
     if cover:
         metadata['cover'] = cover
     elif not metadata.get('cover_url'):
@@ -140,6 +107,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             metadata['cover_url'] = get_moov_cover(raw_url)
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
+    # Quality Handling
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
     
@@ -177,21 +145,22 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
 
-    # --- FIX: STRICT CHECK EXPLICIT ALBUM ---
+    # --- EXPLICIT CHECK (ALBUM) ---
     is_album_explicit = is_explicit_strict(album_data)
     
-    # Cek tags manual
     tags = album_data.get('tags', [])
     if 'Explicit' in tags or 'Parental Advisory' in tags:
         is_album_explicit = True
 
-    # Date
+    # --- DATE ---
     moov_date = ""
     moov_year = ""
+    # Moov sering menaruh tanggal di elemen ke-3 list engTitle
     if len(titles) > 2:
         moov_date = titles[2]
         try: moov_year = moov_date.split('-')[0]
         except: pass
+        
     if not moov_date:
         pdate = str(album_data.get('publishDate', ''))
         if pdate: 
@@ -202,6 +171,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['year'] = moov_year
     metadata['date'] = moov_date 
 
+    # --- GENRE ---
     genres = album_data.get('genres', [])
     if genres:
         metadata['genre'] = ", ".join([g.get('name') for g in genres])
@@ -210,26 +180,17 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         
     metadata['label'] = album_data.get('recordLabel') or album_data.get('albumLabel') or ""
 
+    # --- COVER (MOOV ONLY) ---
     moov_cover_url = None
     images = album_data.get('images', [])
     if images:
-        moov_cover_url = get_moov_cover(images[0].get('path'))
+        raw_path = images[0].get('path')
+        # Fungsi ini akan otomatis mengubah resolusi ke 1000x1000 jika memungkinkan
+        moov_cover_url = get_moov_cover(raw_path)
 
-    # iTunes Search
-    itunes_data = await fetch_itunes_meta(metadata['artist'], metadata['album'])
-    
-    if itunes_data:
-        LOGGER.info(f"[ITUNES] Match Found: {metadata['album']}")
-        metadata['cover_url'] = itunes_data['cover_url']
-        if itunes_data['genre']: metadata['genre'] = itunes_data['genre']
-        if itunes_data['copyright']: metadata['copyright'] = itunes_data['copyright']
-        
-        if not metadata['date'] and itunes_data['date']:
-             metadata['date'] = itunes_data['date']
-             metadata['year'] = itunes_data['year']
-    else:
-        metadata['cover_url'] = moov_cover_url
+    metadata['cover_url'] = moov_cover_url
 
+    # Download Cover Utama
     if metadata.get('cover_url'):
         metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
         
@@ -242,7 +203,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         for idx, track_raw in enumerate(products, 1):
             track_raw['trackNo'] = idx 
             
-            # --- FIX: Cek Track Explicit Strict di dalam loop ---
+            # Cek jika ada lagu explicit, update status album
             if not is_album_explicit:
                 if is_explicit_strict(track_raw):
                     is_album_explicit = True
