@@ -24,7 +24,6 @@ async def fetch_itunes_meta(artist, album):
                     
                     if data['resultCount'] > 0:
                         res = data['results'][0]
-                        
                         raw_art = res.get('artworkUrl100', '')
                         hd_cover = raw_art.replace('100x100bb', '3000x3000bb')
                         
@@ -39,9 +38,8 @@ async def fetch_itunes_meta(artist, album):
                             'year': release_date[:4] if release_date else '',
                             'copyright': res.get('copyright', ''),
                             'composer': '',
-                            'track_count': res.get('trackCount'),
-                            # UBAH DISINI: Yes/No -> True/False
-                            'explicit': 'True' if res.get('collectionExplicitness') == 'explicit' else 'False'
+                            'track_count': res.get('trackCount')
+                            # Kita tidak mengambil explicit dari iTunes lagi agar lebih akurat
                         }
     except Exception as e:
         LOGGER.error(f"iTunes Search Error: {e}")
@@ -82,6 +80,16 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         comp_list.append(track_data.get('author'))
     metadata['composer'] = ", ".join(comp_list)
 
+    # --- PERBAIKAN EXPLICIT TRACK ---
+    # Cek status explicit KHUSUS untuk lagu ini saja
+    # Jangan mewarisi dari album_meta agar lagu non-explicit tetap False
+    is_track_explicit = False
+    if track_data.get('explicit') or track_data.get('parentalWarning'):
+        is_track_explicit = True
+    
+    metadata['explicit'] = "True" if is_track_explicit else "False"
+    # --------------------------------
+
     # Date Logic
     track_date_raw = str(track_data.get('publishDate', ''))
     if not track_date_raw: track_date_raw = str(track_data.get('releaseDate', ''))
@@ -92,12 +100,11 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         metadata['date'] = track_date_raw
         metadata['year'] = track_date_raw[:4]
     
-    # Wariskan data Album
+    # Wariskan data Album (KECUALI EXPLICIT)
     if album_meta:
         metadata['albumartist'] = album_meta.get('artist', '')
         metadata['genre'] = album_meta.get('genre', '')
         metadata['totaltracks'] = album_meta.get('totaltracks', '')
-        metadata['explicit'] = album_meta.get('explicit', 'False') # Default False
         
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
@@ -158,14 +165,16 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
 
-    # --- EXPLICIT CHECK ---
-    is_explicit = False
+    # --- EXPLICIT CHECK (ALBUM LEVEL) ---
+    is_album_explicit = False
+    
+    # 1. Cek Metadata Album Moov
     if album_data.get('explicit') or album_data.get('parentalWarning'):
-        is_explicit = True
+        is_album_explicit = True
     
     tags = album_data.get('tags', [])
     if 'Explicit' in tags or 'Parental Advisory' in tags:
-        is_explicit = True
+        is_album_explicit = True
 
     # Date
     moov_date = ""
@@ -206,17 +215,15 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         if itunes_data['genre']: metadata['genre'] = itunes_data['genre']
         if itunes_data['copyright']: metadata['copyright'] = itunes_data['copyright']
         
-        if itunes_data.get('explicit') == 'True':
-            is_explicit = True
+        # NOTE: Kita HAPUS override Explicit dari iTunes.
+        # Seringkali file Moov itu "Clean" tapi iTunes mencocokkan dengan "Explicit".
+        # Biarkan Moov yang menentukan statusnya.
             
         if not metadata['date'] and itunes_data['date']:
              metadata['date'] = itunes_data['date']
              metadata['year'] = itunes_data['year']
     else:
         metadata['cover_url'] = moov_cover_url
-
-    # UBAH DISINI: Yes/No -> True/False
-    metadata['explicit'] = "True" if is_explicit else "False"
 
     if metadata.get('cover_url'):
         metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
@@ -230,14 +237,17 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         for idx, track_raw in enumerate(products, 1):
             track_raw['trackNo'] = idx 
             
-            # Update Explicit Logic Per Track
-            if not is_explicit:
+            # Update Album Explicit Status
+            # Jika ada SATU SAJA lagu explicit, maka Poster Album jadi Explicit.
+            if not is_album_explicit:
                 if track_raw.get('explicit') or track_raw.get('parentalWarning'):
-                    is_explicit = True
-                    metadata['explicit'] = "True" # Update parent status jika ada track explicit
+                    is_album_explicit = True
             
             t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
             metadata['tracks'].append(t_meta)
+            
+    # Set status Poster Album
+    metadata['explicit'] = "True" if is_album_explicit else "False"
             
     if metadata['tracks']:
         metadata['quality'] = metadata['tracks'][0]['quality']
