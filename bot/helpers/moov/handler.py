@@ -104,20 +104,19 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['COPYRIGHT'] = meta.get('copyright', '')
         audio['DISCNUMBER'] = str(meta.get('disk', ''))
         
-        # --- TRACK TOTAL (1/12) ---
+        # --- TRACKS ---
         audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
-        # Menambahkan tag Total agar muncul "1/12"
         if meta.get('totaltracks'):
             audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
             audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
         
-        # --- RELEASE DATE ---
-        # Gunakan Full Date (YYYY-MM-DD) untuk field DATE agar MediaInfo membacanya sebagai Recorded Date
+        # --- DATES (Fix Recorded vs Release) ---
         if meta.get('date'):
+            # DATE = Recorded Date (di MediaInfo)
             audio['DATE'] = str(meta.get('date'))
-        # Gunakan Year Only untuk field YEAR (kompatibilitas)
-        if meta.get('year'):
-            audio['YEAR'] = str(meta.get('year'))
+            # ORIGINALDATE = Original Released Date (di MediaInfo)
+            audio['ORIGINALDATE'] = str(meta.get('date'))
+            # Kita HAPUS 'YEAR' agar tidak terjadi merge "2013-07-22 / 2013"
 
         # --- LABEL ---
         if meta.get('label'):
