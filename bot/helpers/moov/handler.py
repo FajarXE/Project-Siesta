@@ -90,9 +90,6 @@ async def start_album(album_id, user, upload=True):
         await album_upload(album_meta, user)
 
 async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
-    """
-    Menanamkan Metadata, Cover Art, dan Lirik ke dalam file FLAC
-    """
     try:
         audio = FLAC(filepath)
         audio.delete() 
@@ -108,12 +105,10 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['COMPOSER'] = meta.get('composer', '')
         audio['COPYRIGHT'] = meta.get('copyright', '')
         
-        # --- EMBED LYRICS ---
-        if lyrics:
-            # Gunakan kedua tag ini untuk kompatibilitas player yang luas
+        # Embed Lyrics
+        if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
             audio['LYRICS'] = lyrics
             audio['UNSYNCEDLYRICS'] = lyrics 
-        # --------------------
 
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
@@ -176,7 +171,7 @@ async def download_track(track_meta, user, folderpath):
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
 
-        # 4. COVER DOWNLOAD
+        # 4. COVER DOWNLOAD (ITUNES/MOOV)
         cover_local_path = None
         target_url = meta.get('cover_url')
 
@@ -193,9 +188,10 @@ async def download_track(track_meta, user, folderpath):
                                 await f.write(data)
                         else:
                             cover_local_path = None
-            except Exception as e:
+            except:
                 cover_local_path = None
         
+        # Fallback Local Cover
         if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
@@ -278,16 +274,19 @@ async def download_track(track_meta, user, folderpath):
 
         if not os.path.exists(final_filepath): return False
 
-        # --- 7. LYRICS & TAGGING ---
-        
-        # Ambil Lirik DULUAN
+        # --- 7. LYRICS HANDLING (Robust) ---
         lyrics_text = None
         try:
-            lyrics_text = await client.get_lyrics(meta['itemid'])
+            # Gunakan str() untuk itemid dan handle error secara pasif
+            track_id = str(meta.get('itemid', ''))
+            if track_id:
+                lyrics_text = await client.get_lyrics(track_id)
         except Exception as e:
-            LOGGER.error(f"Lyrics Error: {e}")
+            # Log sebagai warning saja, jangan error, karena ini sering gagal di API Moov
+            # LOGGER.warning(f"Lyrics unavailable for {meta['title']}: {e}")
+            lyrics_text = None
 
-        # Tanam Metadata + Lirik ke dalam file
+        # TAGGING
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         
         if real_duration > 0:
@@ -300,8 +299,7 @@ async def download_track(track_meta, user, folderpath):
         else:
             meta['cover'] = None 
 
-        # Simpan file .lrc eksternal juga (opsional, tapi bagus untuk backup)
-        if lyrics_text:
+        if lyrics_text and isinstance(lyrics_text, str):
             try:
                 lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
                 async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
