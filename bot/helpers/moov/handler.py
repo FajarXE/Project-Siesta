@@ -94,26 +94,42 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio = FLAC(filepath)
         audio.delete() 
         
+        # --- BASIC TAGS ---
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
         audio['ALBUM'] = meta.get('album', '')
         audio['ALBUMARTIST'] = meta.get('albumartist', '')
-        audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
-        audio['DISCNUMBER'] = str(meta.get('disk', ''))
         audio['GENRE'] = meta.get('genre', '')
-        audio['DATE'] = str(meta.get('year', ''))
         audio['COMPOSER'] = meta.get('composer', '')
         audio['COPYRIGHT'] = meta.get('copyright', '')
+        audio['DISCNUMBER'] = str(meta.get('disk', ''))
         
-        # Embed Lyrics
-        if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
-            audio['LYRICS'] = lyrics
-            audio['UNSYNCEDLYRICS'] = lyrics 
+        # --- TRACK TOTAL (1/12) ---
+        audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
+        # Menambahkan tag Total agar muncul "1/12"
+        if meta.get('totaltracks'):
+            audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
+            audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
+        
+        # --- RELEASE DATE ---
+        # Gunakan Full Date (YYYY-MM-DD) untuk field DATE agar MediaInfo membacanya sebagai Recorded Date
+        if meta.get('date'):
+            audio['DATE'] = str(meta.get('date'))
+        # Gunakan Year Only untuk field YEAR (kompatibilitas)
+        if meta.get('year'):
+            audio['YEAR'] = str(meta.get('year'))
 
+        # --- LABEL ---
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
             audio['LABEL'] = meta.get('label', '')
+
+        # --- LYRICS ---
+        if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
+            audio['LYRICS'] = lyrics
+            audio['UNSYNCEDLYRICS'] = lyrics 
         
+        # --- COVER ---
         if cover_path and os.path.exists(cover_path):
             p = Picture()
             with open(cover_path, 'rb') as f:
@@ -135,7 +151,7 @@ async def download_track(track_meta, user, folderpath):
     client = user['moov_api']
     
     try:
-        # 1. STREAM INFO
+        # STREAM INFO
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
             play_url = file_meta.get('playUrl')
@@ -147,7 +163,7 @@ async def download_track(track_meta, user, folderpath):
             LOGGER.error(f"Stream API Error: {e}")
             return False
 
-        # 2. KEY DERIVATION
+        # KEY
         try:
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
@@ -156,7 +172,7 @@ async def download_track(track_meta, user, folderpath):
             LOGGER.error(f"Key Error: {e}")
             return False
 
-        # 3. PATH SETUP
+        # PATH
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
         
@@ -171,7 +187,7 @@ async def download_track(track_meta, user, folderpath):
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
 
-        # 4. COVER DOWNLOAD (ITUNES/MOOV)
+        # COVER DOWNLOAD
         cover_local_path = None
         target_url = meta.get('cover_url')
 
@@ -191,12 +207,11 @@ async def download_track(track_meta, user, folderpath):
             except:
                 cover_local_path = None
         
-        # Fallback Local Cover
         if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 5. SEGMENT DOWNLOAD
+        # SEGMENT DOWNLOAD
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200: 
@@ -252,7 +267,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # 6. FFMPEG
+        # FFMPEG
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
@@ -274,19 +289,14 @@ async def download_track(track_meta, user, folderpath):
 
         if not os.path.exists(final_filepath): return False
 
-        # --- 7. LYRICS HANDLING (Robust) ---
+        # LYRICS & TAGGING
         lyrics_text = None
         try:
-            # Gunakan str() untuk itemid dan handle error secara pasif
             track_id = str(meta.get('itemid', ''))
             if track_id:
                 lyrics_text = await client.get_lyrics(track_id)
-        except Exception as e:
-            # Log sebagai warning saja, jangan error, karena ini sering gagal di API Moov
-            # LOGGER.warning(f"Lyrics unavailable for {meta['title']}: {e}")
-            lyrics_text = None
+        except: lyrics_text = None
 
-        # TAGGING
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         
         if real_duration > 0:
