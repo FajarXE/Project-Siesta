@@ -9,6 +9,23 @@ from ..metadata import create_cover_file
 from .manager import moov_manager
 from bot.logger import LOGGER
 
+def is_explicit_strict(data):
+    """
+    Fungsi bantu untuk mengecek status explicit secara ketat.
+    Menghindari error dimana string "0" dianggap True oleh Python.
+    """
+    # Cek field 'explicit'
+    val_exp = str(data.get('explicit', '')).lower()
+    if val_exp in ['true', '1', 'yes', 'explicit']:
+        return True
+        
+    # Cek field 'parentalWarning'
+    val_pw = str(data.get('parentalWarning', '')).lower()
+    if val_pw in ['true', '1', 'yes', 'explicit']:
+        return True
+        
+    return False
+
 async def fetch_itunes_meta(artist, album):
     if not artist or not album: return None
     
@@ -39,7 +56,6 @@ async def fetch_itunes_meta(artist, album):
                             'copyright': res.get('copyright', ''),
                             'composer': '',
                             'track_count': res.get('trackCount')
-                            # Kita tidak mengambil explicit dari iTunes lagi agar lebih akurat
                         }
     except Exception as e:
         LOGGER.error(f"iTunes Search Error: {e}")
@@ -80,15 +96,11 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         comp_list.append(track_data.get('author'))
     metadata['composer'] = ", ".join(comp_list)
 
-    # --- PERBAIKAN EXPLICIT TRACK ---
-    # Cek status explicit KHUSUS untuk lagu ini saja
-    # Jangan mewarisi dari album_meta agar lagu non-explicit tetap False
-    is_track_explicit = False
-    if track_data.get('explicit') or track_data.get('parentalWarning'):
-        is_track_explicit = True
-    
+    # --- FIX: STRICT CHECK EXPLICIT TRACK ---
+    # Gunakan fungsi bantu agar string "0" tidak dianggap True
+    is_track_explicit = is_explicit_strict(track_data)
     metadata['explicit'] = "True" if is_track_explicit else "False"
-    # --------------------------------
+    # ----------------------------------------
 
     # Date Logic
     track_date_raw = str(track_data.get('publishDate', ''))
@@ -165,13 +177,10 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
 
-    # --- EXPLICIT CHECK (ALBUM LEVEL) ---
-    is_album_explicit = False
+    # --- FIX: STRICT CHECK EXPLICIT ALBUM ---
+    is_album_explicit = is_explicit_strict(album_data)
     
-    # 1. Cek Metadata Album Moov
-    if album_data.get('explicit') or album_data.get('parentalWarning'):
-        is_album_explicit = True
-    
+    # Cek tags manual
     tags = album_data.get('tags', [])
     if 'Explicit' in tags or 'Parental Advisory' in tags:
         is_album_explicit = True
@@ -215,10 +224,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         if itunes_data['genre']: metadata['genre'] = itunes_data['genre']
         if itunes_data['copyright']: metadata['copyright'] = itunes_data['copyright']
         
-        # NOTE: Kita HAPUS override Explicit dari iTunes.
-        # Seringkali file Moov itu "Clean" tapi iTunes mencocokkan dengan "Explicit".
-        # Biarkan Moov yang menentukan statusnya.
-            
         if not metadata['date'] and itunes_data['date']:
              metadata['date'] = itunes_data['date']
              metadata['year'] = itunes_data['year']
@@ -237,10 +242,9 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         for idx, track_raw in enumerate(products, 1):
             track_raw['trackNo'] = idx 
             
-            # Update Album Explicit Status
-            # Jika ada SATU SAJA lagu explicit, maka Poster Album jadi Explicit.
+            # --- FIX: Cek Track Explicit Strict di dalam loop ---
             if not is_album_explicit:
-                if track_raw.get('explicit') or track_raw.get('parentalWarning'):
+                if is_explicit_strict(track_raw):
                     is_album_explicit = True
             
             t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
