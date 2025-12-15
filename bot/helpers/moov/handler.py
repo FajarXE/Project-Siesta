@@ -24,47 +24,43 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
-    # Cek tipe link berdasarkan URL yang sudah di-unshorten
-    if "/album/" in url:
-        album_id = url.split("/album/")[-1].split("?")[0]
+    # Bersihkan URL dari fragment hash '#' agar split lebih aman
+    clean_url = url.replace("#/", "/") 
+    
+    if "/album/" in clean_url:
+        # Ambil bagian setelah /album/
+        raw_id = clean_url.split("/album/")[-1]
+        # Bersihkan dari query params (?) dan path lanjutan (/)
+        album_id = raw_id.split("?")[0].split("/")[0]
+        
         await start_album(album_id, user)
         
-    elif "/song/" in url:
-        # Support untuk Single Track
-        track_id = url.split("/song/")[-1].split("?")[0]
+    elif "/song/" in clean_url:
+        raw_id = clean_url.split("/song/")[-1]
+        track_id = raw_id.split("?")[0].split("/")[0]
+        
         await start_track_single(track_id, user)
         
     else:
-        # PENTING: Gunakan 'raise Exception' agar pesan tidak terhapus otomatis oleh download.py
         raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album (/album/) dan Lagu (/song/).")
 
 async def start_track_single(track_id, user):
-    """
-    Logika untuk mendownload satu lagu.
-    Kita perlu mencari Album ID dari lagu tersebut terlebih dahulu.
-    """
     client = user['moov_api']
     try:
-        # Mencoba mengambil metadata lagu untuk mendapatkan Album ID
-        # Menggunakan method get_product_meta (asumsi nama method di manager.py)
-        # Jika gagal, kita coba tebak atau gunakan method lain jika tersedia
         track_data = None
         try:
             track_data = await client.get_product_meta(track_id)
         except AttributeError:
-             # Fallback jika nama method berbeda di library user
-             raise Exception("API Client Moov tidak mendukung 'get_product_meta'. Mohon update manager.")
+             raise Exception("API Client Moov tidak mendukung 'get_product_meta'.")
         
         if not track_data:
             raise Exception("Data lagu tidak ditemukan.")
 
-        # Ambil Album ID dari data lagu
         album_id = track_data.get('albumId') or track_data.get('album', {}).get('id')
         
         if not album_id:
              raise Exception("Gagal menemukan ID Album dari lagu ini.")
 
-        # Jalankan start_album tapi hanya download lagu yang diminta
         LOGGER.info(f"Downloading Single Track: {track_id} from Album: {album_id}")
         await start_album(album_id, user, filter_track_id=track_id)
 
@@ -80,9 +76,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     except Exception as e:
         raise Exception(f"Gagal metadata Moov: {e}")
 
-    # FILTER: Jika kita hanya ingin download satu lagu (dari start_track_single)
     if filter_track_id:
-        # Filter list tracks, cari yang productId atau itemid nya cocok
         filtered_tracks = [
             t for t in album_meta['tracks'] 
             if str(t.get('itemid')) == str(filter_track_id)
@@ -92,7 +86,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan di dalam album {album_id}.")
             
         album_meta['tracks'] = filtered_tracks
-        # Update info album agar sesuai konteks single (opsional)
         album_meta['totaltracks'] = 1 
         album_meta['type'] = 'track'
 
@@ -114,7 +107,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     for track in album_meta['tracks']:
         tasks.append(download_track(track, user, album_folder))
 
-    # Update teks notifikasi
     dl_type = 'Single Track' if filter_track_id else 'Album'
     update_details = {
         'text': f"Downloading {dl_type}: {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
@@ -133,13 +125,9 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip hanya jika album penuh atau user memaksa (opsional, sesuaikan preferensi)
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
-        elif album_zip and filter_track_id:
-             # Jika single track, biasanya tidak perlu zip folder album, tapi bisa diaktifkan jika mau
-             pass 
     except Exception as e:
         LOGGER.error(f"Zip Error: {e}")
         
@@ -152,7 +140,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio = FLAC(filepath)
         audio.delete() 
         
-        # --- BASIC TAGS ---
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
         audio['ALBUM'] = meta.get('album', '')
@@ -161,29 +148,24 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['COMPOSER'] = meta.get('composer', '')
         audio['COPYRIGHT'] = meta.get('copyright', '')
         audio['DISCNUMBER'] = str(meta.get('disk', ''))
-        
-        # --- TRACKS ---
         audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
+        
         if meta.get('totaltracks'):
             audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
             audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
         
-        # --- DATES ---
         if meta.get('date'):
             audio['DATE'] = str(meta.get('date'))
             audio['ORIGINALDATE'] = str(meta.get('date'))
 
-        # --- LABEL ---
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
             audio['LABEL'] = meta.get('label', '')
 
-        # --- LYRICS ---
         if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
             audio['LYRICS'] = lyrics
             audio['UNSYNCEDLYRICS'] = lyrics 
         
-        # --- COVER ---
         if cover_path and os.path.exists(cover_path):
             p = Picture()
             with open(cover_path, 'rb') as f:
@@ -205,28 +187,22 @@ async def download_track(track_meta, user, folderpath):
     client = user['moov_api']
     
     try:
-        # STREAM INFO
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
             play_url = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url or not content_key: 
-                LOGGER.error(f"No stream/key for {meta['title']}")
                 return False
         except Exception as e:
-            LOGGER.error(f"Stream API Error: {e}")
             return False
 
-        # KEY
         try:
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
             key_bytes = bytes.fromhex(m.hexdigest())
         except Exception as e:
-            LOGGER.error(f"Key Error: {e}")
             return False
 
-        # PATH
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
         
@@ -268,9 +244,7 @@ async def download_track(track_meta, user, folderpath):
         # SEGMENT DOWNLOAD
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
-            if resp.status != 200: 
-                LOGGER.error(f"M3U8 Error {resp.status}")
-                return False
+            if resp.status != 200: return False
             m3u8_content = await resp.text()
 
         target_duration = 10
@@ -374,7 +348,6 @@ async def download_track(track_meta, user, folderpath):
 
     except Exception as e:
         LOGGER.error(f"DL Crash: {e}")
-        LOGGER.error(traceback.format_exc())
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
         
