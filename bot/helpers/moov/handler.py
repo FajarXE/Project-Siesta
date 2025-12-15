@@ -21,7 +21,6 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Membersihkan karakter ilegal, tetap mempertahankan Unicode (Chinese/Japanese ok)
     return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -33,7 +32,6 @@ async def start_moov(url: str, user: dict):
         await start_album(album_id, user)
     except Exception as e:
         LOGGER.error(f"Moov Error: {e}")
-        # Cetak traceback agar tahu error detailnya
         LOGGER.error(traceback.format_exc())
         await edit_message(user['bot_msg'], f"Error: {e}")
 
@@ -53,7 +51,6 @@ async def start_album(album_id, user, upload=True):
     
     album_meta['folderpath'] = album_folder
 
-    # ART POSTER
     if upload:
         try:
             from ..utils import post_art_poster
@@ -78,9 +75,8 @@ async def start_album(album_id, user, upload=True):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
     else:
-        raise Exception("Gagal mengunduh semua lagu. Cek Log untuk detail error.")
+        raise Exception("Gagal mengunduh semua lagu.")
 
-    # ZIP HANDLING
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
         if album_zip:
@@ -93,7 +89,10 @@ async def start_album(album_id, user, upload=True):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
-async def apply_mutagen_tags(filepath, meta, cover_path):
+async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
+    """
+    Menanamkan Metadata, Cover Art, dan Lirik ke dalam file FLAC
+    """
     try:
         audio = FLAC(filepath)
         audio.delete() 
@@ -109,6 +108,13 @@ async def apply_mutagen_tags(filepath, meta, cover_path):
         audio['COMPOSER'] = meta.get('composer', '')
         audio['COPYRIGHT'] = meta.get('copyright', '')
         
+        # --- EMBED LYRICS ---
+        if lyrics:
+            # Gunakan kedua tag ini untuk kompatibilitas player yang luas
+            audio['LYRICS'] = lyrics
+            audio['UNSYNCEDLYRICS'] = lyrics 
+        # --------------------
+
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
             audio['LABEL'] = meta.get('label', '')
@@ -170,7 +176,7 @@ async def download_track(track_meta, user, folderpath):
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
 
-        # 4. COVER DOWNLOAD (ROBUST)
+        # 4. COVER DOWNLOAD
         cover_local_path = None
         target_url = meta.get('cover_url')
 
@@ -178,7 +184,6 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
             try:
                 import aiohttp
-                # Tambahkan Header User-Agent agar tidak diblokir Apple/CDN
                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 async with aiohttp.ClientSession() as session:
                     async with session.get(target_url, headers=headers, timeout=30) as resp:
@@ -187,13 +192,10 @@ async def download_track(track_meta, user, folderpath):
                             async with aiofiles.open(cover_local_path, 'wb') as f:
                                 await f.write(data)
                         else:
-                            # LOGGER.warning(f"Cover DL Fail {resp.status}: {target_url}")
                             cover_local_path = None
             except Exception as e:
-                # LOGGER.error(f"Cover DL Exception: {e}")
                 cover_local_path = None
         
-        # Fallback Cover
         if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
@@ -235,7 +237,6 @@ async def download_track(track_meta, user, folderpath):
                 except: continue
             
             if not success:
-                LOGGER.error(f"Segment DL failed: {index}")
                 shutil.rmtree(track_temp_dir)
                 return False
 
@@ -275,12 +276,20 @@ async def download_track(track_meta, user, folderpath):
             shutil.rmtree(track_temp_dir)
             return False
 
-        if not os.path.exists(final_filepath): 
-            LOGGER.error("File final not found after FFmpeg")
-            return False
+        if not os.path.exists(final_filepath): return False
 
-        # 7. TAGGING
-        real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path)
+        # --- 7. LYRICS & TAGGING ---
+        
+        # Ambil Lirik DULUAN
+        lyrics_text = None
+        try:
+            lyrics_text = await client.get_lyrics(meta['itemid'])
+        except Exception as e:
+            LOGGER.error(f"Lyrics Error: {e}")
+
+        # Tanam Metadata + Lirik ke dalam file
+        real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
+        
         if real_duration > 0:
             meta['duration'] = real_duration
             
@@ -291,19 +300,18 @@ async def download_track(track_meta, user, folderpath):
         else:
             meta['cover'] = None 
 
-        try:
-            lyrics = await client.get_lyrics(meta['itemid'])
-            if lyrics:
+        # Simpan file .lrc eksternal juga (opsional, tapi bagus untuk backup)
+        if lyrics_text:
+            try:
                 lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
                 async with aiofiles.open(lrc_path, 'w', encoding='utf-8') as f:
-                    await f.write(lyrics)
-        except: pass
+                    await f.write(lyrics_text)
+            except: pass
 
         shutil.rmtree(track_temp_dir)
 
     except Exception as e:
-        # INI PENTING: Cetak traceback penuh jika terjadi crash di tengah jalan
-        LOGGER.error(f"DL Crash for {meta.get('title')}: {e}")
+        LOGGER.error(f"DL Crash: {e}")
         LOGGER.error(traceback.format_exc())
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
