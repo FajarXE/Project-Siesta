@@ -286,7 +286,7 @@ async def start_link(link: str, user: dict) -> None:
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
     # --- TAMBAHAN BARU: URL Moov ---
-    moov = ["https://moov.hk", "moov.hk"]
+    moov = ["https://moov.hk", "https://app.moov.hk", "moov.hk", "app.moov.hk"]
     # --- BATAS TAMBAHAN ---
 
     # --- TAMBAHAN BARU: URL Napster ---
