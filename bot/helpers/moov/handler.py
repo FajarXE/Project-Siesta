@@ -6,6 +6,7 @@ import shutil
 import asyncio
 import aiofiles
 import hashlib
+import traceback
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -20,6 +21,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
+    # Membersihkan karakter ilegal, tetap mempertahankan Unicode (Chinese/Japanese ok)
     return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -31,6 +33,8 @@ async def start_moov(url: str, user: dict):
         await start_album(album_id, user)
     except Exception as e:
         LOGGER.error(f"Moov Error: {e}")
+        # Cetak traceback agar tahu error detailnya
+        LOGGER.error(traceback.format_exc())
         await edit_message(user['bot_msg'], f"Error: {e}")
 
 async def start_album(album_id, user, upload=True):
@@ -49,9 +53,13 @@ async def start_album(album_id, user, upload=True):
     
     album_meta['folderpath'] = album_folder
 
+    # ART POSTER
     if upload:
-        from ..utils import post_art_poster
-        album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+        try:
+            from ..utils import post_art_poster
+            album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+        except Exception as e:
+            LOGGER.error(f"Poster Error (Ignored): {e}")
 
     tasks = []
     for track in album_meta['tracks']:
@@ -70,13 +78,16 @@ async def start_album(album_id, user, upload=True):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
     else:
-        raise Exception("Gagal mengunduh semua lagu.")
+        raise Exception("Gagal mengunduh semua lagu. Cek Log untuk detail error.")
 
-    playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    
-    if album_zip:
-        await edit_message(user['bot_msg'], "Zipping...")
-        album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+    # ZIP HANDLING
+    try:
+        playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+        if album_zip:
+            await edit_message(user['bot_msg'], "Zipping...")
+            album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+    except Exception as e:
+        LOGGER.error(f"Zip Error: {e}")
         
     if upload:
         await edit_message(user['bot_msg'], "Uploading...")
@@ -85,9 +96,8 @@ async def start_album(album_id, user, upload=True):
 async def apply_mutagen_tags(filepath, meta, cover_path):
     try:
         audio = FLAC(filepath)
-        audio.delete() # Bersihkan tag lama
+        audio.delete() 
         
-        # --- WRITE TAGS (VORBIS COMMENTS) ---
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
         audio['ALBUM'] = meta.get('album', '')
@@ -99,12 +109,10 @@ async def apply_mutagen_tags(filepath, meta, cover_path):
         audio['COMPOSER'] = meta.get('composer', '')
         audio['COPYRIGHT'] = meta.get('copyright', '')
         
-        # Label (Standard FLAC menggunakan ORGANIZATION)
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
-            audio['LABEL'] = meta.get('label', '') # Redundansi agar terbaca player tertentu
+            audio['LABEL'] = meta.get('label', '')
         
-        # Embed Cover
         if cover_path and os.path.exists(cover_path):
             p = Picture()
             with open(cover_path, 'rb') as f:
@@ -113,8 +121,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path):
             p.mime = 'image/jpeg'
             p.desc = 'Front Cover'
             audio.add_picture(p)
-        else:
-            LOGGER.warning(f"[TAG] No cover found for {meta['title']}")
             
         audio.save()
         return int(audio.info.length)
@@ -128,64 +134,76 @@ async def download_track(track_meta, user, folderpath):
     client = user['moov_api']
     
     try:
-        file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
-        play_url = file_meta.get('playUrl')
-        content_key = file_meta.get('contentKey')
-        if not play_url or not content_key: return False
-    except Exception as e:
-        LOGGER.error(f"Stream Error: {e}")
-        return False
-
-    try:
-        m = hashlib.md5()
-        m.update((content_key + SECRET_SALT).encode('UTF-8'))
-        key_bytes = bytes.fromhex(m.hexdigest())
-    except: return False
-
-    raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
-    safe_filename = safe_name(raw_filename)
-    
-    track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
-    if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
-    os.makedirs(track_temp_dir, exist_ok=True)
-
-    final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
-    meta['filepath'] = final_filepath
-    
-    key_filepath = os.path.join(track_temp_dir, "key.bin")
-    async with aiofiles.open(key_filepath, 'wb') as f:
-        await f.write(key_bytes)
-
-    # --- INTELLIGENT COVER DOWNLOAD ---
-    cover_local_path = None
-    target_url = meta.get('cover_url')
-
-    if target_url:
-        cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
+        # 1. STREAM INFO
         try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(target_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        async with aiofiles.open(cover_local_path, 'wb') as f:
-                            await f.write(data)
-                    else:
-                        cover_local_path = None
+            file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
+            play_url = file_meta.get('playUrl')
+            content_key = file_meta.get('contentKey')
+            if not play_url or not content_key: 
+                LOGGER.error(f"No stream/key for {meta['title']}")
+                return False
         except Exception as e:
-            cover_local_path = None
-    
-    # Fallback
-    if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
-         cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
-         shutil.copy(meta['cover'], cover_local_path)
-    # ----------------------------------
+            LOGGER.error(f"Stream API Error: {e}")
+            return False
 
-    # DOWNLOAD SEGMENTS
-    try:
+        # 2. KEY DERIVATION
+        try:
+            m = hashlib.md5()
+            m.update((content_key + SECRET_SALT).encode('UTF-8'))
+            key_bytes = bytes.fromhex(m.hexdigest())
+        except Exception as e:
+            LOGGER.error(f"Key Error: {e}")
+            return False
+
+        # 3. PATH SETUP
+        raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
+        safe_filename = safe_name(raw_filename)
+        
+        track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
+        if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
+        os.makedirs(track_temp_dir, exist_ok=True)
+
+        final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
+        meta['filepath'] = final_filepath
+        
+        key_filepath = os.path.join(track_temp_dir, "key.bin")
+        async with aiofiles.open(key_filepath, 'wb') as f:
+            await f.write(key_bytes)
+
+        # 4. COVER DOWNLOAD (ROBUST)
+        cover_local_path = None
+        target_url = meta.get('cover_url')
+
+        if target_url:
+            cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
+            try:
+                import aiohttp
+                # Tambahkan Header User-Agent agar tidak diblokir Apple/CDN
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(target_url, headers=headers, timeout=30) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            async with aiofiles.open(cover_local_path, 'wb') as f:
+                                await f.write(data)
+                        else:
+                            # LOGGER.warning(f"Cover DL Fail {resp.status}: {target_url}")
+                            cover_local_path = None
+            except Exception as e:
+                # LOGGER.error(f"Cover DL Exception: {e}")
+                cover_local_path = None
+        
+        # Fallback Cover
+        if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
+            cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
+            shutil.copy(meta['cover'], cover_local_path)
+
+        # 5. SEGMENT DOWNLOAD
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
-            if resp.status != 200: return False
+            if resp.status != 200: 
+                LOGGER.error(f"M3U8 Error {resp.status}")
+                return False
             m3u8_content = await resp.text()
 
         target_duration = 10
@@ -217,6 +235,7 @@ async def download_track(track_meta, user, folderpath):
                 except: continue
             
             if not success:
+                LOGGER.error(f"Segment DL failed: {index}")
                 shutil.rmtree(track_temp_dir)
                 return False
 
@@ -236,7 +255,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # FFMPEG STITCHING
+        # 6. FFMPEG
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
@@ -256,11 +275,12 @@ async def download_track(track_meta, user, folderpath):
             shutil.rmtree(track_temp_dir)
             return False
 
-        if not os.path.exists(final_filepath): return False
+        if not os.path.exists(final_filepath): 
+            LOGGER.error("File final not found after FFmpeg")
+            return False
 
-        # TAGGING MUTAGEN
+        # 7. TAGGING
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path)
-        
         if real_duration > 0:
             meta['duration'] = real_duration
             
@@ -282,7 +302,9 @@ async def download_track(track_meta, user, folderpath):
         shutil.rmtree(track_temp_dir)
 
     except Exception as e:
-        LOGGER.error(f"DL Logic Error: {e}")
+        # INI PENTING: Cetak traceback penuh jika terjadi crash di tengah jalan
+        LOGGER.error(f"DL Crash for {meta.get('title')}: {e}")
+        LOGGER.error(traceback.format_exc())
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
         
