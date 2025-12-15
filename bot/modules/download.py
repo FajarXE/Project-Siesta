@@ -156,11 +156,19 @@ async def resolve_shortlink(link: str) -> str:
     if any(d in link for d in target_domains):
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.head(link, allow_redirects=True, timeout=15) as response:
+                async with session.get(link, allow_redirects=True, timeout=20) as response:
                     final_url = str(response.url)
+                    
+                    if final_url.strip("/") == "https://moov.hk" and response.history:
+                        for r in response.history:
+                            hist_url = str(r.url)
+                            if "/album/" in hist_url or "/song/" in hist_url:
+                                final_url = hist_url
+                                break
+                    
                     if "?" in final_url and "moov.hk" in final_url:
                          final_url = final_url.split("?")[0]
                     
@@ -169,7 +177,7 @@ async def resolve_shortlink(link: str) -> str:
         except Exception as e:
             LOGGER.error(f"Gagal me-resolve shortlink {link}: {e}")
             return link 
-    return link 
+    return link
 # --- BATAS FUNGSI BARU ---
 
 
@@ -184,8 +192,8 @@ async def run_download_task(link: str, user: dict):
              user['link'] = link
 
         await start_link(link, user)
-        task_successful = True 
-        
+        task_successful = True
+ 
     except asyncio.CancelledError:
         LOGGER.info(f"Tugas untuk {user['user_id']} dibatalkan (mungkin shutdown).")
         await send_message(user, "Tugas dibatalkan.")
@@ -262,7 +270,7 @@ async def download_track(c, msg:Message):
         
         user['link'] = link
         asyncio.create_task(run_download_task(link, user))
-
+        
 
 async def start_link(link: str, user: dict) -> None:
     tidal = ["https://tidal.com", "https://listen.tidal.com", "http://www.tidal.com", "tidal.com", "listen.tidal.com"]
