@@ -151,29 +151,45 @@ from ..helpers.message import send_message, check_user, fetch_user_details, edit
 
 # --- FUNGSI BARU UNTUK MEMBUKA SHORTLINK ---
 async def resolve_shortlink(link: str) -> str:
+    """
+    Membuka shortlink dengan penanganan Manual Redirect untuk menangkap fragment (#) URL.
+    """
     target_domains = ["2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", "youtu.be"]
     
     if any(d in link for d in target_domains):
         try:
+            # Gunakan User-Agent Desktop
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.get(link, allow_redirects=True, timeout=20) as response:
-                    final_url = str(response.url)
-                    
-                    if final_url.strip("/") == "https://moov.hk" and response.history:
-                        for r in response.history:
-                            hist_url = str(r.url)
-                            if "/album/" in hist_url or "/song/" in hist_url:
-                                final_url = hist_url
-                                break
-                    
-                    if "?" in final_url and "moov.hk" in final_url:
-                         final_url = final_url.split("?")[0]
-                    
-                    LOGGER.info(f"Shortlink Resolved: {link} -> {final_url}")
-                    return final_url
+                current_url = link
+                # Lakukan Loop Redirect Manual (Max 5 kali)
+                for _ in range(5):
+                    async with session.get(current_url, allow_redirects=False) as resp:
+                        if 'Location' in resp.headers:
+                            new_url = resp.headers['Location']
+                            
+                            # Logika Khusus Moov: Tangkap URL yang ada '/album/' atau '/song/'
+                            # meskipun itu ada di dalam redirect sementara
+                            if "moov.hk" in new_url and ("/album/" in new_url or "/song/" in new_url):
+                                LOGGER.info(f"Shortlink Detected Target: {link} -> {new_url}")
+                                return new_url
+                            
+                            # Handle Relative URL
+                            if new_url.startswith("/"):
+                                from urllib.parse import urljoin
+                                new_url = urljoin(current_url, new_url)
+                            
+                            current_url = new_url
+                        else:
+                            # Stop jika tidak ada redirect lagi
+                            break
+                
+                # Jika loop selesai, kembalikan URL terakhir yang didapat
+                LOGGER.info(f"Shortlink Final: {link} -> {current_url}")
+                return current_url
+
         except Exception as e:
             LOGGER.error(f"Gagal me-resolve shortlink {link}: {e}")
             return link 
