@@ -151,19 +151,20 @@ from ..helpers.message import send_message, check_user, fetch_user_details, edit
 
 # --- FUNGSI BARU UNTUK MEMBUKA SHORTLINK ---
 async def resolve_shortlink(link: str) -> str:
-    """Membuka shortlink (seperti 2nu.gs) untuk mendapatkan URL penuh."""
-    if "2nu.gs" in link:
+    target_domains = ["2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", "youtu.be"]
+    
+    if any(d in link for d in target_domains):
         try:
-            # --- MODIFIKASI: Tambahkan User-Agent browser ---
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'
             }
-            # --- BATAS MODIFIKASI ---
-            
             async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.head(link, allow_redirects=True) as response:
+                async with session.head(link, allow_redirects=True, timeout=15) as response:
                     final_url = str(response.url)
-                    LOGGER.info(f"Shortlink terdeteksi: {link} -> dialihkan ke -> {final_url}")
+                    if "?" in final_url and "moov.hk" in final_url:
+                         final_url = final_url.split("?")[0]
+                    
+                    LOGGER.info(f"Shortlink Resolved: {link} -> {final_url}")
                     return final_url
         except Exception as e:
             LOGGER.error(f"Gagal me-resolve shortlink {link}: {e}")
@@ -173,18 +174,16 @@ async def resolve_shortlink(link: str) -> str:
 
 
 async def run_download_task(link: str, user: dict):
-    """
-    Fungsi ini berjalan di latar belakang.
-    Ia menangani seluruh siklus hidup tugas: mulai, error, cleanup.
-    """
-    
     task_successful = False
-    
     try:
         user['bot_msg'] = await send_message(user, 'Memulai tugas...')
         
+        resolved = await resolve_shortlink(link)
+        if resolved != link:
+             link = resolved
+             user['link'] = link
+
         await start_link(link, user)
-        
         task_successful = True 
         
     except asyncio.CancelledError:
@@ -255,17 +254,13 @@ async def download_track(c, msg:Message):
         
         user = await fetch_user_details(msg, reply)
         
-        # --- MODIFIKASI: Resolve shortlink ---
         try:
             resolved_link = await resolve_shortlink(link)
             if resolved_link != link:
                 link = resolved_link 
-        except Exception:
-            pass 
-        # --- BATAS MODIFIKASI ---
+        except Exception: pass 
         
         user['link'] = link
-        
         asyncio.create_task(run_download_task(link, user))
 
 
