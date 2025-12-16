@@ -96,6 +96,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
             
         album_meta['tracks'] = filtered_tracks
+        
+        # Kembalikan pengaturan tipe track agar internal logic benar
         album_meta['totaltracks'] = 1 
         album_meta['type'] = 'track'
 
@@ -106,7 +108,9 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    if upload:
+    # --- PERBAIKAN POSTER ---
+    # Hanya kirim Poster jika INI ADALAH ALBUM (filter_track_id kosong)
+    if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
             album_meta['poster_msg'] = await post_art_poster(user, album_meta)
@@ -131,20 +135,16 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- FIX UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
-            # Salin semua kunci penting ke Root Metadata
-            album_meta['filepath'] = track_data['filepath']
-            album_meta['file_path'] = track_data['filepath']
-            album_meta['path'] = track_data['filepath']
-            album_meta['file'] = track_data['filepath'] # Tambahan baru
-            album_meta['duration'] = track_data.get('duration', 0)
+            album_meta.update(track_data)
+            album_meta['tracks'] = successful_tracks
     else:
         raise Exception("Gagal mengunduh lagu.")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+        # Zip hanya jika download full album
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -229,17 +229,17 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- FIX: FULL KEYS FOR UPLOADER ---
-        # Pastikan path absolut
+        # --- PATH KEYS ---
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
         meta['path'] = abs_path
-        meta['file'] = abs_path # Tambahan kunci 'file'
+        meta['file'] = abs_path 
+        meta['local_path'] = abs_path
         meta['filename'] = os.path.basename(abs_path)
         meta['is_downloaded'] = True
         meta['success'] = True
-        # -----------------------------------
+        # -----------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
