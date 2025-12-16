@@ -80,6 +80,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     except Exception as e:
         raise Exception(f"Gagal metadata Moov: {e}")
 
+    # --- FILTER TRACK TAPI PERTAHANKAN TIPE ALBUM ---
     if filter_track_id:
         filtered_tracks = [
             t for t in album_meta['tracks'] 
@@ -95,11 +96,10 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         if not filtered_tracks:
             raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
             
+        # Kita hanya mengubah LIST lagu yang akan didownload.
+        # Kita TIDAK mengubah 'totaltracks' atau 'type'.
+        # Ini agar Poster tetap terlihat Full Album & Uploader mau memprosesnya.
         album_meta['tracks'] = filtered_tracks
-        
-        # [PENTING]
-        # Jangan ubah 'type' atau 'totaltracks'. Biarkan seperti album asli.
-        # Ini akan membuat poster tetap terlihat Full (Lingkaran Biru).
 
     base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
     safe_artist = safe_name(album_meta['artist'])
@@ -108,11 +108,11 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # [POSTER]
+    # --- POSTER ---
     if upload:
         try:
             from ..utils import post_art_poster
-            # Kirim poster dengan data album asli (lengkap)
+            # Selalu kirim poster (karena user ingin tampilan album)
             album_meta['poster_msg'] = await post_art_poster(user, album_meta)
         except Exception as e:
             LOGGER.error(f"Poster Error (Ignored): {e}")
@@ -130,17 +130,12 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     task_results = await run_concurrent_tasks(tasks, update_details)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
+    
+    # Update list tracks dengan data yang sudah ada filepath-nya
     album_meta['tracks'] = successful_tracks
     
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
-        
-        # [FIX UPLOADER]
-        if filter_track_id and len(successful_tracks) == 1:
-            track_data = successful_tracks[0]
-            # Copy data ke root agar uploader single track bisa baca
-            album_meta.update(track_data)
-            album_meta['tracks'] = successful_tracks
     else:
         raise Exception("Gagal mengunduh lagu.")
 
@@ -155,6 +150,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         
     if upload:
         await edit_message(user['bot_msg'], "Uploading...")
+        # PENTING: Panggil album_upload. Karena type='album', 
+        # uploader akan meloop 'tracks' dan menemukan 1 file kita.
         await album_upload(album_meta, user)
 
 async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
@@ -231,20 +228,10 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- FIX UPLOADER: ISI SEMUA KUNCI PATH ---
+        # --- PATH KEYS (ABSOLUTE) ---
         abs_path = os.path.abspath(final_filepath)
-        
         meta['filepath'] = abs_path
-        meta['file_path'] = abs_path
-        meta['path'] = abs_path
-        meta['file'] = abs_path
-        meta['outfile'] = abs_path
-        meta['local_path'] = abs_path
-        
-        meta['filename'] = os.path.basename(abs_path)
-        meta['is_downloaded'] = True
-        meta['success'] = True
-        # ------------------------------------------
+        # ----------------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
@@ -349,14 +336,6 @@ async def download_track(track_meta, user, folderpath):
             return False
 
         if not os.path.exists(final_filepath): return False
-
-        # --- FIX: ISI FILESIZE (Wajib buat uploader) ---
-        try:
-            fsize = os.path.getsize(final_filepath)
-            meta['filesize'] = fsize
-            if fsize == 0: return False
-        except: pass
-        # -----------------------------------------------
 
         # LYRICS
         lyrics_text = None
