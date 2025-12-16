@@ -97,9 +97,9 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             
         album_meta['tracks'] = filtered_tracks
         
-        # Kembalikan pengaturan tipe track agar internal logic benar
-        album_meta['totaltracks'] = 1 
-        album_meta['type'] = 'track'
+        # [PENTING]
+        # Jangan ubah 'type' atau 'totaltracks'. Biarkan seperti album asli.
+        # Ini akan membuat poster tetap terlihat Full (Lingkaran Biru).
 
     base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
     safe_artist = safe_name(album_meta['artist'])
@@ -108,11 +108,11 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- PERBAIKAN POSTER ---
-    # Hanya kirim Poster jika INI ADALAH ALBUM (filter_track_id kosong)
-    if upload and not filter_track_id:
+    # [POSTER]
+    if upload:
         try:
             from ..utils import post_art_poster
+            # Kirim poster dengan data album asli (lengkap)
             album_meta['poster_msg'] = await post_art_poster(user, album_meta)
         except Exception as e:
             LOGGER.error(f"Poster Error (Ignored): {e}")
@@ -135,8 +135,10 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
+        # [FIX UPLOADER]
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
+            # Copy data ke root agar uploader single track bisa baca
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
     else:
@@ -144,7 +146,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip hanya jika download full album
+        # Zip hanya jika full album
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -229,17 +231,20 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- PATH KEYS ---
+        # --- FIX UPLOADER: ISI SEMUA KUNCI PATH ---
         abs_path = os.path.abspath(final_filepath)
+        
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
         meta['path'] = abs_path
-        meta['file'] = abs_path 
+        meta['file'] = abs_path
+        meta['outfile'] = abs_path
         meta['local_path'] = abs_path
+        
         meta['filename'] = os.path.basename(abs_path)
         meta['is_downloaded'] = True
         meta['success'] = True
-        # -----------------
+        # ------------------------------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
@@ -344,6 +349,14 @@ async def download_track(track_meta, user, folderpath):
             return False
 
         if not os.path.exists(final_filepath): return False
+
+        # --- FIX: ISI FILESIZE (Wajib buat uploader) ---
+        try:
+            fsize = os.path.getsize(final_filepath)
+            meta['filesize'] = fsize
+            if fsize == 0: return False
+        except: pass
+        # -----------------------------------------------
 
         # LYRICS
         lyrics_text = None
