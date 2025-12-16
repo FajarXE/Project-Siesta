@@ -22,7 +22,6 @@ from ..uploder import album_upload
 
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
-# Header Browser Standar
 BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
@@ -36,7 +35,10 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 def resolve_url(base_url, relative_url):
-    """Hanya menggabungkan path, TIDAK menyentuh query params."""
+    """Menggabungkan path tanpa merusak query params yang sudah ada."""
+    if relative_url.startswith('http'):
+        return relative_url
+        
     base_clean = base_url.split('?')[0]
     if not base_clean.endswith('/') and not os.path.splitext(base_clean)[1]:
         base_clean += '/'
@@ -45,7 +47,7 @@ def resolve_url(base_url, relative_url):
     return urllib.parse.urljoin(base_clean, relative_url)
 
 def merge_urls(base_url, relative_url):
-    """Menggabungkan path DAN mewariskan query params dari base."""
+    """Menggabungkan path dan mewariskan query params (Hanya untuk segmen/key tanpa token)."""
     base_parsed = urllib.parse.urlparse(base_url)
     base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
     
@@ -53,7 +55,6 @@ def merge_urls(base_url, relative_url):
     final_parsed = urllib.parse.urlparse(full_url)
     final_params = dict(urllib.parse.parse_qsl(final_parsed.query))
     
-    # Merge: Child menang, base mewarisi
     merged_params = base_params.copy()
     merged_params.update(final_params)
     
@@ -231,7 +232,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. INIT
+        # 1. INIT: Get PlayURL
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url_init = file_meta.get('playUrl')
@@ -261,7 +262,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(default_key_bytes)
 
-        # 2. COVER
+        # 2. DOWNLOAD COVER
         cover_local_path = None
         target_url = meta.get('cover_url')
         if target_url:
@@ -279,142 +280,148 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. M3U8 -> KEY -> SEGMENTS
+        # 3. LOOP UTAMA (M3U8 -> KEY -> SEGMENTS)
+        # Attempt 0: Menggunakan Client Session (Proxy)
+        # Attempt 1+: Menggunakan Direct Session (No Proxy) untuk menjaga konsistensi IP
+        
         success_process = False
         play_url = play_url_init
         
-        for attempt in range(3):
+        for attempt in range(2):
+            use_proxy = (attempt == 0)
+            session_context = client.session if use_proxy else aiohttp.ClientSession()
+            
+            if not use_proxy:
+                LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
+
             try:
-                async with client.session.get(play_url, headers=BROWSER_HEADERS) as resp:
-                    if resp.status != 200: continue
-                    m3u8_content = await resp.text()
-            except: continue
+                # Context manager for fallback session
+                async with (session_context if not use_proxy else asyncio.NullContext()) as session:
+                    # Session to use (either client.session or the new direct one)
+                    sess = client.session if use_proxy else session_context
 
-            # Handle Master Playlist
-            if "#EXT-X-STREAM-INF" in m3u8_content:
-                remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
-                if remote_lines:
-                    # Untuk varian playlist, kita merge token karena biasanya relatif
-                    play_url = merge_urls(play_url, remote_lines[0])
-                    continue 
-
-            # [FIX] SMART KEY DOWNLOAD
-            key_ok = True
-            key_match = re.search(r'URI="([^"]+)"', m3u8_content)
-            
-            if key_match:
-                raw_key_uri = key_match.group(1)
-                
-                # LOGIKA PENTING:
-                # 1. Jika URL Key sudah punya query (tanda '?'), berarti itu Pre-Signed.
-                #    JANGAN tambahkan parameter dari M3U8 (bisa merusak signature).
-                # 2. Jika URL Key belum punya query, WARISI parameter dari M3U8.
-                if '?' in raw_key_uri:
-                    key_url_attempt = resolve_url(play_url, raw_key_uri)
-                else:
-                    key_url_attempt = merge_urls(play_url, raw_key_uri)
-                
-                LOGGER.info(f"Downloading Remote Key: {key_url_attempt}")
-                
-                # Coba download key
-                key_downloaded_now = False
-                try:
-                    async with client.session.get(key_url_attempt, headers=BROWSER_HEADERS, timeout=10) as key_resp:
-                        if key_resp.status == 200:
-                            key_data = await key_resp.read()
-                            if len(key_data) == 16:
-                                async with aiofiles.open(key_filepath, 'wb') as f: await f.write(key_data)
-                                key_downloaded_now = True
-                except: pass
-                
-                # Jika gagal dengan URL Asli, coba FALLBACK dengan Merge (siapa tahu butuh session ID)
-                if not key_downloaded_now and '?' in raw_key_uri:
-                    LOGGER.info("Key DL Retry: Trying with Merged Params...")
-                    fallback_key_url = merge_urls(play_url, raw_key_uri)
+                    # A. Fetch M3U8
                     try:
-                        async with client.session.get(fallback_key_url, headers=BROWSER_HEADERS, timeout=10) as key_resp:
-                            if key_resp.status == 200:
-                                key_data = await key_resp.read()
-                                if len(key_data) == 16:
-                                    async with aiofiles.open(key_filepath, 'wb') as f: await f.write(key_data)
-                                    key_downloaded_now = True
-                    except: pass
+                        async with sess.get(play_url, headers=BROWSER_HEADERS) as resp:
+                            if resp.status != 200: 
+                                if not use_proxy: break # Fallback failed
+                                continue
+                            m3u8_content = await resp.text()
+                    except: continue
 
-                if not key_downloaded_now:
-                    LOGGER.warning(f"Key DL Failed (Attempt {attempt+1}). Retrying M3U8...")
-                    await asyncio.sleep(1)
-                    # Refresh link meta untuk attempt berikutnya
-                    try:
-                        file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
-                        play_url = file_meta.get('playUrl')
-                    except: pass
-                    continue # Ulang loop
+                    # Handle Master Playlist
+                    if "#EXT-X-STREAM-INF" in m3u8_content:
+                        remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
+                        if remote_lines:
+                            play_url = resolve_url(play_url, remote_lines[0])
+                            continue 
 
-            # C. Parse Segments
-            target_duration = 10
-            media_sequence = 0
-            is_encrypted = "#EXT-X-KEY" in m3u8_content
-            iv_line = ""
-            if is_encrypted:
-                iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content, re.IGNORECASE)
-                if iv_match:
-                    iv_hex = iv_match.group(1)
-                    iv_line = f",IV=0x{iv_hex}"
+                    # B. Check & Download Key
+                    key_ok = True
+                    key_match = re.search(r'URI="([^"]+)"', m3u8_content)
+                    
+                    if key_match:
+                        raw_key_uri = key_match.group(1)
+                        
+                        # Jika URL Key sudah ada query param, GUNAKAN LANGSUNG (Resolve).
+                        # Jangan merge, karena bisa merusak signature yang sudah valid.
+                        if '?' in raw_key_uri:
+                            key_uri = resolve_url(play_url, raw_key_uri)
+                        else:
+                            key_uri = merge_urls(play_url, raw_key_uri)
+                        
+                        LOGGER.info(f"Downloading Key ({'Proxy' if use_proxy else 'Direct'}): {key_uri}")
+                        
+                        try:
+                            async with sess.get(key_uri, headers=BROWSER_HEADERS, timeout=10) as key_resp:
+                                if key_resp.status == 200:
+                                    key_data = await key_resp.read()
+                                    if len(key_data) == 16:
+                                        async with aiofiles.open(key_filepath, 'wb') as f: await f.write(key_data)
+                                    else: key_ok = False
+                                else: 
+                                    LOGGER.warning(f"Key DL Failed status: {key_resp.status}")
+                                    key_ok = False
+                        except Exception as e:
+                            LOGGER.error(f"Key DL Error: {e}")
+                            key_ok = False
+                        
+                        if not key_ok:
+                            if use_proxy:
+                                LOGGER.warning("Key DL Failed with Proxy. Switching to Direct...")
+                                # Force next loop to be direct
+                                continue 
+                            else:
+                                LOGGER.error("Key DL Failed even with Direct Connection.")
+                                break
 
-            for line in m3u8_content.splitlines():
-                if line.startswith("#EXT-X-TARGETDURATION"):
-                    target_duration = line.split(":")[1].strip()
-                if line.startswith("#EXT-X-MEDIA-SEQUENCE"):
-                    media_sequence = int(line.split(":")[1].strip())
+                    # C. Parse & Download Segments
+                    target_duration = 10
+                    media_sequence = 0
+                    is_encrypted = "#EXT-X-KEY" in m3u8_content
+                    iv_line = ""
+                    if is_encrypted:
+                        iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content, re.IGNORECASE)
+                        if iv_match:
+                            iv_hex = iv_match.group(1)
+                            iv_line = f",IV=0x{iv_hex}"
 
-            remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
-            local_segment_names = []
-            
-            # D. Download Segments
-            seg_error = False
-            for index, seg_url_raw in enumerate(remote_segments):
-                # Segmen biasanya selalu butuh merge token
-                seg_url = merge_urls(play_url, seg_url_raw)
-                seg_name = f"seg_{index:04d}.flac"
-                seg_path = os.path.join(track_temp_dir, seg_name)
-                local_segment_names.append(seg_name)
-                
-                seg_success = False
-                for _ in range(2):
-                    try:
-                        async with client.session.get(seg_url, headers=BROWSER_HEADERS, timeout=15) as seg_resp:
-                            if seg_resp.status == 200:
-                                data = await seg_resp.read()
-                                if len(data) > 500:
-                                    async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
-                                    seg_success = True
-                                    break
-                    except: pass
-                
-                if not seg_success:
-                    seg_error = True
-                    break
-            
-            if seg_error:
-                LOGGER.warning("Segment DL Failed. Retrying...")
-                continue 
+                    for line in m3u8_content.splitlines():
+                        if line.startswith("#EXT-X-TARGETDURATION"):
+                            target_duration = line.split(":")[1].strip()
+                        if line.startswith("#EXT-X-MEDIA-SEQUENCE"):
+                            media_sequence = int(line.split(":")[1].strip())
 
-            # E. Build Local M3U8
-            local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
-            async with aiofiles.open(local_m3u8_path, 'w') as f:
-                await f.write("#EXTM3U\n")
-                await f.write("#EXT-X-VERSION:3\n")
-                await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
-                await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
-                if is_encrypted:
-                    await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
-                for seg_name in local_segment_names:
-                    await f.write(f"#EXTINF:{target_duration},\n")
-                    await f.write(f"{seg_name}\n")
-                await f.write("#EXT-X-ENDLIST\n")
-            
-            success_process = True
-            break
+                    remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
+                    local_segment_names = []
+                    
+                    # D. Download Segments
+                    seg_error = False
+                    for index, seg_url_raw in enumerate(remote_segments):
+                        seg_url = merge_urls(play_url, seg_url_raw)
+                        seg_name = f"seg_{index:04d}.flac"
+                        seg_path = os.path.join(track_temp_dir, seg_name)
+                        local_segment_names.append(seg_name)
+                        
+                        seg_success = False
+                        for _ in range(2):
+                            try:
+                                async with sess.get(seg_url, headers=BROWSER_HEADERS, timeout=15) as seg_resp:
+                                    if seg_resp.status == 200:
+                                        data = await seg_resp.read()
+                                        if len(data) > 500:
+                                            async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
+                                            seg_success = True
+                                            break
+                            except: pass
+                        
+                        if not seg_success:
+                            seg_error = True
+                            break
+                    
+                    if seg_error:
+                        continue # Retry / Switch mode
+
+                    # E. Build Local M3U8
+                    local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
+                    async with aiofiles.open(local_m3u8_path, 'w') as f:
+                        await f.write("#EXTM3U\n")
+                        await f.write("#EXT-X-VERSION:3\n")
+                        await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
+                        await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
+                        if is_encrypted:
+                            await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
+                        for seg_name in local_segment_names:
+                            await f.write(f"#EXTINF:{target_duration},\n")
+                            await f.write(f"{seg_name}\n")
+                        await f.write("#EXT-X-ENDLIST\n")
+                    
+                    success_process = True
+                    break # Break loop if success
+
+            except Exception as e:
+                LOGGER.error(f"Loop Error: {e}")
+                continue
 
         if not success_process: return False
 
@@ -435,15 +442,13 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         _, stderr = await process.communicate()
         
         if process.returncode != 0:
-            LOGGER.warning(f"FFmpeg encode error ({quality_code}), trying copy...")
+            LOGGER.warning(f"FFmpeg encode error, trying copy...")
             cmd[7] = 'copy' 
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
             )
             _, stderr = await process.communicate()
-            if process.returncode != 0:
-                LOGGER.error(f"FFmpeg Fail: {stderr.decode()}")
-                return False
+            if process.returncode != 0: return False
 
         if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 100:
             return False
@@ -479,6 +484,13 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         LOGGER.error(f"Download Variant Error ({quality_code}): {e}")
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
+
+# Dummy nullcontext for python < 3.7 comp (just in case) or simple logic
+if not hasattr(asyncio, 'NullContext'):
+    class NullContext:
+        async def __aenter__(self): return None
+        async def __aexit__(self, *args): pass
+    asyncio.NullContext = NullContext
 
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
