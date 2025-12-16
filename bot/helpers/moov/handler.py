@@ -21,7 +21,9 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
+    # TAMBAHAN: Menambahkan karakter '#' ke dalam regex agar diganti jadi '_'
+    # FFmpeg akan error jika path mengandung '#'
+    return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
     clean_url = url.replace("#/", "/") 
@@ -104,9 +106,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- PERBAIKAN POSTER ---
-    # Hanya kirim Poster jika ini FULL ALBUM (filter_track_id kosong).
-    # Jika Single Track, lewati blok ini agar tidak ada poster.
+    # --- LOGIKA POSTER ---
+    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL (filter_track_id kosong)
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -128,23 +129,22 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     task_results = await run_concurrent_tasks(tasks, update_details)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
     
-    # Update list dengan track yang sukses
+    # Update tracks list
     album_meta['tracks'] = successful_tracks
     
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- PERBAIKAN UPLOADER ---
+        # --- FIX CRITICAL UNTUK UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
-            # Copy data file ke root metadata agar aman
+            # Copy data track ke root metadata (agar uploader bisa baca info file jika perlu)
             album_meta.update(track_data)
-            # Kembalikan list tracks
+            # Pastikan list tracks tetap ada dan benar
             album_meta['tracks'] = successful_tracks
             
-            # [CRITICAL FIX]
-            # Paksa tipe kembali ke 'album' agar uploder.py mau memprosesnya.
-            # uploder.py Anda hanya menerima: if metadata['type'] in ['album', 'playlist']
+            # [SANGAT PENTING]
+            # Kembalikan tipe ke 'album' agar uploder.py mau memprosesnya via batch_telegram_upload.
             album_meta['type'] = 'album'
             
     else:
@@ -152,7 +152,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip hanya jika full album
+        # Zip hanya jika full album (bukan single track)
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
