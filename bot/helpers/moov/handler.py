@@ -22,13 +22,11 @@ from ..uploder import album_upload
 
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
-# Gunakan header Chrome terbaru agar dipercaya CDN
 BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
-    'Referer': 'https://moov.hk/',
     'Origin': 'https://moov.hk'
 }
 
@@ -36,44 +34,40 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 def resolve_url(base_url, relative_url):
-    """Menggabungkan path tanpa merusak query params yang sudah ada di relative_url."""
+    """Menggabungkan path tanpa merusak query params yang sudah ada."""
     if relative_url.startswith('http'):
         return relative_url
     
-    # Hapus query dari base_url agar tidak tercampur
     base_clean = base_url.split('?')[0]
     if not base_clean.endswith('/') and not os.path.splitext(base_clean)[1]:
         base_clean += '/'
     elif os.path.splitext(base_clean)[1]:
         base_clean = os.path.dirname(base_clean) + '/'
-        
     return urllib.parse.urljoin(base_clean, relative_url)
 
 def merge_urls(base_url, relative_url):
-    """Menggabungkan path DAN mewariskan token dari base_url ke relative_url."""
-    # 1. Parse Params Base
+    """Menggabungkan path dan mewariskan query params."""
     base_parsed = urllib.parse.urlparse(base_url)
     base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
     
-    # 2. Resolve Full Path
     full_url = resolve_url(base_url, relative_url)
-    
-    # 3. Parse Params Child
     final_parsed = urllib.parse.urlparse(full_url)
     final_params = dict(urllib.parse.parse_qsl(final_parsed.query))
     
-    # 4. Merge: Child params menimpa Base params
     merged_params = base_params.copy()
     merged_params.update(final_params)
     
-    # 5. Rebuild
     new_query = urllib.parse.urlencode(merged_params)
     return final_parsed._replace(query=new_query).geturl()
 
-async def download_resource(session, url, path):
-    """Helper download dengan logging detail."""
+async def download_resource(session, url, path, referer=None):
+    """Helper download dengan Referer dinamis."""
+    headers = BROWSER_HEADERS.copy()
+    # Gunakan Referer spesifik jika ada (misal URL M3U8), jika tidak default ke moov.hk
+    headers['Referer'] = referer if referer else 'https://moov.hk/'
+    
     try:
-        async with session.get(url, headers=BROWSER_HEADERS, timeout=20) as resp:
+        async with session.get(url, headers=headers, timeout=20) as resp:
             if resp.status == 200:
                 data = await resp.read()
                 if len(data) > 0:
@@ -244,7 +238,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. INIT: Get Meta
+        # 1. INIT
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url_init = file_meta.get('playUrl')
@@ -270,7 +264,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         meta['is_downloaded'] = True
         meta['success'] = True
         
-        # Save Default Key
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(default_key_bytes)
@@ -293,18 +286,25 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. M3U8 -> KEY/MAP -> SEGMENTS
+        # 3. LOOP UTAMA
         success_process = False
         play_url = play_url_init
         
-        # Retry loop for Master Playlist / Key fetch
         for attempt in range(2):
             use_proxy = (attempt == 0)
             
-            # [FIX] Normal aiohttp Session for Direct Connection (No SSL disable)
+            # [FIX] Enhanced Direct Connection Setup
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
-                session_context = aiohttp.ClientSession()
+                # Salin Cookies dari sesi Client (Proxy) ke sesi Direct
+                jar = aiohttp.CookieJar(unsafe=True)
+                if client.session.cookie_jar:
+                    for cookie in client.session.cookie_jar:
+                        jar.update_cookies({cookie.key: cookie.value}, response_url=urllib.parse.URL('https://moov.hk'))
+                
+                # SSL=False untuk menghindari handshake error
+                connector = aiohttp.TCPConnector(ssl=False)
+                session_context = aiohttp.ClientSession(connector=connector, cookie_jar=jar)
             else:
                 session_context = client.session
 
@@ -327,7 +327,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             play_url = merge_urls(play_url, remote_lines[0])
                             continue 
 
-                    # B. Parse & Download Resources (Key & Map)
+                    # B. Parse & Download Resources
                     local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
                     remote_segments = []
                     error_in_parsing = False
@@ -343,24 +343,23 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 key_match = re.search(r'URI="([^"]+)"', line)
                                 if key_match:
                                     raw_key_uri = key_match.group(1)
-                                    # Cerdas: Resolve jika sudah ada query, Merge jika belum
                                     if '?' in raw_key_uri:
                                         key_uri = resolve_url(play_url, raw_key_uri)
                                     else:
                                         key_uri = merge_urls(play_url, raw_key_uri)
                                     
-                                    if not await download_resource(sess, key_uri, key_filepath):
+                                    # [FIX] Pass play_url as referer
+                                    if not await download_resource(sess, key_uri, key_filepath, referer=play_url):
                                         LOGGER.warning("Key DL Failed.")
                                         error_in_parsing = True
                                         break
                                     
-                                    # Replace URI only
                                     new_line = re.sub(r'URI="[^"]+"', 'URI="key.bin"', line)
                                     await f_out.write(f"{new_line}\n")
                                 else:
                                     await f_out.write(f"{line}\n")
 
-                            # Handle Map (fMP4 Init)
+                            # Handle Map
                             elif line.startswith("#EXT-X-MAP"):
                                 map_match = re.search(r'URI="([^"]+)"', line)
                                 if map_match:
@@ -371,7 +370,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                         map_uri = merge_urls(play_url, raw_map_uri)
                                     
                                     map_path = os.path.join(track_temp_dir, "init.bin")
-                                    if not await download_resource(sess, map_uri, map_path):
+                                    # [FIX] Pass play_url as referer
+                                    if not await download_resource(sess, map_uri, map_path, referer=play_url):
                                         LOGGER.warning("Map DL Failed.")
                                         error_in_parsing = True
                                         break
@@ -391,8 +391,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 seg_idx += 1
                     
                     if error_in_parsing: 
-                        if use_proxy: continue # Retry with Direct
-                        else: break # Fail
+                        if use_proxy: continue 
+                        else: break
 
                     # D. Download Segments
                     seg_error = False
@@ -400,7 +400,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                         seg_url = merge_urls(play_url, seg_url_raw)
                         seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.flac")
                         
-                        if not await download_resource(sess, seg_url, seg_path):
+                        # [FIX] Pass play_url as referer
+                        if not await download_resource(sess, seg_url, seg_path, referer=play_url):
                             seg_error = True
                             break
                     
@@ -415,8 +416,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 
         if not success_process: return False
 
-        # 4. FFMPEG Processing (Dual Strategy)
-        # Strategy A: Re-encode (Safe default)
+        # 4. FFMPEG
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M', '-probesize', '100M',
@@ -432,7 +432,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         )
         _, stderr = await process.communicate()
         
-        # Strategy B: Stream Copy (Fallback if re-encode fails due to format issues)
         if process.returncode != 0:
             LOGGER.warning(f"FFmpeg encode error, trying copy...")
             cmd[7] = 'copy' 
