@@ -9,7 +9,7 @@ import hashlib
 import traceback
 import urllib.parse
 import aiohttp
-from yarl import URL  # [FIX] Wajib import ini untuk aiohttp cookies
+from yarl import URL
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -36,10 +36,8 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 def resolve_url(base_url, relative_url):
-    """Menggabungkan path tanpa merusak query params yang sudah ada."""
     if relative_url.startswith('http'):
         return relative_url
-    
     base_clean = base_url.split('?')[0]
     if not base_clean.endswith('/') and not os.path.splitext(base_clean)[1]:
         base_clean += '/'
@@ -48,7 +46,6 @@ def resolve_url(base_url, relative_url):
     return urllib.parse.urljoin(base_clean, relative_url)
 
 def merge_urls(base_url, relative_url):
-    """Menggabungkan path dan mewariskan query params."""
     base_parsed = urllib.parse.urlparse(base_url)
     base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
     
@@ -62,14 +59,11 @@ def merge_urls(base_url, relative_url):
     new_query = urllib.parse.urlencode(merged_params)
     return final_parsed._replace(query=new_query).geturl()
 
-async def download_resource(session, url, path, referer=None):
-    """Helper download dengan Referer dinamis."""
-    headers = BROWSER_HEADERS.copy()
-    if referer:
-        headers['Referer'] = referer
-    
+async def download_resource(session, url, path):
+    """Helper download standar."""
     try:
-        async with session.get(url, headers=headers, timeout=20) as resp:
+        # Gunakan headers browser standar tanpa modifikasi referer aneh-aneh
+        async with session.get(url, headers=BROWSER_HEADERS, timeout=20) as resp:
             if resp.status == 200:
                 data = await resp.read()
                 if len(data) > 0:
@@ -82,17 +76,14 @@ async def download_resource(session, url, path, referer=None):
 
 async def start_moov(url: str, user: dict):
     clean_url = url.replace("#/", "/") 
-    
     if "/album/" in clean_url:
         raw_id = clean_url.split("/album/")[-1]
         album_id = raw_id.split("?")[0].split("/")[0]
         await start_album(album_id, user)
-        
     elif "/song/" in clean_url:
         raw_id = clean_url.split("/song/")[-1]
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
-
     elif "/share/" in clean_url and "/ADO/" in clean_url:
         try:
             parts = clean_url.split("/AUDIO/")
@@ -100,30 +91,24 @@ async def start_moov(url: str, user: dict):
             track_id = left_part.split("/")[0]
             right_part = parts[1]
             album_id = right_part.split("?")[0].split("/")[0]
-            
             LOGGER.info(f"Share Link Parsed. Track: {track_id}, Album: {album_id}")
             await start_album(album_id, user, filter_track_id=track_id)
-            
         except Exception as e:
             raise Exception(f"Gagal memparsing link Share Moov: {e}")
     else:
-        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album, Lagu, dan Share Link.")
+        raise Exception("Link Moov tidak dikenali.")
 
 async def start_track_single(track_id, user):
     client = user['moov_api']
     try:
         if not hasattr(client, 'get_product_meta'):
-             raise Exception("Client Moov versi lama. Gunakan link Album/Share.")
-        
+             raise Exception("Client Moov versi lama.")
         track_data = await client.get_product_meta(track_id)
         if not track_data: raise Exception("Data lagu tidak ditemukan.")
-
         album_id = track_data.get('albumId') or track_data.get('album', {}).get('id')
         if not album_id: raise Exception("Gagal menemukan ID Album.")
-
         LOGGER.info(f"Downloading Single Track: {track_id} from Album: {album_id}")
         await start_album(album_id, user, filter_track_id=track_id)
-
     except Exception as e:
         raise Exception(f"Gagal memproses lagu: {e}")
 
@@ -197,7 +182,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
     try:
         audio = FLAC(filepath)
         audio.delete() 
-        
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
         audio['ALBUM'] = meta.get('album', '')
@@ -207,7 +191,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['COPYRIGHT'] = meta.get('copyright', '')
         audio['DISCNUMBER'] = str(meta.get('disk', ''))
         audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
-        
         if meta.get('totaltracks'):
             audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
             audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
@@ -227,7 +210,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
             p.mime = 'image/jpeg'
             p.desc = 'Front Cover'
             audio.add_picture(p)
-            
         audio.save()
         return int(audio.info.length)
     except Exception: return 0
@@ -240,13 +222,12 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. INIT: Get Meta
+        # 1. INIT
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url_init = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url_init or not content_key: return False
-            
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
             default_key_bytes = bytes.fromhex(m.hexdigest())
@@ -255,7 +236,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
-        
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -283,7 +263,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             async with aiofiles.open(cover_local_path, 'wb') as f: await f.write(data)
                         else: cover_local_path = None
             except: cover_local_path = None
-        
         if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
@@ -295,17 +274,11 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         for attempt in range(2):
             use_proxy = (attempt == 0)
             
+            # [FIX] KEMBALI KE SESI DIRECT SEDERHANA (SEPERTI LOG 18)
+            # Ini terbukti berhasil mendownload key di log 18
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
-                # [FIX] Gunakan CookieJar unsafe dan salin cookies dari client
-                jar = aiohttp.CookieJar(unsafe=True)
-                if client.session.cookie_jar:
-                    for cookie in client.session.cookie_jar:
-                        # [FIXED] Gunakan yarl.URL
-                        jar.update_cookies({cookie.key: cookie.value}, response_url=URL('https://moov.hk'))
-                
-                connector = aiohttp.TCPConnector(ssl=False)
-                session_context = aiohttp.ClientSession(connector=connector, cookie_jar=jar)
+                session_context = aiohttp.ClientSession()
             else:
                 session_context = client.session
 
@@ -349,7 +322,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                     else:
                                         key_uri = merge_urls(play_url, raw_key_uri)
                                     
-                                    if not await download_resource(sess, key_uri, key_filepath, referer=play_url):
+                                    if not await download_resource(sess, key_uri, key_filepath):
                                         LOGGER.warning("Key DL Failed.")
                                         error_in_parsing = True
                                         break
@@ -359,7 +332,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 else:
                                     await f_out.write(f"{line}\n")
 
-                            # Handle Map
+                            # Handle Map (Map DL logic yang hilang di Log 18, ditambahkan di sini)
                             elif line.startswith("#EXT-X-MAP"):
                                 map_match = re.search(r'URI="([^"]+)"', line)
                                 if map_match:
@@ -370,7 +343,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                         map_uri = merge_urls(play_url, raw_map_uri)
                                     
                                     map_path = os.path.join(track_temp_dir, "init.bin")
-                                    if not await download_resource(sess, map_uri, map_path, referer=play_url):
+                                    if not await download_resource(sess, map_uri, map_path):
                                         LOGGER.warning("Map DL Failed.")
                                         error_in_parsing = True
                                         break
@@ -382,7 +355,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             
                             elif line.startswith("#"):
                                 await f_out.write(f"{line}\n")
-                            
                             else:
                                 remote_segments.append(line)
                                 seg_filename = f"seg_{seg_idx:04d}.flac"
@@ -399,12 +371,11 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                         seg_url = merge_urls(play_url, seg_url_raw)
                         seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.flac")
                         
-                        if not await download_resource(sess, seg_url, seg_path, referer=play_url):
+                        if not await download_resource(sess, seg_url, seg_path):
                             seg_error = True
                             break
                     
                     if seg_error: continue 
-                    
                     success_process = True
                     break 
 
