@@ -105,8 +105,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- POSTER ---
-    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -132,12 +130,10 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- FIX UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
-            # Paksa tipe 'album' agar uploader bekerja
             album_meta['type'] = 'album'
     else:
         raise Exception("Gagal mengunduh lagu.")
@@ -215,7 +211,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             play_url = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url or not content_key:
-                LOGGER.warning(f"Meta/Key empty for {quality_code}")
                 return False
             
             m = hashlib.md5()
@@ -229,7 +224,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         safe_filename = safe_name(raw_filename)
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # Setup Meta Paths
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -265,12 +259,10 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. M3U8 DOWNLOAD
+        # 3. M3U8 DOWNLOAD & PARSING
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
-            if resp.status != 200:
-                LOGGER.error(f"M3U8 Fetch Failed: {resp.status}")
-                return False
+            if resp.status != 200: return False
             m3u8_content = await resp.text()
 
         # Handle Master Playlist
@@ -288,77 +280,69 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     m3u8_content = await var_resp.text()
                     play_url = variant_url 
 
-        # Parse URLs
         parsed_uri = urllib.parse.urlparse(play_url)
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
         query_params = parsed_uri.query 
 
-        target_duration = 10
-        media_sequence = 0
-        is_encrypted = "#EXT-X-KEY" in m3u8_content
-        iv_line = ""
-        if is_encrypted:
-            iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content, re.IGNORECASE)
-            if iv_match:
-                iv_hex = iv_match.group(1)
-                iv_line = f",IV=0x{iv_hex}"
-
-        for line in m3u8_content.splitlines():
-            if line.startswith("#EXT-X-TARGETDURATION"):
-                target_duration = line.split(":")[1].strip()
-            if line.startswith("#EXT-X-MEDIA-SEQUENCE"):
-                media_sequence = int(line.split(":")[1].strip())
-
-        remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
-        local_segment_names = []
-        
-        for index, seg_url_raw in enumerate(remote_segments):
-            if not seg_url_raw.startswith('http'):
-                seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
-                # [CRITICAL FIX]: Append token correctly even if url has query params
-                if query_params:
-                    joiner = '&' if '?' in seg_url else '?'
-                    seg_url += f"{joiner}{query_params}"
-            else:
-                seg_url = seg_url_raw
-
-            seg_name = f"seg_{index:04d}.flac"
-            seg_path = os.path.join(track_temp_dir, seg_name)
-            local_segment_names.append(seg_name)
-            
-            success = False
-            for _ in range(3):
-                try:
-                    async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
-                        if seg_resp.status == 200:
-                            data = await seg_resp.read()
-                            if len(data) < 100: # Validasi minimal (header FLAC/TS)
-                                # Cek jika HTML/Text error
-                                try:
-                                    if data.decode().strip().startswith('<'): continue 
-                                except: pass
-                            async with aiofiles.open(seg_path, 'wb') as f:
-                                await f.write(data)
-                            success = True
-                            break
-                except: continue
-            
-            if not success:
-                LOGGER.error(f"Failed to download segment: {seg_name}")
-                return False
-
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
-        async with aiofiles.open(local_m3u8_path, 'w') as f:
-            await f.write("#EXTM3U\n")
-            await f.write("#EXT-X-VERSION:3\n")
-            await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
-            await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
-            if is_encrypted:
-                await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
-            for seg_name in local_segment_names:
-                await f.write(f"#EXTINF:{target_duration},\n")
-                await f.write(f"{seg_name}\n")
-            await f.write("#EXT-X-ENDLIST\n")
+        
+        # --- ROBUST M3U8 RECONSTRUCTION ---
+        # Parse baris per baris untuk handle enkripsi & segmen dengan benar
+        # Ini mencegah error jika ada perubahan IV atau Key di tengah stream
+        async with aiofiles.open(local_m3u8_path, 'w') as f_out:
+            seg_index = 0
+            
+            for line in m3u8_content.splitlines():
+                line = line.strip()
+                if not line: continue
+                
+                if line.startswith("#EXT-X-KEY"):
+                    # Ganti URI key ke key.bin, biarkan parameter lain (IV, METHOD) tetap
+                    # Contoh: #EXT-X-KEY:METHOD=AES-128,URI="...",IV=...
+                    # Regex untuk ganti URI="..." dengan URI="key.bin"
+                    new_line = re.sub(r'URI="[^"]+"', 'URI="key.bin"', line)
+                    await f_out.write(f"{new_line}\n")
+                    
+                elif line.startswith("#"):
+                    # Tulis tag lain apa adanya (TargetDuration, MediaSequence, dll)
+                    await f_out.write(f"{line}\n")
+                    
+                else:
+                    # Ini adalah baris URL Segmen
+                    seg_url = line
+                    if not seg_url.startswith('http'):
+                        seg_url = urllib.parse.urljoin(base_url, line)
+                        # Append token jika belum ada
+                        if query_params:
+                            # Cek apakah sudah ada parameter di URL
+                            joiner = '&' if '?' in seg_url else '?'
+                            # Cek apakah token sudah ada di URL (hindari duplikasi)
+                            if query_params not in seg_url:
+                                seg_url += f"{joiner}{query_params}"
+
+                    seg_filename = f"seg_{seg_index:04d}.flac"
+                    seg_path = os.path.join(track_temp_dir, seg_filename)
+                    
+                    # Download Segmen
+                    success_seg = False
+                    for _ in range(3):
+                        try:
+                            async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
+                                if seg_resp.status == 200:
+                                    data = await seg_resp.read()
+                                    if len(data) > 100: # Validasi data
+                                        async with aiofiles.open(seg_path, 'wb') as f_seg:
+                                            await f_seg.write(data)
+                                        success_seg = True
+                                        break
+                        except: continue
+                    
+                    if not success_seg:
+                        LOGGER.error(f"Gagal download segmen: {seg_url}")
+                        return False
+                        
+                    await f_out.write(f"{seg_filename}\n")
+                    seg_index += 1
 
         # 4. FFMPEG
         cmd = [
@@ -422,16 +406,13 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     
-    # --- AGGRESSIVE FALLBACK ---
-    # Coba kedua kualitas (HR dan LL) jika salah satu gagal.
-    # Prioritaskan preferensi user, lalu fallback ke lainnya.
+    # --- AUTO-FALLBACK QUALITY ---
     target_q = meta.get('moov_quality_code', 'LL')
-    
     qualities_to_try = []
     if target_q == 'HR':
         qualities_to_try = ['HR', 'LL']
     else:
-        qualities_to_try = ['LL', 'HR'] # Jika user minta LL, coba HR juga kalau LL gagal (jarang tapi mungkin)
+        qualities_to_try = ['LL', 'HR']
 
     for quality in qualities_to_try:
         LOGGER.info(f"Mencoba download {meta.get('title')} dengan kualitas: {quality}")
