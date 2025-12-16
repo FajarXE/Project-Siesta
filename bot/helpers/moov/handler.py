@@ -36,9 +36,24 @@ async def start_moov(url: str, user: dict):
         raw_id = clean_url.split("/song/")[-1]
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
+
+    # --- TAMBAHAN: Support Link Share (/share/ADO/TRACK_ID/...) ---
+    elif "/share/" in clean_url and "/ADO/" in clean_url:
+        try:
+            # Format: .../share/ADO/{TRACK_ID}/AUDIO/{ALBUM_ID}
+            # Ambil bagian setelah /ADO/
+            raw_id = clean_url.split("/ADO/")[-1]
+            # Ambil segmen pertama (Track ID)
+            track_id = raw_id.split("/")[0]
+            
+            LOGGER.info(f"Detected Share Link. Track ID: {track_id}")
+            await start_track_single(track_id, user)
+        except Exception as e:
+            raise Exception(f"Gagal memparsing link Share Moov: {e}")
+    # -------------------------------------------------------------
         
     else:
-        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album (/album/) dan Lagu (/song/).")
+        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album, Lagu, dan Share Link.")
 
 async def start_track_single(track_id, user):
     client = user['moov_api']
@@ -116,6 +131,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+        # Zip jika album full
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -316,21 +332,15 @@ async def download_track(track_meta, user, folderpath):
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         if real_duration > 0: meta['duration'] = real_duration
             
-        # --- FIX: COVER CLEANUP ---
-        # 1. Simpan satu file cover.jpg di folder album (untuk Poster/Zip) jika belum ada
+        # COVER CLEANUP (1 File per Album)
         if cover_local_path and os.path.exists(cover_local_path):
             album_cover_path = os.path.join(folderpath, "cover.jpg")
             if not os.path.exists(album_cover_path):
                 shutil.copy(cover_local_path, album_cover_path)
-            
-            # Gunakan path ini untuk uploader
             meta['cover'] = album_cover_path
         else:
             meta['cover'] = None
 
-        # 2. Hapus folder temp (ini akan menghapus file cover_local_path yang duplikat)
-        # Jadi tidak ada lagi file 'cover_ID.jpg' yang menumpuk di folder output.
-        
         if lyrics_text and isinstance(lyrics_text, str):
             try:
                 lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
