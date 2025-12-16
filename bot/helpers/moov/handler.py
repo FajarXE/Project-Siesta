@@ -21,8 +21,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # TAMBAHAN: Menambahkan karakter '#' ke dalam regex agar diganti jadi '_'
-    # FFmpeg akan error jika path mengandung '#'
+    # Fix: Replace '#' and other illegal chars
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -38,7 +37,6 @@ async def start_moov(url: str, user: dict):
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
 
-    # Parsing Link Share
     elif "/share/" in clean_url and "/ADO/" in clean_url:
         try:
             parts = clean_url.split("/AUDIO/")
@@ -107,7 +105,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     album_meta['folderpath'] = album_folder
 
     # --- LOGIKA POSTER ---
-    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL (filter_track_id kosong)
+    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -129,22 +127,17 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     task_results = await run_concurrent_tasks(tasks, update_details)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
     
-    # Update tracks list
     album_meta['tracks'] = successful_tracks
     
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- FIX CRITICAL UNTUK UPLOADER ---
+        # --- FIX UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
-            # Copy data track ke root metadata (agar uploader bisa baca info file jika perlu)
             album_meta.update(track_data)
-            # Pastikan list tracks tetap ada dan benar
             album_meta['tracks'] = successful_tracks
-            
-            # [SANGAT PENTING]
-            # Kembalikan tipe ke 'album' agar uploder.py mau memprosesnya via batch_telegram_upload.
+            # Paksa tipe 'album' agar uploader bekerja
             album_meta['type'] = 'album'
             
     else:
@@ -152,7 +145,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip hanya jika full album (bukan single track)
+        # Zip hanya jika full album
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -237,7 +230,7 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- PATH KEYS LENGKAP (Agar Uploader Valid) ---
+        # --- PATH KEYS ---
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -247,7 +240,6 @@ async def download_track(track_meta, user, folderpath):
         meta['filename'] = os.path.basename(abs_path)
         meta['is_downloaded'] = True
         meta['success'] = True
-        # -----------------------------------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
@@ -331,13 +323,15 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # FFMPEG
+        # --- FIX: ROBUST FFMPEG COMMAND ---
         cmd = [
             'ffmpeg', '-y',
+            '-analyzeduration', '100M',  # Analisis lebih dalam
+            '-probesize', '100M',        # Probe lebih besar
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-            '-c', 'flac', 
+            '-c', 'copy',                # Copy stream (lebih aman & cepat)
             final_filepath
         ]
         
@@ -353,7 +347,6 @@ async def download_track(track_meta, user, folderpath):
 
         if not os.path.exists(final_filepath): return False
         
-        # --- ISI FILESIZE (Wajib buat uploader) ---
         try:
             fsize = os.path.getsize(final_filepath)
             meta['filesize'] = fsize
