@@ -22,7 +22,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Fix: Hapus '#' dan karakter ilegal lain
+    # Membersihkan karakter ilegal untuk nama file/folder
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -105,8 +105,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- LOGIKA POSTER ---
-    # Hanya kirim Poster jika DOWNLOAD FULL ALBUM
+    # --- POSTER ---
+    # Hanya jika Full Album
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -201,19 +201,22 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         LOGGER.error(f"Mutagen Error: {e}")
         return 0
 
-async def download_track(track_meta, user, folderpath):
-    meta = track_meta.copy()
+async def _download_quality_variant(meta, user, folderpath, quality_code):
+    """Fungsi internal untuk mencoba download dengan kualitas tertentu."""
     client = user['moov_api']
+    track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
     
     try:
+        if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
+        os.makedirs(track_temp_dir, exist_ok=True)
+        
+        # 1. Get File Meta & Key
         try:
-            file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
+            file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url or not content_key: return False
-        except: return False
-
-        try:
+            
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
             key_bytes = bytes.fromhex(m.hexdigest())
@@ -221,14 +224,9 @@ async def download_track(track_meta, user, folderpath):
 
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
-        
-        track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
-        if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
-        os.makedirs(track_temp_dir, exist_ok=True)
-
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- PATH KEYS ---
+        # Setup Meta Paths
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -239,15 +237,14 @@ async def download_track(track_meta, user, folderpath):
         meta['is_downloaded'] = True
         meta['success'] = True
         
-        # Simpan Key ke File (untuk jaga-jaga)
+        # Save Key
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
 
-        # COVER DOWNLOAD
+        # 2. Cover Download (Skip jika sudah ada di meta)
         cover_local_path = None
         target_url = meta.get('cover_url')
-
         if target_url:
             cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
             try:
@@ -259,16 +256,14 @@ async def download_track(track_meta, user, folderpath):
                             data = await resp.read()
                             async with aiofiles.open(cover_local_path, 'wb') as f:
                                 await f.write(data)
-                        else:
-                            cover_local_path = None
-            except:
-                cover_local_path = None
+                        else: cover_local_path = None
+            except: cover_local_path = None
         
         if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # --- SEGMENT DOWNLOAD (ROBUST FIX) ---
+        # 3. M3U8 & Segment Download
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200: return False
@@ -289,18 +284,14 @@ async def download_track(track_meta, user, folderpath):
                     m3u8_content = await var_resp.text()
                     play_url = variant_url 
 
-        # Parse Base URL & Token
+        # Parse URLs
         parsed_uri = urllib.parse.urlparse(play_url)
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
         query_params = parsed_uri.query 
 
         target_duration = 10
         media_sequence = 0
-        
-        # [FIX] Cek keberadaan Key di Playlist
-        # Jika playlist tidak mengandung #EXT-X-KEY, maka stream TIDAK terenkripsi.
         is_encrypted = "#EXT-X-KEY" in m3u8_content
-        
         iv_line = ""
         if is_encrypted:
             iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content, re.IGNORECASE)
@@ -335,48 +326,40 @@ async def download_track(track_meta, user, folderpath):
                     async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
-                            if len(data) < 500: 
+                            if len(data) < 500: # Cek data minimal
                                 try:
                                     if data.decode().strip().startswith('<'): continue 
                                 except: pass
-                                
                             async with aiofiles.open(seg_path, 'wb') as f:
                                 await f.write(data)
                             success = True
                             break
                 except: continue
             
-            if not success:
-                shutil.rmtree(track_temp_dir)
-                return False
+            if not success: return False
 
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
-        
         async with aiofiles.open(local_m3u8_path, 'w') as f:
             await f.write("#EXTM3U\n")
             await f.write("#EXT-X-VERSION:3\n")
             await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
             await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
-            
-            # [FIX] Hanya tulis baris KEY jika playlist asli juga punya KEY
             if is_encrypted:
                 await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
-                
             for seg_name in local_segment_names:
                 await f.write(f"#EXTINF:{target_duration},\n")
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # FFMPEG
+        # 4. FFmpeg Encoding
         cmd = [
             'ffmpeg', '-y',
-            '-analyzeduration', '100M',  
-            '-probesize', '100M',        
+            '-analyzeduration', '100M', '-probesize', '100M',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
             '-c', 'flac', 
-            '-user_agent', 'Moov-Android/1.0/hls-hr', # [FIX] Tambahkan User Agent
+            '-user_agent', 'Moov-Android/1.0/hls-hr',
             final_filepath
         ]
         
@@ -386,38 +369,34 @@ async def download_track(track_meta, user, folderpath):
         _, stderr = await process.communicate()
         
         if process.returncode != 0:
-            LOGGER.error(f"FFmpeg Error: {stderr.decode()}")
-            shutil.rmtree(track_temp_dir)
+            LOGGER.error(f"FFmpeg Error ({quality_code}): {stderr.decode()}")
             return False
 
         if not os.path.exists(final_filepath): return False
-        
         try:
-            fsize = os.path.getsize(final_filepath)
-            meta['filesize'] = fsize
-            if fsize == 0: return False
-        except: pass
+            if os.path.getsize(final_filepath) == 0: return False
+            meta['filesize'] = os.path.getsize(final_filepath)
+        except: return False
 
-        # LYRICS
+        # 5. Metadata Tagging
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
             if track_id: lyrics_text = await client.get_lyrics(track_id)
-        except: lyrics_text = None
+        except: pass
 
-        # TAGGING
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         if real_duration > 0: meta['duration'] = real_duration
             
-        # COVER CLEANUP
+        # Cover Final
         if cover_local_path and os.path.exists(cover_local_path):
             album_cover_path = os.path.join(folderpath, "cover.jpg")
             if not os.path.exists(album_cover_path):
                 shutil.copy(cover_local_path, album_cover_path)
             meta['cover'] = album_cover_path
-        else:
-            meta['cover'] = None
-
+        else: meta['cover'] = None
+        
+        # Lyrics Final
         if lyrics_text and isinstance(lyrics_text, str):
             try:
                 lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
@@ -425,11 +404,35 @@ async def download_track(track_meta, user, folderpath):
                     await f.write(lyrics_text)
             except: pass
 
-        shutil.rmtree(track_temp_dir)
+        # Cleanup
+        if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
+        return True
 
     except Exception as e:
-        LOGGER.error(f"DL Crash: {e}")
+        LOGGER.error(f"Download Variant Error ({quality_code}): {e}")
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
-        
-    return meta
+
+async def download_track(track_meta, user, folderpath):
+    meta = track_meta.copy()
+    
+    # --- AUTO-FALLBACK QUALITY ---
+    # Jika kualitas 'HR' (Hi-Res) gagal, coba 'LL' (Lossless/16bit)
+    # Ini mengatasi masalah "Invalid Data" pada track yang key-nya bermasalah di 24bit.
+    target_q = meta.get('moov_quality_code', 'LL')
+    qualities_to_try = [target_q]
+    if target_q == 'HR':
+        qualities_to_try.append('LL')
+    
+    # Hapus duplikat dan pastikan urutan
+    qualities_to_try = list(dict.fromkeys(qualities_to_try))
+
+    for quality in qualities_to_try:
+        LOGGER.info(f"Mencoba download {meta.get('title')} dengan kualitas: {quality}")
+        success = await _download_quality_variant(meta, user, folderpath, quality)
+        if success:
+            LOGGER.info(f"Berhasil download {meta.get('title')} ({quality})")
+            return meta
+    
+    LOGGER.error(f"Gagal mendownload {meta.get('title')} pada semua kualitas.")
+    return False
