@@ -9,7 +9,6 @@ import hashlib
 import traceback
 import urllib.parse
 import aiohttp
-from yarl import URL
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -23,6 +22,7 @@ from ..uploder import album_upload
 
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
+# Header Browser Standar (Sama seperti Log 18 yang sukses)
 BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Accept': '*/*',
@@ -60,9 +60,9 @@ def merge_urls(base_url, relative_url):
     return final_parsed._replace(query=new_query).geturl()
 
 async def download_resource(session, url, path):
-    """Helper download standar."""
+    """Helper download resource kecil (Key/Map)."""
     try:
-        # Gunakan headers browser standar tanpa modifikasi referer aneh-aneh
+        # Gunakan BROWSER_HEADERS statis (Referer: moov.hk)
         async with session.get(url, headers=BROWSER_HEADERS, timeout=20) as resp:
             if resp.status == 200:
                 data = await resp.read()
@@ -274,8 +274,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         for attempt in range(2):
             use_proxy = (attempt == 0)
             
-            # [FIX] KEMBALI KE SESI DIRECT SEDERHANA (SEPERTI LOG 18)
-            # Ini terbukti berhasil mendownload key di log 18
+            # [FIX] FALLBACK: Gunakan Session Polos (tanpa Cookies/SSL Tweak)
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
                 session_context = aiohttp.ClientSession()
@@ -332,7 +331,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 else:
                                     await f_out.write(f"{line}\n")
 
-                            # Handle Map (Map DL logic yang hilang di Log 18, ditambahkan di sini)
+                            # Handle Map
                             elif line.startswith("#EXT-X-MAP"):
                                 map_match = re.search(r'URI="([^"]+)"', line)
                                 if map_match:
@@ -355,6 +354,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             
                             elif line.startswith("#"):
                                 await f_out.write(f"{line}\n")
+                            
                             else:
                                 remote_segments.append(line)
                                 seg_filename = f"seg_{seg_idx:04d}.flac"
@@ -376,6 +376,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             break
                     
                     if seg_error: continue 
+                    
                     success_process = True
                     break 
 
