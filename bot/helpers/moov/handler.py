@@ -48,13 +48,18 @@ def resolve_url(base_url, relative_url):
 
 def merge_urls(base_url, relative_url):
     """Menggabungkan path dan mewariskan query params."""
+    # 1. Parse Base
     base_parsed = urllib.parse.urlparse(base_url)
     base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
     
+    # 2. Resolve Path (Base path + Relative path)
     full_url = resolve_url(base_url, relative_url)
+    
+    # 3. Parse Result
     final_parsed = urllib.parse.urlparse(full_url)
     final_params = dict(urllib.parse.parse_qsl(final_parsed.query))
     
+    # 4. Merge Params: Child menang, tapi warisi Base jika Child tidak punya
     merged_params = base_params.copy()
     merged_params.update(final_params)
     
@@ -291,17 +296,17 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             m3u8_content = await resp.text()
                     except: continue
 
+                    # Handle Master Playlist Redirect
                     if "#EXT-X-STREAM-INF" in m3u8_content:
                         remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
                         if remote_lines:
-                            play_url = resolve_url(play_url, remote_lines[0])
+                            # [CRITICAL FIX] Use merge_urls to inherit TOKEN!
+                            play_url = merge_urls(play_url, remote_lines[0])
+                            LOGGER.info(f"Redirecting to Variant (Token Inherited): {play_url}")
                             continue 
 
                     # B. Check & Download Key (PRESERVE METADATA)
-                    # Kita tidak boleh menulis ulang METHOD/IV manual karena bisa salah.
-                    # Kita akan parse baris per baris saat menulis local.m3u8 nanti.
-                    # Di sini hanya download file kuncinya saja.
-                    
+                    key_ok = True
                     key_match = re.search(r'URI="([^"]+)"', m3u8_content)
                     if key_match:
                         raw_key_uri = key_match.group(1)
@@ -317,18 +322,15 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                     key_data = await key_resp.read()
                                     if len(key_data) == 16:
                                         async with aiofiles.open(key_filepath, 'wb') as f: await f.write(key_data)
-                                    else: 
-                                        if use_proxy: continue 
-                                        break
-                                else: 
-                                    if use_proxy: continue
-                                    break
-                        except: 
-                            if use_proxy: continue
-                            break
+                                    else: key_ok = False
+                                else: key_ok = False
+                        except: key_ok = False
+                        
+                        if not key_ok:
+                            if use_proxy: continue 
+                            else: break
 
                     # C. Parse Segments & Build Local M3U8
-                    # [CRITICAL FIX]: Parse Line-by-Line to preserve Encryption Method
                     remote_segments = []
                     local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
                     
@@ -339,16 +341,11 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             if not line: continue
                             
                             if line.startswith("#EXT-X-KEY"):
-                                # Ganti URI="..." dengan URI="key.bin" TAPI pertahankan METHOD/IV/dll
-                                # Regex replace URI="..." dengan URI="key.bin"
                                 new_line = re.sub(r'URI="[^"]+"', 'URI="key.bin"', line)
                                 await f_out.write(f"{new_line}\n")
-                            
                             elif line.startswith("#"):
                                 await f_out.write(f"{line}\n")
-                            
                             else:
-                                # Ini adalah URL Segmen
                                 remote_segments.append(line)
                                 seg_filename = f"seg_{seg_idx:04d}.flac"
                                 await f_out.write(f"{seg_filename}\n")
@@ -366,13 +363,14 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 async with sess.get(seg_url, headers=BROWSER_HEADERS, timeout=15) as seg_resp:
                                     if seg_resp.status == 200:
                                         data = await seg_resp.read()
-                                        if len(data) > 100: # Validasi agak longgar
+                                        if len(data) > 100:
                                             async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
                                             seg_success = True
                                             break
                             except: pass
                         
                         if not seg_success:
+                            LOGGER.warning(f"Seg Fail: {seg_url}")
                             seg_error = True
                             break
                     
