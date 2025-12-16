@@ -22,7 +22,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Fix: Hapus '#' dan karakter ilegal lain agar path tidak error di FFmpeg
+    # Membersihkan karakter ilegal termasuk pagar '#'
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -105,8 +105,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- LOGIKA POSTER (Sesuai Permintaan) ---
-    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL (bukan single track)
+    # --- LOGIKA POSTER ---
+    # Hanya kirim Poster jika DOWNLOAD FULL ALBUM (filter_track_id kosong)
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -132,12 +132,15 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- FIX UPLOADER (PENTING) ---
+        # --- FIX UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
+            # Copy data ke root agar uploader single track bisa baca
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
-            # [CRITICAL]: Paksa tipe 'album' agar uploader.py mau memprosesnya
+            
+            # [CRITICAL]: Ubah tipe ke 'album' AGAR uploder.py mau memprosesnya.
+            # uploder.py hanya menerima if type in ['album', 'playlist']
             album_meta['type'] = 'album'
     else:
         raise Exception("Gagal mengunduh lagu.")
@@ -276,8 +279,9 @@ async def download_track(track_meta, user, folderpath):
 
         # [FIX] Parse Base URL & Token untuk segmen
         parsed_uri = urllib.parse.urlparse(play_url)
+        # Ambil base path sampai direktori terakhir
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
-        query_params = parsed_uri.query 
+        query_params = parsed_uri.query # Simpan token
 
         target_duration = 10
         media_sequence = 0
@@ -294,6 +298,7 @@ async def download_track(track_meta, user, folderpath):
             # [FIX] Gabungkan Base URL & Token jika URL relatif
             if not seg_url_raw.startswith('http'):
                 seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
+                # Tambahkan token jika belum ada
                 if query_params and '?' not in seg_url:
                     seg_url += f"?{query_params}"
             else:
@@ -342,7 +347,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # [FIX] Gunakan re-encode (-c flac) agar output valid dari segmen HLS
+        # [FIX] Gunakan re-encode (-c flac) agar output valid
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M',  
