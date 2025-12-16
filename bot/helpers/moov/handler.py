@@ -24,7 +24,6 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
-    # Bersihkan URL dari fragment hash
     clean_url = url.replace("#/", "/") 
     
     if "/album/" in clean_url:
@@ -37,43 +36,28 @@ async def start_moov(url: str, user: dict):
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
 
-    # --- FIX: Parsing Link Share (Ambil Track ID & Album ID dari URL) ---
+    # Parsing Link Share
     elif "/share/" in clean_url and "/ADO/" in clean_url:
         try:
-            # Format: .../share/ADO/{TRACK_ID}/AUDIO/{ALBUM_ID}
-            # Pisahkan berdasarkan /AUDIO/
             parts = clean_url.split("/AUDIO/")
-            
-            # Bagian Kiri (Track ID): .../share/ADO/{TRACK_ID}
             left_part = parts[0].split("/ADO/")[-1]
             track_id = left_part.split("/")[0]
-            
-            # Bagian Kanan (Album ID): {ALBUM_ID}
             right_part = parts[1]
             album_id = right_part.split("?")[0].split("/")[0]
             
             LOGGER.info(f"Share Link Parsed. Track: {track_id}, Album: {album_id}")
-            
-            # Langsung ke start_album karena kita sudah punya Album ID
-            # Ini mem-bypass kebutuhan fungsi 'get_product_meta' yang hilang di client Anda
             await start_album(album_id, user, filter_track_id=track_id)
             
         except Exception as e:
             raise Exception(f"Gagal memparsing link Share Moov: {e}")
-    # -------------------------------------------------------------------
-        
     else:
-        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album (/album/), Lagu (/song/), dan Share Link.")
+        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album, Lagu, dan Share Link.")
 
 async def start_track_single(track_id, user):
-    """
-    Hanya dipanggil jika link berupa /song/ (tanpa info album).
-    """
     client = user['moov_api']
     try:
-        # Cek apakah client mendukung metadata produk
         if not hasattr(client, 'get_product_meta'):
-             raise Exception("Client Moov Anda versi lama/tidak lengkap. Tidak bisa mendownload link '/song/' karena butuh mencari ID Album. Gunakan link Album atau Share Link saja.")
+             raise Exception("Client Moov versi lama. Gunakan link Album/Share.")
         
         track_data = await client.get_product_meta(track_id)
         if not track_data: raise Exception("Data lagu tidak ditemukan.")
@@ -103,14 +87,13 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         ]
         
         if not filtered_tracks:
-            # Fallback: Kadang ID di URL share beda sedikit formatnya, coba cocokkan kasar
             filtered_tracks = [
                 t for t in album_meta['tracks'] 
                 if str(filter_track_id) in str(t.get('itemid'))
             ]
         
         if not filtered_tracks:
-            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan di dalam album {album_id}.")
+            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
             
         album_meta['tracks'] = filtered_tracks
         album_meta['totaltracks'] = 1 
@@ -147,12 +130,20 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
+        
+        # --- FIX UPLOADER (PENTING) ---
+        # Jika mode single track, salin info file ke root album_meta
+        # Ini mencegah error "No valid tasks created" jika uploader membaca root dict
+        if filter_track_id and len(successful_tracks) == 1:
+            track_data = successful_tracks[0]
+            album_meta['filepath'] = track_data['filepath']
+            album_meta['file_path'] = track_data['filepath'] # Tambahkan file_path (underscore) juga
+            album_meta['duration'] = track_data.get('duration', 0)
     else:
         raise Exception("Gagal mengunduh lagu.")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip jika album full
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -236,7 +227,12 @@ async def download_track(track_meta, user, folderpath):
         os.makedirs(track_temp_dir, exist_ok=True)
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
+        
+        # --- FIX UPLOADER ---
+        # Isi DUA key path agar kompatibel dengan berbagai uploader
         meta['filepath'] = final_filepath
+        meta['file_path'] = final_filepath # Tambahan
+        # --------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
@@ -353,7 +349,7 @@ async def download_track(track_meta, user, folderpath):
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         if real_duration > 0: meta['duration'] = real_duration
             
-        # COVER CLEANUP (1 File per Album)
+        # COVER CLEANUP
         if cover_local_path and os.path.exists(cover_local_path):
             album_cover_path = os.path.join(folderpath, "cover.jpg")
             if not os.path.exists(album_cover_path):
