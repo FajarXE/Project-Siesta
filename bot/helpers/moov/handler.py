@@ -9,6 +9,7 @@ import hashlib
 import traceback
 import urllib.parse
 import aiohttp
+from yarl import URL  # [FIX] Wajib import ini untuk aiohttp cookies
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -27,6 +28,7 @@ BROWSER_HEADERS = {
     'Accept': '*/*',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
+    'Referer': 'https://moov.hk/',
     'Origin': 'https://moov.hk'
 }
 
@@ -63,8 +65,8 @@ def merge_urls(base_url, relative_url):
 async def download_resource(session, url, path, referer=None):
     """Helper download dengan Referer dinamis."""
     headers = BROWSER_HEADERS.copy()
-    # Gunakan Referer spesifik jika ada (misal URL M3U8), jika tidak default ke moov.hk
-    headers['Referer'] = referer if referer else 'https://moov.hk/'
+    if referer:
+        headers['Referer'] = referer
     
     try:
         async with session.get(url, headers=headers, timeout=20) as resp:
@@ -238,7 +240,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. INIT
+        # 1. INIT: Get Meta
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url_init = file_meta.get('playUrl')
@@ -293,16 +295,15 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         for attempt in range(2):
             use_proxy = (attempt == 0)
             
-            # [FIX] Enhanced Direct Connection Setup
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
-                # Salin Cookies dari sesi Client (Proxy) ke sesi Direct
+                # [FIX] Gunakan CookieJar unsafe dan salin cookies dari client
                 jar = aiohttp.CookieJar(unsafe=True)
                 if client.session.cookie_jar:
                     for cookie in client.session.cookie_jar:
-                        jar.update_cookies({cookie.key: cookie.value}, response_url=urllib.parse.URL('https://moov.hk'))
+                        # [FIXED] Gunakan yarl.URL
+                        jar.update_cookies({cookie.key: cookie.value}, response_url=URL('https://moov.hk'))
                 
-                # SSL=False untuk menghindari handshake error
                 connector = aiohttp.TCPConnector(ssl=False)
                 session_context = aiohttp.ClientSession(connector=connector, cookie_jar=jar)
             else:
@@ -348,7 +349,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                     else:
                                         key_uri = merge_urls(play_url, raw_key_uri)
                                     
-                                    # [FIX] Pass play_url as referer
                                     if not await download_resource(sess, key_uri, key_filepath, referer=play_url):
                                         LOGGER.warning("Key DL Failed.")
                                         error_in_parsing = True
@@ -370,7 +370,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                         map_uri = merge_urls(play_url, raw_map_uri)
                                     
                                     map_path = os.path.join(track_temp_dir, "init.bin")
-                                    # [FIX] Pass play_url as referer
                                     if not await download_resource(sess, map_uri, map_path, referer=play_url):
                                         LOGGER.warning("Map DL Failed.")
                                         error_in_parsing = True
@@ -400,7 +399,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                         seg_url = merge_urls(play_url, seg_url_raw)
                         seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.flac")
                         
-                        # [FIX] Pass play_url as referer
                         if not await download_resource(sess, seg_url, seg_path, referer=play_url):
                             seg_error = True
                             break
@@ -416,7 +414,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 
         if not success_process: return False
 
-        # 4. FFMPEG
+        # 4. FFMPEG Processing
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M', '-probesize', '100M',
