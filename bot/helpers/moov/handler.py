@@ -131,16 +131,13 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- FIX UPLOADER (FINAL) ---
-        # Untuk Single Track, timpa Metadata Root dengan Data Track.
-        # Ini menjamin uploader yang membaca root dict akan menemukan file.
+        # --- FIX UPLOADER ---
+        # Salin semua properti file ke metadata root (album_meta)
+        # agar uploader yang tidak meloop 'tracks' tetap bisa menemukan file
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
-            # Update root dengan data track (filepath, quality, dll)
-            album_meta.update(track_data)
-            # Pastikan list tracks tetap ada (untuk uploader tipe batch)
-            album_meta['tracks'] = successful_tracks
-            
+            album_meta.update(track_data) # Gabungkan semua kunci (filepath, success, dll)
+            album_meta['tracks'] = successful_tracks # Pastikan list tracks tetap ada
     else:
         raise Exception("Gagal mengunduh lagu.")
 
@@ -230,12 +227,15 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- ISI SEMUA PATH KEYS ---
+        # --- FIX: FULL KEYS FOR UPLOADER ---
         meta['filepath'] = final_filepath
         meta['file_path'] = final_filepath 
-        meta['path'] = final_filepath 
+        meta['path'] = final_filepath
+        meta['local_path'] = final_filepath 
         meta['filename'] = os.path.basename(final_filepath)
-        # ---------------------------
+        meta['is_downloaded'] = True
+        meta['success'] = True # Indikator sukses eksplisit
+        # -----------------------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
