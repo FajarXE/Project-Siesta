@@ -7,6 +7,7 @@ import asyncio
 import aiofiles
 import hashlib
 import traceback
+import urllib.parse
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -21,7 +22,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Fix: Replace '#' and other illegal chars to prevent path issues
+    # Membersihkan karakter ilegal untuk nama file/folder
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -104,7 +105,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- LOGIKA POSTER ---
     # Hanya kirim Poster jika DOWNLOAD ALBUM FULL
     if upload and not filter_track_id:
         try:
@@ -138,12 +138,12 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             album_meta['tracks'] = successful_tracks
             # Paksa tipe 'album' agar uploader bekerja
             album_meta['type'] = 'album'
+            
     else:
         raise Exception("Gagal mengunduh lagu.")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip hanya jika full album
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -228,7 +228,6 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- PATH KEYS ---
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -267,11 +266,16 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # SEGMENT DOWNLOAD
+        # --- SEGMENT DOWNLOAD (ROBUST FIX) ---
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200: return False
             m3u8_content = await resp.text()
+
+        # Parse Play URL untuk Base URL & Query Params (Token)
+        parsed_uri = urllib.parse.urlparse(play_url)
+        base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
+        query_params = parsed_uri.query # Simpan token jika ada
 
         target_duration = 10
         media_sequence = 0
@@ -284,7 +288,17 @@ async def download_track(track_meta, user, folderpath):
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
-        for index, seg_url in enumerate(remote_segments):
+        for index, seg_url_raw in enumerate(remote_segments):
+            # [FIX] Handle URL Relatif & Tambahkan Token
+            if not seg_url_raw.startswith('http'):
+                # Gabungkan Base URL
+                seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
+                # Tambahkan token jika di URL asli ada tapi di segmen tidak ada
+                if query_params and '?' not in seg_url:
+                    seg_url += f"?{query_params}"
+            else:
+                seg_url = seg_url_raw
+
             seg_name = f"seg_{index:04d}.flac"
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
@@ -292,11 +306,18 @@ async def download_track(track_meta, user, folderpath):
             success = False
             for _ in range(3):
                 try:
-                    # [FIX]: Tambahkan header User-Agent saat download segmen
-                    # Ini penting untuk mencegah server menolak request (Access Denied)
+                    # Header User-Agent wajib ada
                     async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
+                            
+                            # [FIX] Cek validitas data (mencegah file sampah/html error)
+                            if len(data) < 500: # Jika file < 500 bytes, kemungkinan corrupt/error
+                                try:
+                                    if data.decode().strip().startswith('<'): # Cek jika isinya HTML
+                                        continue 
+                                except: pass
+                                
                             async with aiofiles.open(seg_path, 'wb') as f:
                                 await f.write(data)
                             success = True
@@ -323,8 +344,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- FIX: Gunakan -c flac (Re-encode) untuk stabilitas ---
-        # -c copy sering gagal jika stream input tidak sempurna
+        # FFMPEG (Re-Encode to ensure valid FLAC)
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M',  
@@ -332,7 +352,7 @@ async def download_track(track_meta, user, folderpath):
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-            '-c', 'flac',                # Re-encode ke FLAC standard
+            '-c', 'flac', 
             final_filepath
         ]
         
