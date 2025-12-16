@@ -22,7 +22,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Membersihkan karakter ilegal untuk nama file/folder
+    # Fix: Hapus '#' dan karakter ilegal lain agar path tidak error di FFmpeg
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -105,7 +105,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL
+    # --- LOGIKA POSTER (Sesuai Permintaan) ---
+    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL (bukan single track)
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -131,19 +132,19 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- FIX UPLOADER ---
+        # --- FIX UPLOADER (PENTING) ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
-            # Paksa tipe 'album' agar uploader bekerja
+            # [CRITICAL]: Paksa tipe 'album' agar uploader.py mau memprosesnya
             album_meta['type'] = 'album'
-            
     else:
         raise Exception("Gagal mengunduh lagu.")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+        # Zip hanya jika full album
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -228,6 +229,7 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
+        # --- PATH KEYS LENGKAP (Agar Uploader Valid) ---
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -272,10 +274,10 @@ async def download_track(track_meta, user, folderpath):
             if resp.status != 200: return False
             m3u8_content = await resp.text()
 
-        # Parse Play URL untuk Base URL & Query Params (Token)
+        # [FIX] Parse Base URL & Token untuk segmen
         parsed_uri = urllib.parse.urlparse(play_url)
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
-        query_params = parsed_uri.query # Simpan token jika ada
+        query_params = parsed_uri.query 
 
         target_duration = 10
         media_sequence = 0
@@ -289,11 +291,9 @@ async def download_track(track_meta, user, folderpath):
         local_segment_names = []
         
         for index, seg_url_raw in enumerate(remote_segments):
-            # [FIX] Handle URL Relatif & Tambahkan Token
+            # [FIX] Gabungkan Base URL & Token jika URL relatif
             if not seg_url_raw.startswith('http'):
-                # Gabungkan Base URL
                 seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
-                # Tambahkan token jika di URL asli ada tapi di segmen tidak ada
                 if query_params and '?' not in seg_url:
                     seg_url += f"?{query_params}"
             else:
@@ -306,16 +306,14 @@ async def download_track(track_meta, user, folderpath):
             success = False
             for _ in range(3):
                 try:
-                    # Header User-Agent wajib ada
+                    # [FIX] Sertakan headers saat download segmen
                     async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
-                            
-                            # [FIX] Cek validitas data (mencegah file sampah/html error)
-                            if len(data) < 500: # Jika file < 500 bytes, kemungkinan corrupt/error
+                            # Cek integritas data (hindari file 0 byte atau error HTML)
+                            if len(data) < 500: 
                                 try:
-                                    if data.decode().strip().startswith('<'): # Cek jika isinya HTML
-                                        continue 
+                                    if data.decode().strip().startswith('<'): continue 
                                 except: pass
                                 
                             async with aiofiles.open(seg_path, 'wb') as f:
@@ -344,7 +342,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # FFMPEG (Re-Encode to ensure valid FLAC)
+        # [FIX] Gunakan re-encode (-c flac) agar output valid dari segmen HLS
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M',  
