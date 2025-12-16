@@ -132,12 +132,14 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
         # --- FIX UPLOADER ---
-        # Salin semua properti file ke metadata root (album_meta)
-        # agar uploader yang tidak meloop 'tracks' tetap bisa menemukan file
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
-            album_meta.update(track_data) # Gabungkan semua kunci (filepath, success, dll)
-            album_meta['tracks'] = successful_tracks # Pastikan list tracks tetap ada
+            # Salin semua kunci penting ke Root Metadata
+            album_meta['filepath'] = track_data['filepath']
+            album_meta['file_path'] = track_data['filepath']
+            album_meta['path'] = track_data['filepath']
+            album_meta['file'] = track_data['filepath'] # Tambahan baru
+            album_meta['duration'] = track_data.get('duration', 0)
     else:
         raise Exception("Gagal mengunduh lagu.")
 
@@ -228,13 +230,15 @@ async def download_track(track_meta, user, folderpath):
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
         # --- FIX: FULL KEYS FOR UPLOADER ---
-        meta['filepath'] = final_filepath
-        meta['file_path'] = final_filepath 
-        meta['path'] = final_filepath
-        meta['local_path'] = final_filepath 
-        meta['filename'] = os.path.basename(final_filepath)
+        # Pastikan path absolut
+        abs_path = os.path.abspath(final_filepath)
+        meta['filepath'] = abs_path
+        meta['file_path'] = abs_path
+        meta['path'] = abs_path
+        meta['file'] = abs_path # Tambahan kunci 'file'
+        meta['filename'] = os.path.basename(abs_path)
         meta['is_downloaded'] = True
-        meta['success'] = True # Indikator sukses eksplisit
+        meta['success'] = True
         # -----------------------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
