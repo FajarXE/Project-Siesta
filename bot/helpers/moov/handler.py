@@ -21,7 +21,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Fix: Replace '#' and other illegal chars
+    # Fix: Replace '#' and other illegal chars to prevent path issues
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -126,7 +126,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     task_results = await run_concurrent_tasks(tasks, update_details)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
-    
     album_meta['tracks'] = successful_tracks
     
     if successful_tracks:
@@ -139,7 +138,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             album_meta['tracks'] = successful_tracks
             # Paksa tipe 'album' agar uploader bekerja
             album_meta['type'] = 'album'
-            
     else:
         raise Exception("Gagal mengunduh lagu.")
 
@@ -294,7 +292,9 @@ async def download_track(track_meta, user, folderpath):
             success = False
             for _ in range(3):
                 try:
-                    async with client.session.get(seg_url) as seg_resp:
+                    # [FIX]: Tambahkan header User-Agent saat download segmen
+                    # Ini penting untuk mencegah server menolak request (Access Denied)
+                    async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
                             async with aiofiles.open(seg_path, 'wb') as f:
@@ -323,15 +323,16 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- FIX: ROBUST FFMPEG COMMAND ---
+        # --- FIX: Gunakan -c flac (Re-encode) untuk stabilitas ---
+        # -c copy sering gagal jika stream input tidak sempurna
         cmd = [
             'ffmpeg', '-y',
-            '-analyzeduration', '100M',  # Analisis lebih dalam
-            '-probesize', '100M',        # Probe lebih besar
+            '-analyzeduration', '100M',  
+            '-probesize', '100M',        
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
-            '-c', 'copy',                # Copy stream (lebih aman & cepat)
+            '-c', 'flac',                # Re-encode ke FLAC standard
             final_filepath
         ]
         
