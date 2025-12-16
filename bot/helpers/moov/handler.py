@@ -37,32 +37,45 @@ async def start_moov(url: str, user: dict):
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
 
-    # --- TAMBAHAN: Support Link Share (/share/ADO/TRACK_ID/...) ---
+    # --- FIX: Parsing Link Share (Ambil Track ID & Album ID dari URL) ---
     elif "/share/" in clean_url and "/ADO/" in clean_url:
         try:
             # Format: .../share/ADO/{TRACK_ID}/AUDIO/{ALBUM_ID}
-            # Ambil bagian setelah /ADO/
-            raw_id = clean_url.split("/ADO/")[-1]
-            # Ambil segmen pertama (Track ID)
-            track_id = raw_id.split("/")[0]
+            # Pisahkan berdasarkan /AUDIO/
+            parts = clean_url.split("/AUDIO/")
             
-            LOGGER.info(f"Detected Share Link. Track ID: {track_id}")
-            await start_track_single(track_id, user)
+            # Bagian Kiri (Track ID): .../share/ADO/{TRACK_ID}
+            left_part = parts[0].split("/ADO/")[-1]
+            track_id = left_part.split("/")[0]
+            
+            # Bagian Kanan (Album ID): {ALBUM_ID}
+            right_part = parts[1]
+            album_id = right_part.split("?")[0].split("/")[0]
+            
+            LOGGER.info(f"Share Link Parsed. Track: {track_id}, Album: {album_id}")
+            
+            # Langsung ke start_album karena kita sudah punya Album ID
+            # Ini mem-bypass kebutuhan fungsi 'get_product_meta' yang hilang di client Anda
+            await start_album(album_id, user, filter_track_id=track_id)
+            
         except Exception as e:
             raise Exception(f"Gagal memparsing link Share Moov: {e}")
-    # -------------------------------------------------------------
+    # -------------------------------------------------------------------
         
     else:
-        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album, Lagu, dan Share Link.")
+        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album (/album/), Lagu (/song/), dan Share Link.")
 
 async def start_track_single(track_id, user):
+    """
+    Hanya dipanggil jika link berupa /song/ (tanpa info album).
+    """
     client = user['moov_api']
     try:
-        try:
-            track_data = await client.get_product_meta(track_id)
-        except AttributeError:
-             raise Exception("API Client Moov tidak mendukung 'get_product_meta'.")
+        # Cek apakah client mendukung metadata produk
+        if not hasattr(client, 'get_product_meta'):
+             raise Exception("Client Moov Anda versi lama/tidak lengkap. Tidak bisa mendownload link '/song/' karena butuh mencari ID Album. Gunakan link Album atau Share Link saja.")
         
+        track_data = await client.get_product_meta(track_id)
         if not track_data: raise Exception("Data lagu tidak ditemukan.")
 
         album_id = track_data.get('albumId') or track_data.get('album', {}).get('id')
@@ -88,8 +101,16 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             t for t in album_meta['tracks'] 
             if str(t.get('itemid')) == str(filter_track_id)
         ]
+        
         if not filtered_tracks:
-            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
+            # Fallback: Kadang ID di URL share beda sedikit formatnya, coba cocokkan kasar
+            filtered_tracks = [
+                t for t in album_meta['tracks'] 
+                if str(filter_track_id) in str(t.get('itemid'))
+            ]
+        
+        if not filtered_tracks:
+            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan di dalam album {album_id}.")
             
         album_meta['tracks'] = filtered_tracks
         album_meta['totaltracks'] = 1 
