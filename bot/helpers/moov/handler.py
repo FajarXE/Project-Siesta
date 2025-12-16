@@ -105,7 +105,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- POSTER: Hanya jika Full Album ---
+    # --- LOGIKA POSTER ---
+    # Hanya kirim Poster jika DOWNLOAD FULL ALBUM
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -227,7 +228,7 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- PATH KEYS LENGKAP ---
+        # --- PATH KEYS ---
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -238,6 +239,7 @@ async def download_track(track_meta, user, folderpath):
         meta['is_downloaded'] = True
         meta['success'] = True
         
+        # Simpan Key ke File (untuk jaga-jaga)
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
@@ -266,35 +268,28 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # --- SEGMENT DOWNLOAD (FIX: HANDLE MASTER PLAYLIST) ---
+        # --- SEGMENT DOWNLOAD (ROBUST FIX) ---
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200: return False
             m3u8_content = await resp.text()
 
-        # [FIX] Cek apakah ini Master Playlist (berisi varian m3u8 lain)
-        # Jika ada EXT-X-STREAM-INF, berarti ini bukan file segmen langsung
+        # Handle Master Playlist
         if "#EXT-X-STREAM-INF" in m3u8_content:
-            # Ambil URL pertama (biasanya kualitas terbaik atau default)
             remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
             if remote_lines:
                 variant_url = remote_lines[0]
-                # Jika URL relatif, gabungkan dengan base URL
                 if not variant_url.startswith('http'):
                     parsed_uri = urllib.parse.urlparse(play_url)
                     base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
                     variant_url = urllib.parse.urljoin(base_url, variant_url)
-                    
-                LOGGER.info(f"Master Playlist detected. Fetching Variant: {variant_url}")
                 
-                # Fetch ulang M3U8 yang sebenarnya
                 async with client.session.get(variant_url, headers=hls_headers) as var_resp:
                     if var_resp.status != 200: return False
                     m3u8_content = await var_resp.text()
-                    # Update play_url agar parsing segmen berikutnya benar
                     play_url = variant_url 
 
-        # [FIX] Parse Base URL & Token untuk segmen
+        # Parse Base URL & Token
         parsed_uri = urllib.parse.urlparse(play_url)
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
         query_params = parsed_uri.query 
@@ -302,12 +297,16 @@ async def download_track(track_meta, user, folderpath):
         target_duration = 10
         media_sequence = 0
         
-        # [FIX] IV Extraction (Regex yang lebih kuat)
+        # [FIX] Cek keberadaan Key di Playlist
+        # Jika playlist tidak mengandung #EXT-X-KEY, maka stream TIDAK terenkripsi.
+        is_encrypted = "#EXT-X-KEY" in m3u8_content
+        
         iv_line = ""
-        iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content, re.IGNORECASE)
-        if iv_match:
-            iv_hex = iv_match.group(1)
-            iv_line = f",IV=0x{iv_hex}"
+        if is_encrypted:
+            iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content, re.IGNORECASE)
+            if iv_match:
+                iv_hex = iv_match.group(1)
+                iv_line = f",IV=0x{iv_hex}"
 
         for line in m3u8_content.splitlines():
             if line.startswith("#EXT-X-TARGETDURATION"):
@@ -319,7 +318,6 @@ async def download_track(track_meta, user, folderpath):
         local_segment_names = []
         
         for index, seg_url_raw in enumerate(remote_segments):
-            # [FIX] Gabungkan Base URL & Token jika URL relatif
             if not seg_url_raw.startswith('http'):
                 seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
                 if query_params and '?' not in seg_url:
@@ -337,7 +335,7 @@ async def download_track(track_meta, user, folderpath):
                     async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
-                            if len(data) < 500: # Skip small files/errors
+                            if len(data) < 500: 
                                 try:
                                     if data.decode().strip().startswith('<'): continue 
                                 except: pass
@@ -359,14 +357,17 @@ async def download_track(track_meta, user, folderpath):
             await f.write("#EXT-X-VERSION:3\n")
             await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
             await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
-            # Masukkan IV jika ditemukan
-            await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
+            
+            # [FIX] Hanya tulis baris KEY jika playlist asli juga punya KEY
+            if is_encrypted:
+                await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
+                
             for seg_name in local_segment_names:
                 await f.write(f"#EXTINF:{target_duration},\n")
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # [FIX] Gunakan re-encode (-c flac)
+        # FFMPEG
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M',  
@@ -375,6 +376,7 @@ async def download_track(track_meta, user, folderpath):
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-i', local_m3u8_path,
             '-c', 'flac', 
+            '-user_agent', 'Moov-Android/1.0/hls-hr', # [FIX] Tambahkan User Agent
             final_filepath
         ]
         
