@@ -8,7 +8,7 @@ import aiofiles
 import hashlib
 import traceback
 import urllib.parse
-import aiohttp  # Wajib import ini
+import aiohttp
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -243,6 +243,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if target_url:
             cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
             try:
+                import aiohttp
                 async with aiohttp.ClientSession() as session:
                     async with session.get(target_url) as resp:
                         if resp.status == 200:
@@ -256,13 +257,19 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. M3U8 DOWNLOAD
-        hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
+        # 3. M3U8 DOWNLOAD & HEADERS SETUP
+        # [FIX] Tambahkan Referer dan Origin agar tidak ditolak CDN
+        hls_headers = {
+            'User-Agent': 'Moov-Android/1.0/hls-hr',
+            'Referer': 'https://moov.hk/',
+            'Origin': 'https://moov.hk',
+            'Accept': '*/*'
+        }
+        
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200: return False
             m3u8_content = await resp.text()
 
-        # Handle Master Playlist
         if "#EXT-X-STREAM-INF" in m3u8_content:
             remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
             if remote_lines:
@@ -305,6 +312,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                 seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
                 if query_params:
                     joiner = '&' if '?' in seg_url else '?'
+                    # Cek duplikasi query params
                     if query_params not in seg_url:
                         seg_url += f"{joiner}{query_params}"
             else:
@@ -314,11 +322,10 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
             
-            # --- MULTI-STRATEGY SEGMENT DOWNLOAD ---
-            # Coba 3 metode berurutan untuk mengatasi blokir Proxy/IP
+            # --- 3-STEP ROBUST DOWNLOAD ---
             success = False
             
-            # Strategi 1: Pakai Akun Bot (Proxy) + Header
+            # 1. Gunakan Session Bot (Proxy) + Headers Lengkap
             if not success:
                 try:
                     async with client.session.get(seg_url, headers=hls_headers, timeout=10) as seg_resp:
@@ -327,9 +334,11 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             if len(data) > 500:
                                 async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
                                 success = True
+                        else:
+                            LOGGER.warning(f"Seg Fail (Proxy): {seg_resp.status} - {seg_url}")
                 except: pass
 
-            # Strategi 2: Pakai Akun Bot (Proxy) + TANPA Header (Kadang UA malah bikin masalah)
+            # 2. Gunakan Session Bot (Proxy) + TANPA Header (Raw)
             if not success:
                 try:
                     async with client.session.get(seg_url, timeout=10) as seg_resp:
@@ -340,8 +349,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 success = True
                 except: pass
 
-            # Strategi 3: Pakai Session BARU (Direct/No Proxy)
-            # Ini bypass proxy bot jika IP proxy di-blacklist oleh CDN untuk file ini
+            # 3. Gunakan Direct Connection (Bypass Proxy)
             if not success:
                 try:
                     async with aiohttp.ClientSession() as direct_session:
@@ -351,10 +359,12 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 if len(data) > 500:
                                     async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
                                     success = True
+                            else:
+                                LOGGER.warning(f"Seg Fail (Direct): {seg_resp.status}")
                 except: pass
             
             if not success:
-                LOGGER.error(f"Gagal download segmen (Semua metode gagal): {seg_name}")
+                LOGGER.error(f"Gagal total download segmen: {seg_name}")
                 return False
 
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
@@ -397,7 +407,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             meta['filesize'] = os.path.getsize(final_filepath)
         except: return False
 
-        # 5. TAGS
+        # 5. TAGS & CLEANUP
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
@@ -432,7 +442,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     
-    # Auto-Fallback Quality
     target_q = meta.get('moov_quality_code', 'LL')
     qualities_to_try = []
     if target_q == 'HR':
