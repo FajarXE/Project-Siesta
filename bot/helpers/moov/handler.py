@@ -22,7 +22,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Membersihkan karakter ilegal termasuk pagar '#'
+    # Fix: Hapus '#' dan karakter ilegal lain
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -105,8 +105,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- LOGIKA POSTER ---
-    # Hanya kirim Poster jika DOWNLOAD FULL ALBUM (filter_track_id kosong)
+    # --- POSTER: Hanya jika Full Album ---
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -135,19 +134,15 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         # --- FIX UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
-            # Copy data ke root agar uploader single track bisa baca
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
-            
-            # [CRITICAL]: Ubah tipe ke 'album' AGAR uploder.py mau memprosesnya.
-            # uploder.py hanya menerima if type in ['album', 'playlist']
+            # Paksa tipe 'album' agar uploader bekerja
             album_meta['type'] = 'album'
     else:
         raise Exception("Gagal mengunduh lagu.")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip hanya jika full album
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -232,7 +227,7 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- PATH KEYS LENGKAP (Agar Uploader Valid) ---
+        # --- PATH KEYS LENGKAP ---
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -271,20 +266,49 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # --- SEGMENT DOWNLOAD (ROBUST FIX) ---
+        # --- SEGMENT DOWNLOAD (FIX: HANDLE MASTER PLAYLIST) ---
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
             if resp.status != 200: return False
             m3u8_content = await resp.text()
 
+        # [FIX] Cek apakah ini Master Playlist (berisi varian m3u8 lain)
+        # Jika ada EXT-X-STREAM-INF, berarti ini bukan file segmen langsung
+        if "#EXT-X-STREAM-INF" in m3u8_content:
+            # Ambil URL pertama (biasanya kualitas terbaik atau default)
+            remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
+            if remote_lines:
+                variant_url = remote_lines[0]
+                # Jika URL relatif, gabungkan dengan base URL
+                if not variant_url.startswith('http'):
+                    parsed_uri = urllib.parse.urlparse(play_url)
+                    base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
+                    variant_url = urllib.parse.urljoin(base_url, variant_url)
+                    
+                LOGGER.info(f"Master Playlist detected. Fetching Variant: {variant_url}")
+                
+                # Fetch ulang M3U8 yang sebenarnya
+                async with client.session.get(variant_url, headers=hls_headers) as var_resp:
+                    if var_resp.status != 200: return False
+                    m3u8_content = await var_resp.text()
+                    # Update play_url agar parsing segmen berikutnya benar
+                    play_url = variant_url 
+
         # [FIX] Parse Base URL & Token untuk segmen
         parsed_uri = urllib.parse.urlparse(play_url)
-        # Ambil base path sampai direktori terakhir
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
-        query_params = parsed_uri.query # Simpan token
+        query_params = parsed_uri.query 
 
         target_duration = 10
         media_sequence = 0
+        
+        # [FIX] IV Extraction (Regex yang lebih kuat)
+        iv_line = ""
+        iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content, re.IGNORECASE)
+        if iv_match:
+            iv_hex = iv_match.group(1)
+            iv_line = f",IV=0x{iv_hex}"
+
         for line in m3u8_content.splitlines():
             if line.startswith("#EXT-X-TARGETDURATION"):
                 target_duration = line.split(":")[1].strip()
@@ -298,7 +322,6 @@ async def download_track(track_meta, user, folderpath):
             # [FIX] Gabungkan Base URL & Token jika URL relatif
             if not seg_url_raw.startswith('http'):
                 seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
-                # Tambahkan token jika belum ada
                 if query_params and '?' not in seg_url:
                     seg_url += f"?{query_params}"
             else:
@@ -311,12 +334,10 @@ async def download_track(track_meta, user, folderpath):
             success = False
             for _ in range(3):
                 try:
-                    # [FIX] Sertakan headers saat download segmen
                     async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
-                            # Cek integritas data (hindari file 0 byte atau error HTML)
-                            if len(data) < 500: 
+                            if len(data) < 500: # Skip small files/errors
                                 try:
                                     if data.decode().strip().startswith('<'): continue 
                                 except: pass
@@ -332,22 +353,20 @@ async def download_track(track_meta, user, folderpath):
                 return False
 
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
-        iv_line = ""
-        iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
-        if iv_match: iv_line = f",IV=0x{iv_match.group(1)}"
-            
+        
         async with aiofiles.open(local_m3u8_path, 'w') as f:
             await f.write("#EXTM3U\n")
             await f.write("#EXT-X-VERSION:3\n")
             await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
             await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
+            # Masukkan IV jika ditemukan
             await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
             for seg_name in local_segment_names:
                 await f.write(f"#EXTINF:{target_duration},\n")
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # [FIX] Gunakan re-encode (-c flac) agar output valid
+        # [FIX] Gunakan re-encode (-c flac)
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M',  
