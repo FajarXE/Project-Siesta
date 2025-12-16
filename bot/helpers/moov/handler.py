@@ -48,23 +48,30 @@ def resolve_url(base_url, relative_url):
 
 def merge_urls(base_url, relative_url):
     """Menggabungkan path dan mewariskan query params."""
-    # 1. Parse Base
     base_parsed = urllib.parse.urlparse(base_url)
     base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
     
-    # 2. Resolve Path (Base path + Relative path)
     full_url = resolve_url(base_url, relative_url)
-    
-    # 3. Parse Result
     final_parsed = urllib.parse.urlparse(full_url)
     final_params = dict(urllib.parse.parse_qsl(final_parsed.query))
     
-    # 4. Merge Params: Child menang, tapi warisi Base jika Child tidak punya
     merged_params = base_params.copy()
     merged_params.update(final_params)
     
     new_query = urllib.parse.urlencode(merged_params)
     return final_parsed._replace(query=new_query).geturl()
+
+async def download_resource(session, url, path):
+    """Helper untuk download resource kecil (Key/Map) dengan retry."""
+    try:
+        async with session.get(url, headers=BROWSER_HEADERS, timeout=10) as resp:
+            if resp.status == 200:
+                data = await resp.read()
+                if len(data) > 0:
+                    async with aiofiles.open(path, 'wb') as f: await f.write(data)
+                    return True
+    except: pass
+    return False
 
 async def start_moov(url: str, user: dict):
     clean_url = url.replace("#/", "/") 
@@ -296,60 +303,68 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             m3u8_content = await resp.text()
                     except: continue
 
-                    # Handle Master Playlist Redirect
                     if "#EXT-X-STREAM-INF" in m3u8_content:
                         remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
                         if remote_lines:
-                            # [CRITICAL FIX] Use merge_urls to inherit TOKEN!
                             play_url = merge_urls(play_url, remote_lines[0])
-                            LOGGER.info(f"Redirecting to Variant (Token Inherited): {play_url}")
                             continue 
 
-                    # B. Check & Download Key (PRESERVE METADATA)
-                    key_ok = True
-                    key_match = re.search(r'URI="([^"]+)"', m3u8_content)
-                    if key_match:
-                        raw_key_uri = key_match.group(1)
-                        if '?' in raw_key_uri:
-                            key_uri = resolve_url(play_url, raw_key_uri)
-                        else:
-                            key_uri = merge_urls(play_url, raw_key_uri)
-                        
-                        LOGGER.info(f"Downloading Key ({'Proxy' if use_proxy else 'Direct'}): {key_uri}")
-                        try:
-                            async with sess.get(key_uri, headers=BROWSER_HEADERS, timeout=10) as key_resp:
-                                if key_resp.status == 200:
-                                    key_data = await key_resp.read()
-                                    if len(key_data) == 16:
-                                        async with aiofiles.open(key_filepath, 'wb') as f: await f.write(key_data)
-                                    else: key_ok = False
-                                else: key_ok = False
-                        except: key_ok = False
-                        
-                        if not key_ok:
-                            if use_proxy: continue 
-                            else: break
-
-                    # C. Parse Segments & Build Local M3U8
-                    remote_segments = []
+                    # B. Check & Download Key/Map (PRESERVE METADATA)
                     local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
-                    
+                    remote_segments = []
+                    error_in_parsing = False
+
                     async with aiofiles.open(local_m3u8_path, 'w') as f_out:
                         seg_idx = 0
                         for line in m3u8_content.splitlines():
                             line = line.strip()
                             if not line: continue
                             
+                            # Handle Key
                             if line.startswith("#EXT-X-KEY"):
-                                new_line = re.sub(r'URI="[^"]+"', 'URI="key.bin"', line)
-                                await f_out.write(f"{new_line}\n")
+                                key_match = re.search(r'URI="([^"]+)"', line)
+                                if key_match:
+                                    raw_key_uri = key_match.group(1)
+                                    key_uri = resolve_url(play_url, raw_key_uri) if '?' in raw_key_uri else merge_urls(play_url, raw_key_uri)
+                                    
+                                    if not await download_resource(sess, key_uri, key_filepath):
+                                        LOGGER.warning("Key DL Failed.")
+                                        error_in_parsing = True
+                                        break
+                                    
+                                    new_line = re.sub(r'URI="[^"]+"', 'URI="key.bin"', line)
+                                    await f_out.write(f"{new_line}\n")
+                                else:
+                                    await f_out.write(f"{line}\n")
+
+                            # [CRITICAL FIX] Handle Map (Init Segment)
+                            elif line.startswith("#EXT-X-MAP"):
+                                map_match = re.search(r'URI="([^"]+)"', line)
+                                if map_match:
+                                    raw_map_uri = map_match.group(1)
+                                    map_uri = merge_urls(play_url, raw_map_uri)
+                                    map_path = os.path.join(track_temp_dir, "init.bin")
+                                    
+                                    if not await download_resource(sess, map_uri, map_path):
+                                        LOGGER.warning("Map DL Failed.")
+                                        error_in_parsing = True
+                                        break
+                                    
+                                    new_line = re.sub(r'URI="[^"]+"', 'URI="init.bin"', line)
+                                    await f_out.write(f"{new_line}\n")
+                                else:
+                                    await f_out.write(f"{line}\n")
+                            
                             elif line.startswith("#"):
                                 await f_out.write(f"{line}\n")
+                            
                             else:
                                 remote_segments.append(line)
                                 seg_filename = f"seg_{seg_idx:04d}.flac"
                                 await f_out.write(f"{seg_filename}\n")
                                 seg_idx += 1
+                    
+                    if error_in_parsing: continue
 
                     # D. Download Segments
                     seg_error = False
@@ -357,19 +372,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                         seg_url = merge_urls(play_url, seg_url_raw)
                         seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.flac")
                         
-                        seg_success = False
-                        for _ in range(2):
-                            try:
-                                async with sess.get(seg_url, headers=BROWSER_HEADERS, timeout=15) as seg_resp:
-                                    if seg_resp.status == 200:
-                                        data = await seg_resp.read()
-                                        if len(data) > 100:
-                                            async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
-                                            seg_success = True
-                                            break
-                            except: pass
-                        
-                        if not seg_success:
+                        if not await download_resource(sess, seg_url, seg_path):
                             LOGGER.warning(f"Seg Fail: {seg_url}")
                             seg_error = True
                             break
