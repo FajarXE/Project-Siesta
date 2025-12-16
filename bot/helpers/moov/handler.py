@@ -22,7 +22,7 @@ from ..uploder import album_upload
 
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
-# Header Browser Standar untuk menipu CDN
+# Header Browser Standar
 BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
@@ -35,23 +35,25 @@ BROWSER_HEADERS = {
 def safe_name(name):
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
-def merge_urls(base_url, relative_url):
-    """Gabungkan URL dengan cerdas, pertahankan query params (token)."""
-    base_parsed = urllib.parse.urlparse(base_url)
-    base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
-    
-    # Bersihkan query dari base sebelum join
-    base_clean = base_parsed._replace(query="").geturl()
+def resolve_url(base_url, relative_url):
+    """Hanya menggabungkan path, TIDAK menyentuh query params."""
+    base_clean = base_url.split('?')[0]
     if not base_clean.endswith('/') and not os.path.splitext(base_clean)[1]:
         base_clean += '/'
     elif os.path.splitext(base_clean)[1]:
         base_clean = os.path.dirname(base_clean) + '/'
-        
-    full_url = urllib.parse.urljoin(base_clean, relative_url)
+    return urllib.parse.urljoin(base_clean, relative_url)
+
+def merge_urls(base_url, relative_url):
+    """Menggabungkan path DAN mewariskan query params dari base."""
+    base_parsed = urllib.parse.urlparse(base_url)
+    base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
+    
+    full_url = resolve_url(base_url, relative_url)
     final_parsed = urllib.parse.urlparse(full_url)
     final_params = dict(urllib.parse.parse_qsl(final_parsed.query))
     
-    # Merge params: Child menang, tapi warisi Base jika Child kosong
+    # Merge: Child menang, base mewarisi
     merged_params = base_params.copy()
     merged_params.update(final_params)
     
@@ -134,7 +136,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     album_folder = os.path.join(base_dir, str(user['r_id']), "Moov", safe_artist, safe_title)
     album_meta['folderpath'] = album_folder
 
-    # Poster hanya jika Full Album
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -158,12 +159,11 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
-        # Fix Uploader untuk Single Track
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
-            album_meta['type'] = 'album' # Force type
+            album_meta['type'] = 'album'
     else:
         raise Exception("Gagal mengunduh lagu.")
 
@@ -231,7 +231,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. INIT: Get PlayURL & Default Key
+        # 1. INIT
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url_init = file_meta.get('playUrl')
@@ -261,7 +261,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(default_key_bytes)
 
-        # 2. DOWNLOAD COVER (Biasa)
+        # 2. COVER
         cover_local_path = None
         target_url = meta.get('cover_url')
         if target_url:
@@ -279,15 +279,11 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. LOOP UTAMA: M3U8 -> KEY -> SEGMENTS
-        # Kita loop maksimal 3x. Jika Key gagal, kita ulang dari ambil M3U8
-        # agar dapat signature baru yang cocok dengan IP saat itu.
-        
+        # 3. M3U8 -> KEY -> SEGMENTS
         success_process = False
         play_url = play_url_init
         
         for attempt in range(3):
-            # A. Fetch M3U8
             try:
                 async with client.session.get(play_url, headers=BROWSER_HEADERS) as resp:
                     if resp.status != 200: continue
@@ -298,41 +294,63 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             if "#EXT-X-STREAM-INF" in m3u8_content:
                 remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
                 if remote_lines:
-                    variant_url = merge_urls(play_url, remote_lines[0])
-                    # Update play_url dan ulang loop untuk fetch varian
-                    play_url = variant_url
+                    # Untuk varian playlist, kita merge token karena biasanya relatif
+                    play_url = merge_urls(play_url, remote_lines[0])
                     continue 
 
-            # B. Check & Download Key
+            # [FIX] SMART KEY DOWNLOAD
             key_ok = True
             key_match = re.search(r'URI="([^"]+)"', m3u8_content)
             
             if key_match:
                 raw_key_uri = key_match.group(1)
-                key_uri = merge_urls(play_url, raw_key_uri)
                 
-                # Coba download key dengan Browser Headers
+                # LOGIKA PENTING:
+                # 1. Jika URL Key sudah punya query (tanda '?'), berarti itu Pre-Signed.
+                #    JANGAN tambahkan parameter dari M3U8 (bisa merusak signature).
+                # 2. Jika URL Key belum punya query, WARISI parameter dari M3U8.
+                if '?' in raw_key_uri:
+                    key_url_attempt = resolve_url(play_url, raw_key_uri)
+                else:
+                    key_url_attempt = merge_urls(play_url, raw_key_uri)
+                
+                LOGGER.info(f"Downloading Remote Key: {key_url_attempt}")
+                
+                # Coba download key
+                key_downloaded_now = False
                 try:
-                    async with client.session.get(key_uri, headers=BROWSER_HEADERS, timeout=10) as key_resp:
+                    async with client.session.get(key_url_attempt, headers=BROWSER_HEADERS, timeout=10) as key_resp:
                         if key_resp.status == 200:
                             key_data = await key_resp.read()
                             if len(key_data) == 16:
                                 async with aiofiles.open(key_filepath, 'wb') as f: await f.write(key_data)
-                            else: key_ok = False
-                        else: key_ok = False
-                except: key_ok = False
+                                key_downloaded_now = True
+                except: pass
                 
-                if not key_ok:
+                # Jika gagal dengan URL Asli, coba FALLBACK dengan Merge (siapa tahu butuh session ID)
+                if not key_downloaded_now and '?' in raw_key_uri:
+                    LOGGER.info("Key DL Retry: Trying with Merged Params...")
+                    fallback_key_url = merge_urls(play_url, raw_key_uri)
+                    try:
+                        async with client.session.get(fallback_key_url, headers=BROWSER_HEADERS, timeout=10) as key_resp:
+                            if key_resp.status == 200:
+                                key_data = await key_resp.read()
+                                if len(key_data) == 16:
+                                    async with aiofiles.open(key_filepath, 'wb') as f: await f.write(key_data)
+                                    key_downloaded_now = True
+                    except: pass
+
+                if not key_downloaded_now:
                     LOGGER.warning(f"Key DL Failed (Attempt {attempt+1}). Retrying M3U8...")
                     await asyncio.sleep(1)
-                    # Refresh link meta untuk attempt berikutnya (New Signature)
+                    # Refresh link meta untuk attempt berikutnya
                     try:
                         file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
                         play_url = file_meta.get('playUrl')
                     except: pass
-                    continue # Ulang loop dari awal (Fetch M3U8 baru)
+                    continue # Ulang loop
 
-            # C. Parse Segments (Jika Key OK)
+            # C. Parse Segments
             target_duration = 10
             media_sequence = 0
             is_encrypted = "#EXT-X-KEY" in m3u8_content
@@ -355,14 +373,14 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             # D. Download Segments
             seg_error = False
             for index, seg_url_raw in enumerate(remote_segments):
+                # Segmen biasanya selalu butuh merge token
                 seg_url = merge_urls(play_url, seg_url_raw)
                 seg_name = f"seg_{index:04d}.flac"
                 seg_path = os.path.join(track_temp_dir, seg_name)
                 local_segment_names.append(seg_name)
                 
-                # Download per segment
                 seg_success = False
-                for _ in range(2): # Retry segment 2x
+                for _ in range(2):
                     try:
                         async with client.session.get(seg_url, headers=BROWSER_HEADERS, timeout=15) as seg_resp:
                             if seg_resp.status == 200:
@@ -379,7 +397,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             
             if seg_error:
                 LOGGER.warning("Segment DL Failed. Retrying...")
-                continue # Retry loop utama
+                continue 
 
             # E. Build Local M3U8
             local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
@@ -396,10 +414,9 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                 await f.write("#EXT-X-ENDLIST\n")
             
             success_process = True
-            break # Loop selesai, semua sukses
+            break
 
-        if not success_process:
-            return False
+        if not success_process: return False
 
         # 4. FFMPEG Processing
         cmd = [
@@ -419,8 +436,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         
         if process.returncode != 0:
             LOGGER.warning(f"FFmpeg encode error ({quality_code}), trying copy...")
-            # Fallback Copy
-            cmd[7] = 'copy' # Ubah -c flac jadi -c copy
+            cmd[7] = 'copy' 
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
             )
@@ -434,7 +450,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             
         meta['filesize'] = os.path.getsize(final_filepath)
 
-        # 5. TAGS
+        # 5. TAGS & CLEANUP
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
