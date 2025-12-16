@@ -23,6 +23,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
+    # Membersihkan karakter ilegal untuk path file
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -105,6 +106,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
+    # --- POSTER ---
+    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -130,10 +133,12 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
+        # --- FIX UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
+            # Force type 'album' agar uploader mau proses
             album_meta['type'] = 'album'
     else:
         raise Exception("Gagal mengunduh lagu.")
@@ -205,14 +210,14 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. GET META (DEFAULT KEY GEN)
+        # 1. GET META (Create Default Key as Fallback)
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url or not content_key: return False
             
-            # Buat Default Key (Fallback)
+            # Default Key (Fallback jika remote key tidak ditemukan)
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
             default_key_bytes = bytes.fromhex(m.hexdigest())
@@ -234,7 +239,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         meta['is_downloaded'] = True
         meta['success'] = True
         
-        # Simpan Default Key dulu
+        # Tulis default key dulu (akan ditimpa jika ada remote key)
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(default_key_bytes)
@@ -258,7 +263,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. M3U8 & KEY HANDLING
+        # 3. M3U8 & KEY DOWNLOAD
+        # Header wajib agar CDN tidak menolak (403)
         hls_headers = {
             'User-Agent': 'Moov-Android/1.0/hls-hr',
             'Referer': 'https://moov.hk/',
@@ -269,7 +275,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             if resp.status != 200: return False
             m3u8_content = await resp.text()
 
-        # Handle Master Playlist
+        # Handle Master Playlist Redirect
         if "#EXT-X-STREAM-INF" in m3u8_content:
             remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
             if remote_lines:
@@ -284,30 +290,46 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     m3u8_content = await var_resp.text()
                     play_url = variant_url 
 
-        # [CRITICAL FIX] CHECK FOR REMOTE KEY IN M3U8
-        # Jika M3U8 memiliki URI key yang berupa URL, kita harus mendownloadnya!
-        # Karena key default (contentKey + salt) mungkin salah untuk track ini.
-        key_match = re.search(r'URI="([^"]+)"', m3u8_content)
-        if key_match:
-            key_uri = key_match.group(1)
-            if key_uri.startswith('http'):
-                LOGGER.info(f"Downloading Remote Key from: {key_uri}")
-                try:
-                    async with client.session.get(key_uri, headers=hls_headers) as key_resp:
-                        if key_resp.status == 200:
-                            remote_key_data = await key_resp.read()
-                            if len(remote_key_data) == 16: # Valid AES-128 Key length
-                                async with aiofiles.open(key_filepath, 'wb') as f:
-                                    await f.write(remote_key_data)
-                                LOGGER.info("Remote Key applied successfully.")
-                except Exception as e:
-                    LOGGER.error(f"Failed to download remote key: {e}")
-
-        # Parsing Segmen
+        # Parse Base URL & Token
         parsed_uri = urllib.parse.urlparse(play_url)
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}{os.path.dirname(parsed_uri.path)}/"
         query_params = parsed_uri.query 
 
+        # [CRITICAL FIX] DOWNLOAD REMOTE KEY
+        # Cek apakah ada URI="..." di EXT-X-KEY
+        # Jika ada, ini adalah SESSION KEY yang wajib didownload.
+        # Key default (dari metadata) biasanya salah untuk stream ini.
+        key_match = re.search(r'URI="([^"]+)"', m3u8_content)
+        if key_match:
+            raw_key_uri = key_match.group(1)
+            
+            # [FIX] Handle Relative Key URL & Append Token
+            if not raw_key_uri.startswith('http'):
+                key_uri = urllib.parse.urljoin(base_url, raw_key_uri)
+                if query_params:
+                    joiner = '&' if '?' in key_uri else '?'
+                    if query_params not in key_uri:
+                        key_uri += f"{joiner}{query_params}"
+            else:
+                key_uri = raw_key_uri
+            
+            LOGGER.info(f"Downloading Remote Key: {key_uri}")
+            try:
+                async with client.session.get(key_uri, headers=hls_headers) as key_resp:
+                    if key_resp.status == 200:
+                        remote_key_data = await key_resp.read()
+                        if len(remote_key_data) == 16: # Validasi AES-128
+                            async with aiofiles.open(key_filepath, 'wb') as f:
+                                await f.write(remote_key_data)
+                            LOGGER.info("Remote Key applied successfully.")
+                        else:
+                            LOGGER.warning(f"Invalid key length: {len(remote_key_data)}")
+                    else:
+                        LOGGER.warning(f"Key Download Failed: {key_resp.status}")
+            except Exception as e:
+                LOGGER.error(f"Key DL Error: {e}")
+
+        # Parsing Playlist
         target_duration = 10
         media_sequence = 0
         is_encrypted = "#EXT-X-KEY" in m3u8_content
@@ -341,31 +363,33 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
             
+            # Multi-Strategy Download (Proxy -> Direct)
             success = False
-            for _ in range(3):
+            
+            # Method 1: Proxy + Headers
+            if not success:
                 try:
-                    async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
+                    async with client.session.get(seg_url, headers=hls_headers, timeout=10) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
                             if len(data) > 500:
                                 async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
                                 success = True
-                                break
-                except: continue
-            
+                except: pass
+
+            # Method 2: Direct (No Proxy)
             if not success:
-                # Try direct fallback
                 try:
-                    async with aiohttp.ClientSession() as ds:
-                        async with ds.get(seg_url, headers=hls_headers) as seg_resp:
+                    async with aiohttp.ClientSession() as direct_session:
+                        async with direct_session.get(seg_url, headers=hls_headers, timeout=10) as seg_resp:
                             if seg_resp.status == 200:
                                 data = await seg_resp.read()
                                 if len(data) > 500:
                                     async with aiofiles.open(seg_path, 'wb') as f: await f.write(data)
                                     success = True
                 except: pass
-                
-                if not success: return False
+            
+            if not success: return False
 
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         async with aiofiles.open(local_m3u8_path, 'w') as f:
