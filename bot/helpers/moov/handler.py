@@ -22,7 +22,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # Membersihkan karakter ilegal untuk nama file/folder
+    # Hapus karakter ilegal termasuk pagar '#'
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
@@ -106,7 +106,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     album_meta['folderpath'] = album_folder
 
     # --- POSTER ---
-    # Hanya jika Full Album
+    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL
     if upload and not filter_track_id:
         try:
             from ..utils import post_art_poster
@@ -202,7 +202,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         return 0
 
 async def _download_quality_variant(meta, user, folderpath, quality_code):
-    """Fungsi internal untuk mencoba download dengan kualitas tertentu."""
     client = user['moov_api']
     track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
     
@@ -210,17 +209,21 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. Get File Meta & Key
+        # 1. GET META & KEY
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
-            if not play_url or not content_key: return False
+            if not play_url or not content_key:
+                LOGGER.warning(f"Meta/Key empty for {quality_code}")
+                return False
             
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
             key_bytes = bytes.fromhex(m.hexdigest())
-        except: return False
+        except Exception as e:
+            LOGGER.error(f"Failed getting track meta {quality_code}: {e}")
+            return False
 
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
@@ -237,12 +240,11 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         meta['is_downloaded'] = True
         meta['success'] = True
         
-        # Save Key
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
 
-        # 2. Cover Download (Skip jika sudah ada di meta)
+        # 2. COVER
         cover_local_path = None
         target_url = meta.get('cover_url')
         if target_url:
@@ -263,10 +265,12 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. M3U8 & Segment Download
+        # 3. M3U8 DOWNLOAD
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
-            if resp.status != 200: return False
+            if resp.status != 200:
+                LOGGER.error(f"M3U8 Fetch Failed: {resp.status}")
+                return False
             m3u8_content = await resp.text()
 
         # Handle Master Playlist
@@ -311,8 +315,10 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         for index, seg_url_raw in enumerate(remote_segments):
             if not seg_url_raw.startswith('http'):
                 seg_url = urllib.parse.urljoin(base_url, seg_url_raw)
-                if query_params and '?' not in seg_url:
-                    seg_url += f"?{query_params}"
+                # [CRITICAL FIX]: Append token correctly even if url has query params
+                if query_params:
+                    joiner = '&' if '?' in seg_url else '?'
+                    seg_url += f"{joiner}{query_params}"
             else:
                 seg_url = seg_url_raw
 
@@ -326,7 +332,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
-                            if len(data) < 500: # Cek data minimal
+                            if len(data) < 100: # Validasi minimal (header FLAC/TS)
+                                # Cek jika HTML/Text error
                                 try:
                                     if data.decode().strip().startswith('<'): continue 
                                 except: pass
@@ -336,7 +343,9 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             break
                 except: continue
             
-            if not success: return False
+            if not success:
+                LOGGER.error(f"Failed to download segment: {seg_name}")
+                return False
 
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         async with aiofiles.open(local_m3u8_path, 'w') as f:
@@ -351,7 +360,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # 4. FFmpeg Encoding
+        # 4. FFMPEG
         cmd = [
             'ffmpeg', '-y',
             '-analyzeduration', '100M', '-probesize', '100M',
@@ -378,7 +387,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             meta['filesize'] = os.path.getsize(final_filepath)
         except: return False
 
-        # 5. Metadata Tagging
+        # 5. TAGS & CLEANUP
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
@@ -388,7 +397,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         if real_duration > 0: meta['duration'] = real_duration
             
-        # Cover Final
         if cover_local_path and os.path.exists(cover_local_path):
             album_cover_path = os.path.join(folderpath, "cover.jpg")
             if not os.path.exists(album_cover_path):
@@ -396,7 +404,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             meta['cover'] = album_cover_path
         else: meta['cover'] = None
         
-        # Lyrics Final
         if lyrics_text and isinstance(lyrics_text, str):
             try:
                 lrc_path = final_filepath.rsplit('.', 1)[0] + ".lrc"
@@ -404,7 +411,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     await f.write(lyrics_text)
             except: pass
 
-        # Cleanup
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return True
 
@@ -416,16 +422,16 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     
-    # --- AUTO-FALLBACK QUALITY ---
-    # Jika kualitas 'HR' (Hi-Res) gagal, coba 'LL' (Lossless/16bit)
-    # Ini mengatasi masalah "Invalid Data" pada track yang key-nya bermasalah di 24bit.
+    # --- AGGRESSIVE FALLBACK ---
+    # Coba kedua kualitas (HR dan LL) jika salah satu gagal.
+    # Prioritaskan preferensi user, lalu fallback ke lainnya.
     target_q = meta.get('moov_quality_code', 'LL')
-    qualities_to_try = [target_q]
-    if target_q == 'HR':
-        qualities_to_try.append('LL')
     
-    # Hapus duplikat dan pastikan urutan
-    qualities_to_try = list(dict.fromkeys(qualities_to_try))
+    qualities_to_try = []
+    if target_q == 'HR':
+        qualities_to_try = ['HR', 'LL']
+    else:
+        qualities_to_try = ['LL', 'HR'] # Jika user minta LL, coba HR juga kalau LL gagal (jarang tapi mungkin)
 
     for quality in qualities_to_try:
         LOGGER.info(f"Mencoba download {meta.get('title')} dengan kualitas: {quality}")
