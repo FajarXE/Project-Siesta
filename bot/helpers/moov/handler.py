@@ -131,13 +131,13 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if successful_tracks:
         LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
         
-        # --- FIX UPLOADER (PENTING) ---
-        # Jika mode single track, salin info file ke root album_meta
-        # Ini mencegah error "No valid tasks created" jika uploader membaca root dict
+        # --- FIX UPLOADER ---
+        # Salin path ke root meta agar uploader single track bisa menemukannya
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
             album_meta['filepath'] = track_data['filepath']
-            album_meta['file_path'] = track_data['filepath'] # Tambahkan file_path (underscore) juga
+            album_meta['file_path'] = track_data['filepath']
+            album_meta['path'] = track_data['filepath']
             album_meta['duration'] = track_data.get('duration', 0)
     else:
         raise Exception("Gagal mengunduh lagu.")
@@ -228,11 +228,12 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- FIX UPLOADER ---
-        # Isi DUA key path agar kompatibel dengan berbagai uploader
+        # --- FIX: ISI SEMUA VARIASI KEY AGAR UPLOADER BISA BACA ---
         meta['filepath'] = final_filepath
-        meta['file_path'] = final_filepath # Tambahan
-        # --------------------
+        meta['file_path'] = final_filepath 
+        meta['path'] = final_filepath 
+        meta['is_downloaded'] = True
+        # --------------------------------------------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
