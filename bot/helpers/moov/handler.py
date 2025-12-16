@@ -23,7 +23,7 @@ from ..uploder import album_upload
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 BROWSER_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
@@ -62,15 +62,18 @@ def merge_urls(base_url, relative_url):
     return final_parsed._replace(query=new_query).geturl()
 
 async def download_resource(session, url, path):
-    """Helper untuk download resource kecil (Key/Map) dengan retry."""
+    """Helper untuk download resource kecil (Key/Map) dengan retry dan logging."""
     try:
-        async with session.get(url, headers=BROWSER_HEADERS, timeout=10) as resp:
+        async with session.get(url, headers=BROWSER_HEADERS, timeout=15) as resp:
             if resp.status == 200:
                 data = await resp.read()
                 if len(data) > 0:
                     async with aiofiles.open(path, 'wb') as f: await f.write(data)
                     return True
-    except: pass
+            else:
+                LOGGER.warning(f"Resource DL Failed ({resp.status}): {url}")
+    except Exception as e:
+        LOGGER.error(f"Resource DL Error ({url}): {e}")
     return False
 
 async def start_moov(url: str, user: dict):
@@ -287,8 +290,15 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         
         for attempt in range(2):
             use_proxy = (attempt == 0)
-            session_context = client.session if use_proxy else aiohttp.ClientSession()
-            if not use_proxy: LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
+            
+            # [FIX] Gunakan TCPConnector dengan ssl=False untuk koneksi Direct
+            if not use_proxy:
+                LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
+                # SSL False untuk menghindari handshake error
+                connector = aiohttp.TCPConnector(ssl=False)
+                session_context = aiohttp.ClientSession(connector=connector)
+            else:
+                session_context = client.session
 
             try:
                 async with (session_context if not use_proxy else asyncio.NullContext()) as session:
@@ -309,7 +319,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             play_url = merge_urls(play_url, remote_lines[0])
                             continue 
 
-                    # B. Check & Download Key/Map (PRESERVE METADATA)
+                    # B. Check & Download Key/Map
                     local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
                     remote_segments = []
                     error_in_parsing = False
@@ -337,7 +347,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 else:
                                     await f_out.write(f"{line}\n")
 
-                            # [CRITICAL FIX] Handle Map (Init Segment)
+                            # Handle Map (Init Segment for fMP4)
                             elif line.startswith("#EXT-X-MAP"):
                                 map_match = re.search(r'URI="([^"]+)"', line)
                                 if map_match:
@@ -373,7 +383,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                         seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.flac")
                         
                         if not await download_resource(sess, seg_url, seg_path):
-                            LOGGER.warning(f"Seg Fail: {seg_url}")
                             seg_error = True
                             break
                     
