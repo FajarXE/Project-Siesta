@@ -6,7 +6,6 @@ import aiohttp
 import json
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-# Hindari Circular Import
 from bot.logger import LOGGER
 
 def is_explicit_strict(data):
@@ -23,12 +22,10 @@ def get_moov_cover(url):
         return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
     return clean_url
 
-# --- PENCARI LAGU REKURSIF (WAJIB ADA) ---
 def find_products_recursive(data, results=None):
     if results is None: results = []
     
     if isinstance(data, dict):
-        # Cek tanda-tanda track (ID + Judul + Artis)
         pid = data.get('productId') or data.get('contentId') or data.get('mtgContentId')
         title = data.get('productTitle') or data.get('title') or data.get('trackTitle')
         has_artist = 'artist' in data or 'artists' in data
@@ -40,21 +37,17 @@ def find_products_recursive(data, results=None):
                 results.append(data)
             return
 
-        # Rekursif ke dalam dict
         for key, value in data.items():
             if isinstance(value, (dict, list)):
                  find_products_recursive(value, results)
                  
     elif isinstance(data, list):
-        # Rekursif ke dalam list
         for item in data:
             find_products_recursive(item, results)
             
     return results
-# -----------------------------------------
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
-    # Local Import
     from .manager import moov_manager
 
     metadata = copy.deepcopy(base_meta)
@@ -117,14 +110,34 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
+    # --- LOGIKA BARU PENCARIAN COVER ---
     if cover:
         metadata['cover'] = cover
     elif not metadata.get('cover_url'):
+        found_url = None
+        
+        # 1. Cek 'images' di root track (Standard)
         images = track_data.get('images', [])
         if images:
-            raw_url = images[0].get('path')
-            metadata['cover_url'] = get_moov_cover(raw_url)
+            found_url = images[0].get('path')
+            
+        # 2. Cek 'album' -> 'images' (Khusus Playlist/Chart)
+        # Seringkali cover asli ada di sini jika ini adalah track dari chart
+        if not found_url:
+            album_info = track_data.get('album')
+            if isinstance(album_info, dict):
+                alb_imgs = album_info.get('images', [])
+                if alb_imgs:
+                    found_url = alb_imgs[0].get('path')
+
+        # 3. Cek 'thumbnail' (Fallback)
+        if not found_url:
+             found_url = track_data.get('thumbnail')
+
+        if found_url:
+            metadata['cover_url'] = get_moov_cover(found_url)
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
+    # -----------------------------------
 
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
@@ -205,7 +218,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         
     metadata['tracks'] = []
     
-    # Gunakan rekursif juga untuk album agar lebih aman
     raw_products = find_products_recursive(album_data)
     
     max_disc = 1
@@ -253,17 +265,17 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
 
     metadata['tracks'] = []
     
-    # --- CARI SEMUA LAGU ---
     raw_tracks = find_products_recursive(pl_data)
     LOGGER.info(f"Moov Playlist/Chart: Ditemukan {len(raw_tracks)} lagu melalui pencarian rekursif.")
-    # -----------------------
 
     for idx, track_raw in enumerate(raw_tracks, 1):
         track_raw['trackNo'] = idx
         track_raw['discNo'] = 1
         
+        # Pass cover=None agar fungsi mencari cover spesifik lagu dulu
         t_meta = await process_track_metadata(track_raw, r_id, user, cover=None, album_meta=None)
         
+        # Jika cover lagu tidak ketemu, baru pakai cover playlist
         if not t_meta.get('cover') and metadata.get('cover'):
              t_meta['cover'] = metadata['cover']
 
