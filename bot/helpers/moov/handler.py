@@ -195,9 +195,12 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
     else:
         deep_meta = shallow_track_meta.copy()
         
+        # INJECT DATA ALBUM (FALLBACK)
         if album_meta_full:
             if album_meta_full.get('cover'):
                 deep_meta['cover'] = album_meta_full['cover']
+                deep_meta['cover_url'] = None # FORCE DISABLE URL DOWNLOAD untuk menjaga HD cover
+                
             if album_meta_full.get('label'):
                 deep_meta['label'] = album_meta_full['label']
             if album_meta_full.get('date'):
@@ -400,11 +403,10 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # --- PERBAIKAN: Retry Logic untuk M3U8 Fetch ---
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         m3u8_content = None
         
-        for _ in range(3): # Coba 3 kali
+        for _ in range(3): 
             try:
                 async with client.session.get(play_url, headers=hls_headers) as resp:
                     if resp.status == 200: 
@@ -414,13 +416,12 @@ async def download_track(track_meta, user, folderpath):
                         LOGGER.warning(f"Moov: M3U8 Fetch Status {resp.status}, Retrying...")
             except Exception as e:
                 LOGGER.warning(f"Moov: M3U8 Fetch Exception ({e}), Retrying...")
-                await asyncio.sleep(2) # Tunggu 2 detik sebelum retry
+                await asyncio.sleep(2) 
         
         if not m3u8_content:
             LOGGER.error(f"Moov: Gagal mengambil M3U8 setelah 3x percobaan.")
             shutil.rmtree(track_temp_dir)
             return False
-        # -----------------------------------------------
 
         target_duration = 10
         media_sequence = 0
