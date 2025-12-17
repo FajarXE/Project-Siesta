@@ -4,13 +4,13 @@ import aiohttp
 import asyncio
 from bot.logger import LOGGER
 
-# --- TAMBAHAN PENTING: Konektor Proxy ---
+# --- Konektor Proxy ---
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
     LOGGER.critical("Modul 'aiohttp-socks' tidak ditemukan. Silakan install dengan 'pip install aiohttp-socks'")
     ProxyConnector = None
-# ----------------------------------------
+# ----------------------
 
 class MoovAPI:
     def __init__(self, proxy=None):
@@ -93,24 +93,71 @@ class MoovAPI:
             data = await resp.json()
             return data.get('dataObject')
 
-    # --- FUNGSI BARU UNTUK PLAYLIST/CHART ---
+    # --- PERBAIKAN UTAMA DI SINI ---
     async def get_playlist_meta(self, pid):
         session = await self._get_session()
+        
+        # Logika Deteksi:
+        # ID yang berawalan "PC" (Chart) atau "PP" (Program Playlist) biasanya ada di endpoint Profile
+        # ID angka/UUID biasanya Playlist User ada di endpoint Playlist
+        is_profile_type = str(pid).startswith("PC") or str(pid).startswith("PP")
+        
+        # Percobaan 1: Tentukan endpoint berdasarkan tebakan awal
+        if is_profile_type:
+            endpoint = "profile/getProfile"
+            ref_type = "PAB"
+        else:
+            endpoint = "playlist/getProfile"
+            ref_type = "CAT"
+
         params = {
             'profileId': pid,
             'features': '24bit',
             'deviceType': 'phones3',
-            'refType': 'CAT', # CAT biasanya untuk Chart/Category/Playlist
+            'refType': ref_type,
             'checksum': ''
         }
-        # Coba endpoint playlist dulu
-        async with session.get(f"{self.base_url}/playlist/getProfile", headers=self.headers, params=params) as resp:
+        
+        try:
+            async with session.get(f"{self.base_url}/{endpoint}", headers=self.headers, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get('dataObject')
+                elif resp.status == 404:
+                    # FALLBACK: Jika tebakan salah (404), coba endpoint sebaliknya
+                    LOGGER.warning(f"Moov: {endpoint} gagal (404), mencoba endpoint alternatif...")
+                    return await self._get_playlist_fallback(pid, is_profile_type)
+        except Exception as e:
+            LOGGER.error(f"Moov API Error (Percobaan 1): {e}")
+            raise e
+            
+        return None
+
+    async def _get_playlist_fallback(self, pid, prev_was_profile):
+        session = await self._get_session()
+        
+        # Tukar endpoint
+        if prev_was_profile:
+            endpoint = "playlist/getProfile"
+            ref_type = "CAT"
+        else:
+            endpoint = "profile/getProfile"
+            ref_type = "PAB"
+            
+        params = {
+            'profileId': pid,
+            'features': '24bit',
+            'deviceType': 'phones3',
+            'refType': ref_type,
+            'checksum': ''
+        }
+        
+        async with session.get(f"{self.base_url}/{endpoint}", headers=self.headers, params=params) as resp:
             data = await resp.json()
             return data.get('dataObject')
-    # ----------------------------------------
+    # -------------------------------
 
     async def get_product_meta(self, product_id):
-        # Tambahan helper untuk single track jika diperlukan manual
         session = await self._get_session()
         params = {
             'productId': product_id,
