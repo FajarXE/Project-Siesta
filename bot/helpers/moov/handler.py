@@ -150,51 +150,55 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
-# --- FUNGSI PENGAYAAN DATA (SOLUSI COVER & METADATA) ---
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, album_cache):
     """
-    Mengambil data Album induk untuk mendapatkan:
-    1. Cover Original (350x350)
-    2. Label & Copyright
-    3. Recorded Date
+    Versi Optimized & Fallback:
+    1. Coba ambil Product Meta (Lengkap).
+    2. Jika Gagal, Cek apakah data Shallow punya Album ID.
+    3. Jika ada Album ID (dari Product atau Shallow), ambil Album Meta (Cover HD, Label).
+    4. Gabungkan semua data.
     """
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
     
+    # Variabel untuk menampung data yang akan diproses
+    target_data = shallow_track_meta # Default pakai shallow dulu
+    album_id = shallow_track_meta.get('albumId') or shallow_track_meta.get('album', {}).get('id')
+
     try:
-        # 1. Ambil Data Product LENGKAP (Lagu)
+        # 1. Coba ambil Data Product LENGKAP
         full_product = await client.get_product_meta(track_id)
         
-        # Jika gagal mendapatkan data produk (misal region lock/404), gunakan data shallow
-        if not full_product:
-            LOGGER.warning(f"Moov: Gagal mengambil detail produk {track_id}, menggunakan data shallow.")
-            return await download_track(shallow_track_meta, user, folderpath)
+        if full_product:
+            target_data = full_product
+            # Update album_id jika di shallow tidak ada tapi di full ada
+            if not album_id:
+                album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
+        else:
+            LOGGER.warning(f"Moov: Product {track_id} gagal (404/Null), mencoba fallback data Shallow...")
 
-        # 2. Cari Album ID
-        album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
-        
+        # 2. Proses Album Context (Jika Album ID ditemukan)
         album_meta_full = None
         if album_id:
-            # 3. Cek Cache Album (Supaya tidak request berulang untuk album yang sama)
+            # Cek Cache
             if album_id in album_cache:
                 album_meta_full = album_cache[album_id]
             else:
                 try:
-                    # Request API Album
                     raw_album = await client.get_album_meta(album_id)
                     if raw_album:
-                        # Proses metadata album
                         album_meta_full = await process_album_metadata(raw_album, user['r_id'], user)
-                        # Simpan ke cache
                         album_cache[album_id] = album_meta_full 
                 except Exception as e:
                     LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
+        else:
+            LOGGER.warning(f"Moov: Tidak ditemukan ID Album untuk track {track_id} (Cover mungkin Low Res).")
 
-        # 4. Proses Metadata Lagu dengan INJEKSI data Album
-        # 'cover' diambil dari album_meta_full (HD)
-        # 'album_meta' dipassing agar Label & Date terisi
+        # 3. Proses Metadata Final
+        # Kita gunakan 'target_data' (bisa full atau shallow)
+        # Tapi kita paksa inject 'cover' dan 'album_meta' dari hasil pencarian Album di atas
         deep_meta = await process_track_metadata(
-            full_product, 
+            target_data, 
             user['r_id'], 
             user, 
             cover=album_meta_full['cover'] if album_meta_full else None,
@@ -206,7 +210,7 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
 
     except Exception as e:
         LOGGER.error(f"Error enriching track {track_id}: {e}")
-        # Fallback terakhir
+        # Fallback terakhir jika semua logika di atas crash
         return await download_track(shallow_track_meta, user, folderpath)
 
 async def start_playlist(pid, user):
@@ -239,7 +243,7 @@ async def start_playlist(pid, user):
         tasks.append(enrich_and_download_chart_track(track, user, pl_folder, album_cache))
 
     update_details = {
-        'text': f"Downloading Playlist (Full Meta): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': f"Downloading Playlist (Deep Scan): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
         'msg': user['bot_msg'], 
         'title': pl_meta['title'], 'type': 'playlist'
     }
