@@ -17,18 +17,22 @@ def is_explicit_strict(data):
 
 def get_moov_cover(url):
     """
-    Memaksa URL cover menjadi resolusi tinggi.
-    Menangani pola /118x118/ maupun _118x118.jpg
+    MEMPERBAIKI RESOLUSI GAMBAR SECARA AGRESIF.
+    Target: 1000x1000 atau Original.
     """
     if not url: return None
     clean_url = url.split("?")[0]
     
-    # 1. Ganti pola dimensi di tengah path (contoh: /118x118/)
-    # Kita coba 1000x1000 dulu, biasanya Moov resize on-the-fly
-    clean_url = re.sub(r'\/(\d{2,4}x\d{2,4})\/', '/1000x1000/', clean_url)
-    
-    # 2. Ganti pola dimensi di nama file (contoh: cover_118x118.jpg)
-    clean_url = re.sub(r'_(\d{2,4}x\d{2,4})', '_1000x1000', clean_url)
+    # 1. Hapus segmen '/resize/...' sepenuhnya jika ada.
+    # Contoh: .../images/resize/118x118/cover.jpg -> .../images/cover.jpg
+    if "/resize/" in clean_url:
+        clean_url = re.sub(r'\/resize\/\d+x\d+', '', clean_url)
+        # Hapus double slash jika terbentuk akibat replace
+        clean_url = clean_url.replace('//', '/')
+        clean_url = clean_url.replace('https:/', 'https://') # Fix protokol
+
+    # 2. Jika masih ada pola dimensi (misal di filename), paksa ke 1000x1000
+    clean_url = re.sub(r'(\d{2,4}x\d{2,4})', '1000x1000', clean_url)
     
     return clean_url
 
@@ -43,7 +47,6 @@ def parse_date(date_val):
 
 def find_products_recursive(data, results=None):
     if results is None: results = []
-    
     if isinstance(data, dict):
         pid = data.get('productId') or data.get('contentId') or data.get('mtgContentId')
         title = data.get('productTitle') or data.get('title') or data.get('trackTitle')
@@ -57,13 +60,9 @@ def find_products_recursive(data, results=None):
             return
 
         for key, value in data.items():
-            if isinstance(value, (dict, list)):
-                 find_products_recursive(value, results)
-                 
+            if isinstance(value, (dict, list)): find_products_recursive(value, results)
     elif isinstance(data, list):
-        for item in data:
-            find_products_recursive(item, results)
-            
+        for item in data: find_products_recursive(item, results)
     return results
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
@@ -85,7 +84,15 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         if not main_artists: main_artists = [a.get('name') for a in artists if isinstance(a, dict)]
         metadata['artist'] = ", ".join(main_artists)
         
-    metadata['album'] = track_data.get('albumTitle') or ""
+    # --- LOGIKA ALBUM ASLI ---
+    # Prioritaskan Album dari data Track itu sendiri (Blue Circle), BUKAN dari Chart (Red Circle)
+    if track_data.get('albumTitle'):
+        metadata['album'] = track_data.get('albumTitle')
+    elif album_meta:
+        metadata['album'] = album_meta.get('title', '')
+    else:
+        metadata['album'] = ""
+
     metadata['disk'] = str(track_data.get('discNo', 1))
     metadata['tracknumber'] = str(track_data.get('trackNo', 1))
     
@@ -104,15 +111,18 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     is_track_explicit = is_explicit_strict(track_data)
     metadata['explicit'] = "True" if is_track_explicit else "False"
 
-    # --- PENCARIAN TANGGAL ---
+    # --- PENCARIAN TANGGAL (FIX METADATA) ---
     final_date = None
     date_keys = ['publishDate', 'releaseDate', 'originalReleaseDate', 'createdOn']
+    
+    # 1. Cari di root track
     for key in date_keys:
         d = parse_date(track_data.get(key))
-        if d:
+        if d: 
             final_date = d
             break
             
+    # 2. Cari di objek album (PENTING UNTUK CHART)
     if not final_date and 'album' in track_data:
         alb_data = track_data.get('album')
         if isinstance(alb_data, dict):
@@ -125,46 +135,49 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     if final_date:
         metadata['date'] = final_date
         metadata['year'] = final_date[:4]
-    # -------------------------
+    # ----------------------------------------
     
+    # Inherit dari Album Meta (HANYA JIKA TIDAK ADA DI TRACK)
     if album_meta:
         if not metadata['albumartist']: metadata['albumartist'] = album_meta.get('artist', '')
         if not metadata['genre']: metadata['genre'] = album_meta.get('genre', '')
-        if album_meta.get('type') == 'album':
-            metadata['totaltracks'] = album_meta.get('totaltracks', '')
-            metadata['totalvolumes'] = album_meta.get('totalvolumes', '')
         
-        # Priority: Track Date > Album Date
+        # JANGAN overwrite tanggal jika track sudah punya tanggal sendiri
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
             metadata['year'] = album_meta.get('year', '')
             
         if not metadata['label']: metadata['label'] = album_meta.get('label', '')
         if not metadata['copyright']: metadata['copyright'] = album_meta.get('copyright', '')
+        
+        # Cover fallback
         if not cover and album_meta.get('cover_url'):
              metadata['cover_url'] = album_meta.get('cover_url')
     
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- LOGIKA COVER (Max Res) ---
+    # --- LOGIKA COVER RESOLUSI TINGGI ---
     if cover:
         metadata['cover'] = cover
     elif not metadata.get('cover_url'):
         found_url = None
-        images = track_data.get('images', [])
-        if images: found_url = images[0].get('path')
+        
+        # Prioritas 1: Gambar Album dari objek 'album' (Biasanya lebih HD di Chart)
+        album_info = track_data.get('album')
+        if isinstance(album_info, dict):
+            alb_imgs = album_info.get('images', [])
+            if alb_imgs: found_url = alb_imgs[0].get('path')
             
+        # Prioritas 2: Gambar Track langsung
         if not found_url:
-            album_info = track_data.get('album')
-            if isinstance(album_info, dict):
-                alb_imgs = album_info.get('images', [])
-                if alb_imgs: found_url = alb_imgs[0].get('path')
+            images = track_data.get('images', [])
+            if images: found_url = images[0].get('path')
 
+        # Prioritas 3: Thumbnail
         if not found_url: found_url = track_data.get('thumbnail')
 
         if found_url:
-            # Panggil fungsi regex baru
             metadata['cover_url'] = get_moov_cover(found_url)
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
@@ -190,20 +203,18 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     return metadata
 
 async def process_album_metadata(album_data: dict, r_id, user: dict):
-    # (Kode ini tetap sama, hanya memastikan fungsi helper dipanggil)
+    # (Bagian ini tidak berubah, hanya memastikan kompatibilitas)
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     titles = album_data.get('engTitle', [])
     if not titles: titles = album_data.get('title', [])
-        
     metadata['title'] = titles[0] if titles else "Unknown Album"
     metadata['album'] = metadata['title']
     
     artists = album_data.get('artists', [])
     metadata['artist'] = ", ".join([a.get('name') for a in artists])
     metadata['albumartist'] = metadata['artist']
-    
     metadata['provider'] = 'Moov'
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
@@ -216,25 +227,16 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     date_keys = ['publishDate', 'releaseDate', 'originalReleaseDate']
     for key in date_keys:
         d = parse_date(album_data.get(key))
-        if d:
+        if d: 
             final_date = d
             break
-            
     if final_date:
         metadata['date'] = final_date
         metadata['year'] = final_date[:4]
-    else:
-        if len(titles) > 2:
-            try: 
-                metadata['year'] = titles[2].split('-')[0]
-                metadata['date'] = titles[2]
-            except: pass
 
     genres = album_data.get('genres', [])
-    if genres:
-        metadata['genre'] = ", ".join([g.get('name') for g in genres])
-    else:
-        metadata['genre'] = album_data.get('category', "")
+    if genres: metadata['genre'] = ", ".join([g.get('name') for g in genres])
+    else: metadata['genre'] = album_data.get('category', "")
         
     metadata['label'] = album_data.get('recordLabel') or album_data.get('albumLabel') or ""
 
@@ -249,9 +251,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
         
     metadata['tracks'] = []
-    
     raw_products = find_products_recursive(album_data)
-    
     max_disc = 1
     for idx, track_raw in enumerate(raw_products, 1):
         track_raw['trackNo'] = idx 
@@ -269,7 +269,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['totalvolumes'] = str(max_disc)
     metadata['explicit'] = "True" if is_album_explicit else "False"
     if metadata['tracks']: metadata['quality'] = metadata['tracks'][0]['quality']
-        
     return metadata
 
 async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
@@ -278,14 +277,11 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
     
     titles = pl_data.get('engTitle', [])
     if not titles: titles = pl_data.get('title', []) 
-    
     metadata['title'] = titles[0] if titles else "Unknown Playlist"
     metadata['album'] = metadata['title']
-    
     metadata['provider'] = 'Moov'
     metadata['type'] = 'playlist'
     metadata['itemid'] = pl_data.get('profileId')
-    
     metadata['artist'] = "Moov Playlist"
     metadata['albumartist'] = "Various Artists"
 
@@ -296,13 +292,10 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
         metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
     metadata['tracks'] = []
-    
     raw_tracks = find_products_recursive(pl_data)
     LOGGER.info(f"Moov Playlist/Chart: Ditemukan {len(raw_tracks)} lagu.")
 
-    # PENTING: Kita tidak memproses metadata disini lagi secara mendalam,
-    # karena handler.py akan mengambil ulang metadata lengkap (product meta) nanti.
-    # Kita hanya butuh ID dan Title dasar.
+    # Kita hanya butuh ID di sini, data lengkap akan diambil ulang di Handler
     for idx, track_raw in enumerate(raw_tracks, 1):
         track_raw['trackNo'] = idx
         track_raw['discNo'] = 1
@@ -310,7 +303,5 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
         metadata['tracks'].append(t_meta)
 
     metadata['totaltracks'] = len(metadata['tracks'])
-    if metadata['tracks']:
-        metadata['quality'] = metadata['tracks'][0]['quality']
-
+    if metadata['tracks']: metadata['quality'] = metadata['tracks'][0]['quality']
     return metadata
