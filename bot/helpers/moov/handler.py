@@ -151,12 +151,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await album_upload(album_meta, user)
 
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath):
-    """
-    Mengambil metadata lengkap (Product Meta).
-    """
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
-    
     try:
         full_data = await client.get_product_meta(track_id)
         if full_data:
@@ -191,12 +187,11 @@ async def start_playlist(pid, user):
     except: pass
 
     tasks = []
-    # Menggunakan fungsi enrich
     for track in pl_meta['tracks']:
         tasks.append(enrich_and_download_chart_track(track, user, pl_folder))
 
     update_details = {
-        'text': f"Downloading Playlist: {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': f"Downloading Playlist (Full): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
         'msg': user['bot_msg'], 
         'title': pl_meta['title'], 'type': 'playlist'
     }
@@ -234,6 +229,7 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['GENRE'] = meta.get('genre', '')
         audio['COMPOSER'] = meta.get('composer', '')
         
+        # PRODUCER
         if meta.get('producer'):
             audio['PRODUCER'] = meta.get('producer')
             
@@ -245,12 +241,15 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
             audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
             audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
         
+        # RECORDED DATE & RELEASE DATE
         if meta.get('date'):
             audio['DATE'] = str(meta.get('date'))
             audio['YEAR'] = str(meta.get('date'))[:4]
             audio['ORIGINALDATE'] = str(meta.get('date'))
             audio['RELEASEDATE'] = str(meta.get('date')) 
+            audio['RECORDEDDATE'] = str(meta.get('date')) # Extra Tag
 
+        # LABEL / PUBLISHER
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
             audio['LABEL'] = meta.get('label', '')
