@@ -15,22 +15,11 @@ def is_explicit_strict(data):
     return False
 
 def get_moov_cover(url):
-    """
-    Membersihkan URL cover untuk mendapatkan file ASLI (Original).
-    Menghindari pemaksaan dimensi yang menyebabkan 404 (Project Siesta).
-    """
     if not url: return None
     clean_url = url.split("?")[0]
-    
-    # 1. Hapus folder resize (contoh: /resize/118x118/)
     clean_url = re.sub(r'\/resize\/\d+x\d+', '', clean_url)
-    
-    # 2. Hapus suffix dimensi di nama file (contoh: _118x118.jpg -> .jpg)
     clean_url = re.sub(r'_(\d{2,4}x\d{2,4})', '', clean_url)
-    
-    # 3. Bersihkan sisa-sisa
     clean_url = clean_url.replace('//', '/').replace('https:/', 'https://').replace('http:/', 'http://')
-    
     return clean_url
 
 def parse_date(date_val):
@@ -67,6 +56,13 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     
     metadata['itemid'] = track_data.get('productId')
     metadata['title'] = track_data.get('productTitle')
+
+    # --- TAMBAHAN PENTING: SIMPAN ALBUM ID UNTUK FALLBACK ---
+    if track_data.get('albumId'):
+        metadata['moov_album_id'] = track_data.get('albumId')
+    elif isinstance(track_data.get('album'), dict):
+        metadata['moov_album_id'] = track_data.get('album').get('id')
+    # --------------------------------------------------------
     
     # --- PENGOLAHAN ARTIS & PRODUCER (Deep Search) ---
     artists_raw = track_data.get('artists', [])
@@ -84,12 +80,8 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             if isinstance(a, dict):
                 name = a.get('name')
                 role = a.get('role', 'Main')
-                
-                # Artist
                 if role in ['Main', 'Featured']:
                     main_artists.append(name)
-                
-                # Producer
                 if role in ['Producer', 'Arranger', 'Composer', 'Conductor']:
                     producers.append(name)
             elif isinstance(a, str):
@@ -97,11 +89,8 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     
     metadata['artist'] = ", ".join(main_artists)
     metadata['producer'] = ", ".join(producers) 
-    # -----------------------------------
-
-    # --- PENGOLAHAN LABEL (Deep Search) ---
+    
     label_val = ""
-    # Cek urutan prioritas key
     label_keys = ['albumLabel', 'label', 'recordLabel', 'company', 'copyright']
     for key in label_keys:
         val = track_data.get(key)
@@ -109,7 +98,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             label_val = val
             break
             
-    # Jika masih kosong, cek di object album
     if not label_val and 'album' in track_data:
         alb = track_data.get('album')
         if isinstance(alb, dict):
@@ -120,7 +108,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
                     break
     
     metadata['label'] = str(label_val)
-    # -------------------------------------
 
     if track_data.get('albumTitle'):
         metadata['album'] = track_data.get('albumTitle')
@@ -129,7 +116,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     else:
         metadata['album'] = ""
 
-    # Album Artist
     metadata['albumartist'] = metadata['artist'] 
     if album_meta and album_meta.get('artist'):
          metadata['albumartist'] = album_meta.get('artist')
@@ -151,7 +137,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     is_track_explicit = is_explicit_strict(track_data)
     metadata['explicit'] = "True" if is_track_explicit else "False"
 
-    # --- RECORDED DATE ---
     final_date = None
     date_keys = ['publishDate', 'releaseDate', 'originalReleaseDate', 'createdOn']
     for key in date_keys:
@@ -171,7 +156,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     if final_date:
         metadata['date'] = final_date
         metadata['year'] = final_date[:4]
-    # ---------------------
     
     if album_meta:
         if not metadata.get('date'):
@@ -183,35 +167,26 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- LOGIKA COVER (Safe & High Quality) ---
     if cover:
         metadata['cover'] = cover
     elif not metadata.get('cover_url'):
         found_url = None
-        
-        # 1. Cek 'largeImage' (Key khusus Moov untuk gambar besar)
         if track_data.get('largeImage'):
             found_url = track_data.get('largeImage')
         
-        # 2. Cek Album Images
         if not found_url and 'album' in track_data:
             alb = track_data.get('album')
             if isinstance(alb, dict):
-                # Cek largeImage di album
                 if alb.get('largeImage'): found_url = alb.get('largeImage')
-                # Cek images list
                 elif alb.get('images'): found_url = alb.get('images')[0].get('path')
 
-        # 3. Cek Track Images
         if not found_url:
             images = track_data.get('images', [])
             if images: found_url = images[0].get('path')
 
-        # 4. Fallback Thumbnail
         if not found_url: found_url = track_data.get('thumbnail')
 
         if found_url:
-            # Gunakan fungsi cleaning (hapus resize) agar dapat Original
             metadata['cover_url'] = get_moov_cover(found_url)
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
@@ -237,7 +212,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     return metadata
 
 async def process_album_metadata(album_data: dict, r_id, user: dict):
-    # Logika album standar
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
@@ -338,7 +312,6 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
         track_raw['trackNo'] = idx
         track_raw['discNo'] = 1
         
-        # PENTING: cover=None.
         t_meta = await process_track_metadata(track_raw, r_id, user, cover=None, album_meta=None)
         metadata['tracks'].append(t_meta)
 
