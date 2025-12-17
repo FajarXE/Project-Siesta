@@ -11,7 +11,6 @@ from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
 from ..message import edit_message
-# IMPORT YANG BENAR:
 from .metadata import process_album_metadata, process_playlist_metadata
 from ..uploder import album_upload, playlist_upload
 from ..utils import (
@@ -37,7 +36,6 @@ async def start_moov(url: str, user: dict):
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
 
-    # --- HANDLE CHART & PLAYLIST ---
     elif "/chart/" in clean_url or "/playlist/" in clean_url:
         if "/chart/" in clean_url:
             raw_id = clean_url.split("/chart/")[-1]
@@ -47,7 +45,6 @@ async def start_moov(url: str, user: dict):
         pid = raw_id.split("?")[0].split("/")[0]
         LOGGER.info(f"Moov: Terdeteksi Chart/Playlist ID: {pid}")
         await start_playlist(pid, user)
-    # -------------------------------
 
     elif "/share/" in clean_url and "/ADO/" in clean_url:
         try:
@@ -140,7 +137,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             track_data = successful_tracks[0]
             album_meta.update(track_data)
             album_meta['tracks'] = successful_tracks
-            album_meta['type'] = 'album' 
+            album_meta['type'] = 'album'
     else:
         raise Exception("Gagal mengunduh lagu.")
 
@@ -156,7 +153,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
-# --- FUNGSI BARU: HANDLER PLAYLIST/CHART ---
 async def start_playlist(pid, user):
     client = user['moov_api']
     try:
@@ -208,7 +204,6 @@ async def start_playlist(pid, user):
         
     await edit_message(user['bot_msg'], "Uploading...")
     await playlist_upload(pl_meta, user)
-# -------------------------------------------
 
 async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
     try:
