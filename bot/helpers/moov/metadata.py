@@ -9,29 +9,17 @@ from .manager import moov_manager
 from bot.logger import LOGGER
 
 def is_explicit_strict(data):
-    """
-    Fungsi bantu untuk mengecek status explicit secara ketat.
-    """
     val_exp = str(data.get('explicit', '')).lower()
-    if val_exp in ['true', '1', 'yes', 'explicit']:
-        return True
-        
+    if val_exp in ['true', '1', 'yes', 'explicit']: return True
     val_pw = str(data.get('parentalWarning', '')).lower()
-    if val_pw in ['true', '1', 'yes', 'explicit']:
-        return True
-        
+    if val_pw in ['true', '1', 'yes', 'explicit']: return True
     return False
 
 def get_moov_cover(url):
-    """
-    Mengambil URL cover Moov dan mencoba menaikkan resolusi ke 1000x1000
-    """
     if not url: return None
     clean_url = url.split("?")[0]
-    
     if "resize" in clean_url:
         return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
-        
     return clean_url
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
@@ -61,26 +49,26 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         comp_list.append(track_data.get('author'))
     metadata['composer'] = ", ".join(comp_list)
 
-    # EXPLICIT TRACK
     is_track_explicit = is_explicit_strict(track_data)
     metadata['explicit'] = "True" if is_track_explicit else "False"
 
-    # DATE LOGIC
     track_date_raw = str(track_data.get('publishDate', ''))
     if not track_date_raw: track_date_raw = str(track_data.get('releaseDate', ''))
-    
     if 'T' in track_date_raw: track_date_raw = track_date_raw.split('T')[0]
         
     if track_date_raw:
         metadata['date'] = track_date_raw
         metadata['year'] = track_date_raw[:4]
     
-    # Wariskan data Album
+    # Wariskan data Album/Playlist jika ada
     if album_meta:
-        metadata['albumartist'] = album_meta.get('artist', '')
-        metadata['genre'] = album_meta.get('genre', '')
-        metadata['totaltracks'] = album_meta.get('totaltracks', '')
-        metadata['totalvolumes'] = album_meta.get('totalvolumes', '') # Wariskan total volumes
+        if not metadata['albumartist']: metadata['albumartist'] = album_meta.get('artist', '')
+        if not metadata['genre']: metadata['genre'] = album_meta.get('genre', '')
+        
+        # Jangan timpa totaltracks jika dari playlist (karena track bisa dari album beda)
+        if album_meta.get('type') == 'album':
+            metadata['totaltracks'] = album_meta.get('totaltracks', '')
+            metadata['totalvolumes'] = album_meta.get('totalvolumes', '')
         
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
@@ -104,7 +92,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             metadata['cover_url'] = get_moov_cover(raw_url)
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
-    # QUALITY
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
     
@@ -131,6 +118,9 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     titles = album_data.get('engTitle', [])
+    # Fallback title jika engTitle kosong
+    if not titles: titles = album_data.get('title', [])
+        
     metadata['title'] = titles[0] if titles else "Unknown Album"
     metadata['album'] = metadata['title']
     
@@ -142,13 +132,11 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['type'] = 'album'
     metadata['itemid'] = album_data.get('profileId') 
 
-    # EXPLICIT CHECK (ALBUM)
     is_album_explicit = is_explicit_strict(album_data)
     tags = album_data.get('tags', [])
     if 'Explicit' in tags or 'Parental Advisory' in tags:
         is_album_explicit = True
 
-    # DATE
     moov_date = ""
     moov_year = ""
     if len(titles) > 2:
@@ -165,7 +153,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['year'] = moov_year
     metadata['date'] = moov_date 
 
-    # GENRE
     genres = album_data.get('genres', [])
     if genres:
         metadata['genre'] = ", ".join([g.get('name') for g in genres])
@@ -174,7 +161,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         
     metadata['label'] = album_data.get('recordLabel') or album_data.get('albumLabel') or ""
 
-    # COVER
     moov_cover_url = None
     images = album_data.get('images', [])
     if images:
@@ -182,7 +168,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         moov_cover_url = get_moov_cover(raw_path)
 
     metadata['cover_url'] = moov_cover_url
-
     if metadata.get('cover_url'):
         metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
         
@@ -191,19 +176,12 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     if modules:
         products = modules[0].get('products', [])
         metadata['totaltracks'] = len(products)
-        
-        # Variabel sementara untuk menghitung Volume terbesar
         max_disc = 1
         
         for idx, track_raw in enumerate(products, 1):
             track_raw['trackNo'] = idx 
-            
-            # Cek Explicit Track untuk update Album
             if not is_album_explicit:
-                if is_explicit_strict(track_raw):
-                    is_album_explicit = True
-            
-            # Cek Volume/Disk
+                if is_explicit_strict(track_raw): is_album_explicit = True
             try:
                 d = int(track_raw.get('discNo', 1))
                 if d > max_disc: max_disc = d
@@ -212,12 +190,67 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
             t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
             metadata['tracks'].append(t_meta)
         
-        # --- HITUNG TOTAL VOLUME ---
         metadata['totalvolumes'] = str(max_disc)
 
     metadata['explicit'] = "True" if is_album_explicit else "False"
-            
     if metadata['tracks']:
         metadata['quality'] = metadata['tracks'][0]['quality']
         
     return metadata
+
+# --- FUNGSI BARU UNTUK PLAYLIST/CHART ---
+async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
+    metadata = copy.deepcopy(base_meta)
+    metadata['tempfolder'] += f"{r_id}-temp/"
+    
+    titles = pl_data.get('engTitle', [])
+    if not titles: titles = pl_data.get('title', []) # Fallback
+    
+    metadata['title'] = titles[0] if titles else "Unknown Playlist"
+    metadata['album'] = metadata['title'] # Untuk playlist, album name = playlist name
+    
+    metadata['provider'] = 'Moov'
+    metadata['type'] = 'playlist'
+    metadata['itemid'] = pl_data.get('profileId')
+    
+    # Playlist biasanya "Various Artists" atau kosong
+    metadata['artist'] = "Moov Playlist"
+    metadata['albumartist'] = "Various Artists"
+
+    images = pl_data.get('images', [])
+    if images:
+        raw_path = images[0].get('path')
+        metadata['cover_url'] = get_moov_cover(raw_path)
+        metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
+
+    metadata['tracks'] = []
+    
+    # Struktur playlist kadang berbeda, cek 'tracks' atau 'products'
+    raw_tracks = pl_data.get('tracks', [])
+    if not raw_tracks:
+        # Coba cek di modules jika strukturnya mirip album
+        modules = pl_data.get('modules', [])
+        if modules:
+            raw_tracks = modules[0].get('products', [])
+
+    for idx, track_raw in enumerate(raw_tracks, 1):
+        # Playlist tidak punya disc/track number yang konsisten, kita buat sendiri
+        track_raw['trackNo'] = idx
+        track_raw['discNo'] = 1
+        
+        # PENTING: Jangan pass metadata playlist sebagai 'album_meta' sepenuhnya
+        # agar track mengambil metadata asli dari album asalnya (jika ada di JSON)
+        t_meta = await process_track_metadata(track_raw, r_id, user, cover=None, album_meta=None)
+        
+        # Override cover track jika track tidak punya cover, pakai cover playlist
+        if not t_meta.get('cover') and metadata.get('cover'):
+             t_meta['cover'] = metadata['cover']
+
+        metadata['tracks'].append(t_meta)
+
+    metadata['totaltracks'] = len(metadata['tracks'])
+    if metadata['tracks']:
+        metadata['quality'] = metadata['tracks'][0]['quality']
+
+    return metadata
+# ----------------------------------------
