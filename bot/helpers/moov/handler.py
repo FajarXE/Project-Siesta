@@ -150,17 +150,52 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
-async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath):
+# --- PERBAIKAN LOGIKA: Deep Enrich dengan Album Context ---
+async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, album_cache):
+    """
+    Fungsi ini mengambil metadata Product LENGKAP, lalu mengambil metadata ALBUM induknya.
+    Ini memastikan Cover Art adalah Original (dari Album) dan Tag (Label/Date) terisi.
+    """
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
+    
     try:
-        full_data = await client.get_product_meta(track_id)
-        if full_data:
-            deep_meta = await process_track_metadata(full_data, user['r_id'], user, cover=None, album_meta=None)
+        # 1. Ambil Data Product (Lagu)
+        full_product = await client.get_product_meta(track_id)
+        
+        if full_product:
+            # 2. Cari Album ID dari Product
+            album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
+            
+            album_meta_full = None
+            if album_id:
+                # 3. Cek Cache atau Ambil Data Album (PENTING untuk Cover & Label)
+                if album_id in album_cache:
+                    album_meta_full = album_cache[album_id]
+                else:
+                    try:
+                        raw_album = await client.get_album_meta(album_id)
+                        if raw_album:
+                            album_meta_full = await process_album_metadata(raw_album, user['r_id'], user)
+                            album_cache[album_id] = album_meta_full # Simpan ke cache
+                    except Exception as e:
+                        LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
+
+            # 4. Proses Metadata Lagu dengan menyuntikkan data Album (Cover, Label, Date)
+            deep_meta = await process_track_metadata(
+                full_product, 
+                user['r_id'], 
+                user, 
+                cover=album_meta_full['cover'] if album_meta_full else None,
+                album_meta=album_meta_full if album_meta_full else None
+            )
+            
             deep_meta['folderpath'] = folderpath
             return await download_track(deep_meta, user, folderpath)
         else:
+            # Fallback jika get_product_meta gagal
             return await download_track(shallow_track_meta, user, folderpath)
+            
     except Exception as e:
         LOGGER.error(f"Gagal memperkaya metadata track {track_id}: {e}")
         return await download_track(shallow_track_meta, user, folderpath)
@@ -186,12 +221,16 @@ async def start_playlist(pid, user):
         pl_meta['poster_msg'] = await post_art_poster(user, pl_meta)
     except: pass
 
+    # --- PERBAIKAN: Cache Album untuk mempercepat loop ---
+    album_cache = {}
     tasks = []
+    
     for track in pl_meta['tracks']:
-        tasks.append(enrich_and_download_chart_track(track, user, pl_folder))
+        # Pass album_cache ke fungsi enrich
+        tasks.append(enrich_and_download_chart_track(track, user, pl_folder, album_cache))
 
     update_details = {
-        'text': f"Downloading Playlist (Full): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': f"Downloading Playlist (Deep Scan): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
         'msg': user['bot_msg'], 
         'title': pl_meta['title'], 'type': 'playlist'
     }
