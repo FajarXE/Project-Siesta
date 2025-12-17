@@ -33,8 +33,12 @@ BROWSER_HEADERS = {
     'Origin': 'https://moov.hk'
 }
 
+# [FIX] Definisikan AsyncNullContext secara lokal, jangan monkey-patch asyncio
+class AsyncNullContext:
+    async def __aenter__(self): return None
+    async def __aexit__(self, exc_type, exc_value, traceback): pass
+
 def safe_name(name):
-    # Membersihkan karakter ilegal
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 def resolve_url(base_url, relative_url):
@@ -78,17 +82,14 @@ async def download_resource(session, url, path, referer=None):
 
 async def start_moov(url: str, user: dict):
     clean_url = url.replace("#/", "/") 
-    
     if "/album/" in clean_url:
         raw_id = clean_url.split("/album/")[-1]
         album_id = raw_id.split("?")[0].split("/")[0]
         await start_album(album_id, user)
-        
     elif "/song/" in clean_url:
         raw_id = clean_url.split("/song/")[-1]
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
-
     elif "/share/" in clean_url and "/ADO/" in clean_url:
         try:
             parts = clean_url.split("/AUDIO/")
@@ -96,10 +97,8 @@ async def start_moov(url: str, user: dict):
             track_id = left_part.split("/")[0]
             right_part = parts[1]
             album_id = right_part.split("?")[0].split("/")[0]
-            
             LOGGER.info(f"Share Link Parsed. Track: {track_id}, Album: {album_id}")
             await start_album(album_id, user, filter_track_id=track_id)
-            
         except Exception as e:
             raise Exception(f"Gagal memparsing link Share Moov: {e}")
     else:
@@ -108,18 +107,13 @@ async def start_moov(url: str, user: dict):
 async def start_track_single(track_id, user):
     client = user['moov_api']
     try:
-        if not hasattr(client, 'get_product_meta'):
-             raise Exception("Client Moov versi lama.")
-        
+        if not hasattr(client, 'get_product_meta'): raise Exception("Client Moov versi lama.")
         track_data = await client.get_product_meta(track_id)
         if not track_data: raise Exception("Data lagu tidak ditemukan.")
-
         album_id = track_data.get('albumId') or track_data.get('album', {}).get('id')
         if not album_id: raise Exception("Gagal menemukan ID Album.")
-
         LOGGER.info(f"Downloading Single Track: {track_id} from Album: {album_id}")
         await start_album(album_id, user, filter_track_id=track_id)
-
     except Exception as e:
         raise Exception(f"Gagal memproses lagu: {e}")
 
@@ -192,43 +186,25 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
     try:
         is_flac = filepath.lower().endswith('.flac')
-        
-        # Inisialisasi Objek Audio
         if is_flac:
             audio = FLAC(filepath)
             audio.delete()
         else:
-            # Untuk MP3
-            try: 
-                audio = ID3(filepath)
-                audio.delete_all()
-            except: 
-                audio = ID3()
+            try: audio = ID3(filepath); audio.delete_all()
+            except: audio = ID3()
         
-        # Fungsi Helper untuk MP3
-        def add_id3(tag_class, value):
-            if value: audio.add(tag_class(encoding=3, text=str(value)))
+        def add_id3(tag, val):
+            if val: audio.add(tag(encoding=3, text=str(val)))
 
-        # 1. TAGGING FLAC
         if is_flac:
             audio['TITLE'] = meta.get('title', '')
             audio['ARTIST'] = meta.get('artist', '')
             audio['ALBUM'] = meta.get('album', '')
             audio['ALBUMARTIST'] = meta.get('albumartist', '')
             audio['GENRE'] = meta.get('genre', '')
-            audio['COMPOSER'] = meta.get('composer', '')
             if meta.get('date'): audio['DATE'] = str(meta.get('date'))
             if meta.get('tracknumber'): audio['TRACKNUMBER'] = str(meta.get('tracknumber'))
-            if meta.get('disk'): audio['DISCNUMBER'] = str(meta.get('disk'))
             if lyrics: audio['LYRICS'] = lyrics
-            
-            if cover_path and os.path.exists(cover_path):
-                p = Picture()
-                with open(cover_path, 'rb') as f: p.data = f.read()
-                p.type = 3; p.mime = 'image/jpeg'; p.desc = 'Front Cover'
-                audio.add_picture(p)
-                
-        # 2. TAGGING MP3 (ID3)
         else:
             add_id3(TIT2, meta.get('title', ''))
             add_id3(TPE1, meta.get('artist', ''))
@@ -237,20 +213,20 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
             add_id3(TCON, meta.get('genre', ''))
             add_id3(TYER, meta.get('date', ''))
             add_id3(TRCK, meta.get('tracknumber', ''))
-            add_id3(TPOS, meta.get('disk', ''))
-            
-            if lyrics:
-                audio.add(USLT(encoding=3, lang='eng', desc='', text=lyrics))
-            
-            if cover_path and os.path.exists(cover_path):
-                with open(cover_path, 'rb') as f: data = f.read()
-                audio.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=data))
+            if lyrics: audio.add(USLT(encoding=3, lang='eng', desc='', text=lyrics))
 
-        # Simpan
+        if cover_path and os.path.exists(cover_path):
+            with open(cover_path, 'rb') as f: data = f.read()
+            if is_flac:
+                p = Picture()
+                p.data = data; p.type = 3; p.mime = 'image/jpeg'
+                audio.add_picture(p)
+            else:
+                audio.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=data))
+            
         audio.save(filepath if not is_flac else None)
         return 0 
-        
-    except Exception as e:
+    except Exception as e: 
         LOGGER.error(f"Tagging Error: {e}")
         return 0
 
@@ -262,14 +238,13 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. INIT: Ambil Metadata & URL
+        # 1. INIT
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url_init = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url_init: return False
             
-            # Generate Default Key (Fallback)
             default_key_bytes = b''
             if content_key:
                 m = hashlib.md5()
@@ -277,29 +252,19 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                 default_key_bytes = bytes.fromhex(m.hexdigest())
         except: return False
 
-        # Tentukan Ekstensi File Akhir
         ext = '.mp3' if quality_code == '320' else '.flac'
-        
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
         final_filepath = os.path.join(folderpath, f"{safe_filename}{ext}")
         
-        # Setup Meta untuk Uploader
-        abs_path = os.path.abspath(final_filepath)
-        meta['filepath'] = abs_path
-        meta['file_path'] = abs_path
-        meta['path'] = abs_path
-        meta['file'] = abs_path
-        meta['outfile'] = abs_path
-        meta['filename'] = os.path.basename(abs_path)
+        meta['filepath'] = os.path.abspath(final_filepath)
+        meta['filename'] = os.path.basename(final_filepath)
         meta['is_downloaded'] = True
         meta['success'] = True
         
-        # Simpan Default Key sebagai .m4a untuk menipu FFmpeg
         key_filepath = os.path.join(track_temp_dir, "key.m4a")
         if default_key_bytes:
-            async with aiofiles.open(key_filepath, 'wb') as f:
-                await f.write(default_key_bytes)
+            async with aiofiles.open(key_filepath, 'wb') as f: await f.write(default_key_bytes)
 
         # 2. COVER
         cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
@@ -311,20 +276,17 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                         if resp.status == 200:
                             data = await resp.read()
                             async with aiofiles.open(cover_local_path, 'wb') as f: await f.write(data)
-                        else: cover_local_path = None
-            except: cover_local_path = None
-        
+            except: pass
         if not os.path.exists(cover_local_path) and meta.get('cover') and os.path.exists(meta.get('cover')):
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. LOOP DOWNLOAD (M3U8 -> Key/Map -> Segmen)
+        # 3. LOOP UTAMA
         success_process = False
         play_url = play_url_init
         
         for attempt in range(2):
             use_proxy = (attempt == 0)
             
-            # Setup Session (Direct tanpa modifikasi aneh-aneh)
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
                 jar = aiohttp.CookieJar(unsafe=True)
@@ -337,7 +299,9 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                 session_context = client.session
 
             try:
-                async with (session_context if not use_proxy else asyncio.NullContext()) as session:
+                # [FIX] Gunakan AsyncNullContext lokal
+                ctx = session_context if not use_proxy else AsyncNullContext()
+                async with ctx as session:
                     sess = client.session if use_proxy else session_context
 
                     # A. Fetch M3U8
@@ -355,7 +319,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             play_url = merge_urls(play_url, remote_lines[0])
                             continue 
 
-                    # B. Parse M3U8 & Download Resources
+                    # B. Parse & Download
                     local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
                     remote_segments = []
                     error_in_parsing = False
@@ -366,7 +330,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             line = line.strip()
                             if not line: continue
                             
-                            # Handle Key (Ubah ke .m4a)
                             if line.startswith("#EXT-X-KEY"):
                                 key_match = re.search(r'URI="([^"]+)"', line)
                                 if key_match:
@@ -377,25 +340,21 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                         LOGGER.warning("Key DL Failed.")
                                         error_in_parsing = True
                                         break
-                                    
-                                    # Rewrite playlist to point to local key.m4a
                                     new_line = re.sub(r'URI="[^"]+"', 'URI="key.m4a"', line)
                                     await f_out.write(f"{new_line}\n")
                                 else: await f_out.write(f"{line}\n")
 
-                            # Handle Map (Ubah ke .m4a)
                             elif line.startswith("#EXT-X-MAP"):
                                 map_match = re.search(r'URI="([^"]+)"', line)
                                 if map_match:
                                     raw_map_uri = map_match.group(1)
                                     map_uri = resolve_url(play_url, raw_map_uri) if '?' in raw_map_uri else merge_urls(play_url, raw_map_uri)
-                                    
                                     map_path = os.path.join(track_temp_dir, "init.m4a")
+                                    
                                     if not await download_resource(sess, map_uri, map_path, referer=play_url):
                                         LOGGER.warning("Map DL Failed.")
                                         error_in_parsing = True
                                         break
-                                    
                                     new_line = re.sub(r'URI="[^"]+"', 'URI="init.m4a"', line)
                                     await f_out.write(f"{new_line}\n")
                                 else: await f_out.write(f"{line}\n")
@@ -403,7 +362,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             elif line.startswith("#"): await f_out.write(f"{line}\n")
                             else:
                                 remote_segments.append(line)
-                                # Simpan segmen sebagai .m4a juga
                                 seg_filename = f"seg_{seg_idx:04d}.m4a"
                                 await f_out.write(f"{seg_filename}\n")
                                 seg_idx += 1
@@ -432,11 +390,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 
         if not success_process: return False
 
-        # 4. FFMPEG Processing
-        # Jika output mp3, gunakan -c copy jika source sudah mp3 (320), atau transcode jika perlu.
-        # Biasanya Moov 320 adalah M4A/AAC, jadi perlu transcode ke MP3 atau FLAC.
-        # Kode di bawah ini memaksa format output sesuai ekstensi file final.
-        
+        # 4. FFMPEG
         cmd = [
             'ffmpeg', '-y', '-analyzeduration', '100M', '-probesize', '100M',
             '-allowed_extensions', 'ALL', '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
@@ -487,13 +441,9 @@ async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     target_q = meta.get('moov_quality_code', 'LL')
     
-    # [FIX] Tambahkan prioritas '320'
-    if target_q == 'HR':
-        qualities_to_try = ['HR', 'LL', '320']
-    elif target_q == 'LL':
-        qualities_to_try = ['LL', 'HR', '320']
-    else:
-        qualities_to_try = ['320', 'LL', 'HR']
+    if target_q == 'HR': qualities_to_try = ['HR', 'LL', '320']
+    elif target_q == 'LL': qualities_to_try = ['LL', 'HR', '320']
+    else: qualities_to_try = ['320', 'LL', 'HR']
 
     for quality in qualities_to_try:
         LOGGER.info(f"Mencoba download {meta.get('title')} dengan kualitas: {quality}")
