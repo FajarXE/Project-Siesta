@@ -152,18 +152,15 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, album_cache):
     """
-    Versi Optimized & Fallback:
-    1. Coba ambil Product Meta (Lengkap).
-    2. Jika Gagal, Cek apakah data Shallow punya Album ID.
-    3. Jika ada Album ID (dari Product atau Shallow), ambil Album Meta (Cover HD, Label).
-    4. Gabungkan semua data.
+    Versi FIXED: Menghapus baris yang menyebabkan error 'str object has no attribute get'.
+    Hanya mengandalkan full_product untuk mendapatkan Album ID.
     """
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
     
-    # Variabel untuk menampung data yang akan diproses
-    target_data = shallow_track_meta # Default pakai shallow dulu
-    album_id = shallow_track_meta.get('albumId') or shallow_track_meta.get('album', {}).get('id')
+    # Default: gunakan data shallow jika enrich gagal
+    target_data = shallow_track_meta 
+    album_id = None 
 
     try:
         # 1. Coba ambil Data Product LENGKAP
@@ -171,13 +168,12 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
         
         if full_product:
             target_data = full_product
-            # Update album_id jika di shallow tidak ada tapi di full ada
-            if not album_id:
-                album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
+            # Ambil Album ID hanya dari data Valid API (full_product), JANGAN dari shallow_track_meta
+            album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
         else:
-            LOGGER.warning(f"Moov: Product {track_id} gagal (404/Null), mencoba fallback data Shallow...")
+            LOGGER.warning(f"Moov: Product {track_id} gagal (404/Null), menggunakan data Shallow.")
 
-        # 2. Proses Album Context (Jika Album ID ditemukan)
+        # 2. Proses Album Context (Hanya jika Album ID berhasil didapat)
         album_meta_full = None
         if album_id:
             # Cek Cache
@@ -191,12 +187,8 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
                         album_cache[album_id] = album_meta_full 
                 except Exception as e:
                     LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
-        else:
-            LOGGER.warning(f"Moov: Tidak ditemukan ID Album untuk track {track_id} (Cover mungkin Low Res).")
 
         # 3. Proses Metadata Final
-        # Kita gunakan 'target_data' (bisa full atau shallow)
-        # Tapi kita paksa inject 'cover' dan 'album_meta' dari hasil pencarian Album di atas
         deep_meta = await process_track_metadata(
             target_data, 
             user['r_id'], 
@@ -210,7 +202,7 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
 
     except Exception as e:
         LOGGER.error(f"Error enriching track {track_id}: {e}")
-        # Fallback terakhir jika semua logika di atas crash
+        # Fallback terakhir
         return await download_track(shallow_track_meta, user, folderpath)
 
 async def start_playlist(pid, user):
@@ -239,11 +231,10 @@ async def start_playlist(pid, user):
     tasks = []
     
     for track in pl_meta['tracks']:
-        # Panggil fungsi enrich dengan parameter cache
         tasks.append(enrich_and_download_chart_track(track, user, pl_folder, album_cache))
 
     update_details = {
-        'text': f"Downloading Playlist (Deep Scan): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': f"Downloading Playlist: {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
         'msg': user['bot_msg'], 
         'title': pl_meta['title'], 'type': 'playlist'
     }
@@ -334,6 +325,9 @@ async def download_track(track_meta, user, folderpath):
     try:
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
+            # SAFETY CHECK: Pastikan file_meta bukan None atau Kosong
+            if not file_meta: return False 
+            
             play_url = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url or not content_key: return False
