@@ -151,32 +151,22 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await album_upload(album_meta, user)
 
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, album_cache):
-    """
-    Versi FIXED: Menghapus baris yang menyebabkan error 'str object has no attribute get'.
-    Hanya mengandalkan full_product untuk mendapatkan Album ID.
-    """
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
     
-    # Default: gunakan data shallow jika enrich gagal
     target_data = shallow_track_meta 
     album_id = None 
 
     try:
-        # 1. Coba ambil Data Product LENGKAP
         full_product = await client.get_product_meta(track_id)
-        
         if full_product:
             target_data = full_product
-            # Ambil Album ID hanya dari data Valid API (full_product), JANGAN dari shallow_track_meta
             album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
         else:
             LOGGER.warning(f"Moov: Product {track_id} gagal (404/Null), menggunakan data Shallow.")
 
-        # 2. Proses Album Context (Hanya jika Album ID berhasil didapat)
         album_meta_full = None
         if album_id:
-            # Cek Cache
             if album_id in album_cache:
                 album_meta_full = album_cache[album_id]
             else:
@@ -188,7 +178,6 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
                 except Exception as e:
                     LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
 
-        # 3. Proses Metadata Final
         deep_meta = await process_track_metadata(
             target_data, 
             user['r_id'], 
@@ -202,7 +191,6 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
 
     except Exception as e:
         LOGGER.error(f"Error enriching track {track_id}: {e}")
-        # Fallback terakhir
         return await download_track(shallow_track_meta, user, folderpath)
 
 async def start_playlist(pid, user):
@@ -226,7 +214,6 @@ async def start_playlist(pid, user):
         pl_meta['poster_msg'] = await post_art_poster(user, pl_meta)
     except: pass
 
-    # --- INISIALISASI CACHE ALBUM ---
     album_cache = {} 
     tasks = []
     
@@ -244,7 +231,7 @@ async def start_playlist(pid, user):
     
     pl_meta['tracks'] = successful_tracks
     if not successful_tracks:
-        raise Exception("Gagal mengunduh semua lagu dari Playlist ini.")
+        raise Exception("Gagal mengunduh semua lagu dari Playlist ini (Cek Log untuk detail).")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
@@ -272,7 +259,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['GENRE'] = meta.get('genre', '')
         audio['COMPOSER'] = meta.get('composer', '')
         
-        # PRODUCER
         if meta.get('producer'):
             audio['PRODUCER'] = meta.get('producer')
             
@@ -284,15 +270,13 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
             audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
             audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
         
-        # RECORDED DATE & RELEASE DATE
         if meta.get('date'):
             audio['DATE'] = str(meta.get('date'))
             audio['YEAR'] = str(meta.get('date'))[:4]
             audio['ORIGINALDATE'] = str(meta.get('date'))
             audio['RELEASEDATE'] = str(meta.get('date')) 
-            audio['RECORDEDDATE'] = str(meta.get('date')) # Extra Tag
+            audio['RECORDEDDATE'] = str(meta.get('date')) 
 
-        # LABEL / PUBLISHER
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
             audio['LABEL'] = meta.get('label', '')
@@ -318,27 +302,54 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         LOGGER.error(f"Mutagen Error: {e}")
         return 0
 
+# --- FUNGSI DOWNLOAD UTAMA (DENGAN AUTO FALLBACK & LOGGING) ---
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     client = user['moov_api']
     
+    # 1. Coba Dapatkan File Meta (Stream URL)
+    file_meta = None
+    
+    # Kualitas Utama
+    target_quality = meta.get('moov_quality_code', 'LL')
     try:
-        try:
-            file_meta = await client.get_track_file_meta(meta['itemid'], meta['moov_quality_code'])
-            # SAFETY CHECK: Pastikan file_meta bukan None atau Kosong
-            if not file_meta: return False 
-            
-            play_url = file_meta.get('playUrl')
-            content_key = file_meta.get('contentKey')
-            if not play_url or not content_key: return False
-        except: return False
+        file_meta = await client.get_track_file_meta(meta['itemid'], target_quality)
+    except Exception as e:
+        LOGGER.warning(f"Moov Stream Check Error ({target_quality}): {e}")
 
+    # 2. AUTO-FALLBACK: Jika kualitas tinggi gagal, coba 'LL'
+    if not file_meta and target_quality != 'LL':
+        LOGGER.info(f"Moov: Kualitas {target_quality} tidak tersedia untuk {meta.get('itemid')}, mencoba Fallback ke LL...")
         try:
-            m = hashlib.md5()
-            m.update((content_key + SECRET_SALT).encode('UTF-8'))
-            key_bytes = bytes.fromhex(m.hexdigest())
-        except: return False
+            file_meta = await client.get_track_file_meta(meta['itemid'], 'LL')
+            if file_meta:
+                meta['quality'] = 'FLAC 16bit' # Update label kualitas
+        except: pass
 
+    # 3. Validasi Akhir Stream URL
+    if not file_meta:
+        LOGGER.warning(f"Moov: Gagal mendapatkan Stream URL untuk {meta.get('itemid')} (Mungkin Region Locked/Video?).")
+        return False
+        
+    play_url = file_meta.get('playUrl')
+    content_key = file_meta.get('contentKey')
+    
+    if not play_url or not content_key:
+        LOGGER.warning(f"Moov: PlayUrl/ContentKey kosong untuk {meta.get('itemid')}.")
+        return False
+
+    # 4. Decode Key
+    key_bytes = None
+    try:
+        m = hashlib.md5()
+        m.update((content_key + SECRET_SALT).encode('UTF-8'))
+        key_bytes = bytes.fromhex(m.hexdigest())
+    except Exception as e:
+        LOGGER.error(f"Moov: Gagal decode Key: {e}")
+        return False
+
+    try:
+        # 5. Persiapan File
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
         
@@ -350,22 +361,16 @@ async def download_track(track_meta, user, folderpath):
         
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
-        meta['file_path'] = abs_path
-        meta['path'] = abs_path
-        meta['file'] = abs_path
-        meta['outfile'] = abs_path
         meta['filename'] = os.path.basename(abs_path)
         meta['is_downloaded'] = True
-        meta['success'] = True
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
 
-        # COVER DOWNLOAD
+        # 6. Download Cover (Optional, ignore errors)
         cover_local_path = None
         target_url = meta.get('cover_url')
-
         if target_url:
             cover_local_path = os.path.join(track_temp_dir, "cover.jpg")
             try:
@@ -377,19 +382,19 @@ async def download_track(track_meta, user, folderpath):
                             data = await resp.read()
                             async with aiofiles.open(cover_local_path, 'wb') as f:
                                 await f.write(data)
-                        else:
-                            cover_local_path = None
-            except:
-                cover_local_path = None
+                        else: cover_local_path = None
+            except: cover_local_path = None
         
         if not cover_local_path and meta.get('cover') and os.path.exists(meta.get('cover')):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # SEGMENT DOWNLOAD
+        # 7. Ambil m3u8 dan Segmen
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         async with client.session.get(play_url, headers=hls_headers) as resp:
-            if resp.status != 200: return False
+            if resp.status != 200: 
+                LOGGER.warning(f"Moov: Gagal akses m3u8 {resp.status}")
+                return False
             m3u8_content = await resp.text()
 
         target_duration = 10
@@ -403,6 +408,7 @@ async def download_track(track_meta, user, folderpath):
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
+        # Download Segmen
         for index, seg_url in enumerate(remote_segments):
             seg_name = f"seg_{index:04d}.flac"
             seg_path = os.path.join(track_temp_dir, seg_name)
@@ -421,9 +427,11 @@ async def download_track(track_meta, user, folderpath):
                 except: continue
             
             if not success:
+                LOGGER.warning(f"Moov: Gagal download segmen {seg_name}")
                 shutil.rmtree(track_temp_dir)
                 return False
 
+        # Buat Local M3U8
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         iv_line = ""
         iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
@@ -440,6 +448,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
+        # 8. Decrypt & Merge via FFmpeg
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
@@ -459,19 +468,18 @@ async def download_track(track_meta, user, folderpath):
             shutil.rmtree(track_temp_dir)
             return False
 
-        if not os.path.exists(final_filepath): return False
-        
-        try:
-            fsize = os.path.getsize(final_filepath)
-            meta['filesize'] = fsize
-            if fsize == 0: return False
-        except: pass
+        if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) == 0:
+            LOGGER.error("Moov: File hasil FFmpeg kosong/tidak ada.")
+            return False
+            
+        meta['filesize'] = os.path.getsize(final_filepath)
 
+        # 9. Lyrics & Tagging
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
             if track_id: lyrics_text = await client.get_lyrics(track_id)
-        except: lyrics_text = None
+        except: pass
 
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         if real_duration > 0: meta['duration'] = real_duration
@@ -494,7 +502,7 @@ async def download_track(track_meta, user, folderpath):
         shutil.rmtree(track_temp_dir)
 
     except Exception as e:
-        LOGGER.error(f"DL Crash: {e}")
+        LOGGER.error(f"DL Crash: {e}\n{traceback.format_exc()}")
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         return False
         
