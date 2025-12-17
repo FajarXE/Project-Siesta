@@ -91,16 +91,13 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             t for t in album_meta['tracks'] 
             if str(t.get('itemid')) == str(filter_track_id)
         ]
-        
         if not filtered_tracks:
             filtered_tracks = [
                 t for t in album_meta['tracks'] 
                 if str(filter_track_id) in str(t.get('itemid'))
             ]
-        
         if not filtered_tracks:
             raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
-            
         album_meta['tracks'] = filtered_tracks
 
     base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
@@ -153,7 +150,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
-# --- FUNGSI BARU: ENRICH METADATA CHART ---
+# --- FUNGSI KUNCI: ENRICH METADATA CHART ---
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath):
     """
     Mengambil metadata lengkap (Product Meta) untuk lagu chart agar 
@@ -163,21 +160,21 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath):
     track_id = shallow_track_meta.get('itemid')
     
     try:
-        # 1. Ambil Metadata Lengkap (Product Meta)
-        # Ini kuncinya: Metadata chart itu 'Lite', Product Meta itu 'Full'
+        # 1. Minta Metadata Lengkap (Product Meta)
+        # Data dari Chart itu 'Lite' (Lingkaran Merah), kita butuh 'Full' (Lingkaran Biru)
         full_data = await client.get_product_meta(track_id)
         if full_data:
-            # 2. Proses ulang metadata dengan data lengkap
+            # 2. Proses ulang metadata. PENTING: album_meta=None
+            # album_meta=None memaksa fungsi untuk pakai nama Album Asli lagu tersebut,
+            # bukan nama Playlist/Chart.
             deep_meta = await process_track_metadata(full_data, user['r_id'], user, cover=None, album_meta=None)
             
-            # 3. Pastikan folder path tetap mengarah ke folder Playlist/Chart
-            # (Agar tidak berantakan ke folder artis masing-masing)
+            # 3. Tetap simpan di folder Playlist
             deep_meta['folderpath'] = folderpath
             
-            # 4. Download dengan metadata lengkap
+            # 4. Download
             return await download_track(deep_meta, user, folderpath)
         else:
-            # Fallback jika gagal ambil full meta
             return await download_track(shallow_track_meta, user, folderpath)
             
     except Exception as e:
@@ -208,8 +205,7 @@ async def start_playlist(pid, user):
     except: pass
 
     tasks = []
-    # --- PERUBAHAN DI SINI ---
-    # Gunakan fungsi 'enrich_and_download_chart_track' alih-alih 'download_track' langsung
+    # --- PANGGIL FUNGSI ENRICH ---
     for track in pl_meta['tracks']:
         tasks.append(enrich_and_download_chart_track(track, user, pl_folder))
 
@@ -260,7 +256,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         if meta.get('date'):
             audio['DATE'] = str(meta.get('date'))
             audio['ORIGINALDATE'] = str(meta.get('date'))
-            # Paksa tulis YEAR
             try: audio['YEAR'] = str(meta.get('date'))[:4]
             except: pass
 
