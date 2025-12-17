@@ -15,10 +15,19 @@ def is_explicit_strict(data):
     return False
 
 def get_moov_cover(url):
+    """
+    Membersihkan URL cover untuk mendapatkan file ASLI (Original/HD).
+    """
     if not url: return None
     clean_url = url.split("?")[0]
+    
+    # 1. Hapus folder resize (contoh: /resize/118x118/)
     clean_url = re.sub(r'\/resize\/\d+x\d+', '', clean_url)
+    
+    # 2. Hapus suffix dimensi di nama file (contoh: _118x118.jpg -> .jpg)
     clean_url = re.sub(r'_(\d{2,4}x\d{2,4})', '', clean_url)
+    
+    # 3. Normalisasi protokol
     clean_url = clean_url.replace('//', '/').replace('https:/', 'https://').replace('http:/', 'http://')
     return clean_url
 
@@ -57,14 +66,12 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['itemid'] = track_data.get('productId')
     metadata['title'] = track_data.get('productTitle')
 
-    # --- TAMBAHAN PENTING: SIMPAN ALBUM ID UNTUK FALLBACK ---
     if track_data.get('albumId'):
         metadata['moov_album_id'] = track_data.get('albumId')
     elif isinstance(track_data.get('album'), dict):
         metadata['moov_album_id'] = track_data.get('album').get('id')
-    # --------------------------------------------------------
     
-    # --- PENGOLAHAN ARTIS & PRODUCER (Deep Search) ---
+    # --- ARTIS ---
     artists_raw = track_data.get('artists', [])
     if not artists_raw and 'artist' in track_data:
         if isinstance(track_data['artist'], str): 
@@ -90,6 +97,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['artist'] = ", ".join(main_artists)
     metadata['producer'] = ", ".join(producers) 
     
+    # --- LABEL ---
     label_val = ""
     label_keys = ['albumLabel', 'label', 'recordLabel', 'company', 'copyright']
     for key in label_keys:
@@ -167,8 +175,11 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
+    # --- LOGIKA COVER BARU ---
+    # Jika cover (filepath HD) diberikan, gunakan itu dan JANGAN cari URL lain.
     if cover:
         metadata['cover'] = cover
+        metadata['cover_url'] = None # Hapus URL agar download.py tidak menimpa dengan versi low-res
     elif not metadata.get('cover_url'):
         found_url = None
         if track_data.get('largeImage'):
@@ -188,7 +199,8 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
 
         if found_url:
             metadata['cover_url'] = get_moov_cover(found_url)
-            metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
+            # Jika tidak ada file lokal cover, download nanti
+            # tapi tidak kita set 'cover' path disini karena belum didownload
 
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
