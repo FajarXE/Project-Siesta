@@ -26,6 +26,11 @@ class MoovAPI:
 
     async def _get_session(self):
         if not self.session or self.session.closed:
+            # --- KONFIGURASI TIMEOUT YANG LEBIH SABAR ---
+            # Connect: Waktu tunggu proxy connect (60 detik)
+            # Total: Waktu total request selesai (120 detik)
+            timeout = aiohttp.ClientTimeout(total=120, connect=60)
+            
             if self.proxy:
                 if not ProxyConnector:
                     raise ImportError("Anda menggunakan Proxy SOCKS5 tapi 'aiohttp-socks' belum diinstal.")
@@ -37,11 +42,11 @@ class MoovAPI:
                     proxy_url = proxy_url.replace("socks5h://", "socks5://")
                     use_rdns = True
                 
-                LOGGER.info(f"MoovAPI: Menggunakan ProxyConnector (RDNS={use_rdns})")
+                LOGGER.info(f"MoovAPI: Menggunakan ProxyConnector (RDNS={use_rdns}, Timeout=60s)")
                 connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
-                self.session = aiohttp.ClientSession(connector=connector)
+                self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
             else:
-                self.session = aiohttp.ClientSession()
+                self.session = aiohttp.ClientSession(timeout=timeout)
         return self.session
 
     async def login(self, email, password):
@@ -143,7 +148,7 @@ class MoovAPI:
                     if resp.status == 200:
                         try:
                             data = await resp.json()
-                        except: # Handle jika response bukan JSON (misal HTML Error)
+                        except: 
                             continue
                             
                         data_obj = data.get('dataObject')
@@ -171,7 +176,6 @@ class MoovAPI:
         }
         try:
             async with session.get(f"{self.base_url}/product/getProduct", headers=self.headers, params=params) as resp:
-                # FIX: Cek status code dan content type untuk menghindari crash pada 404 HTML
                 if resp.status != 200:
                     LOGGER.warning(f"Moov getProduct Failed: {product_id} returned {resp.status}")
                     return None
@@ -180,7 +184,6 @@ class MoovAPI:
                     data = await resp.json()
                     return data.get('dataObject')
                 except Exception:
-                    # Silent fail jika bukan JSON (misal HTML 404 body)
                     return None
         except Exception as e:
             LOGGER.error(f"Moov getProduct Exception ({product_id}): {e}")
