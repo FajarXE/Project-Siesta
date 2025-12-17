@@ -150,7 +150,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
-# --- PERBAIKAN: Gunakan moov_album_id untuk Fallback ---
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, album_cache):
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
@@ -167,11 +166,9 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
     except Exception:
         LOGGER.warning(f"Moov: Exception saat ambil product {track_id}.")
 
-    # JIKA FALLBACK: Ambil ID dari metadata shallow (via field baru moov_album_id)
     if not album_id:
         album_id = shallow_track_meta.get('moov_album_id')
 
-    # Ambil Metadata Album (Context)
     album_meta_full = None
     if album_id:
         if album_id in album_cache:
@@ -185,11 +182,9 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
             except Exception as e:
                 LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
 
-    # KONSTRUKSI FINAL METADATA
     deep_meta = None
 
     if full_product:
-        # KASUS A: Data Lengkap Tersedia
         deep_meta = await process_track_metadata(
             full_product, 
             user['r_id'], 
@@ -198,10 +193,8 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
             album_meta=album_meta_full if album_meta_full else None
         )
     else:
-        # KASUS B: Fallback ke Shallow
         deep_meta = shallow_track_meta.copy()
         
-        # Inject Album Data Manual (Label & Date akan masuk di sini)
         if album_meta_full:
             if album_meta_full.get('cover'):
                 deep_meta['cover'] = album_meta_full['cover']
@@ -407,12 +400,27 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
+        # --- PERBAIKAN: Retry Logic untuk M3U8 Fetch ---
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
-        async with client.session.get(play_url, headers=hls_headers) as resp:
-            if resp.status != 200: 
-                LOGGER.warning(f"Moov: Gagal akses m3u8 {resp.status}")
-                return False
-            m3u8_content = await resp.text()
+        m3u8_content = None
+        
+        for _ in range(3): # Coba 3 kali
+            try:
+                async with client.session.get(play_url, headers=hls_headers) as resp:
+                    if resp.status == 200: 
+                        m3u8_content = await resp.text()
+                        break
+                    else:
+                        LOGGER.warning(f"Moov: M3U8 Fetch Status {resp.status}, Retrying...")
+            except Exception as e:
+                LOGGER.warning(f"Moov: M3U8 Fetch Exception ({e}), Retrying...")
+                await asyncio.sleep(2) # Tunggu 2 detik sebelum retry
+        
+        if not m3u8_content:
+            LOGGER.error(f"Moov: Gagal mengambil M3U8 setelah 3x percobaan.")
+            shutil.rmtree(track_temp_dir)
+            return False
+        # -----------------------------------------------
 
         target_duration = 10
         media_sequence = 0
