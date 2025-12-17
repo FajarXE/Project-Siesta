@@ -11,34 +11,47 @@ from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
 from ..message import edit_message
-from .metadata import process_album_metadata
+from .metadata import process_album_metadata, process_playlist_metadata # Import fungsi baru
+from ..uploder import album_upload, playlist_upload
 from ..utils import (
     format_string, run_concurrent_tasks, zip_handler, 
     fetch_zip_settings, post_art_poster
 )
-from ..uploder import album_upload
 
 SECRET_SALT = "F4:8E:09:CE:54:F7SeCrEtKkK"
 
 def safe_name(name):
-    # TAMBAHAN: Menambahkan karakter '#' ke dalam regex agar diganti jadi '_'
-    # FFmpeg akan error jika path mengandung '#'
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 async def start_moov(url: str, user: dict):
     clean_url = url.replace("#/", "/") 
     
+    # Handle Album
     if "/album/" in clean_url:
         raw_id = clean_url.split("/album/")[-1]
         album_id = raw_id.split("?")[0].split("/")[0]
         await start_album(album_id, user)
         
+    # Handle Song
     elif "/song/" in clean_url:
         raw_id = clean_url.split("/song/")[-1]
         track_id = raw_id.split("?")[0].split("/")[0]
         await start_track_single(track_id, user)
 
-    # Parsing Link Share
+    # --- TAMBAHAN: Handle Chart dan Playlist ---
+    elif "/chart/" in clean_url or "/playlist/" in clean_url:
+        # Contoh: .../chart/PC1000000014/... atau .../playlist/12345
+        if "/chart/" in clean_url:
+            raw_id = clean_url.split("/chart/")[-1]
+        else:
+            raw_id = clean_url.split("/playlist/")[-1]
+            
+        pid = raw_id.split("?")[0].split("/")[0]
+        LOGGER.info(f"Moov: Terdeteksi Chart/Playlist ID: {pid}")
+        await start_playlist(pid, user)
+    # -------------------------------------------
+
+    # Handle Share Link
     elif "/share/" in clean_url and "/ADO/" in clean_url:
         try:
             parts = clean_url.split("/AUDIO/")
@@ -53,14 +66,13 @@ async def start_moov(url: str, user: dict):
         except Exception as e:
             raise Exception(f"Gagal memparsing link Share Moov: {e}")
     else:
-        raise Exception("Link Moov tidak dikenali. Saat ini hanya mendukung Album, Lagu, dan Share Link.")
+        # Pesan error diupdate
+        raise Exception("Link Moov tidak dikenali. Mendukung: Album, Lagu, Chart, Playlist, dan Share Link.")
 
 async def start_track_single(track_id, user):
     client = user['moov_api']
     try:
-        if not hasattr(client, 'get_product_meta'):
-             raise Exception("Client Moov versi lama. Gunakan link Album/Share.")
-        
+        # Coba ambil info produk
         track_data = await client.get_product_meta(track_id)
         if not track_data: raise Exception("Data lagu tidak ditemukan.")
 
@@ -89,13 +101,14 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         ]
         
         if not filtered_tracks:
+            # Coba substring match jika ID tidak persis
             filtered_tracks = [
                 t for t in album_meta['tracks'] 
                 if str(filter_track_id) in str(t.get('itemid'))
             ]
         
         if not filtered_tracks:
-            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
+            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan di album ini.")
             
         album_meta['tracks'] = filtered_tracks
 
@@ -106,11 +119,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     
     album_meta['folderpath'] = album_folder
 
-    # --- LOGIKA POSTER ---
-    # Hanya kirim Poster jika DOWNLOAD ALBUM FULL (filter_track_id kosong)
     if upload and not filter_track_id:
         try:
-            from ..utils import post_art_poster
             album_meta['poster_msg'] = await post_art_poster(user, album_meta)
         except Exception as e:
             LOGGER.error(f"Poster Error (Ignored): {e}")
@@ -129,30 +139,20 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     task_results = await run_concurrent_tasks(tasks, update_details)
     successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
     
-    # Update tracks list
     album_meta['tracks'] = successful_tracks
     
     if successful_tracks:
-        LOGGER.info(f"[HANDLER FINAL] Tracks Ready. Sample: {successful_tracks[0]['filepath']}")
-        
-        # --- FIX CRITICAL UNTUK UPLOADER ---
         if filter_track_id and len(successful_tracks) == 1:
             track_data = successful_tracks[0]
-            # Copy data track ke root metadata (agar uploader bisa baca info file jika perlu)
             album_meta.update(track_data)
-            # Pastikan list tracks tetap ada dan benar
             album_meta['tracks'] = successful_tracks
-            
-            # [SANGAT PENTING]
-            # Kembalikan tipe ke 'album' agar uploder.py mau memprosesnya via batch_telegram_upload.
-            album_meta['type'] = 'album'
+            album_meta['type'] = 'album' 
             
     else:
         raise Exception("Gagal mengunduh lagu.")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-        # Zip hanya jika full album (bukan single track)
         if album_zip and not filter_track_id: 
             await edit_message(user['bot_msg'], "Zipping...")
             album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -162,6 +162,57 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
     if upload:
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
+
+# --- FUNGSI BARU: HANDLER PLAYLIST/CHART ---
+async def start_playlist(pid, user):
+    client = user['moov_api']
+    try:
+        raw_data = await client.get_playlist_meta(pid)
+        if not raw_data: raise Exception("Metadata playlist/chart kosong.")
+        pl_meta = await process_playlist_metadata(raw_data, user['r_id'], user)
+    except Exception as e:
+        raise Exception(f"Gagal mengambil metadata Playlist/Chart: {e}")
+
+    base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
+    safe_title = safe_name(pl_meta['title'])
+    # Folder playlist biasanya di root folder user atau subfolder "Playlists"
+    pl_folder = os.path.join(base_dir, str(user['r_id']), "Moov", "Playlists", safe_title)
+    
+    pl_meta['folderpath'] = pl_folder
+
+    try:
+        pl_meta['poster_msg'] = await post_art_poster(user, pl_meta)
+    except: pass
+
+    tasks = []
+    for track in pl_meta['tracks']:
+        tasks.append(download_track(track, user, pl_folder))
+
+    update_details = {
+        'text': f"Downloading Playlist: {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'msg': user['bot_msg'], 
+        'title': pl_meta['title'], 'type': 'playlist'
+    }
+    
+    task_results = await run_concurrent_tasks(tasks, update_details)
+    successful_tracks = [res for res in task_results if isinstance(res, dict) and res.get('filepath')]
+    
+    pl_meta['tracks'] = successful_tracks
+    
+    if not successful_tracks:
+        raise Exception("Gagal mengunduh lagu dari Playlist ini.")
+
+    try:
+        playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+        if playlist_zip: 
+            await edit_message(user['bot_msg'], "Zipping...")
+            pl_meta['zip_path'] = await zip_handler(pl_meta['folderpath'])
+    except Exception as e:
+        LOGGER.error(f"Zip Error: {e}")
+        
+    await edit_message(user['bot_msg'], "Uploading...")
+    await playlist_upload(pl_meta, user)
+# -------------------------------------------
 
 async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
     try:
@@ -237,7 +288,6 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        # --- PATH KEYS LENGKAP (Agar Uploader Valid) ---
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
         meta['file_path'] = abs_path
@@ -247,7 +297,6 @@ async def download_track(track_meta, user, folderpath):
         meta['filename'] = os.path.basename(abs_path)
         meta['is_downloaded'] = True
         meta['success'] = True
-        # -----------------------------------------------
         
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
@@ -331,7 +380,6 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # FFMPEG
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
@@ -353,25 +401,21 @@ async def download_track(track_meta, user, folderpath):
 
         if not os.path.exists(final_filepath): return False
         
-        # --- ISI FILESIZE (Wajib buat uploader) ---
         try:
             fsize = os.path.getsize(final_filepath)
             meta['filesize'] = fsize
             if fsize == 0: return False
         except: pass
 
-        # LYRICS
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
             if track_id: lyrics_text = await client.get_lyrics(track_id)
         except: lyrics_text = None
 
-        # TAGGING
         real_duration = await apply_mutagen_tags(final_filepath, meta, cover_local_path, lyrics=lyrics_text)
         if real_duration > 0: meta['duration'] = real_duration
             
-        # COVER CLEANUP
         if cover_local_path and os.path.exists(cover_local_path):
             album_cover_path = os.path.join(folderpath, "cover.jpg")
             if not os.path.exists(album_cover_path):
