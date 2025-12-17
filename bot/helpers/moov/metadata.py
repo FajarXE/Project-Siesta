@@ -5,7 +5,7 @@ import re
 import aiohttp
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-from .manager import moov_manager
+# HAPUS IMPORT moov_manager DARI SINI UNTUK MENCEGAH CIRCULAR IMPORT
 from bot.logger import LOGGER
 
 def is_explicit_strict(data):
@@ -23,6 +23,10 @@ def get_moov_cover(url):
     return clean_url
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
+    # --- LOCAL IMPORT (FIX IMPORT ERROR) ---
+    from .manager import moov_manager
+    # ---------------------------------------
+
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
@@ -60,12 +64,10 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         metadata['date'] = track_date_raw
         metadata['year'] = track_date_raw[:4]
     
-    # Wariskan data Album/Playlist jika ada
     if album_meta:
         if not metadata['albumartist']: metadata['albumartist'] = album_meta.get('artist', '')
         if not metadata['genre']: metadata['genre'] = album_meta.get('genre', '')
         
-        # Jangan timpa totaltracks jika dari playlist (karena track bisa dari album beda)
         if album_meta.get('type') == 'album':
             metadata['totaltracks'] = album_meta.get('totaltracks', '')
             metadata['totalvolumes'] = album_meta.get('totalvolumes', '')
@@ -93,6 +95,8 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
     avail_qualities = track_data.get('qualities', [])
+    
+    # Gunakan instance dari local import
     user_pref = moov_manager.get_user_quality(user['user_id']) 
     
     target_quality = 'LL' 
@@ -118,7 +122,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     titles = album_data.get('engTitle', [])
-    # Fallback title jika engTitle kosong
     if not titles: titles = album_data.get('title', [])
         
     metadata['title'] = titles[0] if titles else "Unknown Album"
@@ -198,22 +201,20 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         
     return metadata
 
-# --- FUNGSI BARU UNTUK PLAYLIST/CHART ---
 async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     titles = pl_data.get('engTitle', [])
-    if not titles: titles = pl_data.get('title', []) # Fallback
+    if not titles: titles = pl_data.get('title', []) 
     
     metadata['title'] = titles[0] if titles else "Unknown Playlist"
-    metadata['album'] = metadata['title'] # Untuk playlist, album name = playlist name
+    metadata['album'] = metadata['title']
     
     metadata['provider'] = 'Moov'
     metadata['type'] = 'playlist'
     metadata['itemid'] = pl_data.get('profileId')
     
-    # Playlist biasanya "Various Artists" atau kosong
     metadata['artist'] = "Moov Playlist"
     metadata['albumartist'] = "Various Artists"
 
@@ -225,24 +226,21 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
 
     metadata['tracks'] = []
     
-    # Struktur playlist kadang berbeda, cek 'tracks' atau 'products'
+    # Logic pencarian tracks di seluruh modul
     raw_tracks = pl_data.get('tracks', [])
     if not raw_tracks:
-        # Coba cek di modules jika strukturnya mirip album
         modules = pl_data.get('modules', [])
-        if modules:
-            raw_tracks = modules[0].get('products', [])
+        for mod in modules:
+            prods = mod.get('products', [])
+            if prods:
+                raw_tracks.extend(prods)
 
     for idx, track_raw in enumerate(raw_tracks, 1):
-        # Playlist tidak punya disc/track number yang konsisten, kita buat sendiri
         track_raw['trackNo'] = idx
         track_raw['discNo'] = 1
         
-        # PENTING: Jangan pass metadata playlist sebagai 'album_meta' sepenuhnya
-        # agar track mengambil metadata asli dari album asalnya (jika ada di JSON)
         t_meta = await process_track_metadata(track_raw, r_id, user, cover=None, album_meta=None)
         
-        # Override cover track jika track tidak punya cover, pakai cover playlist
         if not t_meta.get('cover') and metadata.get('cover'):
              t_meta['cover'] = metadata['cover']
 
@@ -253,4 +251,3 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
         metadata['quality'] = metadata['tracks'][0]['quality']
 
     return metadata
-# ----------------------------------------
