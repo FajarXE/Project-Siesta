@@ -152,8 +152,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath):
     """
-    Mengambil metadata lengkap (Product Meta) agar tag:
-    Album/Performer, Label, Date, Producer lengkap sesuai Single Track.
+    Mengambil metadata lengkap (Product Meta).
     """
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
@@ -161,7 +160,6 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath):
     try:
         full_data = await client.get_product_meta(track_id)
         if full_data:
-            # PENTING: cover=None agar mencari cover asli track (bukan cover playlist)
             deep_meta = await process_track_metadata(full_data, user['r_id'], user, cover=None, album_meta=None)
             deep_meta['folderpath'] = folderpath
             return await download_track(deep_meta, user, folderpath)
@@ -193,12 +191,12 @@ async def start_playlist(pid, user):
     except: pass
 
     tasks = []
-    # Menggunakan fungsi enrich agar metadata lengkap (Producer/Label/Date)
+    # Menggunakan fungsi enrich
     for track in pl_meta['tracks']:
         tasks.append(enrich_and_download_chart_track(track, user, pl_folder))
 
     update_details = {
-        'text': f"Downloading Playlist (Full): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': f"Downloading Playlist: {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
         'msg': user['bot_msg'], 
         'title': pl_meta['title'], 'type': 'playlist'
     }
@@ -226,7 +224,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio = FLAC(filepath)
         audio.delete() 
         
-        # --- MAPPING TAG LENGKAP ---
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
         audio['PERFORMER'] = meta.get('artist', '') 
@@ -237,7 +234,6 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['GENRE'] = meta.get('genre', '')
         audio['COMPOSER'] = meta.get('composer', '')
         
-        # 1. Producer
         if meta.get('producer'):
             audio['PRODUCER'] = meta.get('producer')
             
@@ -249,19 +245,16 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
             audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
             audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
         
-        # 2. Date / Recorded Date
         if meta.get('date'):
             audio['DATE'] = str(meta.get('date'))
             audio['YEAR'] = str(meta.get('date'))[:4]
             audio['ORIGINALDATE'] = str(meta.get('date'))
             audio['RELEASEDATE'] = str(meta.get('date')) 
 
-        # 3. Label
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
             audio['LABEL'] = meta.get('label', '')
             audio['PUBLISHER'] = meta.get('label', '') 
-        # ---------------------------
 
         if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
             audio['LYRICS'] = lyrics
