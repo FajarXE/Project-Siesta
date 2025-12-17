@@ -16,12 +16,37 @@ def is_explicit_strict(data):
     return False
 
 def get_moov_cover(url):
+    """
+    Mengubah resolusi gambar menjadi 1000x1000 (Maksimal).
+    Menangkap pola seperti /118x118/ atau _350x350.jpg
+    """
     if not url: return None
     clean_url = url.split("?")[0]
     
-    # PERBAIKAN: Paksa ganti resolusi apapun (misal 118x118) menjadi 1000x1000
-    # Pola regex: slash, angka, 'x', angka, slash
-    return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
+    # PERBAIKAN: Regex lebih agresif. Ganti pola 'ANGKAxANGKA' dengan '1000x1000'
+    # Ini akan mengubah 118x118 menjadi 1000x1000
+    return re.sub(r'(\d{2,4}x\d{2,4})', '1000x1000', clean_url)
+
+def parse_date(date_val):
+    """
+    Membersihkan dan memformat tanggal dari berbagai format Moov.
+    """
+    if not date_val: return None
+    s = str(date_val).strip()
+    if s.lower() == 'none' or s == "": return None
+    
+    # Format: 2023-01-01T00:00:00
+    if 'T' in s: return s.split('T')[0]
+    
+    # Format: 20230101
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+        
+    # Format sudah benar: 2023-01-01
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+        return s
+        
+    return None
 
 def find_products_recursive(data, results=None):
     if results is None: results = []
@@ -29,7 +54,6 @@ def find_products_recursive(data, results=None):
     if isinstance(data, dict):
         pid = data.get('productId') or data.get('contentId') or data.get('mtgContentId')
         title = data.get('productTitle') or data.get('title') or data.get('trackTitle')
-        # Longgarkan syarat artist agar tidak strict untuk compilations
         has_artist = 'artist' in data or 'artists' in data
         
         if pid and title:
@@ -87,26 +111,33 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     is_track_explicit = is_explicit_strict(track_data)
     metadata['explicit'] = "True" if is_track_explicit else "False"
 
-    # --- PERBAIKAN METADATA TANGGAL ---
-    track_date_raw = str(track_data.get('publishDate', ''))
-    if not track_date_raw or track_date_raw == 'None':
-        track_date_raw = str(track_data.get('releaseDate', ''))
-        
-    # Jika masih kosong, cari di dalam objek 'album' (Khusus Chart/Playlist)
-    if (not track_date_raw or track_date_raw == 'None') and 'album' in track_data:
+    # --- PERBAIKAN PENCARIAN TANGGAL (COMPREHENSIVE) ---
+    final_date = None
+    
+    # Daftar kunci yang mungkin berisi tanggal
+    date_keys = ['publishDate', 'releaseDate', 'originalReleaseDate', 'createdOn']
+    
+    # 1. Cari di data Track
+    for key in date_keys:
+        d = parse_date(track_data.get(key))
+        if d:
+            final_date = d
+            break
+            
+    # 2. Jika tidak ketemu, cari di data Album yang tertaut (untuk Chart/Playlist)
+    if not final_date and 'album' in track_data:
         alb_data = track_data.get('album')
         if isinstance(alb_data, dict):
-            track_date_raw = str(alb_data.get('publishDate', ''))
-            if not track_date_raw or track_date_raw == 'None':
-                track_date_raw = str(alb_data.get('releaseDate', ''))
-
-    if 'T' in track_date_raw: track_date_raw = track_date_raw.split('T')[0]
-    if track_date_raw == 'None': track_date_raw = ""
-        
-    if track_date_raw:
-        metadata['date'] = track_date_raw
-        metadata['year'] = track_date_raw[:4]
-    # ----------------------------------
+            for key in date_keys:
+                d = parse_date(alb_data.get(key))
+                if d:
+                    final_date = d
+                    break
+    
+    if final_date:
+        metadata['date'] = final_date
+        metadata['year'] = final_date[:4]
+    # ---------------------------------------------------
     
     if album_meta:
         if not metadata['albumartist']: metadata['albumartist'] = album_meta.get('artist', '')
@@ -115,7 +146,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             metadata['totaltracks'] = album_meta.get('totaltracks', '')
             metadata['totalvolumes'] = album_meta.get('totalvolumes', '')
         
-        # Fallback date ke album jika track date kosong
+        # Fallback date ke album global jika track date kosong
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
             metadata['year'] = album_meta.get('year', '')
@@ -128,6 +159,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
+    # --- LOGIKA COVER ---
     if cover:
         metadata['cover'] = cover
     elif not metadata.get('cover_url'):
@@ -197,21 +229,25 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     tags = album_data.get('tags', [])
     if 'Explicit' in tags or 'Parental Advisory' in tags: is_album_explicit = True
 
-    moov_date = ""
-    moov_year = ""
-    if len(titles) > 2:
-        moov_date = titles[2]
-        try: moov_year = moov_date.split('-')[0]
-        except: pass
-    if not moov_date:
-        pdate = str(album_data.get('publishDate', ''))
-        if pdate: 
-            if 'T' in pdate: pdate = pdate.split('T')[0]
-            moov_date = pdate
-            moov_year = pdate.split('-')[0]
+    # Parse Date untuk Album
+    final_date = None
+    date_keys = ['publishDate', 'releaseDate', 'originalReleaseDate']
+    for key in date_keys:
+        d = parse_date(album_data.get(key))
+        if d:
+            final_date = d
+            break
             
-    metadata['year'] = moov_year
-    metadata['date'] = moov_date 
+    if final_date:
+        metadata['date'] = final_date
+        metadata['year'] = final_date[:4]
+    else:
+        # Fallback parse dari judul jika ada
+        if len(titles) > 2:
+            try: 
+                metadata['year'] = titles[2].split('-')[0]
+                metadata['date'] = titles[2]
+            except: pass
 
     genres = album_data.get('genres', [])
     if genres:
