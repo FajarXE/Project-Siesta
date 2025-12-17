@@ -5,7 +5,7 @@ import re
 import aiohttp
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-# JANGAN import moov_manager di sini (penyebab circular import)
+# HAPUS moov_manager dari sini untuk mencegah circular import
 from bot.logger import LOGGER
 
 def is_explicit_strict(data):
@@ -22,8 +22,38 @@ def get_moov_cover(url):
         return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
     return clean_url
 
+# --- FUNGSI PENCARI LAGU REKURSIF (BARU) ---
+def find_products_recursive(data, results=None):
+    if results is None: results = []
+    
+    if isinstance(data, dict):
+        # Cek apakah dict ini sendiri adalah Track? (Punya ID dan Judul)
+        if 'productId' in data and 'productTitle' in data:
+            # Pastikan bukan duplikat
+            pid = data.get('productId')
+            if not any(x.get('productId') == pid for x in results):
+                results.append(data)
+            return
+
+        for key, value in data.items():
+            # Jika ketemu key 'products' atau 'tracks' yang berisi list, iterasi isinya
+            if key in ['products', 'tracks', 'playlist'] and isinstance(value, list):
+                for item in value:
+                    find_products_recursive(item, results)
+            
+            # Jika value adalah dict atau list, gali lebih dalam
+            elif isinstance(value, (dict, list)):
+                 find_products_recursive(value, results)
+                 
+    elif isinstance(data, list):
+        for item in data:
+            find_products_recursive(item, results)
+            
+    return results
+# -------------------------------------------
+
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
-    # --- LOCAL IMPORT (Fix Circular Import) ---
+    # --- LOCAL IMPORT (FIX CIRCULAR IMPORT) ---
     from .manager import moov_manager
     # ------------------------------------------
 
@@ -175,25 +205,26 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
         
     metadata['tracks'] = []
-    modules = album_data.get('modules', [])
-    if modules:
-        products = modules[0].get('products', [])
-        metadata['totaltracks'] = len(products)
-        max_disc = 1
+    
+    # Gunakan pencarian rekursif juga untuk album agar lebih aman
+    raw_products = find_products_recursive(album_data)
+    
+    # Filter dan struktur ulang untuk album
+    max_disc = 1
+    for idx, track_raw in enumerate(raw_products, 1):
+        track_raw['trackNo'] = idx 
+        if not is_album_explicit:
+            if is_explicit_strict(track_raw): is_album_explicit = True
+        try:
+            d = int(track_raw.get('discNo', 1))
+            if d > max_disc: max_disc = d
+        except: pass
         
-        for idx, track_raw in enumerate(products, 1):
-            track_raw['trackNo'] = idx 
-            if not is_album_explicit:
-                if is_explicit_strict(track_raw): is_album_explicit = True
-            try:
-                d = int(track_raw.get('discNo', 1))
-                if d > max_disc: max_disc = d
-            except: pass
-            
-            t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
-            metadata['tracks'].append(t_meta)
-        
-        metadata['totalvolumes'] = str(max_disc)
+        t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
+        metadata['tracks'].append(t_meta)
+    
+    metadata['totaltracks'] = len(metadata['tracks'])
+    metadata['totalvolumes'] = str(max_disc)
 
     metadata['explicit'] = "True" if is_album_explicit else "False"
     if metadata['tracks']:
@@ -226,30 +257,12 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
 
     metadata['tracks'] = []
     
-    # --- PERBAIKAN LOGIKA PENCARIAN TRACKS ---
-    raw_tracks = pl_data.get('tracks', [])
+    # --- PENGGUNAAN FUNGSI REKURSIF ---
+    # Cari semua produk/lagu dimanapun mereka berada dalam JSON
+    raw_tracks = find_products_recursive(pl_data)
     
-    # Cek 2: Cek 'products' di root (kadang Chart begitu)
-    if not raw_tracks:
-        raw_tracks = pl_data.get('products', [])
-
-    # Cek 3: Cek 'modules'
-    if not raw_tracks:
-        modules = pl_data.get('modules', [])
-        for mod in modules:
-            # Sub-Cek A: products langsung di module
-            prods = mod.get('products', [])
-            if prods:
-                raw_tracks.extend(prods)
-                continue
-            
-            # Sub-Cek B: products di dalam 'data' (Struktur Chart/Program)
-            mod_data = mod.get('data')
-            if isinstance(mod_data, dict):
-                prods_nested = mod_data.get('products', [])
-                if prods_nested:
-                    raw_tracks.extend(prods_nested)
-    # -----------------------------------------
+    LOGGER.info(f"Moov Playlist/Chart: Ditemukan {len(raw_tracks)} lagu melalui pencarian rekursif.")
+    # ----------------------------------
 
     for idx, track_raw in enumerate(raw_tracks, 1):
         track_raw['trackNo'] = idx
