@@ -6,7 +6,7 @@ import aiohttp
 import json
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-# HAPUS moov_manager dari sini untuk mencegah circular import
+# Hindari Circular Import
 from bot.logger import LOGGER
 
 def is_explicit_strict(data):
@@ -23,43 +23,39 @@ def get_moov_cover(url):
         return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
     return clean_url
 
-# --- FUNGSI PENCARI LAGU REKURSIF (DIPERBARUI) ---
+# --- PENCARI LAGU REKURSIF (WAJIB ADA) ---
 def find_products_recursive(data, results=None):
     if results is None: results = []
     
     if isinstance(data, dict):
-        # Cek apakah dict ini adalah Track? 
-        # Cek productId/contentId DAN title/productTitle
+        # Cek tanda-tanda track (ID + Judul + Artis)
         pid = data.get('productId') or data.get('contentId') or data.get('mtgContentId')
         title = data.get('productTitle') or data.get('title') or data.get('trackTitle')
-        
-        # Syarat tambahan: Harus punya 'artist' atau 'artists' agar tidak salah ambil Album sebagai Track
         has_artist = 'artist' in data or 'artists' in data
         
         if pid and title and has_artist:
-            # Pastikan bukan duplikat ID
             if not any(x.get('productId') == pid for x in results):
-                # Normalisasi ID ke 'productId'
                 data['productId'] = pid
                 data['productTitle'] = title
                 results.append(data)
             return
 
+        # Rekursif ke dalam dict
         for key, value in data.items():
             if isinstance(value, (dict, list)):
                  find_products_recursive(value, results)
                  
     elif isinstance(data, list):
+        # Rekursif ke dalam list
         for item in data:
             find_products_recursive(item, results)
             
     return results
-# -------------------------------------------------
+# -----------------------------------------
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
-    # --- LOCAL IMPORT (FIX CIRCULAR IMPORT) ---
+    # Local Import
     from .manager import moov_manager
-    # ------------------------------------------
 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -69,17 +65,13 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     
     artists = track_data.get('artists', [])
     if not artists and 'artist' in track_data:
-        # Handle jika format artist beda (misal string)
-        if isinstance(track_data['artist'], str):
-             metadata['artist'] = track_data['artist']
-        else:
-             artists = [track_data['artist']]
+        if isinstance(track_data['artist'], str): metadata['artist'] = track_data['artist']
+        else: artists = [track_data['artist']]
     
-    if artists:
-        if isinstance(artists, list):
-            main_artists = [a.get('name') for a in artists if isinstance(a, dict) and a.get('role') == 'Main']
-            if not main_artists: main_artists = [a.get('name') for a in artists if isinstance(a, dict)]
-            metadata['artist'] = ", ".join(main_artists)
+    if artists and isinstance(artists, list):
+        main_artists = [a.get('name') for a in artists if isinstance(a, dict) and a.get('role') == 'Main']
+        if not main_artists: main_artists = [a.get('name') for a in artists if isinstance(a, dict)]
+        metadata['artist'] = ", ".join(main_artists)
         
     metadata['album'] = track_data.get('albumTitle') or ""
     metadata['disk'] = str(track_data.get('discNo', 1))
@@ -111,18 +103,14 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     if album_meta:
         if not metadata['albumartist']: metadata['albumartist'] = album_meta.get('artist', '')
         if not metadata['genre']: metadata['genre'] = album_meta.get('genre', '')
-        
         if album_meta.get('type') == 'album':
             metadata['totaltracks'] = album_meta.get('totaltracks', '')
             metadata['totalvolumes'] = album_meta.get('totalvolumes', '')
-        
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
             metadata['year'] = album_meta.get('year', '')
-            
         if not metadata['label']: metadata['label'] = album_meta.get('label', '')
         if not metadata['copyright']: metadata['copyright'] = album_meta.get('copyright', '')
-            
         if not cover and album_meta.get('cover_url'):
              metadata['cover_url'] = album_meta.get('cover_url')
     
@@ -139,7 +127,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
     avail_qualities = track_data.get('qualities', [])
-    
     user_pref = moov_manager.get_user_quality(user['user_id']) 
     
     target_quality = 'LL' 
@@ -180,8 +167,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
 
     is_album_explicit = is_explicit_strict(album_data)
     tags = album_data.get('tags', [])
-    if 'Explicit' in tags or 'Parental Advisory' in tags:
-        is_album_explicit = True
+    if 'Explicit' in tags or 'Parental Advisory' in tags: is_album_explicit = True
 
     moov_date = ""
     moov_year = ""
@@ -219,6 +205,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         
     metadata['tracks'] = []
     
+    # Gunakan rekursif juga untuk album agar lebih aman
     raw_products = find_products_recursive(album_data)
     
     max_disc = 1
@@ -236,10 +223,8 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     
     metadata['totaltracks'] = len(metadata['tracks'])
     metadata['totalvolumes'] = str(max_disc)
-
     metadata['explicit'] = "True" if is_album_explicit else "False"
-    if metadata['tracks']:
-        metadata['quality'] = metadata['tracks'][0]['quality']
+    if metadata['tracks']: metadata['quality'] = metadata['tracks'][0]['quality']
         
     return metadata
 
@@ -268,18 +253,10 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
 
     metadata['tracks'] = []
     
-    # --- PENGGUNAAN FUNGSI REKURSIF ---
-    # Cari semua produk/lagu dimanapun mereka berada dalam JSON
+    # --- CARI SEMUA LAGU ---
     raw_tracks = find_products_recursive(pl_data)
-    
     LOGGER.info(f"Moov Playlist/Chart: Ditemukan {len(raw_tracks)} lagu melalui pencarian rekursif.")
-    
-    # DEBUG: Jika 0 lagu, log keys utama untuk investigasi (opsional)
-    if not raw_tracks:
-        LOGGER.warning(f"DEBUG keys utama data: {list(pl_data.keys())}")
-        if 'modules' in pl_data:
-            LOGGER.warning(f"DEBUG modules count: {len(pl_data['modules'])}")
-    # ----------------------------------
+    # -----------------------
 
     for idx, track_raw in enumerate(raw_tracks, 1):
         track_raw['trackNo'] = idx
