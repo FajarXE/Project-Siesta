@@ -9,6 +9,7 @@ import hashlib
 import traceback
 import urllib.parse
 import aiohttp
+from yarl import URL
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -35,7 +36,8 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 def resolve_url(base_url, relative_url):
-    if relative_url.startswith('http'): return relative_url
+    if relative_url.startswith('http'):
+        return relative_url
     base_clean = base_url.split('?')[0]
     if not base_clean.endswith('/') and not os.path.splitext(base_clean)[1]:
         base_clean += '/'
@@ -46,11 +48,14 @@ def resolve_url(base_url, relative_url):
 def merge_urls(base_url, relative_url):
     base_parsed = urllib.parse.urlparse(base_url)
     base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
+    
     full_url = resolve_url(base_url, relative_url)
     final_parsed = urllib.parse.urlparse(full_url)
     final_params = dict(urllib.parse.parse_qsl(final_parsed.query))
+    
     merged_params = base_params.copy()
     merged_params.update(final_params)
+    
     new_query = urllib.parse.urlencode(merged_params)
     return final_parsed._replace(query=new_query).geturl()
 
@@ -94,7 +99,8 @@ async def start_moov(url: str, user: dict):
 async def start_track_single(track_id, user):
     client = user['moov_api']
     try:
-        if not hasattr(client, 'get_product_meta'): raise Exception("Client Moov versi lama.")
+        if not hasattr(client, 'get_product_meta'):
+             raise Exception("Client Moov versi lama.")
         track_data = await client.get_product_meta(track_id)
         if not track_data: raise Exception("Data lagu tidak ditemukan.")
         album_id = track_data.get('albumId') or track_data.get('album', {}).get('id')
@@ -204,24 +210,16 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
         
-        # 1. INIT WITH LOGGING
+        # 1. INIT
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], quality_code)
             play_url_init = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
-            if not play_url_init:
-                LOGGER.warning(f"INIT Failed: No playUrl for {quality_code}")
-                return False
-            if not content_key:
-                LOGGER.warning(f"INIT Failed: No contentKey for {quality_code}")
-                return False
-            
+            if not play_url_init or not content_key: return False
             m = hashlib.md5()
             m.update((content_key + SECRET_SALT).encode('UTF-8'))
             default_key_bytes = bytes.fromhex(m.hexdigest())
-        except Exception as e:
-            LOGGER.error(f"INIT Exception ({quality_code}): {e}")
-            return False
+        except: return False
 
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
@@ -236,8 +234,10 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         meta['is_downloaded'] = True
         meta['success'] = True
         
-        key_filepath = os.path.join(track_temp_dir, "key.bin")
-        async with aiofiles.open(key_filepath, 'wb') as f: await f.write(default_key_bytes)
+        # [FIX] Rename key to .m4a to bypass FFmpeg security block
+        key_filepath = os.path.join(track_temp_dir, "key.m4a")
+        async with aiofiles.open(key_filepath, 'wb') as f:
+            await f.write(default_key_bytes)
 
         # 2. COVER
         cover_local_path = None
@@ -256,17 +256,22 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # 3. DOWNLOAD LOOP
+        # 3. LOOP UTAMA
         success_process = False
         play_url = play_url_init
         
         for attempt in range(2):
             use_proxy = (attempt == 0)
             
-            # Use simple session for fallback
+            # Setup Session
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
-                session_context = aiohttp.ClientSession()
+                jar = aiohttp.CookieJar(unsafe=True)
+                if client.session.cookie_jar:
+                    for cookie in client.session.cookie_jar:
+                        jar.update_cookies({cookie.key: cookie.value}, response_url=URL('https://moov.hk'))
+                connector = aiohttp.TCPConnector(ssl=False)
+                session_context = aiohttp.ClientSession(connector=connector, cookie_jar=jar)
             else:
                 session_context = client.session
 
@@ -278,13 +283,10 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     try:
                         async with sess.get(play_url, headers=BROWSER_HEADERS) as resp:
                             if resp.status != 200: 
-                                LOGGER.warning(f"M3U8 Fetch Error {resp.status} (Proxy: {use_proxy})")
                                 if not use_proxy: break
                                 continue
                             m3u8_content = await resp.text()
-                    except Exception as e: 
-                        LOGGER.error(f"M3U8 Exception: {e}")
-                        continue
+                    except: continue
 
                     if "#EXT-X-STREAM-INF" in m3u8_content:
                         remote_lines = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
@@ -303,41 +305,56 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             line = line.strip()
                             if not line: continue
                             
+                            # Handle Key
                             if line.startswith("#EXT-X-KEY"):
                                 key_match = re.search(r'URI="([^"]+)"', line)
                                 if key_match:
                                     raw_key_uri = key_match.group(1)
-                                    key_uri = resolve_url(play_url, raw_key_uri) if '?' in raw_key_uri else merge_urls(play_url, raw_key_uri)
+                                    if '?' in raw_key_uri:
+                                        key_uri = resolve_url(play_url, raw_key_uri)
+                                    else:
+                                        key_uri = merge_urls(play_url, raw_key_uri)
                                     
                                     if not await download_resource(sess, key_uri, key_filepath):
                                         LOGGER.warning("Key DL Failed.")
                                         error_in_parsing = True
                                         break
                                     
-                                    new_line = re.sub(r'URI="[^"]+"', 'URI="key.bin"', line)
+                                    # [FIX] Gunakan key.m4a
+                                    new_line = re.sub(r'URI="[^"]+"', 'URI="key.m4a"', line)
                                     await f_out.write(f"{new_line}\n")
-                                else: await f_out.write(f"{line}\n")
+                                else:
+                                    await f_out.write(f"{line}\n")
 
+                            # Handle Map
                             elif line.startswith("#EXT-X-MAP"):
                                 map_match = re.search(r'URI="([^"]+)"', line)
                                 if map_match:
                                     raw_map_uri = map_match.group(1)
-                                    map_uri = resolve_url(play_url, raw_map_uri) if '?' in raw_map_uri else merge_urls(play_url, raw_map_uri)
-                                    map_path = os.path.join(track_temp_dir, "init.bin")
+                                    if '?' in raw_map_uri:
+                                        map_uri = resolve_url(play_url, raw_map_uri)
+                                    else:
+                                        map_uri = merge_urls(play_url, raw_map_uri)
                                     
+                                    # [FIX] Rename map to init.m4a
+                                    map_path = os.path.join(track_temp_dir, "init.m4a")
                                     if not await download_resource(sess, map_uri, map_path):
                                         LOGGER.warning("Map DL Failed.")
                                         error_in_parsing = True
                                         break
                                     
-                                    new_line = re.sub(r'URI="[^"]+"', 'URI="init.bin"', line)
+                                    new_line = re.sub(r'URI="[^"]+"', 'URI="init.m4a"', line)
                                     await f_out.write(f"{new_line}\n")
-                                else: await f_out.write(f"{line}\n")
+                                else:
+                                    await f_out.write(f"{line}\n")
                             
-                            elif line.startswith("#"): await f_out.write(f"{line}\n")
+                            elif line.startswith("#"):
+                                await f_out.write(f"{line}\n")
+                            
                             else:
                                 remote_segments.append(line)
-                                seg_filename = f"seg_{seg_idx:04d}.flac"
+                                # [FIX] Rename segments to .m4a
+                                seg_filename = f"seg_{seg_idx:04d}.m4a"
                                 await f_out.write(f"{seg_filename}\n")
                                 seg_idx += 1
                     
@@ -349,10 +366,13 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     seg_error = False
                     for index, seg_url_raw in enumerate(remote_segments):
                         seg_url = merge_urls(play_url, seg_url_raw)
-                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.flac")
+                        # [FIX] Rename local segment path to .m4a
+                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.m4a")
+                        
                         if not await download_resource(sess, seg_url, seg_path):
                             seg_error = True
                             break
+                    
                     if seg_error: continue 
                     
                     success_process = True
@@ -364,29 +384,39 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 
         if not success_process: return False
 
-        # 4. FFMPEG
+        # 4. FFMPEG Processing
         cmd = [
-            'ffmpeg', '-y', '-analyzeduration', '100M', '-probesize', '100M',
-            '-allowed_extensions', 'ALL', '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-            '-i', local_m3u8_path, '-c', 'flac', final_filepath
+            'ffmpeg', '-y',
+            '-analyzeduration', '100M', '-probesize', '100M',
+            '-allowed_extensions', 'ALL',
+            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+            '-i', local_m3u8_path,
+            '-c', 'flac', 
+            final_filepath
         ]
         
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+        )
         _, stderr = await process.communicate()
         
         if process.returncode != 0:
             LOGGER.warning(f"FFmpeg encode error, trying copy...")
             cmd[7] = 'copy' 
-            process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+            )
             _, stderr = await process.communicate()
             if process.returncode != 0:
                 LOGGER.error(f"FFmpeg Fail: {stderr.decode()}")
                 return False
 
-        if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 100: return False
+        if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) < 100:
+            return False
+            
         meta['filesize'] = os.path.getsize(final_filepath)
 
-        # 5. TAGS
+        # 5. TAGS & CLEANUP
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
