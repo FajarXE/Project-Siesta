@@ -150,7 +150,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
-# --- FUNGSI ENRICH METADATA CHART ---
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath):
     """
     Mengambil metadata lengkap (Product Meta) agar tag lengkap.
@@ -225,9 +224,10 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio = FLAC(filepath)
         audio.delete() 
         
-        # --- MAPPING TAG EKSTRA LENGKAP ---
+        # --- MAPPING TAG LENGKAP ---
         audio['TITLE'] = meta.get('title', '')
         audio['ARTIST'] = meta.get('artist', '')
+        # Performer juga kadang dibaca dari artist
         audio['PERFORMER'] = meta.get('artist', '') 
         
         audio['ALBUMARTIST'] = meta.get('albumartist', '')
@@ -236,31 +236,35 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio['GENRE'] = meta.get('genre', '')
         audio['COMPOSER'] = meta.get('composer', '')
         
-        # Producer
+        # --- TAGS YANG SEBELUMNYA HILANG ---
+        # 1. Producer
         if meta.get('producer'):
             audio['PRODUCER'] = meta.get('producer')
             
-        audio['COPYRIGHT'] = meta.get('copyright', '')
+        # 2. Recorded Date / Release Date
+        # Menulis ke beberapa field sekaligus untuk kompatibilitas
+        if meta.get('date'):
+            audio['DATE'] = str(meta.get('date'))
+            audio['YEAR'] = str(meta.get('date'))[:4]
+            audio['ORIGINALDATE'] = str(meta.get('date'))
+            audio['RELEASEDATE'] = str(meta.get('date')) 
+
+        # 3. Label
+        if meta.get('label'):
+            audio['ORGANIZATION'] = meta.get('label', '') # Standar FLAC untuk Label
+            audio['LABEL'] = meta.get('label', '') # Kompatibilitas
+            audio['PUBLISHER'] = meta.get('label', '') # Kompatibilitas
+            audio['COPYRIGHT'] = meta.get('copyright', '') or meta.get('label', '')
+        elif meta.get('copyright'):
+             audio['COPYRIGHT'] = meta.get('copyright', '')
+        # -----------------------------------
+
         audio['DISCNUMBER'] = str(meta.get('disk', ''))
         audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
         
         if meta.get('totaltracks'):
             audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
             audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
-        
-        # Date & Recorded Date (Multi-field agar kompatibel semua player)
-        if meta.get('date'):
-            audio['DATE'] = str(meta.get('date'))
-            audio['YEAR'] = str(meta.get('date'))[:4]
-            audio['ORIGINALDATE'] = str(meta.get('date'))
-            audio['RELEASEDATE'] = str(meta.get('date')) # Tag tambahan
-
-        # Label (Multi-field)
-        if meta.get('label'):
-            audio['ORGANIZATION'] = meta.get('label', '')
-            audio['LABEL'] = meta.get('label', '')
-            audio['PUBLISHER'] = meta.get('label', '') # Tag tambahan
-        # ---------------------------
 
         if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
             audio['LYRICS'] = lyrics
