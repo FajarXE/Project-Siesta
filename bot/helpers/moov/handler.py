@@ -150,48 +150,72 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
         await edit_message(user['bot_msg'], "Uploading...")
         await album_upload(album_meta, user)
 
+# --- PERBAIKAN LOGIKA: PISAHKAN RAW vs PROCESSED ---
 async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, album_cache):
     client = user['moov_api']
     track_id = shallow_track_meta.get('itemid')
     
-    target_data = shallow_track_meta 
-    album_id = None 
+    # 1. Coba ambil Data Product LENGKAP (Raw JSON)
+    full_product = None
+    album_id = shallow_track_meta.get('albumId') # Coba ambil dari shallow dulu
 
     try:
         full_product = await client.get_product_meta(track_id)
         if full_product:
-            target_data = full_product
+            # Jika berhasil, update album_id dari full data
             album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
         else:
             LOGGER.warning(f"Moov: Product {track_id} gagal (404/Null), menggunakan data Shallow.")
+    except Exception:
+        LOGGER.warning(f"Moov: Exception saat ambil product {track_id}.")
 
-        album_meta_full = None
-        if album_id:
-            if album_id in album_cache:
-                album_meta_full = album_cache[album_id]
-            else:
-                try:
-                    raw_album = await client.get_album_meta(album_id)
-                    if raw_album:
-                        album_meta_full = await process_album_metadata(raw_album, user['r_id'], user)
-                        album_cache[album_id] = album_meta_full 
-                except Exception as e:
-                    LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
+    # 2. Ambil Metadata Album (Context)
+    album_meta_full = None
+    if album_id:
+        if album_id in album_cache:
+            album_meta_full = album_cache[album_id]
+        else:
+            try:
+                raw_album = await client.get_album_meta(album_id)
+                if raw_album:
+                    album_meta_full = await process_album_metadata(raw_album, user['r_id'], user)
+                    album_cache[album_id] = album_meta_full 
+            except Exception as e:
+                LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
 
+    # 3. KONSTRUKSI FINAL METADATA
+    deep_meta = None
+
+    if full_product:
+        # KASUS A: Data Lengkap Tersedia -> Proses ulang dari Raw JSON
         deep_meta = await process_track_metadata(
-            target_data, 
+            full_product, 
             user['r_id'], 
             user, 
             cover=album_meta_full['cover'] if album_meta_full else None,
             album_meta=album_meta_full if album_meta_full else None
         )
+    else:
+        # KASUS B: Fallback ke Shallow -> JANGAN PROSES ULANG!
+        # Cukup copy dictionary yang sudah ada dan suntikkan data album manual
+        deep_meta = shallow_track_meta.copy()
         
-        deep_meta['folderpath'] = folderpath
-        return await download_track(deep_meta, user, folderpath)
+        # Inject Album Data Manual
+        if album_meta_full:
+            if album_meta_full.get('cover'):
+                deep_meta['cover'] = album_meta_full['cover']
+            if album_meta_full.get('label'):
+                deep_meta['label'] = album_meta_full['label']
+            if album_meta_full.get('date'):
+                deep_meta['date'] = album_meta_full['date']
+                deep_meta['year'] = album_meta_full['year']
+            if album_meta_full.get('copyright'):
+                deep_meta['copyright'] = album_meta_full['copyright']
 
-    except Exception as e:
-        LOGGER.error(f"Error enriching track {track_id}: {e}")
-        return await download_track(shallow_track_meta, user, folderpath)
+    # Pastikan path folder benar
+    deep_meta['folderpath'] = folderpath
+    
+    return await download_track(deep_meta, user, folderpath)
 
 async def start_playlist(pid, user):
     client = user['moov_api']
@@ -302,11 +326,15 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         LOGGER.error(f"Mutagen Error: {e}")
         return 0
 
-# --- FUNGSI DOWNLOAD UTAMA (DENGAN AUTO FALLBACK & LOGGING) ---
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     client = user['moov_api']
     
+    # SAFETY CHECK: Pastikan itemid ada
+    if not meta.get('itemid'):
+        LOGGER.error("Moov: Fatal - Item ID hilang dalam metadata.")
+        return False
+
     # 1. Coba Dapatkan File Meta (Stream URL)
     file_meta = None
     
@@ -323,7 +351,7 @@ async def download_track(track_meta, user, folderpath):
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], 'LL')
             if file_meta:
-                meta['quality'] = 'FLAC 16bit' # Update label kualitas
+                meta['quality'] = 'FLAC 16bit' 
         except: pass
 
     # 3. Validasi Akhir Stream URL
@@ -408,7 +436,6 @@ async def download_track(track_meta, user, folderpath):
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
-        # Download Segmen
         for index, seg_url in enumerate(remote_segments):
             seg_name = f"seg_{index:04d}.flac"
             seg_path = os.path.join(track_temp_dir, seg_name)
@@ -427,11 +454,9 @@ async def download_track(track_meta, user, folderpath):
                 except: continue
             
             if not success:
-                LOGGER.warning(f"Moov: Gagal download segmen {seg_name}")
                 shutil.rmtree(track_temp_dir)
                 return False
 
-        # Buat Local M3U8
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         iv_line = ""
         iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
@@ -448,7 +473,6 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # 8. Decrypt & Merge via FFmpeg
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
@@ -469,12 +493,10 @@ async def download_track(track_meta, user, folderpath):
             return False
 
         if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) == 0:
-            LOGGER.error("Moov: File hasil FFmpeg kosong/tidak ada.")
             return False
             
         meta['filesize'] = os.path.getsize(final_filepath)
 
-        # 9. Lyrics & Tagging
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
