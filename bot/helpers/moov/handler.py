@@ -33,7 +33,7 @@ BROWSER_HEADERS = {
     'Origin': 'https://moov.hk'
 }
 
-# [FIX] Definisikan AsyncNullContext secara lokal, jangan monkey-patch asyncio
+# [FIX] Definisikan AsyncNullContext secara lokal
 class AsyncNullContext:
     async def __aenter__(self): return None
     async def __aexit__(self, exc_type, exc_value, traceback): pass
@@ -262,6 +262,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         meta['is_downloaded'] = True
         meta['success'] = True
         
+        # Simpan Key sebagai .m4a (FFmpeg mengizinkan ini untuk key)
         key_filepath = os.path.join(track_temp_dir, "key.m4a")
         if default_key_bytes:
             async with aiofiles.open(key_filepath, 'wb') as f: await f.write(default_key_bytes)
@@ -299,7 +300,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                 session_context = client.session
 
             try:
-                # [FIX] Gunakan AsyncNullContext lokal
+                # Gunakan AsyncNullContext
                 ctx = session_context if not use_proxy else AsyncNullContext()
                 async with ctx as session:
                     sess = client.session if use_proxy else session_context
@@ -319,7 +320,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             play_url = merge_urls(play_url, remote_lines[0])
                             continue 
 
-                    # B. Parse & Download
+                    # B. Parse & Download Resources
                     local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
                     remote_segments = []
                     error_in_parsing = False
@@ -362,7 +363,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             elif line.startswith("#"): await f_out.write(f"{line}\n")
                             else:
                                 remote_segments.append(line)
-                                seg_filename = f"seg_{seg_idx:04d}.m4a"
+                                # [FIX] Rename ke .ts agar sesuai dengan format mpegts (bypass error FFmpeg)
+                                seg_filename = f"seg_{seg_idx:04d}.ts"
                                 await f_out.write(f"{seg_filename}\n")
                                 seg_idx += 1
                     
@@ -374,7 +376,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     seg_error = False
                     for index, seg_url_raw in enumerate(remote_segments):
                         seg_url = merge_urls(play_url, seg_url_raw)
-                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.m4a")
+                        # [FIX] Simpan sebagai .ts
+                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.ts")
                         
                         if not await download_resource(sess, seg_url, seg_path, referer=play_url):
                             seg_error = True
@@ -390,7 +393,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
 
         if not success_process: return False
 
-        # 4. FFMPEG
+        # 4. FFMPEG Processing
         cmd = [
             'ffmpeg', '-y', '-analyzeduration', '100M', '-probesize', '100M',
             '-allowed_extensions', 'ALL', '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
