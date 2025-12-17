@@ -93,27 +93,24 @@ class MoovAPI:
             data = await resp.json()
             return data.get('dataObject')
 
+    # --- PERBAIKAN LOGIKA PENGAMBILAN DATA (DENGAN VALIDASI ISI) ---
     async def get_playlist_meta(self, pid):
         session = await self._get_session()
         
-        # --- PERUBAHAN PRIORITAS ---
-        # Untuk ID Chart (PC...), coba PAB (Profile Album) dulu karena biasanya
-        # CAT (Category) hanya mengembalikan banner kosong.
-        if str(pid).startswith("PC"):
+        # Prioritas Percobaan
+        attempts = []
+        
+        if str(pid).startswith("PC") or str(pid).startswith("PP"):
+             # Untuk Chart (PC), coba PAB dulu, lalu CAT
              attempts = [
-                {"endpoint": "profile/getProfile", "refType": "PAB"}, # Prioritas 1 untuk Chart
+                {"endpoint": "profile/getProfile", "refType": "PAB"},
                 {"endpoint": "profile/getProfile", "refType": "CAT"},
                 {"endpoint": "playlist/getProfile", "refType": "CAT"}
             ]
-        elif str(pid).startswith("PP"):
-             attempts = [
-                {"endpoint": "profile/getProfile", "refType": "PAB"},
-                {"endpoint": "profile/getProfile", "refType": "CAT"}
-             ]
         else:
-             # Playlist User Biasa (ID Angka/UUID)
+             # Untuk Playlist User (Angka/UUID)
              attempts = [
-                {"endpoint": "playlist/getProfile", "refType": "CAT"}, # Prioritas 1 untuk Playlist User
+                {"endpoint": "playlist/getProfile", "refType": "CAT"},
                 {"endpoint": "profile/getProfile", "refType": "CAT"},
                 {"endpoint": "profile/getProfile", "refType": "PAB"}
             ]
@@ -138,17 +135,35 @@ class MoovAPI:
                         data = await resp.json()
                         data_obj = data.get('dataObject')
                         
-                        # Pastikan data tidak kosong
                         if data_obj:
-                            LOGGER.info(f"Moov: Metadata ditemukan menggunakan {endpoint} (refType={ref_type})")
-                            return data_obj
+                            # --- VALIDASI ISI ---
+                            # Jangan terima jika kosong melompong (fix masalah Chart kosong)
+                            has_content = False
+                            
+                            # Cek modules (biasanya Chart/Album ada di sini)
+                            if data_obj.get('modules') and len(data_obj.get('modules')) > 0:
+                                has_content = True
+                            
+                            # Cek tracks/products (biasanya Playlist ada di sini)
+                            elif data_obj.get('tracks'): has_content = True
+                            elif data_obj.get('products'): has_content = True
+                            
+                            if has_content:
+                                LOGGER.info(f"Moov: Metadata VALID ditemukan menggunakan {endpoint} (refType={ref_type})")
+                                return data_obj
+                            else:
+                                LOGGER.warning(f"Moov: Metadata ditemukan di {endpoint} (refType={ref_type}) tapi KOSONG (0 modules/tracks). Mencoba opsi lain...")
+                        else:
+                            LOGGER.warning(f"Moov: Response 200 OK tapi dataObject kosong di {endpoint}")
+
             except Exception as e:
                 last_error = e
                 continue
         
         if last_error:
-            LOGGER.error(f"Moov: Gagal mengambil metadata. Error terakhir: {last_error}")
+            LOGGER.error(f"Moov: Gagal mengambil metadata setelah {len(attempts)} percobaan. Error terakhir: {last_error}")
         return None
+    # ----------------------------------------------------------------
 
     async def get_product_meta(self, product_id):
         session = await self._get_session()
