@@ -28,8 +28,9 @@ BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive'
-    # Referer & Origin dihapus agar lebih universal
+    'Connection': 'keep-alive',
+    'Referer': 'https://moov.hk/',
+    'Origin': 'https://moov.hk'
 }
 
 # Context Manager Lokal
@@ -60,9 +61,8 @@ def merge_urls(base_url, relative_url):
     new_query = urllib.parse.urlencode(merged_params)
     return final_parsed._replace(query=new_query).geturl()
 
-async def download_resource(session, url, path):
+async def download_resource(session, url, path, referer=None):
     try:
-        # Gunakan header minimalis untuk resource biner (Key/Segmen)
         async with session.get(url, headers=BROWSER_HEADERS, timeout=20) as resp:
             if resp.status == 200:
                 data = await resp.read()
@@ -245,6 +245,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
         meta['is_downloaded'] = True
         meta['success'] = True
         
+        # Key file: Use .m4a to bypass security check, but it's safe for key
         key_filepath = os.path.join(track_temp_dir, "key.m4a")
         if default_key_bytes:
             async with aiofiles.open(key_filepath, 'wb') as f: await f.write(default_key_bytes)
@@ -272,7 +273,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
-                # Cookie jar
                 jar = aiohttp.CookieJar(unsafe=True)
                 if client.session.cookie_jar:
                     for cookie in client.session.cookie_jar:
@@ -302,6 +302,12 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             play_url = merge_urls(play_url, remote_lines[0])
                             continue 
 
+                    # [CRITICAL FIX] Dynamic Extension Detection
+                    # Check if stream is fMP4 (has Map) or MPEG-TS
+                    is_fmp4 = "#EXT-X-MAP" in m3u8_content
+                    # Use .mp4 for fMP4, .ts for MPEG-TS to satisfy FFmpeg validation
+                    segment_ext = ".mp4" if is_fmp4 else ".ts"
+
                     # B. Parse & Download Resources
                     local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
                     remote_segments = []
@@ -318,7 +324,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 if key_match:
                                     raw_key_uri = key_match.group(1)
                                     key_uri = resolve_url(play_url, raw_key_uri) if '?' in raw_key_uri else merge_urls(play_url, raw_key_uri)
-                                    if not await download_resource(sess, key_uri, key_filepath):
+                                    if not await download_resource(sess, key_uri, key_filepath, referer=play_url):
                                         error_in_parsing = True; break
                                     new_line = re.sub(r'URI="[^"]+"', 'URI="key.m4a"', line)
                                     await f_out.write(f"{new_line}\n")
@@ -329,17 +335,18 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 if map_match:
                                     raw_map_uri = map_match.group(1)
                                     map_uri = resolve_url(play_url, raw_map_uri) if '?' in raw_map_uri else merge_urls(play_url, raw_map_uri)
-                                    map_path = os.path.join(track_temp_dir, "init.m4a")
-                                    if not await download_resource(sess, map_uri, map_path):
+                                    map_path = os.path.join(track_temp_dir, "init.mp4") # Map is always fMP4 init
+                                    if not await download_resource(sess, map_uri, map_path, referer=play_url):
                                         error_in_parsing = True; break
-                                    new_line = re.sub(r'URI="[^"]+"', 'URI="init.m4a"', line)
+                                    new_line = re.sub(r'URI="[^"]+"', 'URI="init.mp4"', line)
                                     await f_out.write(f"{new_line}\n")
                                 else: await f_out.write(f"{line}\n")
                             
                             elif line.startswith("#"): await f_out.write(f"{line}\n")
                             else:
                                 remote_segments.append(line)
-                                seg_filename = f"seg_{seg_idx:04d}.m4a"
+                                # Gunakan ekstensi dinamis (.ts atau .mp4)
+                                seg_filename = f"seg_{seg_idx:04d}{segment_ext}"
                                 await f_out.write(f"{seg_filename}\n")
                                 seg_idx += 1
                     
@@ -351,8 +358,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     seg_error = False
                     for index, seg_url_raw in enumerate(remote_segments):
                         seg_url = merge_urls(play_url, seg_url_raw)
-                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.m4a")
-                        if not await download_resource(sess, seg_url, seg_path):
+                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}{segment_ext}")
+                        if not await download_resource(sess, seg_url, seg_path, referer=play_url):
                             seg_error = True; break
                     if seg_error: continue 
                     success_process = True
