@@ -1,252 +1,184 @@
-# [GANTI FILE: bot/helpers/moov/metadata.py]
+# [GANTI FILE: bot/helpers/moov/mvapi.py]
 
-import copy
-import re
 import aiohttp
-from ..metadata import metadata as base_meta
-from ..metadata import create_cover_file
-from .manager import moov_manager
+import asyncio
 from bot.logger import LOGGER
 
-def is_explicit_strict(data):
-    val_exp = str(data.get('explicit', '')).lower()
-    if val_exp in ['true', '1', 'yes', 'explicit']: return True
-    val_pw = str(data.get('parentalWarning', '')).lower()
-    if val_pw in ['true', '1', 'yes', 'explicit']: return True
-    return False
+# --- Konektor Proxy ---
+try:
+    from aiohttp_socks import ProxyConnector
+except ImportError:
+    LOGGER.critical("Modul 'aiohttp-socks' tidak ditemukan. Silakan install dengan 'pip install aiohttp-socks'")
+    ProxyConnector = None
+# ----------------------
 
-def get_moov_cover(url):
-    if not url: return None
-    clean_url = url.split("?")[0]
-    if "resize" in clean_url:
-        return re.sub(r'\/(\d+x\d+)\/', '/1000x1000/', clean_url)
-    return clean_url
-
-async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
-    metadata = copy.deepcopy(base_meta)
-    metadata['tempfolder'] += f"{r_id}-temp/"
-    
-    metadata['itemid'] = track_data.get('productId')
-    metadata['title'] = track_data.get('productTitle')
-    
-    artists = track_data.get('artists', [])
-    main_artists = [a.get('name') for a in artists if a.get('role') == 'Main']
-    if not main_artists: main_artists = [a.get('name') for a in artists]
-    metadata['artist'] = ", ".join(main_artists)
-    
-    metadata['album'] = track_data.get('albumTitle') or ""
-    metadata['disk'] = str(track_data.get('discNo', 1))
-    metadata['tracknumber'] = str(track_data.get('trackNo', 1))
-    
-    metadata['label'] = track_data.get('albumLabel', '') 
-    raw_copyright = track_data.get('cnote')
-    metadata['copyright'] = str(raw_copyright) if raw_copyright else ""
-    
-    comp_list = []
-    for c in track_data.get('composers', []):
-        comp_list.append(c.get('name'))
-    if not comp_list and track_data.get('author'):
-        comp_list.append(track_data.get('author'))
-    metadata['composer'] = ", ".join(comp_list)
-
-    is_track_explicit = is_explicit_strict(track_data)
-    metadata['explicit'] = "True" if is_track_explicit else "False"
-
-    track_date_raw = str(track_data.get('publishDate', ''))
-    if not track_date_raw: track_date_raw = str(track_data.get('releaseDate', ''))
-    if 'T' in track_date_raw: track_date_raw = track_date_raw.split('T')[0]
+class MoovAPI:
+    def __init__(self, proxy=None):
+        self.base_url = "https://mtg.now.com/moov/api"
+        self.session = None
+        self.token = None
+        self.user_id = None
+        self.proxy = proxy
         
-    if track_date_raw:
-        metadata['date'] = track_date_raw
-        metadata['year'] = track_date_raw[:4]
-    
-    if album_meta:
-        if not metadata['albumartist']: metadata['albumartist'] = album_meta.get('artist', '')
-        if not metadata['genre']: metadata['genre'] = album_meta.get('genre', '')
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10.0.0; PIXEL 2XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36/Moov'
+        }
+
+    async def _get_session(self):
+        if not self.session or self.session.closed:
+            if self.proxy:
+                if not ProxyConnector:
+                    raise ImportError("Anda menggunakan Proxy SOCKS5 tapi 'aiohttp-socks' belum diinstal.")
+                
+                proxy_url = self.proxy
+                use_rdns = False 
+
+                if proxy_url.startswith("socks5h://"):
+                    proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                    use_rdns = True
+                
+                LOGGER.info(f"MoovAPI: Menggunakan ProxyConnector (RDNS={use_rdns})")
+                connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+                self.session = aiohttp.ClientSession(connector=connector)
+            else:
+                self.session = aiohttp.ClientSession()
+        return self.session
+
+    async def login(self, email, password):
+        session = await self._get_session()
         
-        if album_meta.get('type') == 'album':
-            metadata['totaltracks'] = album_meta.get('totaltracks', '')
-            metadata['totalvolumes'] = album_meta.get('totalvolumes', '')
+        data = {
+            'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
+            'devicetype': 'Android',
+            'clientver': '3.0.7',
+            'brand': 'Android',
+            'model': 'PIXEL+2XL',
+            'os': 'Android',
+            'osver': '10.0.0',
+            'devicename': 'Google+PIXEL+2XL',
+            'connect': 'WiFi',
+            'lang': 'en_US',
+            'loginid': email,
+            'notifyid': '',
+            'password': password,
+            'autologin': 'true'
+        }
         
-        if not metadata.get('date'):
-            metadata['date'] = album_meta.get('date', '')
-            metadata['year'] = album_meta.get('year', '')
+        try:
+            async with session.post(
+                f"{self.base_url}/user/loginstatuscheck", 
+                headers=self.headers, 
+                data=data
+            ) as resp:
+                if resp.headers.get('Content-Type') == "application/xml;charset=UTF-8":
+                    self.email = email
+                    return True
+                text = await resp.text()
+                LOGGER.error(f"Moov Login Failed Response: {text}")
+                return False
+        except Exception as e:
+            LOGGER.error(f"Moov Login Error: {e}")
+            return False
+
+    async def get_album_meta(self, album_id):
+        session = await self._get_session()
+        params = {
+            'profileId': album_id,
+            'features': '24bit',
+            'deviceType': 'phones3',
+            'refType': 'PAB',
+            'checksum': ''
+        }
+        async with session.get(f"{self.base_url}/profile/getProfile", headers=self.headers, params=params) as resp:
+            data = await resp.json()
+            return data.get('dataObject')
+
+    async def get_playlist_meta(self, pid):
+        session = await self._get_session()
+        
+        attempts = [
+            {"endpoint": "profile/getProfile", "refType": "CAT"},
+            {"endpoint": "playlist/getProfile", "refType": "CAT"},
+            {"endpoint": "profile/getProfile", "refType": "PAB"}
+        ]
+
+        if not str(pid).startswith("PC") and not str(pid).startswith("PP"):
+             attempts = [attempts[1], attempts[0], attempts[2]]
+
+        last_error = None
+
+        for i, config in enumerate(attempts):
+            endpoint = config['endpoint']
+            ref_type = config['refType']
             
-        if not metadata['label']: metadata['label'] = album_meta.get('label', '')
-        if not metadata['copyright']: metadata['copyright'] = album_meta.get('copyright', '')
+            params = {
+                'profileId': pid,
+                'features': '24bit',
+                'deviceType': 'phones3',
+                'refType': ref_type,
+                'checksum': ''
+            }
             
-        if not cover and album_meta.get('cover_url'):
-             metadata['cover_url'] = album_meta.get('cover_url')
-    
-    metadata['provider'] = 'Moov'
-    metadata['type'] = 'track'
-    
-    if cover:
-        metadata['cover'] = cover
-    elif not metadata.get('cover_url'):
-        images = track_data.get('images', [])
-        if images:
-            raw_url = images[0].get('path')
-            metadata['cover_url'] = get_moov_cover(raw_url)
-            metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
-
-    avail_qualities = track_data.get('qualities', [])
-    user_pref = moov_manager.get_user_quality(user['user_id']) 
-    
-    target_quality = 'LL' 
-    if user_pref == "FLAC": 
-        if 'HR' in avail_qualities:
-            target_quality = 'HR'
-            metadata['quality'] = 'FLAC 24bit'
-        elif 'LL' in avail_qualities:
-            target_quality = 'LL'
-            metadata['quality'] = 'FLAC 16bit'
-    else: 
-        if 'LL' in avail_qualities:
-            target_quality = 'LL'
-            metadata['quality'] = 'FLAC 16bit'
-            
-    metadata['extension'] = 'flac'
-    metadata['moov_quality_code'] = target_quality
-    
-    return metadata
-
-async def process_album_metadata(album_data: dict, r_id, user: dict):
-    metadata = copy.deepcopy(base_meta)
-    metadata['tempfolder'] += f"{r_id}-temp/"
-    
-    titles = album_data.get('engTitle', [])
-    if not titles: titles = album_data.get('title', [])
-        
-    metadata['title'] = titles[0] if titles else "Unknown Album"
-    metadata['album'] = metadata['title']
-    
-    artists = album_data.get('artists', [])
-    metadata['artist'] = ", ".join([a.get('name') for a in artists])
-    metadata['albumartist'] = metadata['artist']
-    
-    metadata['provider'] = 'Moov'
-    metadata['type'] = 'album'
-    metadata['itemid'] = album_data.get('profileId') 
-
-    is_album_explicit = is_explicit_strict(album_data)
-    tags = album_data.get('tags', [])
-    if 'Explicit' in tags or 'Parental Advisory' in tags:
-        is_album_explicit = True
-
-    moov_date = ""
-    moov_year = ""
-    if len(titles) > 2:
-        moov_date = titles[2]
-        try: moov_year = moov_date.split('-')[0]
-        except: pass
-    if not moov_date:
-        pdate = str(album_data.get('publishDate', ''))
-        if pdate: 
-            if 'T' in pdate: pdate = pdate.split('T')[0]
-            moov_date = pdate
-            moov_year = pdate.split('-')[0]
-            
-    metadata['year'] = moov_year
-    metadata['date'] = moov_date 
-
-    genres = album_data.get('genres', [])
-    if genres:
-        metadata['genre'] = ", ".join([g.get('name') for g in genres])
-    else:
-        metadata['genre'] = album_data.get('category', "")
-        
-    metadata['label'] = album_data.get('recordLabel') or album_data.get('albumLabel') or ""
-
-    moov_cover_url = None
-    images = album_data.get('images', [])
-    if images:
-        raw_path = images[0].get('path')
-        moov_cover_url = get_moov_cover(raw_path)
-
-    metadata['cover_url'] = moov_cover_url
-    if metadata.get('cover_url'):
-        metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
-        
-    metadata['tracks'] = []
-    modules = album_data.get('modules', [])
-    if modules:
-        # Untuk Album, biasanya di modul pertama
-        products = modules[0].get('products', [])
-        metadata['totaltracks'] = len(products)
-        max_disc = 1
-        
-        for idx, track_raw in enumerate(products, 1):
-            track_raw['trackNo'] = idx 
-            if not is_album_explicit:
-                if is_explicit_strict(track_raw): is_album_explicit = True
             try:
-                d = int(track_raw.get('discNo', 1))
-                if d > max_disc: max_disc = d
-            except: pass
-            
-            t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
-            metadata['tracks'].append(t_meta)
+                async with session.get(f"{self.base_url}/{endpoint}", headers=self.headers, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        data_obj = data.get('dataObject')
+                        if data_obj:
+                            LOGGER.info(f"Moov: Metadata ditemukan menggunakan {endpoint} (refType={ref_type})")
+                            return data_obj
+            except Exception as e:
+                last_error = e
+                continue
         
-        metadata['totalvolumes'] = str(max_disc)
+        if last_error:
+            LOGGER.error(f"Moov: Gagal mengambil metadata. Error terakhir: {last_error}")
+        return None
 
-    metadata['explicit'] = "True" if is_album_explicit else "False"
-    if metadata['tracks']:
-        metadata['quality'] = metadata['tracks'][0]['quality']
+    async def get_product_meta(self, product_id):
+        session = await self._get_session()
+        params = {
+            'productId': product_id,
+            'deviceType': 'phones3'
+        }
+        async with session.get(f"{self.base_url}/product/getProduct", headers=self.headers, params=params) as resp:
+            data = await resp.json()
+            return data.get('dataObject')
+
+    async def get_track_file_meta(self, track_id, quality='LL'):
+        session = await self._get_session()
+        stream_headers = {'User-Agent': 'okhttp/4.8.0'}
         
-    return metadata
-
-async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
-    metadata = copy.deepcopy(base_meta)
-    metadata['tempfolder'] += f"{r_id}-temp/"
-    
-    titles = pl_data.get('engTitle', [])
-    if not titles: titles = pl_data.get('title', []) 
-    
-    metadata['title'] = titles[0] if titles else "Unknown Playlist"
-    metadata['album'] = metadata['title']
-    
-    metadata['provider'] = 'Moov'
-    metadata['type'] = 'playlist'
-    metadata['itemid'] = pl_data.get('profileId')
-    
-    metadata['artist'] = "Moov Playlist"
-    metadata['albumartist'] = "Various Artists"
-
-    images = pl_data.get('images', [])
-    if images:
-        raw_path = images[0].get('path')
-        metadata['cover_url'] = get_moov_cover(raw_path)
-        metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
-
-    metadata['tracks'] = []
-    
-    # --- PERBAIKAN LOGIKA PARSING TRACKS ---
-    raw_tracks = pl_data.get('tracks', [])
-    
-    # Jika di root tidak ada 'tracks', cari di dalam SEMUA 'modules'
-    if not raw_tracks:
-        modules = pl_data.get('modules', [])
-        for mod in modules:
-            # Cari produk di setiap modul, lalu gabungkan
-            prods = mod.get('products', [])
-            if prods:
-                raw_tracks.extend(prods)
-    # ---------------------------------------
-
-    for idx, track_raw in enumerate(raw_tracks, 1):
-        track_raw['trackNo'] = idx
-        track_raw['discNo'] = 1
+        params = {
+            'clientver': '3.0.7',
+            'action': 'stream',
+            'streamtype': 'stdhls',
+            'preview': 'F',
+            'cat': 'playlist',
+            'pid': track_id,
+            'isUpSample': 'false',
+            'osver': '10.0.0',
+            'refid': '',
+            'quality': quality,
+            'devicetype': 'Android',
+            'connect': 'WiFi',
+            'reftype': '',
+            'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
+            'application': 'moovnext',
+            'isStudioMaster': 'true'
+        }
         
-        t_meta = await process_track_metadata(track_raw, r_id, user, cover=None, album_meta=None)
-        
-        if not t_meta.get('cover') and metadata.get('cover'):
-             t_meta['cover'] = metadata['cover']
+        async with session.get(f"{self.base_url}/content/checkout", headers=stream_headers, params=params) as resp:
+            data = await resp.json()
+            return data.get('result', {}).get('dataObject')
 
-        metadata['tracks'].append(t_meta)
+    async def get_lyrics(self, track_id):
+        session = await self._get_session()
+        params = {'pid': track_id}
+        async with session.get(f"{self.base_url}/lyric/getLyric", headers=self.headers, params=params) as resp:
+            data = await resp.json()
+            return data.get('dataObject', {}).get('lyric')
 
-    metadata['totaltracks'] = len(metadata['tracks'])
-    if metadata['tracks']:
-        metadata['quality'] = metadata['tracks'][0]['quality']
-
-    return metadata
+    async def close(self):
+        if self.session:
+            await self.session.close()
