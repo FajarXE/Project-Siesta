@@ -28,12 +28,11 @@ BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Referer': 'https://moov.hk/',
-    'Origin': 'https://moov.hk'
+    'Connection': 'keep-alive'
+    # Referer & Origin dihapus agar lebih universal
 }
 
-# [FIX] Definisikan AsyncNullContext secara lokal
+# Context Manager Lokal
 class AsyncNullContext:
     async def __aenter__(self): return None
     async def __aexit__(self, exc_type, exc_value, traceback): pass
@@ -42,8 +41,7 @@ def safe_name(name):
     return re.sub(r'[\/:*?"><|#]', '_', str(name)).strip()
 
 def resolve_url(base_url, relative_url):
-    if relative_url.startswith('http'):
-        return relative_url
+    if relative_url.startswith('http'): return relative_url
     base_clean = base_url.split('?')[0]
     if not base_clean.endswith('/') and not os.path.splitext(base_clean)[1]:
         base_clean += '/'
@@ -54,22 +52,18 @@ def resolve_url(base_url, relative_url):
 def merge_urls(base_url, relative_url):
     base_parsed = urllib.parse.urlparse(base_url)
     base_params = dict(urllib.parse.parse_qsl(base_parsed.query))
-    
     full_url = resolve_url(base_url, relative_url)
     final_parsed = urllib.parse.urlparse(full_url)
     final_params = dict(urllib.parse.parse_qsl(final_parsed.query))
-    
     merged_params = base_params.copy()
     merged_params.update(final_params)
-    
     new_query = urllib.parse.urlencode(merged_params)
     return final_parsed._replace(query=new_query).geturl()
 
-async def download_resource(session, url, path, referer=None):
-    headers = BROWSER_HEADERS.copy()
-    if referer: headers['Referer'] = referer
+async def download_resource(session, url, path):
     try:
-        async with session.get(url, headers=headers, timeout=20) as resp:
+        # Gunakan header minimalis untuk resource biner (Key/Segmen)
+        async with session.get(url, headers=BROWSER_HEADERS, timeout=20) as resp:
             if resp.status == 200:
                 data = await resp.read()
                 if len(data) > 0:
@@ -188,15 +182,7 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         is_flac = filepath.lower().endswith('.flac')
         if is_flac:
             audio = FLAC(filepath)
-            audio.delete()
-        else:
-            try: audio = ID3(filepath); audio.delete_all()
-            except: audio = ID3()
-        
-        def add_id3(tag, val):
-            if val: audio.add(tag(encoding=3, text=str(val)))
-
-        if is_flac:
+            audio.delete() 
             audio['TITLE'] = meta.get('title', '')
             audio['ARTIST'] = meta.get('artist', '')
             audio['ALBUM'] = meta.get('album', '')
@@ -206,6 +192,10 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
             if meta.get('tracknumber'): audio['TRACKNUMBER'] = str(meta.get('tracknumber'))
             if lyrics: audio['LYRICS'] = lyrics
         else:
+            try: audio = ID3(filepath); audio.delete_all()
+            except: audio = ID3()
+            def add_id3(tag, val):
+                if val: audio.add(tag(encoding=3, text=str(val)))
             add_id3(TIT2, meta.get('title', ''))
             add_id3(TPE1, meta.get('artist', ''))
             add_id3(TALB, meta.get('album', ''))
@@ -223,12 +213,9 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
                 audio.add_picture(p)
             else:
                 audio.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=data))
-            
         audio.save(filepath if not is_flac else None)
-        return 0 
-    except Exception as e: 
-        LOGGER.error(f"Tagging Error: {e}")
-        return 0
+        return int(audio.info.length)
+    except Exception: return 0
 
 async def _download_quality_variant(meta, user, folderpath, quality_code):
     client = user['moov_api']
@@ -244,25 +231,20 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             play_url_init = file_meta.get('playUrl')
             content_key = file_meta.get('contentKey')
             if not play_url_init: return False
-            
-            default_key_bytes = b''
-            if content_key:
-                m = hashlib.md5()
-                m.update((content_key + SECRET_SALT).encode('UTF-8'))
-                default_key_bytes = bytes.fromhex(m.hexdigest())
+            m = hashlib.md5()
+            m.update((content_key + SECRET_SALT).encode('UTF-8'))
+            default_key_bytes = bytes.fromhex(m.hexdigest())
         except: return False
 
         ext = '.mp3' if quality_code == '320' else '.flac'
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
         final_filepath = os.path.join(folderpath, f"{safe_filename}{ext}")
-        
         meta['filepath'] = os.path.abspath(final_filepath)
         meta['filename'] = os.path.basename(final_filepath)
         meta['is_downloaded'] = True
         meta['success'] = True
         
-        # Simpan Key sebagai .m4a (FFmpeg mengizinkan ini untuk key)
         key_filepath = os.path.join(track_temp_dir, "key.m4a")
         if default_key_bytes:
             async with aiofiles.open(key_filepath, 'wb') as f: await f.write(default_key_bytes)
@@ -290,6 +272,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             
             if not use_proxy:
                 LOGGER.info(f"Fallback to DIRECT connection (Attempt {attempt})...")
+                # Cookie jar
                 jar = aiohttp.CookieJar(unsafe=True)
                 if client.session.cookie_jar:
                     for cookie in client.session.cookie_jar:
@@ -300,7 +283,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                 session_context = client.session
 
             try:
-                # Gunakan AsyncNullContext
                 ctx = session_context if not use_proxy else AsyncNullContext()
                 async with ctx as session:
                     sess = client.session if use_proxy else session_context
@@ -336,11 +318,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                 if key_match:
                                     raw_key_uri = key_match.group(1)
                                     key_uri = resolve_url(play_url, raw_key_uri) if '?' in raw_key_uri else merge_urls(play_url, raw_key_uri)
-                                    
-                                    if not await download_resource(sess, key_uri, key_filepath, referer=play_url):
-                                        LOGGER.warning("Key DL Failed.")
-                                        error_in_parsing = True
-                                        break
+                                    if not await download_resource(sess, key_uri, key_filepath):
+                                        error_in_parsing = True; break
                                     new_line = re.sub(r'URI="[^"]+"', 'URI="key.m4a"', line)
                                     await f_out.write(f"{new_line}\n")
                                 else: await f_out.write(f"{line}\n")
@@ -351,11 +330,8 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                                     raw_map_uri = map_match.group(1)
                                     map_uri = resolve_url(play_url, raw_map_uri) if '?' in raw_map_uri else merge_urls(play_url, raw_map_uri)
                                     map_path = os.path.join(track_temp_dir, "init.m4a")
-                                    
-                                    if not await download_resource(sess, map_uri, map_path, referer=play_url):
-                                        LOGGER.warning("Map DL Failed.")
-                                        error_in_parsing = True
-                                        break
+                                    if not await download_resource(sess, map_uri, map_path):
+                                        error_in_parsing = True; break
                                     new_line = re.sub(r'URI="[^"]+"', 'URI="init.m4a"', line)
                                     await f_out.write(f"{new_line}\n")
                                 else: await f_out.write(f"{line}\n")
@@ -363,8 +339,7 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                             elif line.startswith("#"): await f_out.write(f"{line}\n")
                             else:
                                 remote_segments.append(line)
-                                # [FIX] Rename ke .ts agar sesuai dengan format mpegts (bypass error FFmpeg)
-                                seg_filename = f"seg_{seg_idx:04d}.ts"
+                                seg_filename = f"seg_{seg_idx:04d}.m4a"
                                 await f_out.write(f"{seg_filename}\n")
                                 seg_idx += 1
                     
@@ -376,13 +351,9 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
                     seg_error = False
                     for index, seg_url_raw in enumerate(remote_segments):
                         seg_url = merge_urls(play_url, seg_url_raw)
-                        # [FIX] Simpan sebagai .ts
-                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.ts")
-                        
-                        if not await download_resource(sess, seg_url, seg_path, referer=play_url):
-                            seg_error = True
-                            break
-                    
+                        seg_path = os.path.join(track_temp_dir, f"seg_{index:04d}.m4a")
+                        if not await download_resource(sess, seg_url, seg_path):
+                            seg_error = True; break
                     if seg_error: continue 
                     success_process = True
                     break 
@@ -400,7 +371,6 @@ async def _download_quality_variant(meta, user, folderpath, quality_code):
             '-i', local_m3u8_path, 
             final_filepath
         ]
-        
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         _, stderr = await process.communicate()
         
