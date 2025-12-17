@@ -93,69 +93,64 @@ class MoovAPI:
             data = await resp.json()
             return data.get('dataObject')
 
-    # --- PERBAIKAN UTAMA DI SINI ---
+    # --- PERBAIKAN LOGIKA PENGAMBILAN DATA PLAYLIST/CHART ---
     async def get_playlist_meta(self, pid):
         session = await self._get_session()
         
-        # Logika Deteksi:
-        # ID yang berawalan "PC" (Chart) atau "PP" (Program Playlist) biasanya ada di endpoint Profile
-        # ID angka/UUID biasanya Playlist User ada di endpoint Playlist
-        is_profile_type = str(pid).startswith("PC") or str(pid).startswith("PP")
-        
-        # Percobaan 1: Tentukan endpoint berdasarkan tebakan awal
-        if is_profile_type:
-            endpoint = "profile/getProfile"
-            ref_type = "PAB"
-        else:
-            endpoint = "playlist/getProfile"
-            ref_type = "CAT"
-
-        params = {
-            'profileId': pid,
-            'features': '24bit',
-            'deviceType': 'phones3',
-            'refType': ref_type,
-            'checksum': ''
-        }
-        
-        try:
-            async with session.get(f"{self.base_url}/{endpoint}", headers=self.headers, params=params) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get('dataObject')
-                elif resp.status == 404:
-                    # FALLBACK: Jika tebakan salah (404), coba endpoint sebaliknya
-                    LOGGER.warning(f"Moov: {endpoint} gagal (404), mencoba endpoint alternatif...")
-                    return await self._get_playlist_fallback(pid, is_profile_type)
-        except Exception as e:
-            LOGGER.error(f"Moov API Error (Percobaan 1): {e}")
-            raise e
+        # Kita siapkan beberapa kombinasi endpoint karena Chart (PC), Program (PP), 
+        # dan Playlist User memiliki endpoint yang berbeda-beda.
+        attempts = [
+            # [Prioritas 1] Profile + CAT: Biasanya untuk Chart (PC...) dan Program
+            {"endpoint": "profile/getProfile", "refType": "CAT"},
             
+            # [Prioritas 2] Playlist + CAT: Biasanya untuk Playlist User (ID Angka/UUID)
+            {"endpoint": "playlist/getProfile", "refType": "CAT"},
+            
+            # [Prioritas 3] Profile + PAB: Fallback terakhir (mirip Album)
+            {"endpoint": "profile/getProfile", "refType": "PAB"}
+        ]
+
+        # Ubah urutan prioritas jika ID terlihat seperti Playlist User (bukan Chart)
+        if not str(pid).startswith("PC") and not str(pid).startswith("PP"):
+             # Taruh endpoint 'playlist/getProfile' di urutan pertama
+             attempts = [attempts[1], attempts[0], attempts[2]]
+
+        last_error = None
+
+        for i, config in enumerate(attempts):
+            endpoint = config['endpoint']
+            ref_type = config['refType']
+            
+            params = {
+                'profileId': pid,
+                'features': '24bit',
+                'deviceType': 'phones3',
+                'refType': ref_type,
+                'checksum': ''
+            }
+            
+            try:
+                # LOGGER.info(f"Moov Debug: Mencoba {endpoint} (refType={ref_type})...")
+                async with session.get(f"{self.base_url}/{endpoint}", headers=self.headers, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        data_obj = data.get('dataObject')
+                        
+                        # Jika berhasil mendapatkan dataObject, langsung kembalikan
+                        if data_obj:
+                            LOGGER.info(f"Moov: Metadata ditemukan menggunakan {endpoint} (refType={ref_type})")
+                            return data_obj
+                    
+                    # Jika 404 atau dataObject kosong, lanjut ke loop berikutnya
+            except Exception as e:
+                last_error = e
+                continue
+        
+        # Jika semua percobaan gagal
+        if last_error:
+            LOGGER.error(f"Moov: Gagal mengambil metadata setelah {len(attempts)} percobaan. Error terakhir: {last_error}")
         return None
-
-    async def _get_playlist_fallback(self, pid, prev_was_profile):
-        session = await self._get_session()
-        
-        # Tukar endpoint
-        if prev_was_profile:
-            endpoint = "playlist/getProfile"
-            ref_type = "CAT"
-        else:
-            endpoint = "profile/getProfile"
-            ref_type = "PAB"
-            
-        params = {
-            'profileId': pid,
-            'features': '24bit',
-            'deviceType': 'phones3',
-            'refType': ref_type,
-            'checksum': ''
-        }
-        
-        async with session.get(f"{self.base_url}/{endpoint}", headers=self.headers, params=params) as resp:
-            data = await resp.json()
-            return data.get('dataObject')
-    # -------------------------------
+    # --------------------------------------------------------
 
     async def get_product_meta(self, product_id):
         session = await self._get_session()
