@@ -5,7 +5,7 @@ import re
 import aiohttp
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
-# HAPUS IMPORT moov_manager DARI SINI UNTUK MENCEGAH CIRCULAR IMPORT
+# JANGAN import moov_manager di sini (penyebab circular import)
 from bot.logger import LOGGER
 
 def is_explicit_strict(data):
@@ -23,9 +23,9 @@ def get_moov_cover(url):
     return clean_url
 
 async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None, album_meta=None):
-    # --- LOCAL IMPORT (FIX IMPORT ERROR) ---
+    # --- LOCAL IMPORT (Fix Circular Import) ---
     from .manager import moov_manager
-    # ---------------------------------------
+    # ------------------------------------------
 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -226,14 +226,30 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
 
     metadata['tracks'] = []
     
-    # Logic pencarian tracks di seluruh modul
+    # --- PERBAIKAN LOGIKA PENCARIAN TRACKS ---
     raw_tracks = pl_data.get('tracks', [])
+    
+    # Cek 2: Cek 'products' di root (kadang Chart begitu)
+    if not raw_tracks:
+        raw_tracks = pl_data.get('products', [])
+
+    # Cek 3: Cek 'modules'
     if not raw_tracks:
         modules = pl_data.get('modules', [])
         for mod in modules:
+            # Sub-Cek A: products langsung di module
             prods = mod.get('products', [])
             if prods:
                 raw_tracks.extend(prods)
+                continue
+            
+            # Sub-Cek B: products di dalam 'data' (Struktur Chart/Program)
+            mod_data = mod.get('data')
+            if isinstance(mod_data, dict):
+                prods_nested = mod_data.get('products', [])
+                if prods_nested:
+                    raw_tracks.extend(prods_nested)
+    # -----------------------------------------
 
     for idx, track_raw in enumerate(raw_tracks, 1):
         track_raw['trackNo'] = idx
