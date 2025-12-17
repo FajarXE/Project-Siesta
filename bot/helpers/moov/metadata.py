@@ -17,22 +17,24 @@ def is_explicit_strict(data):
 
 def get_moov_cover(url):
     """
-    Memaksa URL cover menjadi ORIGINAL (Resolusi Maksimal).
-    Menghapus semua parameter resize.
+    Memaksa URL cover menjadi ORIGINAL atau 1000x1000.
     """
     if not url: return None
     clean_url = url.split("?")[0]
     
     # 1. Hapus path resize (contoh: /resize/118x118/)
-    clean_url = re.sub(r'\/resize\/\d+x\d+', '', clean_url)
+    if "/resize/" in clean_url:
+        clean_url = re.sub(r'\/resize\/\d+x\d+', '', clean_url)
     
     # 2. Hapus suffix dimensi di nama file (contoh: cover_118x118.jpg -> cover.jpg)
-    # Ini yang paling sering menyebabkan gambar kecil
     clean_url = re.sub(r'_(\d{2,4}x\d{2,4})', '', clean_url)
+
+    # 3. Jika masih ada pola dimensi angka x angka (misal 118x118), paksa ke 1000x1000
+    clean_url = re.sub(r'(\d{2,4}x\d{2,4})', '1000x1000', clean_url)
     
-    # 3. Fix protokol dan slash ganda
-    clean_url = clean_url.replace('//', '/')
-    clean_url = clean_url.replace('https:/', 'https://').replace('http:/', 'http://')
+    # Bersihkan protokol
+    clean_url = clean_url.replace('https:/', 'https://').replace('http:/', 'http://').replace('//', '/')
+    clean_url = clean_url.replace('https:/', 'https://') # Fix double slash fix result
     
     return clean_url
 
@@ -71,7 +73,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['itemid'] = track_data.get('productId')
     metadata['title'] = track_data.get('productTitle')
     
-    # --- PENGOLAHAN ARTIS & PRODUCER ---
+    # --- PENGOLAHAN ARTIS & PRODUCER (Fixed) ---
     artists_raw = track_data.get('artists', [])
     if not artists_raw and 'artist' in track_data:
         if isinstance(track_data['artist'], str): 
@@ -89,18 +91,18 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
                 role = a.get('role', 'Main')
                 if role in ['Main', 'Featured']:
                     main_artists.append(name)
-                # Ambil Producer
-                elif role in ['Producer', 'Arranger']:
+                # Ambil Producer dengan berbagai kemungkinan nama role
+                elif role in ['Producer', 'Arranger', 'Composer']:
                     producers.append(name)
             elif isinstance(a, str):
                 main_artists.append(a)
     
     metadata['artist'] = ", ".join(main_artists)
-    metadata['producer'] = ", ".join(producers) # Simpan untuk handler
+    metadata['producer'] = ", ".join(producers) # Disimpan ke metadata
     # -----------------------------------
 
-    # --- PENGOLAHAN LABEL ---
-    # Cek berbagai kemungkinan key label
+    # --- PENGOLAHAN LABEL (Comprehensive) ---
+    # Cek albumLabel (paling umum), lalu label, lalu recordLabel
     metadata['label'] = (
         track_data.get('albumLabel') or 
         track_data.get('label') or 
@@ -108,6 +110,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         ""
     )
     
+    # Nama Album
     if track_data.get('albumTitle'):
         metadata['album'] = track_data.get('albumTitle')
     elif album_meta:
@@ -172,27 +175,31 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- LOGIKA COVER (Max Res) ---
+    # --- PERBAIKAN LOGIKA COVER (PRIORITAS DIUBAH) ---
+    # Prioritaskan gambar dari objek ALBUM, karena di Chart, gambar Track seringkali thumbnail
     if cover:
         metadata['cover'] = cover
     elif not metadata.get('cover_url'):
         found_url = None
-        # Prioritas 1: Album Image (Seringkali source terbaik)
+        
+        # 1. CEK ALBUM IMAGES DULU (Biasanya HD)
         album_info = track_data.get('album')
         if isinstance(album_info, dict):
             alb_imgs = album_info.get('images', [])
             if alb_imgs: found_url = alb_imgs[0].get('path')
         
-        # Prioritas 2: Track Image
+        # 2. BARU CEK TRACK IMAGES
         if not found_url:
             images = track_data.get('images', [])
             if images: found_url = images[0].get('path')
 
+        # 3. Fallback
         if not found_url: found_url = track_data.get('thumbnail')
 
         if found_url:
             metadata['cover_url'] = get_moov_cover(found_url)
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
+    # -------------------------------------------------
 
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
@@ -216,7 +223,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     return metadata
 
 async def process_album_metadata(album_data: dict, r_id, user: dict):
-    # Logika Album (Tidak berubah, hanya dependensi)
+    # (Sama seperti sebelumnya)
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
