@@ -17,35 +17,28 @@ def is_explicit_strict(data):
 
 def get_moov_cover(url):
     """
-    Mengubah resolusi gambar menjadi 1000x1000 (Maksimal).
-    Menangkap pola seperti /118x118/ atau _350x350.jpg
+    Memaksa URL cover menjadi resolusi tinggi.
+    Menangani pola /118x118/ maupun _118x118.jpg
     """
     if not url: return None
     clean_url = url.split("?")[0]
     
-    # PERBAIKAN: Regex lebih agresif. Ganti pola 'ANGKAxANGKA' dengan '1000x1000'
-    # Ini akan mengubah 118x118 menjadi 1000x1000
-    return re.sub(r'(\d{2,4}x\d{2,4})', '1000x1000', clean_url)
+    # 1. Ganti pola dimensi di tengah path (contoh: /118x118/)
+    # Kita coba 1000x1000 dulu, biasanya Moov resize on-the-fly
+    clean_url = re.sub(r'\/(\d{2,4}x\d{2,4})\/', '/1000x1000/', clean_url)
+    
+    # 2. Ganti pola dimensi di nama file (contoh: cover_118x118.jpg)
+    clean_url = re.sub(r'_(\d{2,4}x\d{2,4})', '_1000x1000', clean_url)
+    
+    return clean_url
 
 def parse_date(date_val):
-    """
-    Membersihkan dan memformat tanggal dari berbagai format Moov.
-    """
     if not date_val: return None
     s = str(date_val).strip()
     if s.lower() == 'none' or s == "": return None
-    
-    # Format: 2023-01-01T00:00:00
     if 'T' in s: return s.split('T')[0]
-    
-    # Format: 20230101
-    if len(s) == 8 and s.isdigit():
-        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
-        
-    # Format sudah benar: 2023-01-01
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
-        return s
-        
+    if len(s) == 8 and s.isdigit(): return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', s): return s
     return None
 
 def find_products_recursive(data, results=None):
@@ -111,20 +104,15 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     is_track_explicit = is_explicit_strict(track_data)
     metadata['explicit'] = "True" if is_track_explicit else "False"
 
-    # --- PERBAIKAN PENCARIAN TANGGAL (COMPREHENSIVE) ---
+    # --- PENCARIAN TANGGAL ---
     final_date = None
-    
-    # Daftar kunci yang mungkin berisi tanggal
     date_keys = ['publishDate', 'releaseDate', 'originalReleaseDate', 'createdOn']
-    
-    # 1. Cari di data Track
     for key in date_keys:
         d = parse_date(track_data.get(key))
         if d:
             final_date = d
             break
             
-    # 2. Jika tidak ketemu, cari di data Album yang tertaut (untuk Chart/Playlist)
     if not final_date and 'album' in track_data:
         alb_data = track_data.get('album')
         if isinstance(alb_data, dict):
@@ -137,7 +125,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     if final_date:
         metadata['date'] = final_date
         metadata['year'] = final_date[:4]
-    # ---------------------------------------------------
+    # -------------------------
     
     if album_meta:
         if not metadata['albumartist']: metadata['albumartist'] = album_meta.get('artist', '')
@@ -146,7 +134,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
             metadata['totaltracks'] = album_meta.get('totaltracks', '')
             metadata['totalvolumes'] = album_meta.get('totalvolumes', '')
         
-        # Fallback date ke album global jika track date kosong
+        # Priority: Track Date > Album Date
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
             metadata['year'] = album_meta.get('year', '')
@@ -159,30 +147,24 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- LOGIKA COVER ---
+    # --- LOGIKA COVER (Max Res) ---
     if cover:
         metadata['cover'] = cover
     elif not metadata.get('cover_url'):
         found_url = None
-        
-        # 1. Cek 'images' di root track (Standard)
         images = track_data.get('images', [])
-        if images:
-            found_url = images[0].get('path')
+        if images: found_url = images[0].get('path')
             
-        # 2. Cek 'album' -> 'images' (Khusus Playlist/Chart)
         if not found_url:
             album_info = track_data.get('album')
             if isinstance(album_info, dict):
                 alb_imgs = album_info.get('images', [])
-                if alb_imgs:
-                    found_url = alb_imgs[0].get('path')
+                if alb_imgs: found_url = alb_imgs[0].get('path')
 
-        # 3. Cek 'thumbnail' (Fallback)
-        if not found_url:
-             found_url = track_data.get('thumbnail')
+        if not found_url: found_url = track_data.get('thumbnail')
 
         if found_url:
+            # Panggil fungsi regex baru
             metadata['cover_url'] = get_moov_cover(found_url)
             metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
 
@@ -208,6 +190,7 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     return metadata
 
 async def process_album_metadata(album_data: dict, r_id, user: dict):
+    # (Kode ini tetap sama, hanya memastikan fungsi helper dipanggil)
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
@@ -229,7 +212,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     tags = album_data.get('tags', [])
     if 'Explicit' in tags or 'Parental Advisory' in tags: is_album_explicit = True
 
-    # Parse Date untuk Album
     final_date = None
     date_keys = ['publishDate', 'releaseDate', 'originalReleaseDate']
     for key in date_keys:
@@ -242,7 +224,6 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
         metadata['date'] = final_date
         metadata['year'] = final_date[:4]
     else:
-        # Fallback parse dari judul jika ada
         if len(titles) > 2:
             try: 
                 metadata['year'] = titles[2].split('-')[0]
@@ -317,17 +298,15 @@ async def process_playlist_metadata(pl_data: dict, r_id, user: dict):
     metadata['tracks'] = []
     
     raw_tracks = find_products_recursive(pl_data)
-    LOGGER.info(f"Moov Playlist/Chart: Ditemukan {len(raw_tracks)} lagu melalui pencarian rekursif.")
+    LOGGER.info(f"Moov Playlist/Chart: Ditemukan {len(raw_tracks)} lagu.")
 
+    # PENTING: Kita tidak memproses metadata disini lagi secara mendalam,
+    # karena handler.py akan mengambil ulang metadata lengkap (product meta) nanti.
+    # Kita hanya butuh ID dan Title dasar.
     for idx, track_raw in enumerate(raw_tracks, 1):
         track_raw['trackNo'] = idx
         track_raw['discNo'] = 1
-        
         t_meta = await process_track_metadata(track_raw, r_id, user, cover=None, album_meta=None)
-        
-        if not t_meta.get('cover') and metadata.get('cover'):
-             t_meta['cover'] = metadata['cover']
-
         metadata['tracks'].append(t_meta)
 
     metadata['totaltracks'] = len(metadata['tracks'])
