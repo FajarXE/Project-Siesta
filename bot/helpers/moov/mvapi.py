@@ -96,14 +96,27 @@ class MoovAPI:
     async def get_playlist_meta(self, pid):
         session = await self._get_session()
         
-        attempts = [
-            {"endpoint": "profile/getProfile", "refType": "CAT"},
-            {"endpoint": "playlist/getProfile", "refType": "CAT"},
-            {"endpoint": "profile/getProfile", "refType": "PAB"}
-        ]
-
-        if not str(pid).startswith("PC") and not str(pid).startswith("PP"):
-             attempts = [attempts[1], attempts[0], attempts[2]]
+        # --- PERUBAHAN PRIORITAS ---
+        # Untuk ID Chart (PC...), coba PAB (Profile Album) dulu karena biasanya
+        # CAT (Category) hanya mengembalikan banner kosong.
+        if str(pid).startswith("PC"):
+             attempts = [
+                {"endpoint": "profile/getProfile", "refType": "PAB"}, # Prioritas 1 untuk Chart
+                {"endpoint": "profile/getProfile", "refType": "CAT"},
+                {"endpoint": "playlist/getProfile", "refType": "CAT"}
+            ]
+        elif str(pid).startswith("PP"):
+             attempts = [
+                {"endpoint": "profile/getProfile", "refType": "PAB"},
+                {"endpoint": "profile/getProfile", "refType": "CAT"}
+             ]
+        else:
+             # Playlist User Biasa (ID Angka/UUID)
+             attempts = [
+                {"endpoint": "playlist/getProfile", "refType": "CAT"}, # Prioritas 1 untuk Playlist User
+                {"endpoint": "profile/getProfile", "refType": "CAT"},
+                {"endpoint": "profile/getProfile", "refType": "PAB"}
+            ]
 
         last_error = None
 
@@ -124,6 +137,8 @@ class MoovAPI:
                     if resp.status == 200:
                         data = await resp.json()
                         data_obj = data.get('dataObject')
+                        
+                        # Pastikan data tidak kosong
                         if data_obj:
                             LOGGER.info(f"Moov: Metadata ditemukan menggunakan {endpoint} (refType={ref_type})")
                             return data_obj
