@@ -227,6 +227,9 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         if meta.get('date'):
             audio['DATE'] = str(meta.get('date'))
             audio['ORIGINALDATE'] = str(meta.get('date'))
+            # Tambahan: Set YEAR explicitly
+            try: audio['YEAR'] = str(meta.get('date'))[:4]
+            except: pass
 
         if meta.get('label'):
             audio['ORGANIZATION'] = meta.get('label', '')
