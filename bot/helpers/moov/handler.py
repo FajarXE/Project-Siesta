@@ -191,7 +191,7 @@ async def start_playlist(pid, user):
         tasks.append(enrich_and_download_chart_track(track, user, pl_folder))
 
     update_details = {
-        'text': f"Downloading Playlist (Full Tags): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': f"Downloading Playlist (Full): {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
         'msg': user['bot_msg'], 
         'title': pl_meta['title'], 'type': 'playlist'
     }
@@ -247,6 +247,7 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
             audio['YEAR'] = str(meta.get('date'))[:4]
             audio['ORIGINALDATE'] = str(meta.get('date'))
             audio['RELEASEDATE'] = str(meta.get('date')) 
+            audio['RECORDEDDATE'] = str(meta.get('date')) # Extra Tag
 
         # LABEL / PUBLISHER
         if meta.get('label'):
