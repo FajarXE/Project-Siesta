@@ -93,22 +93,30 @@ class MoovAPI:
             data = await resp.json()
             return data.get('dataObject')
 
-    # --- PERBAIKAN LOGIKA PENGAMBILAN DATA (DENGAN VALIDASI ISI) ---
+    # --- PERBAIKAN LOGIKA: MENAMBAHKAN refType PP dan PC ---
     async def get_playlist_meta(self, pid):
         session = await self._get_session()
         
-        # Prioritas Percobaan
         attempts = []
         
-        if str(pid).startswith("PC") or str(pid).startswith("PP"):
-             # Untuk Chart (PC), coba PAB dulu, lalu CAT
+        # Deteksi tipe ID
+        if str(pid).startswith("PC"):
+             # PC = Program Chart. Coba variasi Program (PP/PC) sebelum Fallback ke CAT
              attempts = [
-                {"endpoint": "profile/getProfile", "refType": "PAB"},
-                {"endpoint": "profile/getProfile", "refType": "CAT"},
-                {"endpoint": "playlist/getProfile", "refType": "CAT"}
+                {"endpoint": "profile/getProfile", "refType": "PP"},  # Prioritas 1: Program Playlist
+                {"endpoint": "profile/getProfile", "refType": "PC"},  # Prioritas 2: Program Chart (Direct)
+                {"endpoint": "profile/getProfile", "refType": "PAB"}, # Prioritas 3: Profile Album
+                {"endpoint": "profile/getProfile", "refType": "CAT"}, # Prioritas 4: Category (sering kosong)
+                {"endpoint": "playlist/getProfile", "refType": "CAT"} # Fallback
             ]
+        elif str(pid).startswith("PP"):
+             attempts = [
+                {"endpoint": "profile/getProfile", "refType": "PP"},
+                {"endpoint": "profile/getProfile", "refType": "PAB"},
+                {"endpoint": "profile/getProfile", "refType": "CAT"}
+             ]
         else:
-             # Untuk Playlist User (Angka/UUID)
+             # Playlist User Biasa (Angka/UUID)
              attempts = [
                 {"endpoint": "playlist/getProfile", "refType": "CAT"},
                 {"endpoint": "profile/getProfile", "refType": "CAT"},
@@ -137,24 +145,28 @@ class MoovAPI:
                         
                         if data_obj:
                             # --- VALIDASI ISI ---
-                            # Jangan terima jika kosong melompong (fix masalah Chart kosong)
                             has_content = False
                             
-                            # Cek modules (biasanya Chart/Album ada di sini)
+                            # Cek modules
                             if data_obj.get('modules') and len(data_obj.get('modules')) > 0:
                                 has_content = True
                             
-                            # Cek tracks/products (biasanya Playlist ada di sini)
-                            elif data_obj.get('tracks'): has_content = True
-                            elif data_obj.get('products'): has_content = True
+                            # Cek tracks/products
+                            elif data_obj.get('tracks') or data_obj.get('products'): 
+                                has_content = True
+                            
+                            # Cek data tersembunyi (khusus chart)
+                            elif data_obj.get('data') and (data_obj['data'].get('tracks') or data_obj['data'].get('products')):
+                                has_content = True
                             
                             if has_content:
                                 LOGGER.info(f"Moov: Metadata VALID ditemukan menggunakan {endpoint} (refType={ref_type})")
                                 return data_obj
                             else:
-                                LOGGER.warning(f"Moov: Metadata ditemukan di {endpoint} (refType={ref_type}) tapi KOSONG (0 modules/tracks). Mencoba opsi lain...")
+                                LOGGER.warning(f"Moov: Metadata ditemukan di {endpoint} (refType={ref_type}) tapi KOSONG. Mencoba opsi lain...")
                         else:
-                            LOGGER.warning(f"Moov: Response 200 OK tapi dataObject kosong di {endpoint}")
+                            # Response 200 tapi dataObject null
+                            pass 
 
             except Exception as e:
                 last_error = e
@@ -163,7 +175,6 @@ class MoovAPI:
         if last_error:
             LOGGER.error(f"Moov: Gagal mengambil metadata setelah {len(attempts)} percobaan. Error terakhir: {last_error}")
         return None
-    # ----------------------------------------------------------------
 
     async def get_product_meta(self, product_id):
         session = await self._get_session()
