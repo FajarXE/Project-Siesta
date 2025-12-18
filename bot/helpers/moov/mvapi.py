@@ -8,7 +8,8 @@ from bot.logger import LOGGER
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
-    LOGGER.critical("Modul 'aiohttp-socks' tidak ditemukan. Silakan install dengan 'pip install aiohttp-socks'")
+    # Logger level diubah ke warning agar tidak terlalu panik jika user tidak pakai proxy
+    LOGGER.warning("Modul 'aiohttp-socks' tidak ditemukan. Proxy SOCKS5 mungkin tidak jalan.")
     ProxyConnector = None
 # ----------------------
 
@@ -27,24 +28,23 @@ class MoovAPI:
     async def _get_session(self):
         if not self.session or self.session.closed:
             # --- KONFIGURASI TIMEOUT YANG LEBIH SABAR ---
-            # Connect: Waktu tunggu proxy connect (60 detik)
-            # Total: Waktu total request selesai (120 detik)
             timeout = aiohttp.ClientTimeout(total=120, connect=60)
             
             if self.proxy:
                 if not ProxyConnector:
-                    raise ImportError("Anda menggunakan Proxy SOCKS5 tapi 'aiohttp-socks' belum diinstal.")
-                
-                proxy_url = self.proxy
-                use_rdns = False 
+                    LOGGER.error("Proxy diset tapi aiohttp-socks tidak ada.")
+                    self.session = aiohttp.ClientSession(timeout=timeout)
+                else:
+                    proxy_url = self.proxy
+                    use_rdns = False 
 
-                if proxy_url.startswith("socks5h://"):
-                    proxy_url = proxy_url.replace("socks5h://", "socks5://")
-                    use_rdns = True
-                
-                LOGGER.info(f"MoovAPI: Menggunakan ProxyConnector (RDNS={use_rdns}, Timeout=60s)")
-                connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
-                self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+                    if proxy_url.startswith("socks5h://"):
+                        proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                        use_rdns = True
+                    
+                    LOGGER.info(f"MoovAPI: Menggunakan ProxyConnector (RDNS={use_rdns}, Timeout=60s)")
+                    connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+                    self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
             else:
                 self.session = aiohttp.ClientSession(timeout=timeout)
         return self.session
@@ -193,11 +193,10 @@ class MoovAPI:
         session = await self._get_session()
         stream_headers = {'User-Agent': 'okhttp/4.8.0'}
         
-        # --- FIX: Coba berbagai kategori ---
-        # Untuk Link Share/Single Track, biasanya 'product'.
-        # Untuk Playlist, biasanya 'playlist'.
-        # Kita loop agar robust.
-        categories = ['product', 'playlist']
+        # --- PERBAIKAN DI SINI ---
+        # Menambahkan 'album' ke dalam categories.
+        # Lagu dari album seringkali memerlukan cat='album' untuk checkout.
+        categories = ['product', 'album', 'playlist'] 
         
         for cat_type in categories:
             params = {
@@ -205,7 +204,7 @@ class MoovAPI:
                 'action': 'stream',
                 'streamtype': 'stdhls',
                 'preview': 'F',
-                'cat': cat_type, # <-- Dinamis
+                'cat': cat_type, # <-- Dinamis: product/album/playlist
                 'pid': track_id,
                 'isUpSample': 'false',
                 'osver': '10.0.0',
