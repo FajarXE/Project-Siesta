@@ -253,7 +253,7 @@ async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, u
 
     if not metadata['tracks']:
         # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
-        raise DeezerError(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
+        raise DeezerError(f"Tidak ada lagu yang valid ditemukan (Track not available) untuk album {metadata['title']}")
         # --- BATAS PERBAIKAN ---
     
     metadata['quality'] = metadata['tracks'][0]['quality']
