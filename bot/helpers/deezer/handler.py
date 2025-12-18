@@ -67,8 +67,7 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
             track_meta = await process_track_metadata(item_id, user['r_id'], user=user)
         except Exception as e:
             LOGGER.warning(f"Deezer track {item_id} tidak tersedia: {e}")
-            # Raise error agar ditangkap logic retry di download.py (jika single track)
-            # atau diabaikan oleh handler album (jika batch)
+            # Raise error agar ditangkap logic retry di download.py
             raise e 
             
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
@@ -164,7 +163,19 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     album_meta['folderpath'] = album_folder
 
     if upload:
-        album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+        # --- PERBAIKAN BARU: REUSE POSTER (GUNAKAN KEMBALI) ---
+        # Cek apakah poster untuk album ini sudah ada di sesi user (karena retry)
+        poster_key = f'poster_album_{album_id}'
+        existing_poster = user.get(poster_key)
+        
+        if existing_poster:
+            # Gunakan yang sudah ada, jangan kirim baru (Anti-Spam)
+            album_meta['poster_msg'] = existing_poster
+        else:
+            # Kirim baru dan simpan di memori user
+            album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+            user[poster_key] = album_meta['poster_msg']
+        # ------------------------------------------------------
 
     tasks = []
     for track in album_meta['tracks']:
@@ -192,16 +203,10 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     album_meta['totaltracks'] = len(successful_tracks)
 
     if not successful_tracks:
-        # --- PERBAIKAN BARU: HAPUS POSTER JIKA GAGAL (ANTI-DOUBLE) ---
-        # Jika semua lagu gagal (Region Lock), hapus poster sebelum Retry dimulai
-        if upload and album_meta.get('poster_msg'):
-            try:
-                await album_meta['poster_msg'].delete()
-            except:
-                pass
-        # -----------------------------------------------
+        # --- PENTING: JANGAN HAPUS POSTER DI SINI ---
+        # Kita biarkan poster tetap ada agar bisa digunakan lagi oleh Akun berikutnya
         
-        # --- PERBAIKAN ERROR: Tambahkan kata kunci "Track not available" untuk memicu Retry ---
+        # Trigger Retry Exception
         raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh (Track not available) untuk album {album_meta['title']}.")
 
     # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
@@ -295,8 +300,18 @@ async def start_playlist(playlist_id, user):
         'type': play_meta['type']
     }
 
-    play_meta['poster_msg'] = await post_art_poster(user, play_meta)
+    # --- PERBAIKAN BARU: REUSE POSTER (GUNAKAN KEMBALI) ---
     upload = True
+    poster_key = f'poster_playlist_{playlist_id}'
+    existing_poster = user.get(poster_key)
+
+    if upload:
+        if existing_poster:
+            play_meta['poster_msg'] = existing_poster
+        else:
+            play_meta['poster_msg'] = await post_art_poster(user, play_meta)
+            user[poster_key] = play_meta['poster_msg']
+    # ------------------------------------------------------
     
     if bot_set.playlist_conc:
         upload = False
@@ -327,15 +342,7 @@ async def start_playlist(playlist_id, user):
         play_meta['totaltracks'] = len(successful_tracks_non_conc)
     
     if not play_meta['tracks']:
-         # --- PERBAIKAN BARU: HAPUS POSTER JIKA GAGAL (ANTI-DOUBLE) ---
-         if upload and play_meta.get('poster_msg'):
-            try:
-                await play_meta['poster_msg'].delete()
-            except:
-                pass
-         # -----------------------------------------------
-
-         # --- PERBAIKAN ERROR: Tambahkan kata kunci "Track not available" untuk memicu Retry ---
+         # Trigger Retry Exception
          raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh (Track not available) untuk playlist {play_meta['title']}.")
 
     if playlist_zip: 
