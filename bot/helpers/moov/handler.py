@@ -215,7 +215,6 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
                 deep_meta['totalvolumes'] = album_meta_full['totalvolumes']
 
     deep_meta['folderpath'] = folderpath
-    # Gunakan Wrapper Retry
     return await download_track_retry_wrapper(deep_meta, user, folderpath)
 
 async def start_playlist(pid, user):
@@ -362,22 +361,20 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         LOGGER.error(f"Mutagen Error ({ext}): {e}")
         return 0
 
-# --- WRAPPER UNTUK RETRY / FALLBACK ---
 async def download_track_retry_wrapper(track_meta, user, folderpath):
-    # Coba download pertama (sesuai preference, misal FLAC)
     result = await download_track(track_meta, user, folderpath)
     
-    # Jika gagal dan mode awalnya bukan MP3, coba fallback ke MP3
     if result is False:
         current_quality = track_meta.get('moov_quality_code', 'LL')
         if current_quality != 'MP3_320':
             LOGGER.warning(f"Moov: Download FLAC gagal total untuk {track_meta.get('title')}. Mencoba FALLBACK ke MP3...")
             
             fallback_meta = track_meta.copy()
-            fallback_meta['moov_quality_code'] = 'MP3_320' # Paksa kode MP3 (biasanya HQ)
+            fallback_meta['moov_quality_code'] = 'MP3_320'
             fallback_meta['extension'] = 'mp3'
             fallback_meta['quality'] = 'MP3 320kbps'
             
+            # Coba MP3
             return await download_track(fallback_meta, user, folderpath)
     
     return result
@@ -389,16 +386,14 @@ async def download_track(track_meta, user, folderpath):
     if not meta.get('itemid'): return False
 
     file_meta = None
-    # Support kode kualitas MP3 jika diset oleh wrapper
     target_quality = meta.get('moov_quality_code', 'LL')
-    if target_quality == 'MP3_320': target_quality = 'HQ' # Kode Moov untuk MP3
+    if target_quality == 'MP3_320': target_quality = 'HQ'
 
     try:
         file_meta = await client.get_track_file_meta(meta['itemid'], target_quality)
     except Exception as e:
         LOGGER.warning(f"Moov Stream Check Error ({target_quality}): {e}")
 
-    # Fallback Quality Logic (Internal, misal HR -> LL)
     if not file_meta and target_quality not in ['LL', 'HQ']:
         LOGGER.info(f"Moov: Kualitas {target_quality} tidak tersedia, fallback ke LL...")
         target_quality = 'LL'
@@ -497,20 +492,27 @@ async def download_track(track_meta, user, folderpath):
         local_segment_names = []
         
         for index, seg_url in enumerate(remote_segments):
-            seg_name = f"seg_{index:04d}.{ext}" # Use flexible extension
+            seg_name = f"seg_{index:04d}.{ext}" 
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
             
             success = False
             for _ in range(3):
                 try:
-                    async with client.session.get(seg_url) as seg_resp:
+                    # PERBAIKAN: Gunakan Header yang sama dengan M3U8
+                    async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
-                            # --- CEK VALIDITAS SEGMEN ---
-                            if len(data) < 500: # File < 500 bytes mencurigakan
-                                raise Exception("Segment too small (Corrupt/HTML)")
-                            # ----------------------------
+                            
+                            # --- PERBAIKAN: Deteksi Konten Sampah/Error ---
+                            # Jika file diawali dengan XML atau HTML, berarti itu error dari server
+                            try:
+                                prefix = data[:100].decode('utf-8', errors='ignore').strip().lower()
+                                if prefix.startswith(('<html', '<!doctype', '<?xml', '{"error"')):
+                                    raise Exception("Segment contains HTML/XML Error, skipping...")
+                            except: pass
+                            # ---------------------------------------------
+                            
                             async with aiofiles.open(seg_path, 'wb') as f:
                                 await f.write(data)
                             success = True
@@ -537,15 +539,14 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- FFMPEG OPTIMIZED ---
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-            '-analyzeduration', '10000000', # Fix 0 channels
-            '-probesize', '10000000',      # Fix 0 channels
+            '-analyzeduration', '10000000',
+            '-probesize', '10000000',      
             '-i', local_m3u8_path,
-            '-c', 'copy' if ext == 'mp3' else 'flac', # Copy jika MP3, Encode jika FLAC
+            '-c', 'copy' if ext == 'mp3' else 'flac', 
             final_filepath
         ]
         
@@ -557,7 +558,7 @@ async def download_track(track_meta, user, folderpath):
         if process.returncode != 0:
             LOGGER.error(f"FFmpeg Error ({ext}): {stderr.decode()}")
             shutil.rmtree(track_temp_dir)
-            return False # Ini akan mentrigger Fallback di wrapper
+            return False 
 
         if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) == 0:
             return False
