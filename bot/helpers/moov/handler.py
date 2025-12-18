@@ -199,7 +199,7 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
         if album_meta_full:
             if album_meta_full.get('cover'):
                 deep_meta['cover'] = album_meta_full['cover']
-                deep_meta['cover_url'] = None # FORCE DISABLE URL DOWNLOAD untuk menjaga HD cover
+                deep_meta['cover_url'] = None 
                 
             if album_meta_full.get('label'):
                 deep_meta['label'] = album_meta_full['label']
@@ -208,6 +208,12 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
                 deep_meta['year'] = album_meta_full['year']
             if album_meta_full.get('copyright'):
                 deep_meta['copyright'] = album_meta_full['copyright']
+                
+            # FIX: Injeksi Total Tracks manual untuk Fallback
+            if album_meta_full.get('totaltracks'):
+                deep_meta['totaltracks'] = album_meta_full['totaltracks']
+            if album_meta_full.get('totalvolumes'):
+                deep_meta['totalvolumes'] = album_meta_full['totalvolumes']
 
     deep_meta['folderpath'] = folderpath
     return await download_track(deep_meta, user, folderpath)
