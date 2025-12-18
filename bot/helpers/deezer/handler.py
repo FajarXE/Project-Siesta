@@ -118,8 +118,6 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         return False
     except Exception:
         # --- PERBAIKAN LOG: SILENT MODE ---
-        # Kita hapus variable 'e' agar pesan "not a valid FLAC file" tidak muncul di log.
-        # Kita ganti dengan pesan bersih.
         LOGGER.warning(f"Deezer: Metadata gagal (File unduhan invalid). Mengulang dengan akun lain...")
         try:
             os.remove(track_meta['filepath'])
@@ -194,6 +192,15 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     album_meta['totaltracks'] = len(successful_tracks)
 
     if not successful_tracks:
+        # --- PERBAIKAN BARU: HAPUS POSTER JIKA GAGAL (ANTI-DOUBLE) ---
+        # Jika semua lagu gagal (Region Lock), hapus poster sebelum Retry dimulai
+        if upload and album_meta.get('poster_msg'):
+            try:
+                await album_meta['poster_msg'].delete()
+            except:
+                pass
+        # -----------------------------------------------
+        
         # --- PERBAIKAN ERROR: Tambahkan kata kunci "Track not available" untuk memicu Retry ---
         raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh (Track not available) untuk album {album_meta['title']}.")
 
@@ -320,6 +327,14 @@ async def start_playlist(playlist_id, user):
         play_meta['totaltracks'] = len(successful_tracks_non_conc)
     
     if not play_meta['tracks']:
+         # --- PERBAIKAN BARU: HAPUS POSTER JIKA GAGAL (ANTI-DOUBLE) ---
+         if upload and play_meta.get('poster_msg'):
+            try:
+                await play_meta['poster_msg'].delete()
+            except:
+                pass
+         # -----------------------------------------------
+
          # --- PERBAIKAN ERROR: Tambahkan kata kunci "Track not available" untuk memicu Retry ---
          raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh (Track not available) untuk playlist {play_meta['title']}.")
 
