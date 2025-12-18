@@ -30,30 +30,31 @@ async def start_deezer(url:str, user: dict):
     # --- MODIFIKASI: Dapatkan klien API dari kamus user ---
     deezerapi = user.get('deezer_api')
     if not deezerapi:
+        # Error ini fatal, biarkan download.py menangkapnya atau edit di sini
         await edit_message(user['bot_msg'], "Error: Sesi login Deezer tidak ditemukan untuk pengguna ini.")
-        return
+        raise Exception("Sesi login Deezer tidak ditemukan.") # Lempar error agar download.py tahu
     # --- BATAS MODIFIKASI ---
 
-    try:
-        media_type, item_id = await deezerapi.custom_url_parse(url)
+    # --- PERBAIKAN: Hapus blok Try/Except luas di sini ---
+    # Biarkan error (seperti Region Lock) naik ke download.py agar ARL bisa di-roll
+    
+    media_type, item_id = await deezerapi.custom_url_parse(url)
 
-        if media_type == 'artist':
-            await start_artist(item_id, user)
-        elif media_type == 'track':
-            # --- MODIFIKASI: Kirim 'user' ke start_track ---
-            success = await start_track(item_id, user, None)
-            if not success:
-                raise Exception("Gagal mengunduh atau memproses track.")
-        elif media_type == 'album':
-            # --- MODIFIKASI: Kirim 'user' ke start_album ---
-            await start_album(item_id, user)
-        elif media_type == 'playlist':
-            # --- MODIFIKASI: Kirim 'user' ke start_playlist ---
-            await start_playlist(item_id, user)
+    if media_type == 'artist':
+        await start_artist(item_id, user)
+    elif media_type == 'track':
+        # --- MODIFIKASI: Kirim 'user' ke start_track ---
+        success = await start_track(item_id, user, None)
+        if not success:
+            raise Exception("Gagal mengunduh atau memproses track.")
+    elif media_type == 'album':
+        # --- MODIFIKASI: Kirim 'user' ke start_album ---
+        await start_album(item_id, user)
+    elif media_type == 'playlist':
+        # --- MODIFIKASI: Kirim 'user' ke start_playlist ---
+        await start_playlist(item_id, user)
         
-    except Exception as e:
-        LOGGER.error(f"Error fatal di Deezer handler: {e}\n{traceback.format_exc()}")
-        await edit_message(user['bot_msg'], f"Error Deezer: {e}")
+    # --- BATAS PERBAIKAN ---
 
 
 async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=True, \
@@ -69,7 +70,9 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
             track_meta = await process_track_metadata(item_id, user['r_id'], user=user)
         except Exception as e:
             LOGGER.warning(f"Deezer track {item_id} tidak tersedia: {e}")
-            return False
+            # Jika ini single track download, kita ingin error ini naik agar ARL di-roll
+            # Jika bagian dari album, start_album akan menangani kegagalannya
+            raise e 
             
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
         filepath = sanitize_filepath(filepath)
@@ -140,6 +143,7 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
         raise Exception(f"Album '{album_title}' tidak memiliki daftar lagu ('SONGS' key missing or empty from API response).")
     
     # --- MODIFIKASI: Teruskan 'user' ke process_album_metadata ---
+    # Fungsi ini akan melempar DeezerError jika semua lagu region locked
     album_meta = await process_album_metadata(album_id, album_metadata_dict, songs_dict, user['r_id'], user=user)
     # --- BATAS MODIFIKASI ---
     
@@ -182,7 +186,9 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     album_meta['totaltracks'] = len(successful_tracks)
 
     if not successful_tracks:
-        raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh untuk album {album_meta['title']}.")
+        # --- PERBAIKAN ERROR MESSAGE: Tambahkan kata kunci "not available" ---
+        # Ini penting agar download.py mendeteksi ini sebagai retryable error
+        raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh (Track not available) untuk album {album_meta['title']}.")
 
     # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
@@ -307,7 +313,8 @@ async def start_playlist(playlist_id, user):
         play_meta['totaltracks'] = len(successful_tracks_non_conc)
     
     if not play_meta['tracks']:
-         raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh untuk playlist {play_meta['title']}.")
+         # Keyword "available" penting untuk retry
+         raise Exception(f"Tidak ada lagu Deezer yang berhasil diunduh (Track not available) untuk playlist {play_meta['title']}.")
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
