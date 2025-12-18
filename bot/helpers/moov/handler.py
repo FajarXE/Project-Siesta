@@ -8,6 +8,7 @@ import aiofiles
 import hashlib
 import traceback
 from mutagen.flac import FLAC, Picture
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, TPOS, TCON, TPUB, TCOP, TDRC, APIC, USLT
 from config import Config
 from bot.logger import LOGGER
 from ..message import edit_message
@@ -115,7 +116,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
     tasks = []
     for track in album_meta['tracks']:
-        tasks.append(download_track(track, user, album_folder))
+        tasks.append(download_track_retry_wrapper(track, user, album_folder))
 
     dl_type = 'Single Track' if filter_track_id else 'Album'
     update_details = {
@@ -208,15 +209,14 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
                 deep_meta['year'] = album_meta_full['year']
             if album_meta_full.get('copyright'):
                 deep_meta['copyright'] = album_meta_full['copyright']
-                
-            # FIX: Injeksi Total Tracks manual untuk Fallback
             if album_meta_full.get('totaltracks'):
                 deep_meta['totaltracks'] = album_meta_full['totaltracks']
             if album_meta_full.get('totalvolumes'):
                 deep_meta['totalvolumes'] = album_meta_full['totalvolumes']
 
     deep_meta['folderpath'] = folderpath
-    return await download_track(deep_meta, user, folderpath)
+    # Gunakan Wrapper Retry
+    return await download_track_retry_wrapper(deep_meta, user, folderpath)
 
 async def start_playlist(pid, user):
     client = user['moov_api']
@@ -271,94 +271,150 @@ async def start_playlist(pid, user):
 
 async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
     try:
-        audio = FLAC(filepath)
-        audio.delete() 
+        ext = meta.get('extension', 'flac')
         
-        audio['TITLE'] = meta.get('title', '')
-        audio['ARTIST'] = meta.get('artist', '')
-        audio['PERFORMER'] = meta.get('artist', '') 
-        
-        audio['ALBUMARTIST'] = meta.get('albumartist', '')
-        audio['ALBUM'] = meta.get('album', '')
-        
-        audio['GENRE'] = meta.get('genre', '')
-        audio['COMPOSER'] = meta.get('composer', '')
-        
-        if meta.get('producer'):
-            audio['PRODUCER'] = meta.get('producer')
+        # --- TAGGING FLAC ---
+        if ext == 'flac':
+            audio = FLAC(filepath)
+            audio.delete() 
             
-        audio['COPYRIGHT'] = meta.get('copyright', '')
-        audio['DISCNUMBER'] = str(meta.get('disk', ''))
-        audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
-        
-        if meta.get('totaltracks'):
-            audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
-            audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
-        
-        if meta.get('date'):
-            audio['DATE'] = str(meta.get('date'))
-            audio['YEAR'] = str(meta.get('date'))[:4]
-            audio['ORIGINALDATE'] = str(meta.get('date'))
-            audio['RELEASEDATE'] = str(meta.get('date')) 
-            audio['RECORDEDDATE'] = str(meta.get('date')) 
-
-        if meta.get('label'):
-            audio['ORGANIZATION'] = meta.get('label', '')
-            audio['LABEL'] = meta.get('label', '')
-            audio['PUBLISHER'] = meta.get('label', '') 
-
-        if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
-            audio['LYRICS'] = lyrics
-            audio['UNSYNCEDLYRICS'] = lyrics 
-        
-        if cover_path and os.path.exists(cover_path):
-            p = Picture()
-            with open(cover_path, 'rb') as f:
-                p.data = f.read()
-            p.type = 3 
-            p.mime = 'image/jpeg'
-            p.desc = 'Front Cover'
-            audio.add_picture(p)
+            audio['TITLE'] = meta.get('title', '')
+            audio['ARTIST'] = meta.get('artist', '')
+            audio['PERFORMER'] = meta.get('artist', '') 
             
-        audio.save()
-        return int(audio.info.length)
+            audio['ALBUMARTIST'] = meta.get('albumartist', '')
+            audio['ALBUM'] = meta.get('album', '')
+            audio['GENRE'] = meta.get('genre', '')
+            audio['COMPOSER'] = meta.get('composer', '')
+            
+            if meta.get('producer'): audio['PRODUCER'] = meta.get('producer')
+            audio['COPYRIGHT'] = meta.get('copyright', '')
+            audio['DISCNUMBER'] = str(meta.get('disk', ''))
+            audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
+            
+            if meta.get('totaltracks'):
+                audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
+                audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
+            
+            if meta.get('date'):
+                audio['DATE'] = str(meta.get('date'))
+                audio['YEAR'] = str(meta.get('date'))[:4]
+                audio['ORIGINALDATE'] = str(meta.get('date'))
+                audio['RELEASEDATE'] = str(meta.get('date')) 
+                audio['RECORDEDDATE'] = str(meta.get('date')) 
+
+            if meta.get('label'):
+                audio['ORGANIZATION'] = meta.get('label', '')
+                audio['LABEL'] = meta.get('label', '')
+                audio['PUBLISHER'] = meta.get('label', '') 
+
+            if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
+                audio['LYRICS'] = lyrics
+                audio['UNSYNCEDLYRICS'] = lyrics 
+            
+            if cover_path and os.path.exists(cover_path):
+                p = Picture()
+                with open(cover_path, 'rb') as f:
+                    p.data = f.read()
+                p.type = 3 
+                p.mime = 'image/jpeg'
+                p.desc = 'Front Cover'
+                audio.add_picture(p)
+            
+            audio.save()
+            return int(audio.info.length)
         
+        # --- TAGGING MP3 (Fallback) ---
+        elif ext == 'mp3':
+            try:
+                audio = ID3(filepath)
+            except:
+                audio = ID3()
+            
+            audio.add(TIT2(encoding=3, text=meta.get('title', '')))
+            audio.add(TPE1(encoding=3, text=meta.get('artist', '')))
+            audio.add(TALB(encoding=3, text=meta.get('album', '')))
+            audio.add(TRCK(encoding=3, text=f"{meta.get('tracknumber', '')}/{meta.get('totaltracks', '')}"))
+            audio.add(TPOS(encoding=3, text=str(meta.get('disk', ''))))
+            audio.add(TCON(encoding=3, text=meta.get('genre', '')))
+            audio.add(TPUB(encoding=3, text=meta.get('label', '')))
+            audio.add(TCOP(encoding=3, text=meta.get('copyright', '')))
+            
+            if meta.get('date'):
+                audio.add(TDRC(encoding=3, text=str(meta.get('date'))[:4]))
+
+            if lyrics and isinstance(lyrics, str):
+                audio.add(USLT(encoding=3, lang='eng', desc='desc', text=lyrics))
+
+            if cover_path and os.path.exists(cover_path):
+                with open(cover_path, 'rb') as f:
+                    audio.add(APIC(
+                        encoding=3,
+                        mime='image/jpeg',
+                        type=3,
+                        desc='Cover',
+                        data=f.read()
+                    ))
+            audio.save(filepath)
+            return 0 
+
     except Exception as e:
-        LOGGER.error(f"Mutagen Error: {e}")
+        LOGGER.error(f"Mutagen Error ({ext}): {e}")
         return 0
+
+# --- WRAPPER UNTUK RETRY / FALLBACK ---
+async def download_track_retry_wrapper(track_meta, user, folderpath):
+    # Coba download pertama (sesuai preference, misal FLAC)
+    result = await download_track(track_meta, user, folderpath)
+    
+    # Jika gagal dan mode awalnya bukan MP3, coba fallback ke MP3
+    if result is False:
+        current_quality = track_meta.get('moov_quality_code', 'LL')
+        if current_quality != 'MP3_320':
+            LOGGER.warning(f"Moov: Download FLAC gagal total untuk {track_meta.get('title')}. Mencoba FALLBACK ke MP3...")
+            
+            fallback_meta = track_meta.copy()
+            fallback_meta['moov_quality_code'] = 'MP3_320' # Paksa kode MP3 (biasanya HQ)
+            fallback_meta['extension'] = 'mp3'
+            fallback_meta['quality'] = 'MP3 320kbps'
+            
+            return await download_track(fallback_meta, user, folderpath)
+    
+    return result
 
 async def download_track(track_meta, user, folderpath):
     meta = track_meta.copy()
     client = user['moov_api']
     
-    if not meta.get('itemid'):
-        LOGGER.error("Moov: Fatal - Item ID hilang dalam metadata.")
-        return False
+    if not meta.get('itemid'): return False
 
     file_meta = None
+    # Support kode kualitas MP3 jika diset oleh wrapper
     target_quality = meta.get('moov_quality_code', 'LL')
+    if target_quality == 'MP3_320': target_quality = 'HQ' # Kode Moov untuk MP3
+
     try:
         file_meta = await client.get_track_file_meta(meta['itemid'], target_quality)
     except Exception as e:
         LOGGER.warning(f"Moov Stream Check Error ({target_quality}): {e}")
 
-    if not file_meta and target_quality != 'LL':
-        LOGGER.info(f"Moov: Kualitas {target_quality} tidak tersedia untuk {meta.get('itemid')}, mencoba Fallback ke LL...")
+    # Fallback Quality Logic (Internal, misal HR -> LL)
+    if not file_meta and target_quality not in ['LL', 'HQ']:
+        LOGGER.info(f"Moov: Kualitas {target_quality} tidak tersedia, fallback ke LL...")
+        target_quality = 'LL'
         try:
             file_meta = await client.get_track_file_meta(meta['itemid'], 'LL')
-            if file_meta:
-                meta['quality'] = 'FLAC 16bit' 
+            if file_meta: meta['quality'] = 'FLAC 16bit' 
         except: pass
 
     if not file_meta:
-        LOGGER.warning(f"Moov: Gagal mendapatkan Stream URL untuk {meta.get('itemid')} (Mungkin Region Locked/Video?).")
+        LOGGER.warning(f"Moov: Stream URL kosong untuk {meta.get('itemid')}.")
         return False
         
     play_url = file_meta.get('playUrl')
     content_key = file_meta.get('contentKey')
     
     if not play_url or not content_key:
-        LOGGER.warning(f"Moov: PlayUrl/ContentKey kosong untuk {meta.get('itemid')}.")
         return False
 
     key_bytes = None
@@ -366,19 +422,21 @@ async def download_track(track_meta, user, folderpath):
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
         key_bytes = bytes.fromhex(m.hexdigest())
-    except Exception as e:
-        LOGGER.error(f"Moov: Gagal decode Key: {e}")
-        return False
+    except: return False
 
+    track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
     try:
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
         safe_filename = safe_name(raw_filename)
         
-        track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
+        ext = meta.get('extension', 'flac')
+        if target_quality == 'HQ': ext = 'mp3'
+        meta['extension'] = ext
+
         if os.path.exists(track_temp_dir): shutil.rmtree(track_temp_dir)
         os.makedirs(track_temp_dir, exist_ok=True)
 
-        final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
+        final_filepath = os.path.join(folderpath, f"{safe_filename}.{ext}")
         
         abs_path = os.path.abspath(final_filepath)
         meta['filepath'] = abs_path
@@ -419,13 +477,11 @@ async def download_track(track_meta, user, folderpath):
                         m3u8_content = await resp.text()
                         break
                     else:
-                        LOGGER.warning(f"Moov: M3U8 Fetch Status {resp.status}, Retrying...")
-            except Exception as e:
-                LOGGER.warning(f"Moov: M3U8 Fetch Exception ({e}), Retrying...")
-                await asyncio.sleep(2) 
+                        await asyncio.sleep(2) 
+            except:
+                await asyncio.sleep(2)
         
         if not m3u8_content:
-            LOGGER.error(f"Moov: Gagal mengambil M3U8 setelah 3x percobaan.")
             shutil.rmtree(track_temp_dir)
             return False
 
@@ -441,7 +497,7 @@ async def download_track(track_meta, user, folderpath):
         local_segment_names = []
         
         for index, seg_url in enumerate(remote_segments):
-            seg_name = f"seg_{index:04d}.flac"
+            seg_name = f"seg_{index:04d}.{ext}" # Use flexible extension
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
             
@@ -451,6 +507,10 @@ async def download_track(track_meta, user, folderpath):
                     async with client.session.get(seg_url) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
+                            # --- CEK VALIDITAS SEGMEN ---
+                            if len(data) < 500: # File < 500 bytes mencurigakan
+                                raise Exception("Segment too small (Corrupt/HTML)")
+                            # ----------------------------
                             async with aiofiles.open(seg_path, 'wb') as f:
                                 await f.write(data)
                             success = True
@@ -477,12 +537,15 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
+        # --- FFMPEG OPTIMIZED ---
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+            '-analyzeduration', '10000000', # Fix 0 channels
+            '-probesize', '10000000',      # Fix 0 channels
             '-i', local_m3u8_path,
-            '-c', 'flac', 
+            '-c', 'copy' if ext == 'mp3' else 'flac', # Copy jika MP3, Encode jika FLAC
             final_filepath
         ]
         
@@ -492,9 +555,9 @@ async def download_track(track_meta, user, folderpath):
         _, stderr = await process.communicate()
         
         if process.returncode != 0:
-            LOGGER.error(f"FFmpeg Error: {stderr.decode()}")
+            LOGGER.error(f"FFmpeg Error ({ext}): {stderr.decode()}")
             shutil.rmtree(track_temp_dir)
-            return False
+            return False # Ini akan mentrigger Fallback di wrapper
 
         if not os.path.exists(final_filepath) or os.path.getsize(final_filepath) == 0:
             return False
