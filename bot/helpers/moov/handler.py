@@ -459,11 +459,17 @@ async def download_track(track_meta, user, folderpath):
 
         target_duration = 10
         media_sequence = 0
-        original_iv_line = ""
-        # Simpan info IV asli jika ada
-        if "#EXT-X-KEY" in m3u8_content:
+        
+        # --- PERBAIKAN UTAMA: CEK TAG ENKRIPSI ---
+        # Hanya gunakan key JIKA playlist asli memintanya (#EXT-X-KEY)
+        is_encrypted = "#EXT-X-KEY" in m3u8_content
+        # -----------------------------------------
+
+        # Ambil IV jika ada
+        iv_line = ""
+        if is_encrypted:
             iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
-            if iv_match: original_iv_line = f",IV=0x{iv_match.group(1)}"
+            if iv_match: iv_line = f",IV=0x{iv_match.group(1)}"
 
         for line in m3u8_content.splitlines():
             if line.startswith("#EXT-X-TARGETDURATION"):
@@ -474,13 +480,10 @@ async def download_track(track_meta, user, folderpath):
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
-        first_segment_path = None
-
         for index, seg_url in enumerate(remote_segments):
             seg_name = f"seg_{index:04d}.{ext}" 
             seg_path = os.path.join(track_temp_dir, seg_name)
             local_segment_names.append(seg_name)
-            if index == 0: first_segment_path = seg_path
             
             success = False
             for _ in range(3):
@@ -499,28 +502,12 @@ async def download_track(track_meta, user, folderpath):
                 shutil.rmtree(track_temp_dir)
                 return False
 
-        # --- SMART ENCRYPTION CHECK (ANTI-GAGAL) ---
-        is_encrypted = False
-        
-        # 1. Cek Magic Bytes segmen pertama
-        if first_segment_path and os.path.exists(first_segment_path):
-            async with aiofiles.open(first_segment_path, 'rb') as f:
-                header = await f.read(4)
-                # Jika header file adalah Clear Audio (FLAC/ID3/AAC), maka TIDAK terenkripsi
-                if header.startswith(b'fLaC'): is_encrypted = False 
-                elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'): is_encrypted = False 
-                elif header.startswith(b'ADIF') or header.startswith(b'\xff\xf1'): is_encrypted = False 
-                else: 
-                    # Header acak = Terenkripsi
-                    is_encrypted = True 
-        
-        if not content_key: is_encrypted = False
-
         # Build Local M3U8
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
+        
         key_line = ""
-        if is_encrypted:
-            key_line = f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{original_iv_line}\n'
+        if is_encrypted and key_bytes: # Hanya tulis key jika terenkripsi DAN kita punya key
+            key_line = f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n'
             
         async with aiofiles.open(local_m3u8_path, 'w') as f:
             await f.write("#EXTM3U\n")
@@ -533,9 +520,7 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
-        # --- FFMPEG SAFE TRANSCODE ---
-        # Jika MP3, gunakan encoding ulang (libmp3lame) untuk menghindari error copy
-        # Jika FLAC, gunakan flac
+        # FFmpeg
         audio_codec = 'flac'
         if ext == 'mp3': audio_codec = 'libmp3lame'
 
@@ -546,8 +531,8 @@ async def download_track(track_meta, user, folderpath):
             '-analyzeduration', '10000000',
             '-probesize', '10000000',      
             '-i', local_m3u8_path,
-            '-c:a', audio_codec, # Gunakan encoder aman, bukan copy
-            '-q:a', '0',         # Kualitas terbaik untuk MP3
+            '-c:a', audio_codec, 
+            '-q:a', '0',         
             final_filepath
         ]
         
