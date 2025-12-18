@@ -20,14 +20,8 @@ def get_moov_cover(url):
     """
     if not url: return None
     clean_url = url.split("?")[0]
-    
-    # 1. Hapus folder resize (contoh: /resize/118x118/)
     clean_url = re.sub(r'\/resize\/\d+x\d+', '', clean_url)
-    
-    # 2. Hapus suffix dimensi di nama file (contoh: _118x118.jpg -> .jpg)
     clean_url = re.sub(r'_(\d{2,4}x\d{2,4})', '', clean_url)
-    
-    # 3. Normalisasi protokol
     clean_url = clean_url.replace('//', '/').replace('https:/', 'https://').replace('http:/', 'http://')
     return clean_url
 
@@ -165,21 +159,27 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
         metadata['date'] = final_date
         metadata['year'] = final_date[:4]
     
+    # --- INJEKSI DATA DARI ALBUM (TERMASUK TOTAL TRACKS) ---
     if album_meta:
         if not metadata.get('date'):
             metadata['date'] = album_meta.get('date', '')
             metadata['year'] = album_meta.get('year', '')
         if not metadata['label']: metadata['label'] = album_meta.get('label', '')
         if not metadata['copyright']: metadata['copyright'] = album_meta.get('copyright', '')
+        
+        # FIX: Tambahkan Total Tracks dan Total Volumes
+        if not metadata.get('totaltracks') and album_meta.get('totaltracks'):
+            metadata['totaltracks'] = album_meta.get('totaltracks')
+        
+        if not metadata.get('totalvolumes') and album_meta.get('totalvolumes'):
+            metadata['totalvolumes'] = album_meta.get('totalvolumes')
 
     metadata['provider'] = 'Moov'
     metadata['type'] = 'track'
     
-    # --- LOGIKA COVER BARU ---
-    # Jika cover (filepath HD) diberikan, gunakan itu dan JANGAN cari URL lain.
     if cover:
         metadata['cover'] = cover
-        metadata['cover_url'] = None # Hapus URL agar download.py tidak menimpa dengan versi low-res
+        metadata['cover_url'] = None 
     elif not metadata.get('cover_url'):
         found_url = None
         if track_data.get('largeImage'):
@@ -199,8 +199,6 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
 
         if found_url:
             metadata['cover_url'] = get_moov_cover(found_url)
-            # Jika tidak ada file lokal cover, download nanti
-            # tapi tidak kita set 'cover' path disini karena belum didownload
 
     avail_qualities = track_data.get('qualities', [])
     user_pref = moov_manager.get_user_quality(user['user_id']) 
@@ -273,9 +271,14 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
     metadata['cover_url'] = moov_cover_url
     if metadata.get('cover_url'):
         metadata['cover'] = await create_cover_file(metadata['cover_url'], metadata)
-        
+    
+    # --- LOGIKA TOTAL TRACKS DIPINDAHKAN KE SINI ---
     metadata['tracks'] = []
     raw_products = find_products_recursive(album_data)
+    
+    # Hitung total dulu agar bisa disuntikkan ke setiap track
+    metadata['totaltracks'] = len(raw_products) 
+    
     max_disc = 1
     for idx, track_raw in enumerate(raw_products, 1):
         track_raw['trackNo'] = idx 
@@ -286,10 +289,10 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
             if d > max_disc: max_disc = d
         except: pass
         
+        # Metadata album (yang sudah punya totaltracks) dipassing ke sini
         t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
         metadata['tracks'].append(t_meta)
     
-    metadata['totaltracks'] = len(metadata['tracks'])
     metadata['totalvolumes'] = str(max_disc)
     metadata['explicit'] = "True" if is_album_explicit else "False"
     if metadata['tracks']: metadata['quality'] = metadata['tracks'][0]['quality']
