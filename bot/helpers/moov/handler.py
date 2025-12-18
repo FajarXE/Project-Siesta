@@ -58,7 +58,10 @@ async def start_moov(url: str, user: dict):
             await start_album(album_id, user, filter_track_id=track_id)
             
         except Exception as e:
-            raise Exception(f"Gagal memparsing link Share Moov: {e}")
+            # FIX: Jangan telan error download sebagai error parsing
+            if "Gagal mengunduh" in str(e):
+                raise e
+            raise Exception(f"Gagal memparsing/memproses link Share Moov: {e}")
     else:
         raise Exception("Link Moov tidak dikenali. Mendukung: Album, Lagu, Chart, Playlist, dan Share Link.")
 
@@ -97,7 +100,7 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
                 if str(filter_track_id) in str(t.get('itemid'))
             ]
         if not filtered_tracks:
-            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan.")
+            raise Exception(f"Lagu dengan ID {filter_track_id} tidak ditemukan di dalam album {album_id}.")
         album_meta['tracks'] = filtered_tracks
 
     base_dir = os.path.abspath(Config.DOWNLOAD_BASE_DIR)
@@ -136,7 +139,8 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             album_meta['tracks'] = successful_tracks
             album_meta['type'] = 'album'
     else:
-        raise Exception("Gagal mengunduh lagu.")
+        # Pesan error ini yang muncul di log Anda sebelumnya
+        raise Exception("Gagal mengunduh lagu (Stream key kosong atau region blocked).")
 
     try:
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
