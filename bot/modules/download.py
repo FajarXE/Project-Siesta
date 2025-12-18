@@ -216,20 +216,32 @@ async def run_download_task(link: str, user: dict):
         await asyncio.sleep(5) 
             
     except Exception as e:
-        # --- MODIFIKASI: Tambahkan error bersih ---
-        error_message = f"Tugas Gagal: Terjadi error.\n`{e}`"
-        if "not available in any" in str(e) or \
-           "Maaf, tidak ada akun" in str(e) or \
-           "NotImplementedError" in str(e) or \
-           "URL Deezer tidak valid" in str(e) or \
+        error_str = str(e)
+        # --- MODIFIKASI: Deteksi Error yang Dapat Dimaafkan (Tanpa Traceback) ---
+        # Menambahkan "Item tidak tersedia di semua" dan "Track not available"
+        is_handled_error = False
+        if "not available in any" in error_str or \
+           "Maaf, tidak ada akun" in error_str or \
+           "NotImplementedError" in error_str or \
+           "URL Deezer tidak valid" in error_str or \
+           "Item tidak tersedia di semua" in error_str or \
+           "Track not available" in error_str or \
            isinstance(e, NapsterError) or \
            isinstance(e, BugsError) or \
            (highresaudio_manager and isinstance(e, HighResAudioError)) or \
            isinstance(e, DeezerError): 
-            error_message = f"Tugas Gagal: {e}"
+            is_handled_error = True
         # --- BATAS MODIFIKASI ---
-            
-        LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
+        
+        error_message = f"Tugas Gagal: {e}" if is_handled_error else f"Tugas Gagal: Terjadi error.\n`{e}`"
+
+        if is_handled_error:
+             # Log sebagai warning biasa, tanpa traceback panjang
+             LOGGER.warning(f"Download Task Gagal (Handled): {e}")
+        else:
+             # Log sebagai error fatal dengan traceback
+             LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
+
         try:
             await edit_message(user['bot_msg'], error_message)
         except:
@@ -379,22 +391,27 @@ async def start_link(link: str, user: dict) -> None:
                 LOGGER.info(f"Deezer: Unduhan berhasil menggunakan ARL ID {client.user['USER']['USER_ID']}")
                 return 
             except Exception as e:
-                if isinstance(e, DeezerError):
-                    LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Dapat Ditangani): {e}. Mencoba ARL berikutnya...")
-                    last_error = e
-                    continue
-
+                # --- PERBAIKAN LOGIC RETRY ---
                 error_str = str(e).lower()
-                if "not available in your country" in error_str or \
+                is_retryable = False
+                
+                # Cek DeezerError atau pesan error string
+                if isinstance(e, DeezerError) or \
+                   "not available in your country" in error_str or \
                    "not available by your subscription" in error_str or \
                    "track not available" in error_str:
+                    is_retryable = True
+
+                if is_retryable:
                     LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Region/Sub Lock): {e}. Mencoba ARL berikutnya...")
-                    last_error = e 
+                    last_error = e
                     continue 
                 else:
+                    # Error fatal lainnya (misal: parsing gagal)
                     LOGGER.error(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Fatal): {e}")
                     raise e 
         if last_error:
+            # Ini akan ditangkap di run_download_task tanpa traceback
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Deezer yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh Deezer karena alasan yang tidak diketahui setelah mencoba semua akun.")
