@@ -419,7 +419,6 @@ async def download_track(track_meta, user, folderpath):
             async with aiofiles.open(key_filepath, 'wb') as f:
                 await f.write(key_bytes)
 
-        # Cover DL
         cover_local_path = None
         target_url = meta.get('cover_url')
         if target_url:
@@ -440,9 +439,9 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        # M3U8 DL
-        hls_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'} 
+        hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         m3u8_content = None
+        
         for _ in range(3): 
             try:
                 async with client.session.get(play_url, headers=hls_headers) as resp:
@@ -453,6 +452,7 @@ async def download_track(track_meta, user, folderpath):
                         await asyncio.sleep(2) 
             except:
                 await asyncio.sleep(2)
+        
         if not m3u8_content:
             shutil.rmtree(track_temp_dir)
             return False
@@ -460,9 +460,8 @@ async def download_track(track_meta, user, folderpath):
         target_duration = 10
         media_sequence = 0
         original_iv_line = ""
-        original_has_key = "#EXT-X-KEY" in m3u8_content
-        
-        if original_has_key:
+        # Simpan info IV asli jika ada
+        if "#EXT-X-KEY" in m3u8_content:
             iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
             if iv_match: original_iv_line = f",IV=0x{iv_match.group(1)}"
 
@@ -477,7 +476,6 @@ async def download_track(track_meta, user, folderpath):
         
         first_segment_path = None
 
-        # Download Segments
         for index, seg_url in enumerate(remote_segments):
             seg_name = f"seg_{index:04d}.{ext}" 
             seg_path = os.path.join(track_temp_dir, seg_name)
@@ -501,22 +499,21 @@ async def download_track(track_meta, user, folderpath):
                 shutil.rmtree(track_temp_dir)
                 return False
 
-        # --- SMART ENCRYPTION CHECK ---
+        # --- SMART ENCRYPTION CHECK (ANTI-GAGAL) ---
         is_encrypted = False
         
-        # 1. Check Magic Bytes of First Segment
+        # 1. Cek Magic Bytes segmen pertama
         if first_segment_path and os.path.exists(first_segment_path):
             async with aiofiles.open(first_segment_path, 'rb') as f:
                 header = await f.read(4)
-                # Known Magic Bytes for Clear Audio
-                if header.startswith(b'fLaC'): is_encrypted = False # Clear FLAC
-                elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'): is_encrypted = False # Clear MP3
-                elif header.startswith(b'ADIF') or header.startswith(b'\xff\xf1'): is_encrypted = False # Clear AAC
+                # Jika header file adalah Clear Audio (FLAC/ID3/AAC), maka TIDAK terenkripsi
+                if header.startswith(b'fLaC'): is_encrypted = False 
+                elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'): is_encrypted = False 
+                elif header.startswith(b'ADIF') or header.startswith(b'\xff\xf1'): is_encrypted = False 
                 else: 
-                    # If header is unrecognizable (garbage), assume it's Encrypted
+                    # Header acak = Terenkripsi
                     is_encrypted = True 
         
-        # 2. Safety: If content_key is missing, we can't decrypt anyway
         if not content_key: is_encrypted = False
 
         # Build Local M3U8
@@ -536,6 +533,12 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
+        # --- FFMPEG SAFE TRANSCODE ---
+        # Jika MP3, gunakan encoding ulang (libmp3lame) untuk menghindari error copy
+        # Jika FLAC, gunakan flac
+        audio_codec = 'flac'
+        if ext == 'mp3': audio_codec = 'libmp3lame'
+
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
@@ -543,7 +546,8 @@ async def download_track(track_meta, user, folderpath):
             '-analyzeduration', '10000000',
             '-probesize', '10000000',      
             '-i', local_m3u8_path,
-            '-c', 'copy' if ext == 'mp3' else 'flac', 
+            '-c:a', audio_codec, # Gunakan encoder aman, bukan copy
+            '-q:a', '0',         # Kualitas terbaik untuk MP3
             final_filepath
         ]
         
