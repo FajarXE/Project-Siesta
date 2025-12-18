@@ -193,32 +193,50 @@ class MoovAPI:
         session = await self._get_session()
         stream_headers = {'User-Agent': 'okhttp/4.8.0'}
         
-        params = {
-            'clientver': '3.0.7',
-            'action': 'stream',
-            'streamtype': 'stdhls',
-            'preview': 'F',
-            'cat': 'playlist',
-            'pid': track_id,
-            'isUpSample': 'false',
-            'osver': '10.0.0',
-            'refid': '',
-            'quality': quality,
-            'devicetype': 'Android',
-            'connect': 'WiFi',
-            'reftype': '',
-            'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
-            'application': 'moovnext',
-            'isStudioMaster': 'true'
-        }
+        # --- FIX: Coba berbagai kategori ---
+        # Untuk Link Share/Single Track, biasanya 'product'.
+        # Untuk Playlist, biasanya 'playlist'.
+        # Kita loop agar robust.
+        categories = ['product', 'playlist']
         
-        try:
-            async with session.get(f"{self.base_url}/content/checkout", headers=stream_headers, params=params) as resp:
-                if resp.status != 200: return {}
-                data = await resp.json()
-                return data.get('result', {}).get('dataObject')
-        except:
-            return {}
+        for cat_type in categories:
+            params = {
+                'clientver': '3.0.7',
+                'action': 'stream',
+                'streamtype': 'stdhls',
+                'preview': 'F',
+                'cat': cat_type, # <-- Dinamis
+                'pid': track_id,
+                'isUpSample': 'false',
+                'osver': '10.0.0',
+                'refid': '',
+                'quality': quality,
+                'devicetype': 'Android',
+                'connect': 'WiFi',
+                'reftype': '',
+                'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
+                'application': 'moovnext',
+                'isStudioMaster': 'true'
+            }
+            
+            try:
+                async with session.get(f"{self.base_url}/content/checkout", headers=stream_headers, params=params) as resp:
+                    if resp.status != 200: 
+                        continue
+                    
+                    data = await resp.json()
+                    data_obj = data.get('result', {}).get('dataObject')
+                    
+                    # Validasi: Jika playUrl ada, berarti kategori ini benar
+                    if data_obj and data_obj.get('playUrl') and data_obj.get('contentKey'):
+                        return data_obj
+                    
+            except Exception as e:
+                # LOGGER.warning(f"Moov checkout try {cat_type} failed: {e}")
+                continue
+
+        # Jika semua gagal, return kosong
+        return {}
 
     async def get_lyrics(self, track_id):
         session = await self._get_session()
