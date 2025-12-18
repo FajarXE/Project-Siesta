@@ -409,15 +409,18 @@ async def download_track(track_meta, user, folderpath):
     play_url = file_meta.get('playUrl')
     content_key = file_meta.get('contentKey')
     
-    if not play_url or not content_key:
+    # Jika Play URL ada, kita lanjut. Jika tidak ada, STOP.
+    if not play_url:
         return False
 
+    # DEKRIPSI KUNCI (Jika ada)
     key_bytes = None
-    try:
-        m = hashlib.md5()
-        m.update((content_key + SECRET_SALT).encode('UTF-8'))
-        key_bytes = bytes.fromhex(m.hexdigest())
-    except: return False
+    if content_key:
+        try:
+            m = hashlib.md5()
+            m.update((content_key + SECRET_SALT).encode('UTF-8'))
+            key_bytes = bytes.fromhex(m.hexdigest())
+        except: return False
 
     track_temp_dir = os.path.join(folderpath, f"temp_{meta['itemid']}")
     try:
@@ -438,10 +441,13 @@ async def download_track(track_meta, user, folderpath):
         meta['filename'] = os.path.basename(abs_path)
         meta['is_downloaded'] = True
         
-        key_filepath = os.path.join(track_temp_dir, "key.bin")
-        async with aiofiles.open(key_filepath, 'wb') as f:
-            await f.write(key_bytes)
+        # Simpan Key jika ada
+        if key_bytes:
+            key_filepath = os.path.join(track_temp_dir, "key.bin")
+            async with aiofiles.open(key_filepath, 'wb') as f:
+                await f.write(key_bytes)
 
+        # Download Cover
         cover_local_path = None
         target_url = meta.get('cover_url')
         if target_url:
@@ -462,7 +468,8 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
-        hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
+        # Download M3U8
+        hls_headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36'} 
         m3u8_content = None
         
         for _ in range(3): 
@@ -480,8 +487,13 @@ async def download_track(track_meta, user, folderpath):
             shutil.rmtree(track_temp_dir)
             return False
 
+        # Parse M3U8
         target_duration = 10
         media_sequence = 0
+        
+        # PERBAIKAN: Cek apakah stream aslinya terenkripsi?
+        has_encryption = "#EXT-X-KEY" in m3u8_content
+        
         for line in m3u8_content.splitlines():
             if line.startswith("#EXT-X-TARGETDURATION"):
                 target_duration = line.split(":")[1].strip()
@@ -491,6 +503,7 @@ async def download_track(track_meta, user, folderpath):
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
+        # Download Segments
         for index, seg_url in enumerate(remote_segments):
             seg_name = f"seg_{index:04d}.{ext}" 
             seg_path = os.path.join(track_temp_dir, seg_name)
@@ -499,19 +512,16 @@ async def download_track(track_meta, user, folderpath):
             success = False
             for _ in range(3):
                 try:
-                    # PERBAIKAN: Gunakan Header yang sama dengan M3U8
                     async with client.session.get(seg_url, headers=hls_headers) as seg_resp:
                         if seg_resp.status == 200:
                             data = await seg_resp.read()
                             
-                            # --- PERBAIKAN: Deteksi Konten Sampah/Error ---
-                            # Jika file diawali dengan XML atau HTML, berarti itu error dari server
+                            # Deteksi Error Text
                             try:
                                 prefix = data[:100].decode('utf-8', errors='ignore').strip().lower()
                                 if prefix.startswith(('<html', '<!doctype', '<?xml', '{"error"')):
-                                    raise Exception("Segment contains HTML/XML Error, skipping...")
+                                    raise Exception("Segment contains HTML/XML Error")
                             except: pass
-                            # ---------------------------------------------
                             
                             async with aiofiles.open(seg_path, 'wb') as f:
                                 await f.write(data)
@@ -523,22 +533,29 @@ async def download_track(track_meta, user, folderpath):
                 shutil.rmtree(track_temp_dir)
                 return False
 
+        # Buat Local M3U8 CERDAS
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         iv_line = ""
-        iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
-        if iv_match: iv_line = f",IV=0x{iv_match.group(1)}"
+        
+        if has_encryption:
+            iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
+            if iv_match: iv_line = f",IV=0x{iv_match.group(1)}"
+            key_line = f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n'
+        else:
+            key_line = "" # Tidak ada enkripsi
             
         async with aiofiles.open(local_m3u8_path, 'w') as f:
             await f.write("#EXTM3U\n")
             await f.write("#EXT-X-VERSION:3\n")
             await f.write(f"#EXT-X-TARGETDURATION:{target_duration}\n")
             await f.write(f"#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n")
-            await f.write(f'#EXT-X-KEY:METHOD=AES-128,URI="key.bin"{iv_line}\n')
+            await f.write(key_line) # Tulis key line HANYA jika aslinya ada
             for seg_name in local_segment_names:
                 await f.write(f"#EXTINF:{target_duration},\n")
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
+        # FFmpeg
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
