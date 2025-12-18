@@ -100,11 +100,10 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
         LOGGER.error(f"Deezer dl_track gagal untuk {item_id}: {err}")
         return False
 
-    # --- PERBAIKAN UPDATED: Cek Validitas File Lebih Ketat (Batas 1 MB) ---
-    # Lagu full duration pasti > 1MB. Jika < 1MB, itu file sampah/error.
-    # Ini mencegah error "not a valid FLAC file" di log.
+    # --- PERBAIKAN VALIDASI UKURAN FILE ---
+    # Batas 1 MB. Jika di bawah ini, hapus diam-diam.
     if not os.path.exists(track_meta['filepath']) or os.path.getsize(track_meta['filepath']) < 1048576: 
-        LOGGER.warning(f"Deezer: File unduhan dianggap gagal (Ukuran < 1MB) untuk '{track_meta['title']}'.")
+        LOGGER.warning(f"Deezer: File unduhan korup/kecil (<1MB). Mengulang dengan akun lain...")
         try:
             os.remove(track_meta['filepath'])
         except: pass
@@ -117,8 +116,11 @@ async def start_track(item_id: int, user: dict, track_meta: dict | None, upload=
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Deezer: {filepath}")
         return False
-    except Exception as e:
-        LOGGER.warning(f"Gagal memproses metadata Deezer (File mungkin korup): {e}")
+    except Exception:
+        # --- PERBAIKAN LOG: SILENT MODE ---
+        # Kita hapus variable 'e' agar pesan "not a valid FLAC file" tidak muncul di log.
+        # Kita ganti dengan pesan bersih.
+        LOGGER.warning(f"Deezer: Metadata gagal (File unduhan invalid). Mengulang dengan akun lain...")
         try:
             os.remove(track_meta['filepath'])
         except:
