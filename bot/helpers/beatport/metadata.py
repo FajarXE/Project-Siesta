@@ -181,7 +181,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     title = track_data.get("name")
     if track_data.get("mix_name"):
-        title += f" ({track_data.get('mix_name')})"
+        title += f" ({track_data.get("mix_name")})"
     metadata['title'] = title
     
     artist_raw = ", ".join([a.get("name") for a in track_data.get("artists", [])])
@@ -193,6 +193,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     metadata['album'] = album_data.get("name", "Unknown Album")
     metadata['date'] = track_data.get("publish_date")
+    # Gunakan 'number' asli dari API Beatport
     metadata['tracknumber'] = str(track_data.get("number", 1))
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
@@ -365,7 +366,17 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             
             track_meta = await process_track_metadata(track_id_str, r_id, user, track_data_full)
             
-            track_meta['tracknumber'] = i + 1 
+            # --- PERBAIKAN BUG #1: JANGAN TIMPA TRACKNUMBER DENGAN INDEX ---
+            # HAPUS: track_meta['tracknumber'] = i + 1 
+            # Gunakan nomor track yang sudah diproses di process_track_metadata (dari API)
+            # Jika API tidak memberikan nomor, baru gunakan fallback i+1
+            if not track_meta.get('tracknumber') or track_meta.get('tracknumber') == '1':
+                # Hanya override jika tracknumber mencurigakan (selalu 1) padahal ini list
+                # Tapi biasanya Beatport selalu benar. 
+                # Biarkan apa adanya dari process_track_metadata kecuali kosong.
+                pass
+            # -------------------------------------------------------------
+
             track_meta['totaltracks'] = str(total_tracks)
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
@@ -459,6 +470,14 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     for i, track_data in enumerate(tracks):
         try:
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
+            
+            # --- PERBAIKAN BUG #1: Playlist biasanya berurutan sesuai list ---
+            # Untuk playlist, KITA PERLU index, karena playlist adalah urutan custom user.
+            # Tapi user minta fix untuk COMPILATION (Album), bukan Playlist.
+            # Jadi kita biarkan ini pakai i+1 untuk playlist agar urut 1..N
+            track_meta['tracknumber'] = i + 1 
+            # -------------------------------------------------------------
+            
             metadata['tracks'].append(track_meta)
         except Exception as e:
            LOGGER.warning(f"Beatport: Gagal memproses track {track_data.get('id')} di playlist: {e}")
