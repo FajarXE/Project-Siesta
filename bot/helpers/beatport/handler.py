@@ -3,6 +3,7 @@
 import aiohttp
 import aiofiles
 import os
+import shutil # TAMBAHAN UNTUK COPY FILE
 import traceback
 
 from pathvalidate import sanitize_filepath
@@ -184,6 +185,22 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
+        
+        # --- PERBAIKAN BUG #2: Simpan Cover ke Folder sebelum Zip ---
+        try:
+            cover_src = album_meta.get('cover')
+            if cover_src:
+                target_cover = os.path.join(album_meta['folderpath'], "cover.jpg")
+                if os.path.exists(cover_src):
+                    # Jika source file lokal, copy
+                    shutil.copy(cover_src, target_cover)
+                elif cover_src.startswith('http'):
+                    # Jika source URL, download ulang
+                    await download_beatport_track(cover_src, target_cover)
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover ke ZIP: {e}")
+        # -----------------------------------------------------------
+
         # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
         # --- AKHIR PERBAIKAN ---
@@ -232,6 +249,22 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
+
+        # --- PERBAIKAN BUG #2: Simpan Cover ke Folder sebelum Zip ---
+        try:
+            cover_src = play_meta.get('cover')
+            if cover_src:
+                target_cover = os.path.join(play_meta['folderpath'], "cover.jpg")
+                if os.path.exists(cover_src):
+                    # Jika source file lokal, copy
+                    shutil.copy(cover_src, target_cover)
+                elif cover_src.startswith('http'):
+                    # Jika source URL, download ulang
+                    await download_beatport_track(cover_src, target_cover)
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover ke ZIP: {e}")
+        # -----------------------------------------------------------
+
         # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
         # --- AKHIR PERBAIKAN ---
