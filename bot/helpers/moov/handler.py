@@ -341,15 +341,29 @@ async def download_track(track_meta, user, folderpath):
 
     file_meta = None
     target_quality = meta.get('moov_quality_code', 'LL')
+    
+    # Ambil Album ID dari metadata
+    album_context_id = meta.get('moov_album_id')
+
     try:
-        file_meta = await client.get_track_file_meta(meta['itemid'], target_quality)
+        # Kirim album_id ke API checkout
+        file_meta = await client.get_track_file_meta(
+            meta['itemid'], 
+            target_quality, 
+            album_id=album_context_id
+        )
     except Exception as e:
         LOGGER.warning(f"Moov Stream Check Error ({target_quality}): {e}")
 
     if not file_meta and target_quality != 'LL':
         LOGGER.info(f"Moov: Kualitas {target_quality} tidak tersedia untuk {meta.get('itemid')}, mencoba Fallback ke LL...")
         try:
-            file_meta = await client.get_track_file_meta(meta['itemid'], 'LL')
+            # Kirim album_id juga untuk fallback
+            file_meta = await client.get_track_file_meta(
+                meta['itemid'], 
+                'LL', 
+                album_id=album_context_id
+            )
             if file_meta:
                 meta['quality'] = 'FLAC 16bit' 
         except: pass
