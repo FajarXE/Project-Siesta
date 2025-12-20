@@ -60,10 +60,18 @@ async def process_track_metadata(track_data: dict, r_id, user: dict, cover=None,
     metadata['itemid'] = track_data.get('productId')
     metadata['title'] = track_data.get('productTitle')
 
+    # --- PERBAIKAN UTAMA DI SINI ---
+    # 1. Coba ambil dari track_data langsung
     if track_data.get('albumId'):
         metadata['moov_album_id'] = track_data.get('albumId')
     elif isinstance(track_data.get('album'), dict):
         metadata['moov_album_id'] = track_data.get('album').get('id')
+    
+    # 2. JIKA KOSONG, ambil dari album_meta (Context Injection)
+    # Ini penting karena handler.py dan mvapi.py butuh ID ini untuk checkout
+    if not metadata.get('moov_album_id') and album_meta:
+        metadata['moov_album_id'] = album_meta.get('itemid')
+    # -------------------------------
     
     # --- ARTIS ---
     artists_raw = track_data.get('artists', [])
@@ -289,7 +297,7 @@ async def process_album_metadata(album_data: dict, r_id, user: dict):
             if d > max_disc: max_disc = d
         except: pass
         
-        # Metadata album (yang sudah punya totaltracks) dipassing ke sini
+        # Metadata album (yang sudah punya totaltracks dan itemid) dipassing ke sini
         t_meta = await process_track_metadata(track_raw, r_id, user, cover=metadata['cover'], album_meta=metadata)
         metadata['tracks'].append(t_meta)
     
