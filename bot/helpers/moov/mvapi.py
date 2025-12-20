@@ -8,7 +8,6 @@ from bot.logger import LOGGER
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
-    # Logger level diubah ke warning agar tidak terlalu panik jika user tidak pakai proxy
     LOGGER.warning("Modul 'aiohttp-socks' tidak ditemukan. Proxy SOCKS5 mungkin tidak jalan.")
     ProxyConnector = None
 # ----------------------
@@ -189,30 +188,43 @@ class MoovAPI:
             LOGGER.error(f"Moov getProduct Exception ({product_id}): {e}")
             return None
 
-    async def get_track_file_meta(self, track_id, quality='LL'):
+    async def get_track_file_meta(self, track_id, quality='LL', album_id=None):
         session = await self._get_session()
         stream_headers = {'User-Agent': 'okhttp/4.8.0'}
         
-        # --- PERBAIKAN DI SINI ---
-        # Menambahkan 'album' ke dalam categories.
-        # Lagu dari album seringkali memerlukan cat='album' untuk checkout.
-        categories = ['product', 'album', 'playlist'] 
+        # --- LOGIKA CHECKOUT STREAM ---
+        # Urutan prioritas: Product -> Album (jika ada ID) -> Playlist
+        categories = ['product', 'album', 'playlist']
         
         for cat_type in categories:
+            # Tentukan reftype dan refid berdasarkan kategori
+            current_reftype = ''
+            current_refid = ''
+
+            # PENTING: Jika mode 'album', kita WAJIB kirim album_id sebagai refid
+            # dan reftype 'PAB' (Profile Album)
+            if cat_type == 'album' and album_id:
+                current_reftype = 'PAB'
+                current_refid = album_id
+            
+            # Jika album_id tidak ada tapi loop sampai ke 'album', skip saja karena pasti gagal
+            elif cat_type == 'album' and not album_id:
+                continue
+
             params = {
                 'clientver': '3.0.7',
                 'action': 'stream',
                 'streamtype': 'stdhls',
                 'preview': 'F',
-                'cat': cat_type, # <-- Dinamis: product/album/playlist
+                'cat': cat_type, 
                 'pid': track_id,
                 'isUpSample': 'false',
                 'osver': '10.0.0',
-                'refid': '',
+                'refid': current_refid,     # <--- Diisi ID Album jika cat='album'
                 'quality': quality,
                 'devicetype': 'Android',
                 'connect': 'WiFi',
-                'reftype': '',
+                'reftype': current_reftype, # <--- Diisi 'PAB' jika cat='album'
                 'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
                 'application': 'moovnext',
                 'isStudioMaster': 'true'
@@ -226,7 +238,7 @@ class MoovAPI:
                     data = await resp.json()
                     data_obj = data.get('result', {}).get('dataObject')
                     
-                    # Validasi: Jika playUrl ada, berarti kategori ini benar
+                    # Validasi: Pastikan ada playUrl DAN contentKey
                     if data_obj and data_obj.get('playUrl') and data_obj.get('contentKey'):
                         return data_obj
                     
