@@ -3,6 +3,7 @@
 import aiohttp
 import asyncio
 import uuid
+import time
 from bot.logger import LOGGER
 
 # --- Konektor Proxy ---
@@ -19,11 +20,14 @@ class MoovAPI:
         self.session = None
         self.proxy = proxy
         
-        # CREDENTIAL STORAGE UNTUK AUTO RE-LOGIN
+        # CREDENTIAL STORAGE
         self.email = None
         self.password = None
         
-        # GENERATE RANDOM DEVICE ID (Agar tidak terdeteksi spam)
+        # LOCKING & STATE
+        self._lock = asyncio.Lock() # Kunci untuk mencegah tabrakan login
+        self.last_login_time = 0
+        
         self.device_id = str(uuid.uuid4())
 
         self.headers = {
@@ -33,8 +37,12 @@ class MoovAPI:
         }
 
     async def _get_session(self, force_new=False):
-        if force_new and self.session and not self.session.closed:
-            await self.session.close()
+        # Kita tidak mengunci di sini untuk request biasa agar cepat
+        # Kunci hanya digunakan saat force_new (reset session)
+        
+        if force_new:
+            if self.session and not self.session.closed:
+                await self.session.close()
             self.session = None
 
         if not self.session or self.session.closed:
@@ -51,7 +59,7 @@ class MoovAPI:
                         proxy_url = proxy_url.replace("socks5h://", "socks5://")
                         use_rdns = True
                     
-                    LOGGER.info(f"MoovAPI: New Session via Proxy (RDNS={use_rdns})")
+                    # LOGGER.info(f"MoovAPI: Creating Session (RDNS={use_rdns})")
                     connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
                     self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
             else:
@@ -59,59 +67,68 @@ class MoovAPI:
         return self.session
 
     async def login(self, email, password):
-        # Simpan kredensial untuk auto re-login nanti
         self.email = email
         self.password = password
         
-        session = await self._get_session(force_new=True) # Reset session saat login baru
-        
-        data = {
-            'deviceid': self.device_id,
-            'devicetype': 'Android',
-            'clientver': '3.0.7',
-            'brand': 'Android',
-            'model': 'PIXEL+2XL',
-            'os': 'Android',
-            'osver': '10.0.0',
-            'devicename': 'Google+PIXEL+2XL',
-            'connect': 'WiFi',
-            'lang': 'en_US',
-            'loginid': email,
-            'notifyid': '',
-            'password': password,
-            'autologin': 'true'
-        }
-        
-        try:
-            async with session.post(
-                f"{self.base_url}/user/loginstatuscheck", 
-                headers=self.headers, 
-                data=data
-            ) as resp:
-                if resp.headers.get('Content-Type') == "application/xml;charset=UTF-8":
-                    LOGGER.info(f"Moov: Login Sukses ({email})")
-                    return True
-                
-                # Cek respon error
-                text = await resp.text()
-                LOGGER.error(f"Moov Login Failed: {text[:100]}...")
+        # --- CRITICAL SECTION: HANYA 1 PROSES BOLEH LOGIN ---
+        async with self._lock:
+            # Cek jika baru saja login (misal < 10 detik lalu) oleh thread lain
+            # Jika ya, skip login ulang, langsung return True
+            if time.time() - self.last_login_time < 15:
+                # LOGGER.info("Moov: Login dilewati (baru saja direfresh oleh thread lain).")
+                return True
+
+            # Buat sesi baru (memutus sesi lama yang mungkin error)
+            session = await self._get_session(force_new=True)
+            
+            # Reset Device ID setiap login baru untuk menghindari ban
+            self.device_id = str(uuid.uuid4())
+            
+            data = {
+                'deviceid': self.device_id,
+                'devicetype': 'Android',
+                'clientver': '3.0.7',
+                'brand': 'Android',
+                'model': 'PIXEL+2XL',
+                'os': 'Android',
+                'osver': '10.0.0',
+                'devicename': 'Google+PIXEL+2XL',
+                'connect': 'WiFi',
+                'lang': 'en_US',
+                'loginid': email,
+                'notifyid': '',
+                'password': password,
+                'autologin': 'true'
+            }
+            
+            try:
+                async with session.post(
+                    f"{self.base_url}/user/loginstatuscheck", 
+                    headers=self.headers, 
+                    data=data
+                ) as resp:
+                    if resp.headers.get('Content-Type') == "application/xml;charset=UTF-8":
+                        LOGGER.info(f"Moov: Re-Login Sukses ({email})")
+                        self.last_login_time = time.time()
+                        return True
+                    
+                    text = await resp.text()
+                    LOGGER.error(f"Moov Login Failed: {text[:100]}...")
+                    return False
+            except Exception as e:
+                LOGGER.error(f"Moov Login Exception: {e}")
                 return False
-        except Exception as e:
-            LOGGER.error(f"Moov Login Error: {e}")
-            return False
 
     async def _ensure_active_session(self):
-        """Helper untuk memastikan session aktif, atau login ulang jika perlu"""
         if not self.session or self.session.closed:
-            if self.email and self.password:
-                LOGGER.info("Moov: Session mati, mencoba Auto Re-login...")
-                await self.login(self.email, self.password)
-            else:
-                await self._get_session()
+            # Jika sesi mati total, coba buat baru tanpa login dulu
+            await self._get_session()
 
     async def get_album_meta(self, album_id):
         await self._ensure_active_session()
+        # Gunakan lock sebentar untuk mengambil session pointer yang aman
         session = await self._get_session()
+            
         params = {
             'profileId': album_id,
             'features': '24bit',
@@ -191,6 +208,7 @@ class MoovAPI:
     async def get_track_file_meta(self, track_id, quality='LL', album_id=None):
         # Retry loop: 0 = Normal attempt, 1 = Retry after Login
         for attempt_no in range(2): 
+            # Pastikan session ada
             await self._ensure_active_session()
             session = await self._get_session()
             
@@ -209,7 +227,13 @@ class MoovAPI:
             attempts_config.append({'cat': 'song', 'refid': '', 'refType': ''})
             attempts_config.append({'cat': 'video', 'refid': '', 'refType': ''})
 
+            success_data = None
+
             for conf in attempts_config:
+                # Cek jika sesi sudah ditutup oleh thread lain di tengah jalan
+                if session.closed:
+                     break 
+
                 params = {
                     'clientver': '3.0.7',
                     'action': 'stream',
@@ -238,28 +262,26 @@ class MoovAPI:
                         data_obj = data.get('result', {}).get('dataObject')
                         
                         if data_obj and data_obj.get('playUrl') and data_obj.get('contentKey'):
-                            return data_obj
-                        
-                        # Jika respon ada tapi playUrl kosong, mungkin session mati
-                        # Kita biarkan loop berlanjut, jika semua conf gagal, kita masuk blok 'if attempt_no == 0'
+                            success_data = data_obj
+                            break # Sukses, keluar dari loop config
                         
                 except Exception:
+                    # Jika error koneksi terjadi di sini, mungkin session mati
                     continue
             
-            # Jika sampai sini dan attempt_no == 0 (percobaan pertama gagal)
-            # Maka lakukan Re-login dan ulang loop
+            if success_data:
+                return success_data
+
+            # Jika sampai sini berarti semua config gagal atau session mati.
+            # Lakukan Login hanya jika ini attempt pertama
             if attempt_no == 0:
                 if self.email and self.password:
-                    LOGGER.warning(f"Moov Checkout Gagal ({track_id}). Mencoba Re-login otomatis...")
-                    login_success = await self.login(self.email, self.password)
-                    if login_success:
-                        # Login sukses, lanjut ke attempt_no = 1 (Retry)
-                        continue
-                    else:
-                        # Login gagal, stop
-                        break
+                    # LOGGER.warning(f"Moov Checkout Gagal ({track_id}). Requesting Login...")
+                    # Panggil login dengan Lock yang aman
+                    await self.login(self.email, self.password)
+                    continue # Lanjut ke loop attempt_no = 1
                 else:
-                    break
+                    break # Tidak ada kredensial, nyerah
 
         return {}
 
