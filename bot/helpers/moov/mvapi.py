@@ -20,9 +20,11 @@ class MoovAPI:
         self.user_id = None
         self.proxy = proxy
         
+        # FIX: Tambahkan Referer agar tidak dianggap bot
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10.0.0; PIXEL 2XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36/Moov',
-            'Referer': 'https://moov.hk/'
+            'Referer': 'https://moov.hk/',
+            'Origin': 'https://moov.hk'
         }
 
     async def _get_session(self):
@@ -108,6 +110,7 @@ class MoovAPI:
         
         attempts = []
         
+        # Logika brute-force endpoint playlist yang lebih cerdas
         if str(pid).startswith("PC"):
              attempts = [
                 {"endpoint": "profile/getProfile", "refType": "PP"}, 
@@ -129,9 +132,7 @@ class MoovAPI:
                 {"endpoint": "profile/getProfile", "refType": "PAB"}
             ]
 
-        last_error = None
-
-        for i, config in enumerate(attempts):
+        for config in attempts:
             endpoint = config['endpoint']
             ref_type = config['refType']
             
@@ -148,12 +149,11 @@ class MoovAPI:
                     if resp.status == 200:
                         try:
                             data = await resp.json()
-                        except: 
-                            continue
+                        except: continue
                             
                         data_obj = data.get('dataObject')
-                        
                         if data_obj:
+                            # Cek validitas isi
                             has_content = False
                             if data_obj.get('modules') and len(data_obj.get('modules')) > 0: has_content = True
                             elif data_obj.get('tracks') or data_obj.get('products'): has_content = True
@@ -162,8 +162,7 @@ class MoovAPI:
                             if has_content:
                                 LOGGER.info(f"Moov: Metadata VALID ditemukan menggunakan {endpoint} (refType={ref_type})")
                                 return data_obj
-            except Exception as e:
-                last_error = e
+            except:
                 continue
         
         return None
@@ -177,9 +176,7 @@ class MoovAPI:
         try:
             async with session.get(f"{self.base_url}/product/getProduct", headers=self.headers, params=params) as resp:
                 if resp.status != 200:
-                    LOGGER.warning(f"Moov getProduct Failed: {product_id} returned {resp.status}")
                     return None
-                
                 try:
                     data = await resp.json()
                     return data.get('dataObject')
@@ -191,48 +188,55 @@ class MoovAPI:
 
     async def get_track_file_meta(self, track_id, quality='LL', album_id=None):
         session = await self._get_session()
-        stream_headers = {'User-Agent': 'okhttp/4.8.0'}
+        stream_headers = {
+            'User-Agent': 'okhttp/4.8.0', # User-Agent aplikasi Android asli
+            'Referer': 'https://moov.hk/'
+        }
         
-        # --- LOGIKA CHECKOUT STREAM ---
-        # FIX: Tambahkan 'song' ke kategori & Perbaiki refType
-        categories = ['product', 'album', 'playlist', 'song']
+        # --- PERBAIKAN LOGIKA CHECKOUT ---
+        # Kita membuat daftar percobaan (attempts) yang spesifik.
+        # Masalah sebelumnya: 'product' dikirim TANPA refid, padahal butuh refid album.
         
-        for cat_type in categories:
-            # Tentukan reftype dan refid berdasarkan kategori
-            current_reftype = ''
-            current_refid = ''
+        attempts = []
 
-            # PENTING: Jika mode 'album', kita WAJIB kirim album_id sebagai refid
-            # dan reftype 'PAB' (Profile Album)
-            if cat_type == 'album' and album_id:
-                current_reftype = 'PAB'
-                current_refid = album_id
-            
-            # Jika album_id tidak ada tapi loop sampai ke 'album', skip saja karena pasti gagal
-            elif cat_type == 'album' and not album_id:
-                continue
+        # PRIORITAS 1: Jika ada Album ID, gunakan konteks album.
+        if album_id:
+            # Paling sering berhasil: Product checkout dengan referensi Album
+            attempts.append({'cat': 'product', 'refid': album_id, 'refType': 'PAB'})
+            # Kadang endpoint butuh 'song'
+            attempts.append({'cat': 'song', 'refid': album_id, 'refType': 'PAB'})
+            # Cara lama (album checkout)
+            attempts.append({'cat': 'album', 'refid': album_id, 'refType': 'PAB'})
 
+        # PRIORITAS 2: Coba tanpa konteks (Standalone) atau jika Playlist
+        attempts.append({'cat': 'product', 'refid': '', 'refType': ''})
+        attempts.append({'cat': 'song', 'refid': '', 'refType': ''})
+        
+        # PRIORITAS 3: Coba sebagai Video (kadang audio dideteksi sebagai MV)
+        attempts.append({'cat': 'video', 'refid': '', 'refType': ''})
+
+        for attempt in attempts:
             params = {
                 'clientver': '3.0.7',
                 'action': 'stream',
                 'streamtype': 'stdhls',
                 'preview': 'F',
-                'cat': cat_type, 
+                'cat': attempt['cat'], 
                 'pid': track_id,
                 'isUpSample': 'false',
                 'osver': '10.0.0',
-                'refid': current_refid,     
+                'refid': attempt['refid'],      # Album ID (PENTING)
                 'quality': quality,
                 'devicetype': 'Android',
                 'connect': 'WiFi',
-                # FIX: Gunakan 'refType' (CamelCase) bukan 'reftype'
-                'refType': current_reftype, 
+                'refType': attempt['refType'],  # 'PAB' (CamelCase PENTING)
                 'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
                 'application': 'moovnext',
                 'isStudioMaster': 'true'
             }
             
             try:
+                # LOGGER.info(f"Mencoba checkout: cat={attempt['cat']}, refid={attempt['refid']}") # Debug
                 async with session.get(f"{self.base_url}/content/checkout", headers=stream_headers, params=params) as resp:
                     if resp.status != 200: 
                         continue
@@ -240,15 +244,15 @@ class MoovAPI:
                     data = await resp.json()
                     data_obj = data.get('result', {}).get('dataObject')
                     
-                    # Validasi: Pastikan ada playUrl DAN contentKey
+                    # Validasi ketat: Harus ada URL dan Key
                     if data_obj and data_obj.get('playUrl') and data_obj.get('contentKey'):
+                        LOGGER.info(f"Moov Checkout Sukses: cat={attempt['cat']} (Q:{quality})")
                         return data_obj
                     
             except Exception as e:
-                # LOGGER.warning(f"Moov checkout try {cat_type} failed: {e}")
                 continue
 
-        # Jika semua gagal, return kosong
+        # Jika semua gagal
         return {}
 
     async def get_lyrics(self, track_id):
