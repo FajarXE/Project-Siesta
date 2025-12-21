@@ -21,7 +21,8 @@ class MoovAPI:
         self.proxy = proxy
         
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10.0.0; PIXEL 2XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36/Moov'
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10.0.0; PIXEL 2XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36/Moov',
+            'Referer': 'https://moov.hk/'
         }
 
     async def _get_session(self):
@@ -193,8 +194,8 @@ class MoovAPI:
         stream_headers = {'User-Agent': 'okhttp/4.8.0'}
         
         # --- LOGIKA CHECKOUT STREAM ---
-        # Urutan prioritas: Product -> Album (jika ada ID) -> Playlist
-        categories = ['product', 'album', 'playlist']
+        # FIX: Tambahkan 'song' ke kategori & Perbaiki refType
+        categories = ['product', 'album', 'playlist', 'song']
         
         for cat_type in categories:
             # Tentukan reftype dan refid berdasarkan kategori
@@ -220,11 +221,12 @@ class MoovAPI:
                 'pid': track_id,
                 'isUpSample': 'false',
                 'osver': '10.0.0',
-                'refid': current_refid,     # <--- Diisi ID Album jika cat='album'
+                'refid': current_refid,     
                 'quality': quality,
                 'devicetype': 'Android',
                 'connect': 'WiFi',
-                'reftype': current_reftype, # <--- Diisi 'PAB' jika cat='album'
+                # FIX: Gunakan 'refType' (CamelCase) bukan 'reftype'
+                'refType': current_reftype, 
                 'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
                 'application': 'moovnext',
                 'isStudioMaster': 'true'
