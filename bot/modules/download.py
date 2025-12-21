@@ -218,7 +218,6 @@ async def run_download_task(link: str, user: dict):
     except Exception as e:
         error_str = str(e)
         # --- MODIFIKASI: Deteksi Error yang Dapat Dimaafkan (Tanpa Traceback) ---
-        # Menambahkan "Item tidak tersedia di semua" dan "Track not available"
         is_handled_error = False
         if "not available in any" in error_str or \
            "Maaf, tidak ada akun" in error_str or \
@@ -226,6 +225,8 @@ async def run_download_task(link: str, user: dict):
            "URL Deezer tidak valid" in error_str or \
            "Item tidak tersedia di semua" in error_str or \
            "Track not available" in error_str or \
+           "Stream key kosong" in error_str or \
+           "Region Locked" in error_str or \
            isinstance(e, NapsterError) or \
            isinstance(e, BugsError) or \
            (highresaudio_manager and isinstance(e, HighResAudioError)) or \
