@@ -2,6 +2,7 @@
 
 import aiohttp
 import asyncio
+import uuid
 from bot.logger import LOGGER
 
 # --- Konektor Proxy ---
@@ -16,21 +17,28 @@ class MoovAPI:
     def __init__(self, proxy=None):
         self.base_url = "https://mtg.now.com/moov/api"
         self.session = None
-        self.token = None
-        self.user_id = None
         self.proxy = proxy
         
-        # FIX: Tambahkan Referer agar tidak dianggap bot
+        # CREDENTIAL STORAGE UNTUK AUTO RE-LOGIN
+        self.email = None
+        self.password = None
+        
+        # GENERATE RANDOM DEVICE ID (Agar tidak terdeteksi spam)
+        self.device_id = str(uuid.uuid4())
+
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10.0.0; PIXEL 2XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36/Moov',
             'Referer': 'https://moov.hk/',
             'Origin': 'https://moov.hk'
         }
 
-    async def _get_session(self):
+    async def _get_session(self, force_new=False):
+        if force_new and self.session and not self.session.closed:
+            await self.session.close()
+            self.session = None
+
         if not self.session or self.session.closed:
-            # --- KONFIGURASI TIMEOUT YANG LEBIH SABAR ---
-            timeout = aiohttp.ClientTimeout(total=120, connect=60)
+            timeout = aiohttp.ClientTimeout(total=60, connect=30)
             
             if self.proxy:
                 if not ProxyConnector:
@@ -39,12 +47,11 @@ class MoovAPI:
                 else:
                     proxy_url = self.proxy
                     use_rdns = False 
-
                     if proxy_url.startswith("socks5h://"):
                         proxy_url = proxy_url.replace("socks5h://", "socks5://")
                         use_rdns = True
                     
-                    LOGGER.info(f"MoovAPI: Menggunakan ProxyConnector (RDNS={use_rdns}, Timeout=60s)")
+                    LOGGER.info(f"MoovAPI: New Session via Proxy (RDNS={use_rdns})")
                     connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
                     self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
             else:
@@ -52,10 +59,14 @@ class MoovAPI:
         return self.session
 
     async def login(self, email, password):
-        session = await self._get_session()
+        # Simpan kredensial untuk auto re-login nanti
+        self.email = email
+        self.password = password
+        
+        session = await self._get_session(force_new=True) # Reset session saat login baru
         
         data = {
-            'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
+            'deviceid': self.device_id,
             'devicetype': 'Android',
             'clientver': '3.0.7',
             'brand': 'Android',
@@ -78,16 +89,28 @@ class MoovAPI:
                 data=data
             ) as resp:
                 if resp.headers.get('Content-Type') == "application/xml;charset=UTF-8":
-                    self.email = email
+                    LOGGER.info(f"Moov: Login Sukses ({email})")
                     return True
+                
+                # Cek respon error
                 text = await resp.text()
-                LOGGER.error(f"Moov Login Failed Response: {text}")
+                LOGGER.error(f"Moov Login Failed: {text[:100]}...")
                 return False
         except Exception as e:
             LOGGER.error(f"Moov Login Error: {e}")
             return False
 
+    async def _ensure_active_session(self):
+        """Helper untuk memastikan session aktif, atau login ulang jika perlu"""
+        if not self.session or self.session.closed:
+            if self.email and self.password:
+                LOGGER.info("Moov: Session mati, mencoba Auto Re-login...")
+                await self.login(self.email, self.password)
+            else:
+                await self._get_session()
+
     async def get_album_meta(self, album_id):
+        await self._ensure_active_session()
         session = await self._get_session()
         params = {
             'profileId': album_id,
@@ -106,11 +129,10 @@ class MoovAPI:
             return None
 
     async def get_playlist_meta(self, pid):
+        await self._ensure_active_session()
         session = await self._get_session()
         
         attempts = []
-        
-        # Logika brute-force endpoint playlist yang lebih cerdas
         if str(pid).startswith("PC"):
              attempts = [
                 {"endpoint": "profile/getProfile", "refType": "PP"}, 
@@ -143,119 +165,106 @@ class MoovAPI:
                 'refType': ref_type,
                 'checksum': ''
             }
-            
             try:
                 async with session.get(f"{self.base_url}/{endpoint}", headers=self.headers, params=params) as resp:
                     if resp.status == 200:
                         try:
                             data = await resp.json()
                         except: continue
-                            
                         data_obj = data.get('dataObject')
-                        if data_obj:
-                            # Cek validitas isi
-                            has_content = False
-                            if data_obj.get('modules') and len(data_obj.get('modules')) > 0: has_content = True
-                            elif data_obj.get('tracks') or data_obj.get('products'): has_content = True
-                            elif data_obj.get('data') and (data_obj['data'].get('tracks') or data_obj['data'].get('products')): has_content = True
-                            
-                            if has_content:
-                                LOGGER.info(f"Moov: Metadata VALID ditemukan menggunakan {endpoint} (refType={ref_type})")
-                                return data_obj
-            except:
-                continue
-        
+                        if data_obj and (data_obj.get('modules') or data_obj.get('tracks') or data_obj.get('products')):
+                            return data_obj
+            except: continue
         return None
 
     async def get_product_meta(self, product_id):
+        await self._ensure_active_session()
         session = await self._get_session()
-        params = {
-            'productId': product_id,
-            'deviceType': 'phones3'
-        }
+        params = {'productId': product_id, 'deviceType': 'phones3'}
         try:
             async with session.get(f"{self.base_url}/product/getProduct", headers=self.headers, params=params) as resp:
-                if resp.status != 200:
-                    return None
-                try:
-                    data = await resp.json()
-                    return data.get('dataObject')
-                except Exception:
-                    return None
-        except Exception as e:
-            LOGGER.error(f"Moov getProduct Exception ({product_id}): {e}")
-            return None
+                if resp.status != 200: return None
+                data = await resp.json()
+                return data.get('dataObject')
+        except: return None
 
     async def get_track_file_meta(self, track_id, quality='LL', album_id=None):
-        session = await self._get_session()
-        stream_headers = {
-            'User-Agent': 'okhttp/4.8.0', # User-Agent aplikasi Android asli
-            'Referer': 'https://moov.hk/'
-        }
-        
-        # --- PERBAIKAN LOGIKA CHECKOUT ---
-        # Kita membuat daftar percobaan (attempts) yang spesifik.
-        # Masalah sebelumnya: 'product' dikirim TANPA refid, padahal butuh refid album.
-        
-        attempts = []
-
-        # PRIORITAS 1: Jika ada Album ID, gunakan konteks album.
-        if album_id:
-            # Paling sering berhasil: Product checkout dengan referensi Album
-            attempts.append({'cat': 'product', 'refid': album_id, 'refType': 'PAB'})
-            # Kadang endpoint butuh 'song'
-            attempts.append({'cat': 'song', 'refid': album_id, 'refType': 'PAB'})
-            # Cara lama (album checkout)
-            attempts.append({'cat': 'album', 'refid': album_id, 'refType': 'PAB'})
-
-        # PRIORITAS 2: Coba tanpa konteks (Standalone) atau jika Playlist
-        attempts.append({'cat': 'product', 'refid': '', 'refType': ''})
-        attempts.append({'cat': 'song', 'refid': '', 'refType': ''})
-        
-        # PRIORITAS 3: Coba sebagai Video (kadang audio dideteksi sebagai MV)
-        attempts.append({'cat': 'video', 'refid': '', 'refType': ''})
-
-        for attempt in attempts:
-            params = {
-                'clientver': '3.0.7',
-                'action': 'stream',
-                'streamtype': 'stdhls',
-                'preview': 'F',
-                'cat': attempt['cat'], 
-                'pid': track_id,
-                'isUpSample': 'false',
-                'osver': '10.0.0',
-                'refid': attempt['refid'],      # Album ID (PENTING)
-                'quality': quality,
-                'devicetype': 'Android',
-                'connect': 'WiFi',
-                'refType': attempt['refType'],  # 'PAB' (CamelCase PENTING)
-                'deviceid': 'fgq7hzlFQE-Gsf7sj9RiC5',
-                'application': 'moovnext',
-                'isStudioMaster': 'true'
+        # Retry loop: 0 = Normal attempt, 1 = Retry after Login
+        for attempt_no in range(2): 
+            await self._ensure_active_session()
+            session = await self._get_session()
+            
+            stream_headers = {
+                'User-Agent': 'okhttp/4.8.0',
+                'Referer': 'https://moov.hk/'
             }
             
-            try:
-                # LOGGER.info(f"Mencoba checkout: cat={attempt['cat']}, refid={attempt['refid']}") # Debug
-                async with session.get(f"{self.base_url}/content/checkout", headers=stream_headers, params=params) as resp:
-                    if resp.status != 200: 
-                        continue
-                    
-                    data = await resp.json()
-                    data_obj = data.get('result', {}).get('dataObject')
-                    
-                    # Validasi ketat: Harus ada URL dan Key
-                    if data_obj and data_obj.get('playUrl') and data_obj.get('contentKey'):
-                        LOGGER.info(f"Moov Checkout Sukses: cat={attempt['cat']} (Q:{quality})")
-                        return data_obj
-                    
-            except Exception as e:
-                continue
+            attempts_config = []
+            if album_id:
+                attempts_config.append({'cat': 'product', 'refid': album_id, 'refType': 'PAB'})
+                attempts_config.append({'cat': 'song', 'refid': album_id, 'refType': 'PAB'})
+                attempts_config.append({'cat': 'album', 'refid': album_id, 'refType': 'PAB'})
+            
+            attempts_config.append({'cat': 'product', 'refid': '', 'refType': ''})
+            attempts_config.append({'cat': 'song', 'refid': '', 'refType': ''})
+            attempts_config.append({'cat': 'video', 'refid': '', 'refType': ''})
 
-        # Jika semua gagal
+            for conf in attempts_config:
+                params = {
+                    'clientver': '3.0.7',
+                    'action': 'stream',
+                    'streamtype': 'stdhls',
+                    'preview': 'F',
+                    'cat': conf['cat'], 
+                    'pid': track_id,
+                    'isUpSample': 'false',
+                    'osver': '10.0.0',
+                    'refid': conf['refid'],      
+                    'quality': quality,
+                    'devicetype': 'Android',
+                    'connect': 'WiFi',
+                    'refType': conf['refType'], 
+                    'deviceid': self.device_id,
+                    'application': 'moovnext',
+                    'isStudioMaster': 'true'
+                }
+                
+                try:
+                    async with session.get(f"{self.base_url}/content/checkout", headers=stream_headers, params=params) as resp:
+                        if resp.status != 200: 
+                            continue
+                        
+                        data = await resp.json()
+                        data_obj = data.get('result', {}).get('dataObject')
+                        
+                        if data_obj and data_obj.get('playUrl') and data_obj.get('contentKey'):
+                            return data_obj
+                        
+                        # Jika respon ada tapi playUrl kosong, mungkin session mati
+                        # Kita biarkan loop berlanjut, jika semua conf gagal, kita masuk blok 'if attempt_no == 0'
+                        
+                except Exception:
+                    continue
+            
+            # Jika sampai sini dan attempt_no == 0 (percobaan pertama gagal)
+            # Maka lakukan Re-login dan ulang loop
+            if attempt_no == 0:
+                if self.email and self.password:
+                    LOGGER.warning(f"Moov Checkout Gagal ({track_id}). Mencoba Re-login otomatis...")
+                    login_success = await self.login(self.email, self.password)
+                    if login_success:
+                        # Login sukses, lanjut ke attempt_no = 1 (Retry)
+                        continue
+                    else:
+                        # Login gagal, stop
+                        break
+                else:
+                    break
+
         return {}
 
     async def get_lyrics(self, track_id):
+        await self._ensure_active_session()
         session = await self._get_session()
         params = {'pid': track_id}
         try:
@@ -263,8 +272,7 @@ class MoovAPI:
                 if resp.status != 200: return None
                 data = await resp.json()
                 return data.get('dataObject', {}).get('lyric')
-        except:
-            return None
+        except: return None
 
     async def close(self):
         if self.session:
