@@ -173,15 +173,23 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         track_meta['extension'] = await get_audio_extension(filepath)
         
         try:
+            # Mengambil pengaturan convert (index ke-3)
             _, __, ___, user_convert_m4a = tidal_manager.get_user_quality_settings(user['user_id']) 
         except Exception:
             user_convert_m4a = "OFF" 
         
         metadata_written = False
         
-        # --- PERBAIKAN PENTING: Penanganan Lirik untuk Jalur Konversi FFmpeg ---
-        if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "ON":
-            LOGGER.info(f"Mengonversi M4A ke FLAC & Menulis Tag untuk user {user['user_id']} Sesuai pengaturan.")
+        # --- PERBAIKAN LOGIKA: Convert HANYA untuk LOSSLESS/MAX format M4A ---
+        # 1. Definisi Tier Tinggi (Lossless / HiRes)
+        is_high_tier = quality in ['LOSSLESS', 'HI_RES', 'HI_RES_LOSSLESS']
+        
+        # 2. Definisi File M4A
+        is_m4a_file = (track_meta['extension'] == 'm4a')
+
+        # JALANKAN CONVERT JIKA: (Kualitas Tinggi) DAN (File M4A) DAN (Setting ON)
+        if is_high_tier and is_m4a_file and user_convert_m4a == "ON":
+            LOGGER.info(f"Mengonversi M4A (Tier {quality}) ke FLAC untuk user {user['user_id']} Sesuai pengaturan.")
             
             # Jika menggunakan jalur ini, set_metadata (mutagen) dilewati.
             # Jadi kita HARUS mengambil lirik secara manual di sini agar FFmpeg bisa menulisnya.
@@ -202,8 +210,13 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             metadata_written = True 
             
         else:
-            if quality == 'HI_RES_LOSSLESS' and user_convert_m4a == "OFF":
-                LOGGER.info(f"Melewatkan konversi M4A untuk user {user['user_id']} Sesuai pengaturan.")
+            # LOGIKA ELSE:
+            # - Jika kualitas Low/High (biarkan m4a)
+            # - Jika file aslinya sudah FLAC
+            # - Jika fitur OFF
+            
+            if is_high_tier and is_m4a_file and user_convert_m4a == "OFF":
+                LOGGER.info(f"File Lossless/Max format M4A terdeteksi, tapi convert OFF (User {user['user_id']}).")
             
             new_filepath = track_meta['filepath'] + f".{track_meta['extension']}"
             os.rename(filepath, new_filepath)
