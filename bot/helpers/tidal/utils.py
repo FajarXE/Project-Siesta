@@ -38,6 +38,7 @@ async def parse_url(url):
 
 
 async def get_stream_session(track_data: dict, user: dict):
+    # Ambil tag kemampuan audio dari metadata track (contoh: ['LOSSLESS', 'HIRES_LOSSLESS', 'DOLBY_ATMOS'])
     media_tags = track_data['mediaMetadata']['tags']
     formats = None
 
@@ -46,8 +47,10 @@ async def get_stream_session(track_data: dict, user: dict):
     
     client: TidalApi = user['tidal_api']
     
+    # Ambil settingan user (misal: qual='HI_RES')
     qual, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
 
+    # Logika Session Spasial/HiRes
     if 'SONY_360RA' in media_tags and spatial == 'Sony 360RA':
         formats = '360ra'
     elif 'DOLBY_ATMOS' in media_tags and spatial == 'ATMOS AC3 JOC':
@@ -57,19 +60,40 @@ async def get_stream_session(track_data: dict, user: dict):
     elif 'HIRES_LOSSLESS' in media_tags and qual == 'HI_RES':
         formats = 'flac_hires'
 
+    # Pilih Session berdasarkan format
     session = {
             'flac_hires': client.mobile_hires,
             '360ra': client.mobile_hires if client.mobile_hires else client.mobile_atmos,
             'ac4': client.mobile_atmos,
             'ac3': client.tv_session,
-            None: client.tv_session,
+            None: client.tv_session, # Fallback session (biasanya TV session untuk Lossless/High/Low)
     }[formats]
 
+    # Handle kasus khusus Atmos di session mobile
     if not formats and 'DOLBY_ATMOS' in media_tags:
         if client.mobile_hires:
             session = client.mobile_hires
 
-    quality = qual if formats != 'flac_hires' else 'HI_RES_LOSSLESS'
+    # --- PERBAIKAN: LOGIKA FALLBACK KUALITAS ---
+    # Masalah: User set MAX (HI_RES), tapi lagu cuma ada LOSSLESS.
+    # Solusi: Cek tag, jika HIRES tidak tersedia, turunkan ke LOSSLESS.
+    
+    # 1. Jika terdeteksi format HiRes (User minta HI_RES + Lagu Support)
+    if formats == 'flac_hires':
+        quality = 'HI_RES' 
+        
+    # 2. Jika User minta Spasial (Atmos/360) dan format terdeteksi
+    elif formats in ['360ra', 'ac3', 'ac4']:
+        quality = 'DOLBY_ATMOS' if 'DOLBY' in str(formats) else 'LOW' # Placeholder, API biasanya handle via endpoint
+        
+    # 3. Logika Fallback Standar (Stereo)
+    else:
+        # Jika user minta MAX (HI_RES) TAPI lagu TIDAK punya tag HIRES_LOSSLESS
+        if qual == 'HI_RES' and 'HIRES_LOSSLESS' not in media_tags:
+            quality = 'LOSSLESS' # <-- PAKSA TURUN KE LOSSLESS
+        else:
+            quality = qual # Gunakan pilihan user (LOW/HIGH/LOSSLESS)
+
     return session, quality
     
 
@@ -126,9 +150,10 @@ async def get_quality(stream_data: dict):
         'HI_RES':'MAX',
         'HI_RES_LOSSLESS':'MAX'
     }
-    if stream_data['audioMode'] == 'DOLBY_ATMOS':
+    if stream_data.get('audioMode') == 'DOLBY_ATMOS':
         return 'DOLBY ATMOS'
-    return quality_dict[stream_data['audioQuality']]
+    # Fallback aman jika key audioQuality tidak standar
+    return quality_dict.get(stream_data.get('audioQuality', 'LOW'), 'LOW')
 
 
 async def sort_album_from_artist(album_data: dict, user: dict):
@@ -136,16 +161,22 @@ async def sort_album_from_artist(album_data: dict, user: dict):
     _, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
 
     for album in album_data:
-        if album['audioModes'] == ['DOLBY_ATMOS'] \
+        # Filter berdasarkan mode audio album
+        audio_modes = album.get('audioModes', [])
+        
+        if 'DOLBY_ATMOS' in audio_modes \
             and spatial in ['ATMOS AC3 JOC', 'ATMOS AC4']: 
             albums.append(album)
-        elif album['audioModes'] == ['STEREO'] \
+        elif 'STEREO' in audio_modes \
             and spatial == 'OFF':
             albums.append(album)
+        # Jika list kosong atau tidak match, bisa jadi album campuran, tambahkan saja sebagai fallback
+        elif not audio_modes: 
+             albums.append(album)
 
     unique_albums = {}
     for album in albums:
-        unique_key = (album['title'], album['version'])
+        unique_key = (album['title'], album.get('version', ''))
         if unique_key not in unique_albums:
             unique_albums[unique_key] = album
         else:
@@ -174,20 +205,14 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     input_file_escaped = escape_str(input_file)
     output_file_escaped = f"{input_file_escaped}.flac"
     
-    # --- MODIFIKASI: Logika Cover Art ---
+    # Logika Cover Art
     cover_cmd = ""
-    map_cmd = "-map 0:a" # Default: Ambil audio dari input ke-0 (file audio)
+    map_cmd = "-map 0:a" 
     
-    # Cek apakah ada cover art di metadata dan file-nya ada
     cover_path = track_meta.get('cover')
     if cover_path and os.path.exists(cover_path):
-        # Input ke-1 adalah gambar
         cover_cmd = f'-i "{escape_str(cover_path)}"' 
-        # Petakan input ke-1 sebagai stream video (cover art)
-        # -c:v copy: Jangan re-encode JPG/PNG (biarkan aslinya)
-        # -disposition:v attached_pic: Tandai sebagai cover art untuk player (seperti Poweramp)
         map_cmd += " -map 1 -c:v copy -disposition:v attached_pic -metadata:s:v title=\"Album cover\" -metadata:s:v comment=\"Cover (front)\""
-    # --- BATAS MODIFIKASI ---
 
     # 1. Bangun string metadata teks
     metadata_cmd = ""
@@ -212,7 +237,6 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
         'SAMPLERATE': int(track_meta.get('sample_rate', 44.1) * 1000)
     }
 
-    # Tambahkan tag MQA jika ada
     if track_meta.get('mqa_details'):
         mqa_file = track_meta['mqa_details']
         encoder_time = datetime.now().strftime("%b %d %Y %H:%M:%S")
@@ -221,13 +245,11 @@ async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
         tags_to_write['MQAENCODER'] = mqa_encoder_str
         tags_to_write['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
 
-    # Buat argumen -metadata
     for key, value in tags_to_write.items():
         if value is not None and value != '':
             metadata_cmd += f' -metadata {key}="{escape_str(value)}"'
 
     # 2. Bangun perintah FFmpeg LENGKAP
-    # Urutan: ffmpeg -i audio -i cover (opsional) -map audio -map cover (opsional) -codec -metadata output
     cmd = (
         f'ffmpeg -i "{input_file_escaped}" {cover_cmd} '
         f'{map_cmd} '
