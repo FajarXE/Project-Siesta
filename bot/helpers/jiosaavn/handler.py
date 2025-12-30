@@ -48,7 +48,7 @@ async def process_single_track(token_id, user, session, api):
         track_data = await api.get_song_details(session, token_id)
         if not track_data: raise Exception("Metadata tidak ditemukan.")
         
-        # Inject info track 1/1 untuk single
+        # Inject info track
         track_data['track_number'] = 1
         track_data['total_tracks'] = 1
         
@@ -89,7 +89,7 @@ async def process_album(token_id, user, session, api):
                 full_track = await api.get_song_details(session, t_token)
                 if not full_track: full_track = track
                 
-                # INJECT METADATA TRACK NUMBER
+                # INJECT METADATA
                 current_num = i + 1
                 full_track['track_number'] = current_num
                 full_track['total_tracks'] = total
@@ -123,6 +123,12 @@ async def process_album(token_id, user, session, api):
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
+        # --- FIX TANGGAL RILIS (YYYY-MM-DD) ---
+        release_date = album_data.get("release_date")
+        if not release_date:
+            release_date = album_data.get("year", "Unknown")
+        # --------------------------------------
+
         if is_art_poster and downloaded_tracks:
             cover_file = downloaded_tracks[0]['cover']
             if cover_file and os.path.exists(cover_file):
@@ -130,7 +136,7 @@ async def process_album(token_id, user, session, api):
                     caption = (
                         f"**ᴛɪᴛʟᴇ :** {album_title}\n"
                         f"**ᴀʀᴛɪsᴛ :** {album_data.get('primary_artists')}\n"
-                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {album_data.get('year')}\n"
+                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n"
                         f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
                         f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
                         f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
@@ -147,7 +153,7 @@ async def process_album(token_id, user, session, api):
             'tracks': downloaded_tracks, 
             'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
             'zip_path': zip_path, 'poster_msg': False, 
-            'provider': 'JioSaavn', 'release_date': album_data.get("year", ""), 
+            'provider': 'JioSaavn', 'release_date': release_date, 
             'track_count': total, 'quality': '320kbps'
         }
 
@@ -160,18 +166,20 @@ async def process_album(token_id, user, session, api):
 async def download_track_file(track_data, user, session, api, custom_dir=None):
     title = track_data.get("song")
     enc_url = track_data.get("encrypted_media_url")
-    image_url = track_data.get("image", "").replace("150x150", "500x500")
     
-    # --- NOMOR PADA NAMA FILE (Format: 1 - Judul) ---
+    # --- FIX COVER 500x500 (Maksimal API) ---
+    image_url = track_data.get("image", "")
+    # Pastikan ambil resolusi tertinggi yang stabil (500x500)
+    image_url = image_url.replace("150x150", "500x500").replace("50x50", "500x500")
+    # ----------------------------------------
+    
+    # Format Nama File: 1 - Judul
     track_num = track_data.get('track_number')
     safe_title = sanitize_filename(title)
-    
     if track_num:
-        # int() akan mengubah 01 menjadi 1
         filename = f"{int(track_num)} - {safe_title}.m4a"
     else:
         filename = f"{safe_title}.m4a"
-    # -----------------------------------------------
 
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     file_path = os.path.join(dl_dir, filename)
