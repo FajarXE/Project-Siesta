@@ -5,14 +5,13 @@ import aiohttp
 import aiofiles
 import asyncio
 from bot.logger import LOGGER
-from bot.helpers.message import edit_message, edit_art_poster
-from bot.helpers.utils import format_string
-import bot.helpers.translations as lang
+from bot.helpers.message import edit_message
+# HAPUS edit_art_poster KARENA TIDAK ADA DI message.py ANDA
 from .manager import jiosaavn_manager
 from .metadata import set_jiosaavn_metadata
 from bot.helpers.uploder import track_upload, album_upload 
-# Impor Global Settings untuk cek ZIP/Poster
-from bot.settings import bot_set 
+# Gunakan Config untuk debug path
+from bot import Config
 import yt_dlp
 
 def sanitize_filename(name: str) -> str:
@@ -21,22 +20,18 @@ def sanitize_filename(name: str) -> str:
 URL_REGEX = re.compile(r"jiosaavn\.com/(song|album)/.+?/(.+)")
 
 def ensure_download_dir(user, subdir=None):
-    uid = user.get('user_id', 'temp_user')
-    base = os.path.join("downloads", str(uid))
+    # Pastikan pakai path absolut dari Config
+    base_dir = Config.DOWNLOAD_BASE_DIR
+    uid = user.get('user_id', 'temp')
+    # Path: downloads/USER_ID/
+    user_dir = os.path.join(base_dir, str(uid))
+    
     if subdir:
-        base = os.path.join(base, sanitize_filename(subdir))
-    if not os.path.exists(base):
-        os.makedirs(base)
-    return base
-
-# Helper Cek Setting User (lebih kuat)
-def check_user_setting(user, key):
-    # Cek di dict user (dari fetch_user_details)
-    if user.get(key): return True
-    # Cek di cache global bot_set
-    uid = user.get('user_id')
-    if uid and bot_set.user_data.get(uid, {}).get(key): return True
-    return False
+        user_dir = os.path.join(user_dir, sanitize_filename(subdir))
+    
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir)
+    return user_dir
 
 async def start_jiosaavn(link: str, user: dict):
     msg = user['bot_msg']
@@ -82,6 +77,7 @@ async def process_album(token_id, user, session, api):
         if not tracks: raise Exception("Album kosong.")
         
         album_title = album_data.get("title", "Unknown Album")
+        # Buat folder khusus album
         album_dir = ensure_download_dir(user, subdir=album_title)
         
         total = len(tracks)
@@ -108,40 +104,41 @@ async def process_album(token_id, user, session, api):
                 LOGGER.error(f"Skip track {i}: {e}")
 
         if not downloaded_tracks:
-            raise Exception("Gagal mengunduh semua lagu dalam album.")
+            raise Exception("Gagal mengunduh semua lagu.")
 
         await edit_message(msg, "Memproses Album...")
         
-        # --- FIX ZIP ---
+        # --- FIX ZIP YANG LEBIH KUAT ---
         zip_path = None
-        # Cek setting 'zip' atau 'zip_mode'
-        if check_user_setting(user, 'zip') or check_user_setting(user, 'zip_mode'): 
+        # Cek 'zip' di user dict (biasanya diset oleh settings handler)
+        # Jika tidak ada, default False
+        is_zip = user.get('zip', False)
+        
+        if is_zip:
              await edit_message(msg, "Mengompres (ZIP)...")
-             zip_base = os.path.join(ensure_download_dir(user), sanitize_filename(album_title))
-             zip_path = shutil.make_archive(zip_base, 'zip', album_dir)
+             # Nama file zip
+             zip_name = sanitize_filename(album_title)
+             # Lokasi output zip (di luar folder album)
+             parent_dir = os.path.dirname(album_dir)
+             output_path = os.path.join(parent_dir, zip_name)
+             
+             # Buat ZIP
+             zip_path = shutil.make_archive(output_path, 'zip', album_dir)
+             LOGGER.info(f"ZIP dibuat di: {zip_path}")
 
         metadata = {
             'type': 'album', 'title': album_title,
-            'artist': album_data.get("primary_artists"), 'folderpath': album_dir,
+            'artist': album_data.get("primary_artists"), 
+            'folderpath': album_dir,
             'tracks': downloaded_tracks, 
             'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
             'zip_path': zip_path, 
-            'poster_msg': None, # Kita handle poster manual di bawah
+            # Nonaktifkan poster msg karena fungsi helper hilang
+            'poster_msg': False,
             'provider': 'JioSaavn',
-            'release_date': album_data.get("year", ""), # Untuk template poster
+            'release_date': album_data.get("year", ""), 
             'track_count': total
         }
-
-        # --- FIX POSTER (MANUAL) ---
-        # Karena uploder.py tidak handle poster di mode Telegram, kita handle di sini
-        if check_user_setting(user, 'poster') or check_user_setting(user, 'art_poster'):
-            try:
-                # Format caption menggunakan template
-                caption = await format_string(lang.s.ALBUM_TEMPLATE, metadata, user)
-                # Edit pesan bot menjadi poster
-                await edit_art_poster(metadata, user, None, None, caption)
-            except Exception as e:
-                LOGGER.error(f"Gagal menampilkan poster: {e}")
 
         await album_upload(metadata, user)
         
@@ -158,9 +155,7 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
     filename = f"{sanitize_filename(title)}.m4a"
     file_path = os.path.join(dl_dir, filename)
 
-    # 1. Coba Generate Link 320kbps
     dl_url = await api.get_auth_url(session, enc_url)
-    
     urls_to_try = []
     if dl_url:
         urls_to_try.append(dl_url) 
@@ -168,7 +163,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
     
     downloaded = False
     
-    # Metode 1: Manual
     for url in urls_to_try:
         try:
             async with session.get(url) as resp:
@@ -181,7 +175,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
                         break
         except: pass
     
-    # Metode 2: YT-DLP
     if not downloaded:
         if os.path.exists(file_path): os.remove(file_path)
         try:
