@@ -65,6 +65,18 @@ except ImportError:
     highresaudio_manager = None
     class HighResAudioError(Exception): pass
 
+# --- TAMBAHAN BARU: Impor Manajer JioSaavn & Gaana ---
+try:
+    from bot.helpers.jiosaavn.manager import jiosaavn_manager
+except ImportError:
+    jiosaavn_manager = None
+
+try:
+    from bot.helpers.gaana.manager import gaana_manager
+except ImportError:
+    gaana_manager = None
+# --- BATAS TAMBAHAN JIOSAAVN & GAANA ---
+
 # Impor handler secara terpisah
 try:
     from bot.helpers.highresaudio.handler import start_highresaudio
@@ -143,6 +155,20 @@ except ImportError:
     async def start_bugs(*args, **kwargs):
         raise NotImplementedError("Modul Bugs ('handler.py') belum diimplementasikan.")
     class BugsError(Exception): pass
+# --- BATAS TAMBAHAN ---
+
+# --- TAMBAHAN BARU: Impor Handler JioSaavn & Gaana ---
+try:
+    from ..helpers.jiosaavn.handler import start_jiosaavn
+except ImportError:
+    async def start_jiosaavn(*args, **kwargs):
+        raise NotImplementedError("Modul JioSaavn ('handler.py') belum diimplementasikan.")
+
+try:
+    from ..helpers.gaana.handler import start_gaana
+except ImportError:
+    async def start_gaana(*args, **kwargs):
+        raise NotImplementedError("Modul Gaana ('handler.py') belum diimplementasikan.")
 # --- BATAS TAMBAHAN ---
 
 
@@ -343,6 +369,11 @@ async def start_link(link: str, user: dict) -> None:
 
     # --- TAMBAHAN BARU: URL HIGHRESAUDIO ---
     highresaudio = ["https://www.highresaudio.com", "highresaudio.com"]
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: URL JioSaavn & Gaana ---
+    jiosaavn = ["https://www.jiosaavn.com", "jiosaavn.com"]
+    gaana = ["https://gaana.com", "gaana.com"]
     # --- BATAS TAMBAHAN ---
     
     if link.startswith(tuple(tidal)):
@@ -686,6 +717,37 @@ async def start_link(link: str, user: dict) -> None:
                 raise e 
     # --- BATAS TAMBAHAN ---
 
+    # --- TAMBAHAN BARU: Blok JioSaavn ---
+    elif link.startswith(tuple(jiosaavn)):
+        user['provider'] = 'JioSaavn'
+        if not jiosaavn_manager:
+             raise Exception("Modul JioSaavn tidak dimuat (Folder/file helper hilang).")
+        
+        try:
+            await start_jiosaavn(link, user)
+            LOGGER.info("JioSaavn: Unduhan berhasil.")
+            return
+        except Exception as e:
+            LOGGER.error(f"JioSaavn Gagal: {e}")
+            raise e
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Blok Gaana ---
+    elif link.startswith(tuple(gaana)):
+        user['provider'] = 'Gaana'
+        if not gaana_manager:
+             raise Exception("Modul Gaana tidak dimuat (Folder/file helper hilang).")
+        
+        try:
+            await start_gaana(link, user)
+            LOGGER.info("Gaana: Unduhan berhasil.")
+            return
+        except Exception as e:
+            LOGGER.error(f"Gaana Gagal: {e}")
+            raise e
+    # --- BATAS TAMBAHAN ---
+
     else:
         LOGGER.warning(f"Link tidak dikenali: {link}")
         raise Exception(f"Link tidak dikenali. Bot tidak tahu cara mengunduh dari: {link}")
+
