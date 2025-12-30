@@ -1,7 +1,7 @@
 import os
 import re
-import shutil
 import asyncio
+import aiofiles  # <--- INI YANG HILANG SEBELUMNYA
 from bot.logger import LOGGER
 from bot.helpers.message import edit_message
 from .manager import gaana_manager
@@ -92,11 +92,15 @@ async def process_album_gaana(identifier, user, session, api):
             path, cover = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
             downloaded.append({
                 'filepath': path, 'title': track.get("track_title"),
-                'artist': track.get("artist")[0]['name'], 'album': album_title,
+                'artist': track.get("artist")[0]['name'] if track.get("artist") else "Unknown",
+                'album': album_title,
                 'cover': cover
             })
         except Exception as e:
             LOGGER.error(f"Skip Gaana: {e}")
+
+    if not downloaded:
+        raise Exception("Gagal mengunduh semua lagu dalam album.")
 
     # ZIP & Poster Logic
     await edit_message(msg, "Memproses Album...")
@@ -125,11 +129,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     
     decrypted_url = api.decrypt_stream_path(enc_path)
     
-    # FIX QUALITY 320KBPS (Sesuai referensi gaana.py: replace .mp4 -> _320.mp4 atau semacamnya)
-    # Tapi yt-dlp lebih pintar menangani manifest. Kita gunakan high quality replacement jika m3u8.
-    # Jika decrypted url adalah mp4 langsung (progressive), kita ubah bitratenya.
-    # Gaana pattern: .../medium.mp4 or .../128.mp4
-    # Kita coba paksa ke high/320.
+    # Replacement URL untuk kualitas tinggi
     final_url = decrypted_url.replace("medium.mp4", "high.mp4") \
                              .replace("128.mp4", "320.mp4") \
                              .replace("64.mp4", "320.mp4")
@@ -141,7 +141,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     
     if os.path.exists(path): os.remove(path)
     
-    # Gunakan YT-DLP (Paling stabil untuk Gaana HLS/M3U8)
+    # Gunakan YT-DLP
     await download_with_ytdlp(final_url, path)
     
     # Fallback jika gagal high quality
