@@ -53,6 +53,10 @@ async def process_single_gaana(track, user, session, api):
     msg = user['bot_msg']
     await edit_message(msg, "Mengunduh...")
     try:
+        # Inject info track
+        track['track_number'] = 1
+        track['track_count'] = 1
+        
         path, cover, dur = await download_gaana_track(track, user, session, api)
         metadata = {
             'filepath': path,
@@ -88,14 +92,15 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            track["track_number"] = str(i + 1)
+            current_num = i + 1
+            track["track_number"] = str(current_num)
             track["track_count"] = str(total)
             track["label_name"] = data.get("label_name")
             
             if track.get("parental_warning") == 1:
                 is_explicit_album = "True"
 
-            await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
+            await edit_message(msg, f"[{current_num}/{total}] {track.get('track_title')}...")
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
             
             downloaded.append({
@@ -119,32 +124,29 @@ async def process_album_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-    # --- FIX: MANUAL ART POSTER (BOLD LABEL) ---
     if is_art_poster and downloaded:
         cover_file = downloaded[0]['cover']
         if cover_file and os.path.exists(cover_file):
             try:
                 caption = (
-                    f"**ᴛɪᴛʟᴇ** : {album_title}\n"
-                    f"**ᴀʀᴛɪsᴛ** : {downloaded[0]['artist']}\n"
-                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ** : {data.get('release_date')}\n"
-                    f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs** : {total}\n"
-                    f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs** : 1\n"
-                    f"**ǫᴜᴀʟɪᴛʏ** : 320kbps\n"
-                    f"**ᴘʀᴏᴠɪᴅᴇʀ** : Gaana\n"
-                    f"**ᴇxᴘʟɪᴄɪᴛ** : {is_explicit_album}"
+                    f"**ᴛɪᴛʟᴇ :** {album_title}\n"
+                    f"**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
+                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {data.get('release_date')}\n"
+                    f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
+                    f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
+                    f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
+                    f"**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n"
+                    f"**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit_album}"
                 )
                 await send_message(user, cover_file, 'pic', caption=caption)
             except Exception as e:
                 LOGGER.error(f"Gagal kirim poster Gaana: {e}")
-    # -------------------------------------------
 
     metadata = {
         'type': 'album', 'title': album_title,
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
-        'zip_path': zip_path, 
-        'poster_msg': False, 
+        'zip_path': zip_path, 'poster_msg': False, 
         'provider': 'Gaana', 'release_date': data.get("release_date", ""),
         'track_count': total, 'quality': '320kbps'
     }
@@ -165,8 +167,16 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
     else: final_url = final_url.replace(".mp4", "_320.mp4")
 
+    # --- NOMOR PADA NAMA FILE (Format: 1 - Judul) ---
+    track_num = track_info.get('track_number')
+    safe_title = sanitize_filename(title)
+    if track_num:
+        filename = f"{int(track_num)} - {safe_title}.m4a"
+    else:
+        filename = f"{safe_title}.m4a"
+    # -----------------------------------------------
+
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
-    filename = f"{sanitize_filename(title)}.m4a"
     path = os.path.join(dl_dir, filename)
     
     if os.path.exists(path): os.remove(path)
