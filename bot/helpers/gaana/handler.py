@@ -91,14 +91,15 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            track["track_number"] = str(i + 1)
+            current_num = i + 1
+            track["track_number"] = str(current_num)
             track["track_count"] = str(total)
             track["label_name"] = data.get("label_name")
             
             if track.get("parental_warning") == 1:
                 is_explicit_album = "True"
 
-            await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
+            await edit_message(msg, f"[{current_num}/{total}] {track.get('track_title')}...")
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
             
             downloaded.append({
@@ -122,12 +123,10 @@ async def process_album_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-    # --- FIX TANGGAL RILIS GAANA ---
+    # Fix Release Date
     release_date = data.get("release_date")
     if not release_date:
-        # Coba ambil dari track pertama jika di album kosong
         release_date = tracks[0].get("release_date", "Unknown")
-    # -------------------------------
 
     if is_art_poster and downloaded:
         cover_file = downloaded[0]['cover']
@@ -172,7 +171,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
     else: final_url = final_url.replace(".mp4", "_320.mp4")
 
-    # Format: 1 - Judul
+    # Nama File: 1 - Judul
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
     if track_num:
@@ -193,21 +192,13 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
 
     if not os.path.exists(path): raise Exception("Fail DL")
 
-    # --- FIX COVER GAANA (Try Max Res) ---
+    # --- FIX COVER ORIGINAL (Max Res) ---
     artwork_url = track_info.get('artwork', '')
     if artwork_url:
-        # Coba paksa ganti size_s/size_m ke size_xl atau hapus suffix crop
-        # Gaana URL: .../crop_80x80_123.jpg -> .../crop_480x480_123.jpg
-        if "crop_80x80" in artwork_url:
-            artwork_url = artwork_url.replace("crop_80x80", "crop_480x480")
-        elif "size_s" in artwork_url:
-            artwork_url = artwork_url.replace("size_s", "size_xl")
-        elif "size_m" in artwork_url:
-            artwork_url = artwork_url.replace("size_m", "size_xl")
-        else:
-            # General replace
-            artwork_url = artwork_url.replace("size_s", "size_xl")
-    # -------------------------------------
+        # Menghapus 'crop_..._' dari URL untuk mendapatkan file asli
+        artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
+        # Atau fallback ganti size_s ke size_xl jika pola crop tidak ada
+        artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
     cover_path = os.path.join(dl_dir, "cover.jpg")
     if artwork_url and not os.path.exists(cover_path):
