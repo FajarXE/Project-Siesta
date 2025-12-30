@@ -20,7 +20,7 @@ async def set_gaana_metadata(file_path, track_data, album_art_path):
              audio["\xa9ART"] = "Unknown"
              audio["aART"] = "Unknown"
 
-        # Extra Tags (Ref: gaana.py)
+        # Extra Tags
         if track_data.get("release_date"):
             audio["\xa9day"] = track_data["release_date"]
             
@@ -38,13 +38,11 @@ async def set_gaana_metadata(file_path, track_data, album_art_path):
         audio["cprt"] = label 
         audio["----:TXXX:Record label"] = bytes(label, 'utf-8')
 
-        # Track Number
         if track_data.get("track_number"):
              t_num = int(track_data["track_number"])
              t_cnt = int(track_data.get("track_count", 0))
              audio["trkn"] = [(t_num, t_cnt)]
 
-        # Explicit Rating
         if "parental_warning" in track_data:
              audio["rtng"] = [4 if track_data["parental_warning"] == 1 else 2]
         
@@ -56,7 +54,6 @@ async def set_gaana_metadata(file_path, track_data, album_art_path):
 
         audio.save()
         
-        # Get Duration
         audio = MP4(file_path)
         duration = int(audio.info.length)
         
