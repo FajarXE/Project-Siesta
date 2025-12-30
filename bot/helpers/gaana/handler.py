@@ -4,12 +4,13 @@ import asyncio
 import shutil
 import aiofiles
 from bot.logger import LOGGER
-from bot.helpers.message import edit_message, send_message # Import send_message
+from bot.helpers.message import edit_message, send_message
 from .manager import gaana_manager
 from .metadata import set_gaana_metadata
 from bot.helpers.uploder import track_upload, album_upload
 from bot import Config
-from bot.helpers.utils import fetch_zip_settings
+# IMPOR create_simple_text
+from bot.helpers.utils import fetch_zip_settings, create_simple_text
 import yt_dlp 
 
 def sanitize_filename(name: str) -> str:
@@ -91,7 +92,9 @@ async def process_album_gaana(identifier, user, session, api):
             track["label_name"] = data.get("label_name")
             
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
-            path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
+            
+            track_num = i + 1
+            path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir, track_num=track_num)
             
             downloaded.append({
                 'filepath': path, 'title': track.get("track_title"),
@@ -104,7 +107,6 @@ async def process_album_gaana(identifier, user, session, api):
 
     await edit_message(msg, "Memproses Album...")
     
-    # --- ZIP SETTINGS ---
     _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
     
     zip_path = None
@@ -115,30 +117,31 @@ async def process_album_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-    # --- MANUAL ART POSTER ---
-    if is_art_poster and downloaded:
-        cover_file = downloaded[0]['cover']
-        if cover_file and os.path.exists(cover_file):
-            try:
-                caption = f"**Album:** {album_title}\n**Provider:** Gaana\n**Quality:** 320kbps"
-                await send_message(user, cover_file, 'pic', caption=caption)
-            except Exception as e:
-                LOGGER.error(f"Gagal kirim poster Gaana: {e}")
-    # -------------------------
-
+    # --- PREPARE METADATA ---
     metadata = {
         'type': 'album', 'title': album_title,
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
         'zip_path': zip_path, 
-        'poster_msg': False, # Kita sudah kirim manual
-        'provider': 'Gaana', 'release_date': data.get("release_date", ""),
-        'track_count': total, 'quality': '320kbps'
+        'poster_msg': False, # Manual handling
+        'provider': 'Gaana', 
+        'release_date': data.get("release_date", ""),
+        'track_count': total, 
+        'quality': '320kbps'
     }
+
+    # --- MANUAL ART POSTER (CAPTION LENGKAP) ---
+    if is_art_poster and metadata['cover'] and os.path.exists(metadata['cover']):
+        try:
+            caption = await create_simple_text(metadata, user)
+            await send_message(user, metadata['cover'], 'pic', caption=caption)
+        except Exception as e:
+            LOGGER.error(f"Gagal kirim poster Gaana: {e}")
+    # -------------------------------------------
 
     await album_upload(metadata, user)
 
-async def download_gaana_track(track_info, user, session, api, custom_dir=None):
+async def download_gaana_track(track_info, user, session, api, custom_dir=None, track_num=None):
     title = track_info.get("track_title")
     enc_path = track_info.get('urls', {}).get('auto', {}).get('message')
     if not enc_path: raise Exception("No stream")
@@ -154,7 +157,13 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     else: final_url = final_url.replace(".mp4", "_320.mp4")
 
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
-    filename = f"{sanitize_filename(title)}.m4a"
+    
+    clean_title = sanitize_filename(title)
+    if track_num:
+        filename = f"{track_num:02d}. {clean_title}.m4a"
+    else:
+        filename = f"{clean_title}.m4a"
+        
     path = os.path.join(dl_dir, filename)
     
     if os.path.exists(path): os.remove(path)
