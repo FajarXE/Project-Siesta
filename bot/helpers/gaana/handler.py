@@ -12,10 +12,29 @@ def sanitize_filename(name: str) -> str:
 
 URL_REGEX = re.compile(r"gaana\.com/(song|album|playlist)/(.+)")
 
+# --- FUNGSI HELPER BARU: PASTIKAN FOLDER ADA ---
+def ensure_download_dir(user):
+    # Jika key 'dir' tidak ada di user, kita buat manual
+    if 'dir' not in user or not user['dir']:
+        # Ambil User ID, default ke 'temp' jika tidak ada
+        uid = user.get('user_id', 'temp_user')
+        # Buat path: downloads/UID
+        path = os.path.join("downloads", str(uid))
+        user['dir'] = path
+    
+    # Pastikan folder fisiknya ada
+    if not os.path.exists(user['dir']):
+        os.makedirs(user['dir'])
+    return user['dir']
+# -----------------------------------------------
+
 async def start_gaana(link: str, user: dict):
     msg = user['bot_msg']
     session = gaana_manager.session
     api = gaana_manager.api
+
+    # 1. FIX CRITICAL: Pastikan folder download siap
+    ensure_download_dir(user)
 
     match = URL_REGEX.search(link)
     if not match:
@@ -25,7 +44,6 @@ async def start_gaana(link: str, user: dict):
     content_type, identifier = match.groups()
 
     if content_type == 'song':
-        # Ambil metadata songDetail
         data = await api.get_metadata(session, identifier, 'songDetail')
         if data and 'tracks' in data and data['tracks']:
             await process_gaana_track(data['tracks'][0], user, session, api)
@@ -33,7 +51,6 @@ async def start_gaana(link: str, user: dict):
             await edit_message(msg, "Lagu tidak ditemukan.")
 
     elif content_type == 'album':
-        # --- LOGIKA ALBUM GAANA ---
         await edit_message(msg, "Mengambil data Album...")
         data = await api.get_metadata(session, identifier, 'albumDetail')
         
@@ -53,7 +70,6 @@ async def start_gaana(link: str, user: dict):
                 LOGGER.error(f"Gagal download track Gaana {i+1}: {e}")
                 
         await edit_message(msg, "Download Album Selesai!")
-        # --------------------------
     
     elif content_type == 'playlist':
         await edit_message(msg, "Playlist belum didukung.")
@@ -74,7 +90,9 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
 
         # 2. Download
         filename = f"{sanitize_filename(title)}.mp4"
-        file_path = os.path.join(user['dir'], filename)
+        # Gunakan ensure_download_dir lagi untuk safety
+        dl_dir = ensure_download_dir(user)
+        file_path = os.path.join(dl_dir, filename)
         
         async with session.get(final_url) as resp:
             if resp.status != 200:
@@ -87,7 +105,7 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
         cover_path = None
         if artwork_url:
             artwork_url = artwork_url.replace('size_s', 'size_l') 
-            cover_path = os.path.join(user['dir'], "cover.jpg")
+            cover_path = os.path.join(dl_dir, "cover.jpg")
             if not os.path.exists(cover_path):
                 async with session.get(artwork_url) as resp:
                      if resp.status == 200:
@@ -114,7 +132,6 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
             caption="Via Gaana DL"
         )
         
-        # Hapus file setelah upload
         try:
             os.remove(file_path)
         except: pass
@@ -124,5 +141,6 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
 
     except Exception as e:
         LOGGER.error(f"Gaana Error: {e}")
+        # Jangan raise error jika album, agar lanjut ke lagu berikutnya
         if not is_album:
             raise e
