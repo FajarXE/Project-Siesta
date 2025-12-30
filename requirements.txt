@@ -19,3 +19,4 @@ tgcrypto-pyrofork
 tqdm
 bs4
 pycryptodome
+yt-dlp
