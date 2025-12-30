@@ -9,7 +9,6 @@ from .manager import jiosaavn_manager
 from .metadata import set_jiosaavn_metadata
 from bot.helpers.uploder import track_upload, album_upload 
 from bot import Config
-# IMPOR PENTING: Untuk membaca setting ZIP/Poster user dengan benar
 from bot.helpers.utils import fetch_zip_settings 
 import yt_dlp
 
@@ -22,10 +21,8 @@ def ensure_download_dir(user, subdir=None):
     base_dir = Config.DOWNLOAD_BASE_DIR
     uid = user.get('user_id', 'temp')
     user_dir = os.path.join(base_dir, str(uid))
-    
     if subdir:
         user_dir = os.path.join(user_dir, sanitize_filename(subdir))
-    
     if not os.path.exists(user_dir):
         os.makedirs(user_dir)
     return user_dir
@@ -39,7 +36,6 @@ async def start_jiosaavn(link: str, user: dict):
     if not match: return
 
     kind, token_id = match.groups()
-    
     if kind == 'song':
         await process_single_track(token_id, user, session, api)
     elif kind == 'album':
@@ -54,17 +50,11 @@ async def process_single_track(token_id, user, session, api):
         
         file_path, cover_path, duration = await download_track_file(track_data, user, session, api)
         
-        # Ambil setting poster (Index ke-3 dari tuple fetch_zip_settings)
-        # return: (playlist_zip, album_zip, artist_zip, art_poster)
-        _, _, _, art_poster = fetch_zip_settings(user)
-
         metadata = {
             'filepath': file_path, 'title': track_data.get("song"),
             'artist': track_data.get("primary_artists"), 'album': track_data.get("album"),
             'cover': cover_path, 'provider': 'JioSaavn', 'type': 'track',
-            'duration': duration,
-            # Single track biasanya tidak pakai poster, tapi kita bisa pass jika perlu
-            'poster_msg': False 
+            'duration': duration, 'quality': '320kbps' # FIX QUALITY
         }
         await track_upload(metadata, user)
         await edit_message(msg, "Selesai!")
@@ -100,7 +90,7 @@ async def process_album(token_id, user, session, api):
                 downloaded_tracks.append({
                     'filepath': path, 'title': full_track.get("song"),
                     'artist': full_track.get("primary_artists"), 'album': full_track.get("album"),
-                    'cover': cover, 'duration': dur
+                    'cover': cover, 'duration': dur, 'quality': '320kbps' # FIX QUALITY
                 })
             except Exception as e:
                 LOGGER.error(f"Skip track {i}: {e}")
@@ -109,15 +99,11 @@ async def process_album(token_id, user, session, api):
             raise Exception("Gagal mengunduh semua lagu.")
 
         await edit_message(msg, "Memproses Album...")
-        
-        # --- FIX UTAMA: Gunakan fetch_zip_settings ---
-        # playlist_zip, album_zip, artist_zip, art_poster
         _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
         
         zip_path = None
         if is_album_zip:
              await edit_message(msg, "Mengompres (ZIP)...")
-             # Output zip di luar folder album agar tidak recursive
              parent_dir = os.path.dirname(album_dir)
              zip_name = sanitize_filename(album_title)
              base_name = os.path.join(parent_dir, zip_name)
@@ -125,15 +111,12 @@ async def process_album(token_id, user, session, api):
 
         metadata = {
             'type': 'album', 'title': album_title,
-            'artist': album_data.get("primary_artists"), 
-            'folderpath': album_dir,
+            'artist': album_data.get("primary_artists"), 'folderpath': album_dir,
             'tracks': downloaded_tracks, 
             'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
-            'zip_path': zip_path, 
-            'poster_msg': is_art_poster, # Kirim flag poster ke uploader
-            'provider': 'JioSaavn',
-            'release_date': album_data.get("year", ""), 
-            'track_count': total
+            'zip_path': zip_path, 'poster_msg': is_art_poster,
+            'provider': 'JioSaavn', 'release_date': album_data.get("year", ""), 
+            'track_count': total, 'quality': '320kbps'
         }
 
         await album_upload(metadata, user)
@@ -158,8 +141,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
         urls_to_try.append(dl_url.replace("_320.mp4", "_160.mp4"))
     
     downloaded = False
-    
-    # Metode 1: Manual
     for url in urls_to_try:
         try:
             async with session.get(url) as resp:
@@ -172,7 +153,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
                         break
         except: pass
     
-    # Metode 2: YT-DLP Fallback
     if not downloaded:
         if os.path.exists(file_path): os.remove(file_path)
         try:
