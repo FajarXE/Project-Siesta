@@ -1,12 +1,13 @@
 import os
 import re
+import asyncio
 import aiohttp
 import aiofiles
-from urllib.parse import urljoin
 from bot.logger import LOGGER
 from bot.helpers.message import edit_message
 from .manager import gaana_manager
 from .metadata import set_gaana_metadata
+import yt_dlp  # Pastikan library ini ada
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
@@ -20,6 +21,23 @@ def ensure_download_dir(user):
     if not os.path.exists(user['dir']):
         os.makedirs(user['dir'])
     return user['dir']
+
+# --- HELPER YT-DLP ASYNC ---
+async def download_with_ytdlp(url, output_path):
+    def run_ytdlp():
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': output_path,
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    
+    # Jalankan yt-dlp di thread terpisah agar tidak memblokir bot
+    await asyncio.to_thread(run_ytdlp)
+# ---------------------------
 
 async def start_gaana(link: str, user: dict):
     msg = user['bot_msg']
@@ -78,55 +96,26 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
              raise Exception("Stream path tidak ditemukan.")
              
         decrypted_url = api.decrypt_stream_path(enc_path)
-        # Default replace
+        # Prioritaskan High Quality
         final_url = decrypted_url.replace("medium.mp4", "high.mp4").replace("low.mp4", "high.mp4")
 
-        # 2. Download (Support M3U8 & MP4)
-        filename = f"{sanitize_filename(title)}.mp4"
+        # 2. Download Menggunakan YT-DLP (SOLUSI M3U8)
+        filename = f"{sanitize_filename(title)}.mp4" # yt-dlp akan handle converternya
         dl_dir = ensure_download_dir(user)
         file_path = os.path.join(dl_dir, filename)
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-            'Referer': 'https://gaana.com/'
-        }
-        
-        # Download konten pertama (bisa mp4 atau m3u8)
-        content_bytes = b""
-        async with session.get(final_url, headers=headers) as resp:
-            if resp.status != 200:
-                raise Exception(f"Gagal download stream: {resp.status}")
-            content_bytes = await resp.read()
+        # Hapus file lama jika ada
+        if os.path.exists(file_path): os.remove(file_path)
 
-        # Cek apakah konten adalah M3U8 Playlist
-        content_str = ""
         try:
-            content_str = content_bytes.decode('utf-8', errors='ignore')
-        except: pass
+            await download_with_ytdlp(final_url, file_path)
+        except Exception as e:
+            # Fallback ke URL original jika high quality gagal
+            LOGGER.warning(f"Gaana High Quality Gagal, mencoba medium: {e}")
+            await download_with_ytdlp(decrypted_url, file_path)
 
-        if "#EXTM3U" in content_str:
-            # --- PARSING M3U8 ---
-            LOGGER.info(f"Gaana: M3U8 Terdeteksi untuk {title}. Mencari kualitas terbaik...")
-            best_url = parse_m3u8_best_quality(content_str, final_url)
-            
-            if not best_url:
-                raise Exception("Gagal mengekstrak URL dari playlist M3U8.")
-            
-            # Download ulang menggunakan URL dari dalam M3U8
-            async with session.get(best_url, headers=headers) as resp2:
-                if resp2.status != 200:
-                    raise Exception(f"Gagal download segmen audio: {resp2.status}")
-                async with aiofiles.open(file_path, mode='wb') as f:
-                    await f.write(await resp2.read())
-        else:
-            # Jika bukan m3u8, simpan bytes yang sudah didownload
-            async with aiofiles.open(file_path, mode='wb') as f:
-                await f.write(content_bytes)
-
-        # Cek validitas file
-        if os.path.getsize(file_path) < 2000:
-             os.remove(file_path)
-             raise Exception("File terlalu kecil (Error/Geoblock).")
+        if not os.path.exists(file_path) or os.path.getsize(file_path) < 10000:
+             raise Exception("Download gagal atau file korup.")
 
         # 3. Cover Art & Metadata
         artwork_url = track_info.get('artwork')
@@ -146,6 +135,8 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
             LOGGER.warning(f"Metadata skip: {e}")
         
         # 4. Upload
+        # Cek apakah user punya uploader.py (jika nanti Anda kirim)
+        # Untuk sekarang pakai manual dulu agar jalan
         chat_id = user.get('chat_id')
         client = user.get('client')
         if not client: from bot.tgclient import aio as client
@@ -171,33 +162,3 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
     except Exception as e:
         LOGGER.error(f"Gaana Error: {e}")
         if not is_album: raise e
-
-def parse_m3u8_best_quality(m3u8_content, base_url):
-    """
-    Mencari URL dengan bandwidth tertinggi dari konten m3u8 text.
-    Mengembalikan URL absolut.
-    """
-    lines = m3u8_content.split('\n')
-    max_bandwidth = -1
-    best_uri = None
-    
-    for i, line in enumerate(lines):
-        if line.startswith('#EXT-X-STREAM-INF'):
-            # Cari atribut BANDWIDTH
-            match = re.search(r'BANDWIDTH=(\d+)', line)
-            if match:
-                bandwidth = int(match.group(1))
-                if bandwidth > max_bandwidth:
-                    # URL stream biasanya ada di baris berikutnya
-                    if i + 1 < len(lines):
-                        uri_line = lines[i+1].strip()
-                        if uri_line and not uri_line.startswith('#'):
-                            max_bandwidth = bandwidth
-                            best_uri = uri_line
-    
-    if best_uri:
-        # Jika URL relatif, gabungkan dengan base_url
-        if not best_uri.startswith('http'):
-            return urljoin(base_url, best_uri)
-        return best_uri
-    return None
