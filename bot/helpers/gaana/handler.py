@@ -2,13 +2,13 @@ import os
 import re
 import aiohttp
 import aiofiles
+from urllib.parse import urljoin
 from bot.logger import LOGGER
 from bot.helpers.message import edit_message
 from .manager import gaana_manager
 from .metadata import set_gaana_metadata
 
 def sanitize_filename(name: str) -> str:
-    # Bersihkan nama file dari karakter ilegal
     return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
 
 URL_REGEX = re.compile(r"gaana\.com/(song|album|playlist)/(.+)")
@@ -26,7 +26,6 @@ async def start_gaana(link: str, user: dict):
     session = gaana_manager.session
     api = gaana_manager.api
 
-    # Pastikan folder ada
     ensure_download_dir(user)
 
     match = URL_REGEX.search(link)
@@ -79,36 +78,57 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
              raise Exception("Stream path tidak ditemukan.")
              
         decrypted_url = api.decrypt_stream_path(enc_path)
+        # Default replace
         final_url = decrypted_url.replace("medium.mp4", "high.mp4").replace("low.mp4", "high.mp4")
 
-        # 2. Download dengan HEADERS (FIX UTAMA)
+        # 2. Download (Support M3U8 & MP4)
         filename = f"{sanitize_filename(title)}.mp4"
         dl_dir = ensure_download_dir(user)
         file_path = os.path.join(dl_dir, filename)
         
-        # Header wajib untuk Gaana CDN
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
             'Referer': 'https://gaana.com/'
         }
         
+        # Download konten pertama (bisa mp4 atau m3u8)
+        content_bytes = b""
         async with session.get(final_url, headers=headers) as resp:
             if resp.status != 200:
                 raise Exception(f"Gagal download stream: {resp.status}")
+            content_bytes = await resp.read()
+
+        # Cek apakah konten adalah M3U8 Playlist
+        content_str = ""
+        try:
+            content_str = content_bytes.decode('utf-8', errors='ignore')
+        except: pass
+
+        if "#EXTM3U" in content_str:
+            # --- PARSING M3U8 ---
+            LOGGER.info(f"Gaana: M3U8 Terdeteksi untuk {title}. Mencari kualitas terbaik...")
+            best_url = parse_m3u8_best_quality(content_str, final_url)
             
+            if not best_url:
+                raise Exception("Gagal mengekstrak URL dari playlist M3U8.")
+            
+            # Download ulang menggunakan URL dari dalam M3U8
+            async with session.get(best_url, headers=headers) as resp2:
+                if resp2.status != 200:
+                    raise Exception(f"Gagal download segmen audio: {resp2.status}")
+                async with aiofiles.open(file_path, mode='wb') as f:
+                    await f.write(await resp2.read())
+        else:
+            # Jika bukan m3u8, simpan bytes yang sudah didownload
             async with aiofiles.open(file_path, mode='wb') as f:
-                await f.write(await resp.read())
+                await f.write(content_bytes)
 
-        # Cek ukuran file untuk memastikan bukan error XML (700 bytes)
-        if os.path.getsize(file_path) < 5000: # Jika kurang dari 5KB
-             # Baca isi file untuk debug
-             async with aiofiles.open(file_path, mode='r', errors='ignore') as f:
-                 content = await f.read()
-             LOGGER.error(f"Download Gaana gagal (File Palsu/XML Error): {content}")
+        # Cek validitas file
+        if os.path.getsize(file_path) < 2000:
              os.remove(file_path)
-             raise Exception("Server menolak request (Geoblock/Header Error).")
+             raise Exception("File terlalu kecil (Error/Geoblock).")
 
-        # 3. Cover Art
+        # 3. Cover Art & Metadata
         artwork_url = track_info.get('artwork')
         cover_path = None
         if artwork_url:
@@ -120,13 +140,12 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
                         async with aiofiles.open(cover_path, mode='wb') as f:
                             await f.write(await resp.read())
 
-        # 4. Metadata
         try:
             await set_gaana_metadata(file_path, track_info, cover_path)
         except Exception as e:
-            LOGGER.warning(f"Metadata error (skip): {e}")
+            LOGGER.warning(f"Metadata skip: {e}")
         
-        # 5. Upload Manual
+        # 4. Upload
         chat_id = user.get('chat_id')
         client = user.get('client')
         if not client: from bot.tgclient import aio as client
@@ -143,8 +162,7 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
             caption="Via Gaana DL"
         )
         
-        try:
-            os.remove(file_path)
+        try: os.remove(file_path)
         except: pass
 
         if not is_album:
@@ -152,5 +170,34 @@ async def process_gaana_track(track_info, user, session, api, is_album=False):
 
     except Exception as e:
         LOGGER.error(f"Gaana Error: {e}")
-        if not is_album:
-            raise e
+        if not is_album: raise e
+
+def parse_m3u8_best_quality(m3u8_content, base_url):
+    """
+    Mencari URL dengan bandwidth tertinggi dari konten m3u8 text.
+    Mengembalikan URL absolut.
+    """
+    lines = m3u8_content.split('\n')
+    max_bandwidth = -1
+    best_uri = None
+    
+    for i, line in enumerate(lines):
+        if line.startswith('#EXT-X-STREAM-INF'):
+            # Cari atribut BANDWIDTH
+            match = re.search(r'BANDWIDTH=(\d+)', line)
+            if match:
+                bandwidth = int(match.group(1))
+                if bandwidth > max_bandwidth:
+                    # URL stream biasanya ada di baris berikutnya
+                    if i + 1 < len(lines):
+                        uri_line = lines[i+1].strip()
+                        if uri_line and not uri_line.startswith('#'):
+                            max_bandwidth = bandwidth
+                            best_uri = uri_line
+    
+    if best_uri:
+        # Jika URL relatif, gabungkan dengan base_url
+        if not best_uri.startswith('http'):
+            return urljoin(base_url, best_uri)
+        return best_uri
+    return None
