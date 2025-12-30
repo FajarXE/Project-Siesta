@@ -46,11 +46,14 @@ async def process_single_track(token_id, user, session, api):
     try:
         track_data = await api.get_song_details(session, token_id)
         if not track_data: raise Exception("Metadata tidak ditemukan.")
-        file_path, cover_path = await download_track_file(track_data, user, session, api)
+        
+        file_path, cover_path, duration = await download_track_file(track_data, user, session, api)
+        
         metadata = {
             'filepath': file_path, 'title': track_data.get("song"),
             'artist': track_data.get("primary_artists"), 'album': track_data.get("album"),
-            'cover': cover_path, 'provider': 'JioSaavn', 'type': 'track'
+            'cover': cover_path, 'provider': 'JioSaavn', 'type': 'track',
+            'duration': duration # FIX: Kirim durasi ke uploader
         }
         await track_upload(metadata, user)
         await edit_message(msg, "Selesai!")
@@ -81,11 +84,12 @@ async def process_album(token_id, user, session, api):
                 if not full_track: full_track = track
                 
                 await edit_message(msg, f"[{i+1}/{total}] {full_track.get('song')}...")
-                path, cover = await download_track_file(full_track, user, session, api, custom_dir=album_dir)
+                path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=album_dir)
+                
                 downloaded_tracks.append({
                     'filepath': path, 'title': full_track.get("song"),
                     'artist': full_track.get("primary_artists"), 'album': full_track.get("album"),
-                    'cover': cover
+                    'cover': cover, 'duration': dur # FIX: Durasi per track
                 })
             except Exception as e:
                 LOGGER.error(f"Skip track {i}: {e}")
@@ -94,25 +98,27 @@ async def process_album(token_id, user, session, api):
             raise Exception("Gagal mengunduh semua lagu dalam album.")
 
         await edit_message(msg, "Memproses Album...")
-        zip_path = None
-        should_zip = user.get('zip', False) or user.get('zip_mode', False)
         
-        if should_zip:
-             await edit_message(msg, "Membuat ZIP...")
+        # --- FIX ZIP LOGIC ---
+        zip_path = None
+        # Cek berbagai kemungkinan key setting zip
+        if user.get('zip') or user.get('zip_mode'): 
+             await edit_message(msg, "Mengompres (ZIP)...")
              zip_base = os.path.join(ensure_download_dir(user), sanitize_filename(album_title))
              zip_path = shutil.make_archive(zip_base, 'zip', album_dir)
+             LOGGER.info(f"ZIP dibuat: {zip_path}")
 
         metadata = {
             'type': 'album', 'title': album_title,
             'artist': album_data.get("primary_artists"), 'folderpath': album_dir,
             'tracks': downloaded_tracks, 'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
-            'zip_path': zip_path, 'poster_msg': user.get('poster', False) or user.get('art_poster', False),
+            'zip_path': zip_path, # Path zip dikirim ke uploader
+            'poster_msg': user.get('poster') or user.get('art_poster'),
             'provider': 'JioSaavn'
         }
         await album_upload(metadata, user)
         
     except Exception as e:
-        # PENTING: Raise error agar download.py tahu tugas gagal
         LOGGER.error(f"JioSaavn Album Error: {e}")
         raise e
 
@@ -128,30 +134,29 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
     # 1. Coba Generate Link 320kbps
     dl_url = await api.get_auth_url(session, enc_url)
     
-    # List URL Percobaan (Priority: 320 -> 160 -> yt-dlp)
+    # List URL Percobaan
     urls_to_try = []
     if dl_url:
-        urls_to_try.append(dl_url) # 320kbps (web->aac replaced)
-        urls_to_try.append(dl_url.replace("_320.mp4", "_160.mp4")) # Fallback 160kbps
+        urls_to_try.append(dl_url) 
+        urls_to_try.append(dl_url.replace("_320.mp4", "_160.mp4"))
     
     downloaded = False
     
-    # Metode 1: Manual Download (Cepat & Sesuai Bitrate)
+    # Metode 1: Manual Download
     for url in urls_to_try:
         try:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.read()
-                    if len(data) > 10000: # Validasi ukuran
+                    if len(data) > 10000:
                         async with aiofiles.open(file_path, mode='wb') as f:
                             await f.write(data)
                         downloaded = True
                         break
         except: pass
     
-    # Metode 2: Fallback YT-DLP (Jika link manual mati 404)
+    # Metode 2: Fallback YT-DLP
     if not downloaded:
-        LOGGER.info(f"Fallback ke yt-dlp untuk: {title}")
         if os.path.exists(file_path): os.remove(file_path)
         try:
             target = track_data.get('perma_url')
@@ -164,7 +169,7 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
                     downloaded = True
         except: pass
 
-    if not downloaded: raise Exception("HTTP Error Download (Semua link gagal)")
+    if not downloaded: raise Exception("HTTP Error Download")
 
     # Cover & Tags
     cover_path = os.path.join(dl_dir, "cover.jpg")
@@ -178,5 +183,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
     if track_data.get("has_lyrics") == "true":
         lyrics = await api.get_lyrics(session, track_data.get("id"))
 
-    await set_jiosaavn_metadata(file_path, track_data, cover_path, lyrics)
-    return file_path, cover_path
+    # FIX: Tangkap nilai durasi
+    duration = await set_jiosaavn_metadata(file_path, track_data, cover_path, lyrics)
+    return file_path, cover_path, duration
