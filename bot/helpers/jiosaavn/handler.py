@@ -3,13 +3,16 @@ import re
 import aiohttp
 import aiofiles
 from bot.logger import LOGGER
-from bot.helpers.utils import sanitize_filename
 from bot.helpers.message import edit_message
 from .manager import jiosaavn_manager
 from .metadata import set_jiosaavn_metadata
 
-# Regex untuk menangkap Token ID dari URL
-# Contoh: https://www.jiosaavn.com/song/track-name/Iz0xcB1,RFw_
+# --- FUNGSI SANITIZE LOKAL (PENGGANTI IMPORT UTILS) ---
+def sanitize_filename(name: str) -> str:
+    # Hapus karakter ilegal untuk nama file Windows/Linux
+    return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
+# ------------------------------------------------------
+
 URL_REGEX = re.compile(r"jiosaavn\.com/(song|album)/.+?/(.+)")
 
 async def start_jiosaavn(link: str, user: dict):
@@ -19,7 +22,7 @@ async def start_jiosaavn(link: str, user: dict):
 
     match = URL_REGEX.search(link)
     if not match:
-        await edit_message(msg, "Link JioSaavn tidak valid atau tidak didukung.")
+        await edit_message(msg, "Link JioSaavn tidak valid.")
         return
 
     kind, token_id = match.groups()
@@ -76,11 +79,26 @@ async def process_track(token_id, user, session, api):
         await edit_message(msg, "Menulis metadata...")
         await set_jiosaavn_metadata(file_path, track_data, cover_path)
 
-        # 6. Upload
+        # 6. Upload Manual (Aman dari error import uploader)
         await edit_message(msg, "Mengunggah...")
-        from bot.helpers.uploader import upload_file # Asumsi ada helper uploader
-        await upload_file(file_path, user, cover_path)
+        chat_id = user.get('chat_id')
+        client = user.get('client') 
+        # Fallback jika client user tidak ada, pakai client bot utama
+        if not client:
+             from bot.tgclient import aio as client
+        
+        # Kirim Audio
+        await client.send_audio(
+            chat_id=chat_id,
+            audio=file_path,
+            thumb=cover_path,
+            title=track_data.get("song", "Unknown"),
+            performer=track_data.get("primary_artists", "Unknown"),
+            caption="Via JioSaavn DL"
+        )
+        await edit_message(msg, "Selesai!")
 
     except Exception as e:
         LOGGER.error(f"JioSaavn Error: {e}")
+        # Re-raise agar ditangkap download.py
         raise e
