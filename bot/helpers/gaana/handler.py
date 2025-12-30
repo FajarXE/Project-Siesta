@@ -3,13 +3,16 @@ import re
 import aiohttp
 import aiofiles
 from bot.logger import LOGGER
-from bot.helpers.utils import sanitize_filename
 from bot.helpers.message import edit_message
 from .manager import gaana_manager
 from .metadata import set_gaana_metadata
 
-# Regex menangkap tipe dan ID
-# Contoh: https://gaana.com/song/lagu-keren
+# --- FUNGSI SANITIZE LOKAL (PENGGANTI IMPORT UTILS) ---
+def sanitize_filename(name: str) -> str:
+    # Hapus karakter ilegal untuk nama file Windows/Linux
+    return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
+# ------------------------------------------------------
+
 URL_REGEX = re.compile(r"gaana\.com/(song|album|playlist)/(.+)")
 
 async def start_gaana(link: str, user: dict):
@@ -35,7 +38,6 @@ async def process_gaana_track(identifier, user, session, api):
 
     try:
         # 1. Metadata
-        # Type untuk API Gaana: song -> songDetail
         data = await api.get_metadata(session, identifier, 'songDetail')
         if not data or 'tracks' not in data or not data['tracks']:
             raise Exception("Lagu tidak ditemukan di Gaana.")
@@ -44,20 +46,17 @@ async def process_gaana_track(identifier, user, session, api):
         title = track_info.get("track_title", "Unknown")
         
         # 2. Decrypt URL
-        # path terenkripsi ada di urls -> auto -> message
         enc_path = track_info.get('urls', {}).get('auto', {}).get('message')
         if not enc_path:
              raise Exception("Stream path tidak ditemukan.")
              
         decrypted_url = api.decrypt_stream_path(enc_path)
         
-        # Ubah kualitas menjadi high/best (sesuai referensi gaana.py)
-        # Asumsi 'medium.mp4' -> 'high.mp4' atau bitrate lain
-        # Kita pakai default yang didekripsi, atau replace jika perlu:
+        # Ubah kualitas menjadi high
         final_url = decrypted_url.replace("medium.mp4", "high.mp4").replace("low.mp4", "high.mp4")
 
         # 3. Download
-        filename = f"{sanitize_filename(title)}.mp4" # Gaana stream biasanya mp4 audio container
+        filename = f"{sanitize_filename(title)}.mp4"
         file_path = os.path.join(user['dir'], filename)
         
         await edit_message(msg, f"Mengunduh: {title}...")
@@ -72,7 +71,7 @@ async def process_gaana_track(identifier, user, session, api):
         artwork_url = track_info.get('artwork')
         cover_path = None
         if artwork_url:
-            artwork_url = artwork_url.replace('size_s', 'size_l') # High Quality Cover
+            artwork_url = artwork_url.replace('size_s', 'size_l') 
             cover_path = os.path.join(user['dir'], "cover.jpg")
             async with session.get(artwork_url) as resp:
                  if resp.status == 200:
@@ -83,11 +82,27 @@ async def process_gaana_track(identifier, user, session, api):
         await edit_message(msg, "Menulis metadata...")
         await set_gaana_metadata(file_path, track_info, cover_path)
         
-        # 6. Upload
+        # 6. Upload Manual (Aman dari error import uploader)
         await edit_message(msg, "Mengunggah...")
-        from bot.helpers.uploader import upload_file
-        await upload_file(file_path, user, cover_path)
+        chat_id = user.get('chat_id')
+        client = user.get('client')
+        if not client:
+             from bot.tgclient import aio as client
+             
+        artists = track_info.get("artist", [])
+        artist_name = artists[0]['name'] if artists else "Unknown"
+
+        await client.send_audio(
+            chat_id=chat_id,
+            audio=file_path,
+            thumb=cover_path,
+            title=title,
+            performer=artist_name,
+            caption="Via Gaana DL"
+        )
+        await edit_message(msg, "Selesai!")
 
     except Exception as e:
         LOGGER.error(f"Gaana Error: {e}")
+        # Re-raise agar ditangkap download.py
         raise e
