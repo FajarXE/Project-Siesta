@@ -20,7 +20,7 @@ async def set_gaana_metadata(file_path, track_data, album_art_path):
              audio["\xa9ART"] = "Unknown"
              audio["aART"] = "Unknown"
 
-        # --- Extra Tags (Sesuai Referensi) ---
+        # Extra Tags (Ref: gaana.py)
         if track_data.get("release_date"):
             audio["\xa9day"] = track_data["release_date"]
             
@@ -34,7 +34,6 @@ async def set_gaana_metadata(file_path, track_data, album_art_path):
         if track_data.get("language"):
             audio["----:com.apple.iTunes:LANGUAGE"] = bytes(track_data["language"], 'utf-8')
             
-        # Label & Copyright
         label = track_data.get("label_name") or "Gaana"
         audio["cprt"] = label 
         audio["----:TXXX:Record label"] = bytes(label, 'utf-8')
@@ -57,7 +56,7 @@ async def set_gaana_metadata(file_path, track_data, album_art_path):
 
         audio.save()
         
-        # --- Ambil Durasi ---
+        # Get Duration
         audio = MP4(file_path)
         duration = int(audio.info.length)
         
