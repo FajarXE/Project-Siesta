@@ -158,28 +158,21 @@ except ImportError:
 # --- BATAS TAMBAHAN ---
 
 # --- TAMBAHAN BARU: Impor Handler JioSaavn & Gaana ---
-# --- KODE BARU (DEBUG MODE) ---
 try:
     from ..helpers.jiosaavn.handler import start_jiosaavn
 except ImportError as e:
-    # Kita print error aslinya ke Logger
-    LOGGER.error(f"CRITICAL ERROR JIOSAAVN: {e}")
-    import traceback
-    LOGGER.error(traceback.format_exc()) 
-    
+    err_jio = str(e)
+    LOGGER.error(f"Gagal Import JioSaavn: {err_jio}")
     async def start_jiosaavn(*args, **kwargs):
-        # Tampilkan error asli ke user Telegram juga
-        raise NotImplementedError(f"Gagal Import Modul: {e}")
+        raise NotImplementedError(f"Modul JioSaavn Rusak: {err_jio}")
 
 try:
     from ..helpers.gaana.handler import start_gaana
 except ImportError as e:
-    LOGGER.error(f"CRITICAL ERROR GAANA: {e}")
-    import traceback
-    LOGGER.error(traceback.format_exc())
-
+    err_gaana = str(e)
+    LOGGER.error(f"Gagal Import Gaana: {err_gaana}")
     async def start_gaana(*args, **kwargs):
-        raise NotImplementedError(f"Gagal Import Modul: {e}")
+        raise NotImplementedError(f"Modul Gaana Rusak: {err_gaana}")
 
 
 try:
