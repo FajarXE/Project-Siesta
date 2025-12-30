@@ -12,7 +12,6 @@ def sanitize_filename(name: str) -> str:
 
 URL_REGEX = re.compile(r"jiosaavn\.com/(song|album)/.+?/(.+)")
 
-# --- FUNGSI HELPER BARU ---
 def ensure_download_dir(user):
     if 'dir' not in user or not user['dir']:
         uid = user.get('user_id', 'temp_user')
@@ -20,7 +19,6 @@ def ensure_download_dir(user):
     if not os.path.exists(user['dir']):
         os.makedirs(user['dir'])
     return user['dir']
-# --------------------------
 
 async def start_jiosaavn(link: str, user: dict):
     msg = user['bot_msg']
@@ -42,72 +40,85 @@ async def start_jiosaavn(link: str, user: dict):
         await edit_message(msg, "Mengambil data Album...")
         album_data = await api.get_album_details(session, token_id)
         
-        # --- FIX: Cek berbagai kemungkinan key ---
         tracks = []
         if album_data:
-            if 'list' in album_data:
-                tracks = album_data['list']
-            elif 'songs' in album_data:
-                tracks = album_data['songs']
+            if 'list' in album_data: tracks = album_data['list']
+            elif 'songs' in album_data: tracks = album_data['songs']
         
         if not tracks:
-            LOGGER.error(f"DEBUG Jiosaavn Album Data: {album_data.keys() if album_data else 'None'}")
-            await edit_message(msg, "Gagal mengambil data album (struktur JSON tidak dikenali).")
+            await edit_message(msg, "Album kosong atau gagal diambil.")
             return
 
         total = len(tracks)
-        await edit_message(msg, f"Ditemukan {total} lagu dalam album. Memulai download...")
+        await edit_message(msg, f"Ditemukan {total} lagu. Memulai download...")
         
         for i, track in enumerate(tracks):
-            # Coba ambil token. Kadang object track sudah lengkap, kadang cuma summary.
-            # Jika perma_url ada, ambil token dari URL.
             try:
+                # Cari Token ID
+                song_token = None
                 if 'perma_url' in track:
                     song_token = track['perma_url'].split('/')[-1]
-                elif 'id' in track:
-                    # Kadang ID di list album sudah terenkripsi, kadang tidak.
-                    # Kita coba pakai 'id' kalau perma_url tidak ada
-                    # Tapi API get_song_details butuh Token (pids), bukan ID numeric.
-                    # Kita coba cari 'encrypted_media_url' langsung di list ini
-                    if 'encrypted_media_url' in track:
-                        # Langsung proses tanpa fetch detail lagi
-                        await process_track_direct(track, user, session, api, is_album=True)
-                        continue
-                    else:
-                        LOGGER.warning(f"Track {i+1} tidak memiliki perma_url/media_url. Skip.")
-                        continue
-                else:
+                elif 'url' in track: # Kadang key-nya url
+                    song_token = track['url'].split('/')[-1]
+                
+                if not song_token:
+                    LOGGER.warning(f"Track {i+1} skip: Tidak ada token.")
                     continue
 
                 await edit_message(msg, f"[{i+1}/{total}] Mengunduh: {track.get('song', 'Unknown')}...")
+                
+                # Kita panggil process_track standar agar lebih stabil
+                # (Fetch metadata fresh + Auth URL fresh)
                 await process_track(song_token, user, session, api, is_album=True)
+                
             except Exception as e:
-                LOGGER.error(f"Gagal download track {i+1}: {e}")
+                LOGGER.error(f"Gagal download track JioSaavn {i+1}: {e}")
                 
         await edit_message(msg, "Download Album Selesai!")
 
-# Helper baru untuk memproses track jika data sudah lengkap di list album
-async def process_track_direct(track_data, user, session, api, is_album=True):
-    # Logika sama dengan process_track tapi skip fetch metadata
+async def process_track(token_id, user, session, api, is_album=False):
+    msg = user['bot_msg']
+    if not is_album:
+        await edit_message(msg, "Mengambil info lagu...")
+
     try:
+        track_data = await api.get_song_details(session, token_id)
+        if not track_data:
+             raise Exception("Metadata lagu tidak ditemukan.")
+
         title = track_data.get("song")
         enc_url = track_data.get("encrypted_media_url")
         image_url = track_data.get("image", "").replace("150x150", "500x500")
 
-        if not enc_url: return
+        if not enc_url:
+            raise Exception("URL media terenkripsi tidak ditemukan.")
 
+        # 2. Link Download
         dl_url = await api.get_auth_url(session, enc_url)
-        if not dl_url: return
+        if not dl_url:
+            raise Exception("Gagal generate link download.")
 
+        # 3. Download File dengan Headers (FIX PENTING)
         filename = f"{sanitize_filename(title)}.m4a"
         dl_dir = ensure_download_dir(user)
         file_path = os.path.join(dl_dir, filename)
         
-        async with session.get(dl_url) as resp:
-            if resp.status != 200: return
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+        async with session.get(dl_url, headers=headers) as resp:
+            if resp.status != 200:
+                raise Exception(f"HTTP Error: {resp.status}")
             async with aiofiles.open(file_path, mode='wb') as f:
                 await f.write(await resp.read())
 
+        # Cek validitas file
+        if os.path.getsize(file_path) < 1000:
+             os.remove(file_path)
+             raise Exception("File kosong/corrupt (Geoblock?).")
+
+        # 4. Download Cover
         cover_path = None
         if image_url:
             cover_path = os.path.join(dl_dir, "cover.jpg")
@@ -117,8 +128,12 @@ async def process_track_direct(track_data, user, session, api, is_album=True):
                         async with aiofiles.open(cover_path, mode='wb') as f:
                             await f.write(await resp.read())
 
-        await set_jiosaavn_metadata(file_path, track_data, cover_path)
+        # 5. Metadata
+        try:
+             await set_jiosaavn_metadata(file_path, track_data, cover_path)
+        except: pass
 
+        # 6. Upload
         chat_id = user.get('chat_id')
         client = user.get('client')
         if not client: from bot.tgclient import aio as client
@@ -131,24 +146,10 @@ async def process_track_direct(track_data, user, session, api, is_album=True):
             performer=track_data.get("primary_artists", "Unknown"),
             caption="Via JioSaavn DL"
         )
+        
         try: os.remove(file_path)
         except: pass
-    except Exception as e:
-        LOGGER.error(f"Direct Track Error: {e}")
 
-async def process_track(token_id, user, session, api, is_album=False):
-    msg = user['bot_msg']
-    if not is_album:
-        await edit_message(msg, "Mengambil info lagu...")
-
-    try:
-        track_data = await api.get_song_details(session, token_id)
-        if not track_data:
-             raise Exception("Metadata lagu tidak ditemukan.")
-
-        # Panggil helper direct agar tidak duplikasi kode
-        await process_track_direct(track_data, user, session, api, is_album)
-        
         if not is_album:
             await edit_message(msg, "Selesai!")
 
