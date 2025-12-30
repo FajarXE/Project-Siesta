@@ -12,7 +12,6 @@ class JioSaavnAPI:
         async with session.get(self.base_url, params=params, headers=self.headers) as resp:
             try:
                 text = await resp.text()
-                # Membersihkan response dari komentar JSON
                 return json.loads(text.split('-->')[-1] if '-->' in text else text)
             except:
                 return None
@@ -22,7 +21,6 @@ class JioSaavnAPI:
             '__call': 'webapi.get', 'token': token, 'type': 'song', '_format': 'json', 'ctx': 'web6dot0'
         })
         if data and "songs" in data and data["songs"]: return data["songs"][0]
-        # Fallback dictionary
         if isinstance(data, dict) and len(data) > 0:
             key = list(data.keys())[0]
             if isinstance(data[key], dict): return data[key]
@@ -34,18 +32,17 @@ class JioSaavnAPI:
         })
 
     async def get_lyrics(self, session: aiohttp.ClientSession, song_id: str):
-        # Mengambil lirik berdasarkan ID lagu
         data = await self._get(session, {
             '__call': 'lyrics.getLyrics', 'lyrics_id': song_id, 'ctx': 'web6dot0', 'api_version': '4', '_format': 'json'
         })
         return data.get("lyrics") if data else None
 
     async def get_auth_url(self, session: aiohttp.ClientSession, encrypted_url: str):
-        # Meminta URL 320kbps secara eksplisit
+        # Meminta URL 320kbps
         data = await self._get(session, {
             '__call': 'song.generateAuthToken',
             'url': encrypted_url,
-            'bitrate': '320', # PAKSA 320
+            'bitrate': '320',
             'api_version': '4',
             '_format': 'json',
             'ctx': 'web6dot0',
@@ -54,9 +51,15 @@ class JioSaavnAPI:
         
         if data and "auth_url" in data:
             url = data["auth_url"]
-            # Fix ekstensi manual untuk memastikan kualitas
+            # REPLACEMENT SESUAI JIOSAAVN.PY ANDA
+            # web -> aac (PENTING!)
+            if "web" in url: url = url.replace("web", "aac")
             if "preview" in url: url = url.replace("preview", "aac")
+            
+            # Paksa ekstensi 320
             if "_96_p.mp4" in url: url = url.replace("_96_p.mp4", "_320.mp4")
             if "_160_p.mp4" in url: url = url.replace("_160_p.mp4", "_320.mp4")
+            if "_96.mp4" in url: url = url.replace("_96.mp4", "_320.mp4")
+            
             return url
         return None
