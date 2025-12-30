@@ -9,7 +9,6 @@ from .manager import gaana_manager
 from .metadata import set_gaana_metadata
 from bot.helpers.uploder import track_upload, album_upload
 from bot import Config
-# IMPOR PENTING
 from bot.helpers.utils import fetch_zip_settings
 import yt_dlp 
 
@@ -22,23 +21,16 @@ def ensure_download_dir(user, subdir=None):
     base_dir = Config.DOWNLOAD_BASE_DIR
     uid = user.get('user_id', 'temp')
     user_dir = os.path.join(base_dir, str(uid))
-    
     if subdir:
         user_dir = os.path.join(user_dir, sanitize_filename(subdir))
-    
     if not os.path.exists(user_dir):
         os.makedirs(user_dir)
     return user_dir
 
 async def download_with_ytdlp(url, output_path):
     def run_ytdlp():
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': output_path,
-            'quiet': True, 'no_warnings': True, 'nocheckcertificate': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        ydl_opts = {'format': 'bestaudio/best', 'outtmpl': output_path, 'quiet': True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([url])
     await asyncio.to_thread(run_ytdlp)
 
 async def start_gaana(link: str, user: dict):
@@ -50,12 +42,10 @@ async def start_gaana(link: str, user: dict):
     if not match: return
 
     content_type, identifier = match.groups()
-
     if content_type == 'song':
         data = await api.get_metadata(session, identifier, 'songDetail')
         if data and 'tracks' in data:
             await process_single_gaana(data['tracks'][0], user, session, api)
-
     elif content_type == 'album':
         await process_album_gaana(identifier, user, session, api)
 
@@ -64,17 +54,13 @@ async def process_single_gaana(track, user, session, api):
     await edit_message(msg, "Mengunduh...")
     try:
         path, cover, dur = await download_gaana_track(track, user, session, api)
-        
-        _, _, _, art_poster = fetch_zip_settings(user)
-        
         metadata = {
             'filepath': path,
             'title': track.get("track_title"),
             'artist': track.get("artist")[0]['name'] if track.get("artist") else "",
             'album': track.get("album_title"),
             'cover': cover, 'provider': 'Gaana', 'type': 'track',
-            'duration': dur,
-            'poster_msg': False
+            'duration': dur, 'quality': '320kbps' # FIX QUALITY
         }
         await track_upload(metadata, user)
         await edit_message(msg, "Selesai!")
@@ -100,7 +86,6 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # Metadata injection untuk tagging
             track["track_number"] = str(i + 1)
             track["track_count"] = str(total)
             track["label_name"] = data.get("label_name")
@@ -111,15 +96,14 @@ async def process_album_gaana(identifier, user, session, api):
             downloaded.append({
                 'filepath': path, 'title': track.get("track_title"),
                 'artist': track.get("artist")[0]['name'] if track.get("artist") else "Unknown",
-                'album': album_title,
-                'cover': cover, 'duration': dur
+                'album': album_title, 'cover': cover, 'duration': dur,
+                'quality': '320kbps' # FIX QUALITY
             })
         except Exception as e:
             LOGGER.error(f"Skip Gaana: {e}")
 
     await edit_message(msg, "Memproses Album...")
     
-    # --- FIX UTAMA: Gunakan fetch_zip_settings ---
     _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
     
     zip_path = None
@@ -134,11 +118,9 @@ async def process_album_gaana(identifier, user, session, api):
         'type': 'album', 'title': album_title,
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
-        'zip_path': zip_path,
-        'poster_msg': is_art_poster, # Flag poster
-        'provider': 'Gaana',
-        'release_date': data.get("release_date", ""),
-        'track_count': total
+        'zip_path': zip_path, 'poster_msg': is_art_poster,
+        'provider': 'Gaana', 'release_date': data.get("release_date", ""),
+        'track_count': total, 'quality': '320kbps' # FIX QUALITY
     }
 
     await album_upload(metadata, user)
@@ -149,30 +131,23 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     if not enc_path: raise Exception("No stream")
     
     decrypted_url = api.decrypt_stream_path(enc_path)
-    
-    # --- FIX 320kbps (Replace Agresif) ---
-    # Pola: .../f.mp4 atau .../medium.mp4 -> 320.mp4
     final_url = decrypted_url
     if "medium.mp4" in final_url: final_url = final_url.replace("medium.mp4", "320.mp4")
     elif "128.mp4" in final_url: final_url = final_url.replace("128.mp4", "320.mp4")
     elif "f.mp4" in final_url: final_url = final_url.replace("f.mp4", "320.mp4")
     elif "64.mp4" in final_url: final_url = final_url.replace("64.mp4", "320.mp4")
     elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
-    else: 
-        final_url = final_url.replace(".mp4", "_320.mp4")
+    else: final_url = final_url.replace(".mp4", "_320.mp4")
 
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     filename = f"{sanitize_filename(title)}.m4a"
     path = os.path.join(dl_dir, filename)
     
     if os.path.exists(path): os.remove(path)
-    
-    # Coba download High Quality
     try:
         await download_with_ytdlp(final_url, path)
     except: pass
     
-    # Fallback Original URL
     if not os.path.exists(path) or os.path.getsize(path) < 10000:
          await download_with_ytdlp(decrypted_url, path)
 
