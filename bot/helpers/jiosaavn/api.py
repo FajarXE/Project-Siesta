@@ -1,6 +1,5 @@
 import aiohttp
 import json
-import html
 
 class JioSaavnAPI:
     def __init__(self):
@@ -18,16 +17,39 @@ class JioSaavnAPI:
             'ctx': 'web6dot0'
         }
         async with session.get(self.base_url, params=params, headers=self.headers) as resp:
-            text = await resp.text()
-            # Bersihkan response karena kadang ada comment block di JSON
-            clean_json = json.loads(text.split('-->')[-1] if '-->' in text else text)
+            try:
+                text = await resp.text()
+                # Bersihkan response dari komentar HTML jika ada
+                clean_json = json.loads(text.split('-->')[-1] if '-->' in text else text)
+            except:
+                return None
             
-            # API kadang mengembalikan dict di dalam dict dengan key random
-            if "songs" in clean_json: 
+            if "songs" in clean_json and clean_json["songs"]: 
                  return clean_json["songs"][0]
-            # Handle format lama/aneh
-            key = list(clean_json.keys())[0]
-            return clean_json[key]
+            # Fallback untuk struktur lain
+            if isinstance(clean_json, dict) and len(clean_json) > 0:
+                key = list(clean_json.keys())[0]
+                if isinstance(clean_json[key], dict):
+                    return clean_json[key]
+            return None
+
+    # --- FUNGSI BARU UNTUK ALBUM ---
+    async def get_album_details(self, session: aiohttp.ClientSession, token: str):
+        params = {
+            '__call': 'webapi.get',
+            'token': token,
+            'type': 'album',
+            '_format': 'json',
+            'ctx': 'web6dot0'
+        }
+        async with session.get(self.base_url, params=params, headers=self.headers) as resp:
+            try:
+                text = await resp.text()
+                clean_json = json.loads(text.split('-->')[-1] if '-->' in text else text)
+                return clean_json
+            except:
+                return None
+    # -------------------------------
 
     async def get_auth_url(self, session: aiohttp.ClientSession, encrypted_url: str):
         params = {
@@ -40,13 +62,15 @@ class JioSaavnAPI:
             '_marker': '0',
         }
         async with session.get(self.base_url, params=params, headers=self.headers) as resp:
-            data = await resp.json()
-            auth_url = data.get("auth_url")
-            if auth_url:
-                # Fix extension dari preview ke aac/mp4
-                if "preview" in auth_url:
-                    auth_url = auth_url.replace("preview", "aac")
-                if "_96_p.mp4" in auth_url:
-                    auth_url = auth_url.replace("_96_p.mp4", "_320.mp4")
-                return auth_url
+            try:
+                data = await resp.json()
+                auth_url = data.get("auth_url")
+                if auth_url:
+                    if "preview" in auth_url:
+                        auth_url = auth_url.replace("preview", "aac")
+                    if "_96_p.mp4" in auth_url:
+                        auth_url = auth_url.replace("_96_p.mp4", "_320.mp4")
+                    return auth_url
+            except:
+                pass
             return None
