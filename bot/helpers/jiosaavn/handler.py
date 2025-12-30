@@ -48,6 +48,10 @@ async def process_single_track(token_id, user, session, api):
         track_data = await api.get_song_details(session, token_id)
         if not track_data: raise Exception("Metadata tidak ditemukan.")
         
+        # Inject info track 1/1 untuk single
+        track_data['track_number'] = 1
+        track_data['total_tracks'] = 1
+        
         file_path, cover_path, duration = await download_track_file(track_data, user, session, api)
         
         metadata = {
@@ -85,10 +89,15 @@ async def process_album(token_id, user, session, api):
                 full_track = await api.get_song_details(session, t_token)
                 if not full_track: full_track = track
                 
+                # INJECT METADATA TRACK NUMBER
+                current_num = i + 1
+                full_track['track_number'] = current_num
+                full_track['total_tracks'] = total
+                
                 if str(full_track.get("explicit_content")) == "1":
                     is_explicit_album = "True"
 
-                await edit_message(msg, f"[{i+1}/{total}] {full_track.get('song')}...")
+                await edit_message(msg, f"[{current_num}/{total}] {full_track.get('song')}...")
                 path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=album_dir)
                 
                 downloaded_tracks.append({
@@ -114,33 +123,30 @@ async def process_album(token_id, user, session, api):
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-        # --- FIX: MANUAL ART POSTER (BOLD LABEL) ---
         if is_art_poster and downloaded_tracks:
             cover_file = downloaded_tracks[0]['cover']
             if cover_file and os.path.exists(cover_file):
                 try:
                     caption = (
-                        f"**ᴛɪᴛʟᴇ** : {album_title}\n"
-                        f"**ᴀʀᴛɪsᴛ** : {album_data.get('primary_artists')}\n"
-                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ** : {album_data.get('year')}\n"
-                        f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs** : {total}\n"
-                        f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs** : 1\n"
-                        f"**ǫᴜᴀʟɪᴛʏ** : 320kbps\n"
-                        f"**ᴘʀᴏᴠɪᴅᴇʀ** : JioSaavn\n"
-                        f"**ᴇxᴘʟɪᴄɪᴛ** : {is_explicit_album}"
+                        f"**ᴛɪᴛʟᴇ :** {album_title}\n"
+                        f"**ᴀʀᴛɪsᴛ :** {album_data.get('primary_artists')}\n"
+                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {album_data.get('year')}\n"
+                        f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
+                        f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
+                        f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
+                        f"**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n"
+                        f"**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit_album}"
                     )
                     await send_message(user, cover_file, 'pic', caption=caption)
                 except Exception as e:
                     LOGGER.error(f"Gagal kirim Poster JioSaavn: {e}")
-        # -------------------------------------------
 
         metadata = {
             'type': 'album', 'title': album_title,
             'artist': album_data.get("primary_artists"), 'folderpath': album_dir,
             'tracks': downloaded_tracks, 
             'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
-            'zip_path': zip_path, 
-            'poster_msg': False, 
+            'zip_path': zip_path, 'poster_msg': False, 
             'provider': 'JioSaavn', 'release_date': album_data.get("year", ""), 
             'track_count': total, 'quality': '320kbps'
         }
@@ -156,8 +162,18 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
     enc_url = track_data.get("encrypted_media_url")
     image_url = track_data.get("image", "").replace("150x150", "500x500")
     
+    # --- NOMOR PADA NAMA FILE (Format: 1 - Judul) ---
+    track_num = track_data.get('track_number')
+    safe_title = sanitize_filename(title)
+    
+    if track_num:
+        # int() akan mengubah 01 menjadi 1
+        filename = f"{int(track_num)} - {safe_title}.m4a"
+    else:
+        filename = f"{safe_title}.m4a"
+    # -----------------------------------------------
+
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
-    filename = f"{sanitize_filename(title)}.m4a"
     file_path = os.path.join(dl_dir, filename)
 
     dl_url = await api.get_auth_url(session, enc_url)
