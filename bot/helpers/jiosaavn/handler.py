@@ -1,15 +1,17 @@
 import os
 import re
 import shutil
-import asyncio
+import aiohttp
 import aiofiles
+import asyncio
 from bot.logger import LOGGER
-from bot.helpers.message import edit_message, send_message # Import send_message
+from bot.helpers.message import edit_message, send_message
 from .manager import jiosaavn_manager
 from .metadata import set_jiosaavn_metadata
 from bot.helpers.uploder import track_upload, album_upload 
 from bot import Config
-from bot.helpers.utils import fetch_zip_settings 
+# IMPOR create_simple_text
+from bot.helpers.utils import fetch_zip_settings, create_simple_text 
 import yt_dlp
 
 def sanitize_filename(name: str) -> str:
@@ -85,7 +87,9 @@ async def process_album(token_id, user, session, api):
                 if not full_track: full_track = track
                 
                 await edit_message(msg, f"[{i+1}/{total}] {full_track.get('song')}...")
-                path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=album_dir)
+                
+                track_num = i + 1
+                path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=album_dir, track_num=track_num)
                 
                 downloaded_tracks.append({
                     'filepath': path, 'title': full_track.get("song"),
@@ -99,8 +103,6 @@ async def process_album(token_id, user, session, api):
             raise Exception("Gagal mengunduh semua lagu.")
 
         await edit_message(msg, "Memproses Album...")
-        
-        # --- ZIP SETTINGS ---
         _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
         
         zip_path = None
@@ -111,27 +113,31 @@ async def process_album(token_id, user, session, api):
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-        # --- MANUAL ART POSTER (Mengikuti gaya handler lain) ---
-        if is_art_poster and downloaded_tracks:
-            cover_file = downloaded_tracks[0]['cover']
-            if cover_file and os.path.exists(cover_file):
-                try:
-                    caption = f"**Album:** {album_title}\n**Artist:** {album_data.get('primary_artists')}\n**Total:** {total} Tracks\n**Provider:** JioSaavn"
-                    await send_message(user, cover_file, 'pic', caption=caption)
-                except Exception as e:
-                    LOGGER.error(f"Gagal kirim poster: {e}")
-        # -----------------------------------------------------
-
+        # --- PREPARE METADATA UNTUK POSTER & UPLOAD ---
         metadata = {
             'type': 'album', 'title': album_title,
-            'artist': album_data.get("primary_artists"), 'folderpath': album_dir,
+            'artist': album_data.get("primary_artists"), 
+            'folderpath': album_dir,
             'tracks': downloaded_tracks, 
             'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
             'zip_path': zip_path, 
-            'poster_msg': False, # Kita sudah kirim manual di atas, jadi set False ke uploader
-            'provider': 'JioSaavn', 'release_date': album_data.get("year", ""), 
-            'track_count': total, 'quality': '320kbps'
+            'poster_msg': False, # Kita kirim manual di bawah
+            'provider': 'JioSaavn', 
+            'release_date': album_data.get("year", ""), 
+            'track_count': total, 
+            'quality': '320kbps',
+            'genre': 'Unknown'
         }
+
+        # --- MANUAL ART POSTER (DENGAN CAPTION LENGKAP) ---
+        if is_art_poster and metadata['cover'] and os.path.exists(metadata['cover']):
+            try:
+                # Gunakan fungsi standar bot untuk membuat caption lengkap
+                caption = await create_simple_text(metadata, user)
+                await send_message(user, metadata['cover'], 'pic', caption=caption)
+            except Exception as e:
+                LOGGER.error(f"Gagal kirim poster: {e}")
+        # --------------------------------------------------
 
         await album_upload(metadata, user)
         
@@ -139,13 +145,19 @@ async def process_album(token_id, user, session, api):
         LOGGER.error(f"JioSaavn Album Error: {e}")
         raise e
 
-async def download_track_file(track_data, user, session, api, custom_dir=None):
+async def download_track_file(track_data, user, session, api, custom_dir=None, track_num=None):
     title = track_data.get("song")
     enc_url = track_data.get("encrypted_media_url")
     image_url = track_data.get("image", "").replace("150x150", "500x500")
     
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
-    filename = f"{sanitize_filename(title)}.m4a"
+    
+    clean_title = sanitize_filename(title)
+    if track_num:
+        filename = f"{track_num:02d}. {clean_title}.m4a"
+    else:
+        filename = f"{clean_title}.m4a"
+    
     file_path = os.path.join(dl_dir, filename)
 
     dl_url = await api.get_auth_url(session, enc_url)
