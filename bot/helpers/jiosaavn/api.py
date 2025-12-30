@@ -19,21 +19,18 @@ class JioSaavnAPI:
         async with session.get(self.base_url, params=params, headers=self.headers) as resp:
             try:
                 text = await resp.text()
-                # Bersihkan response dari komentar HTML jika ada
                 clean_json = json.loads(text.split('-->')[-1] if '-->' in text else text)
             except:
                 return None
             
             if "songs" in clean_json and clean_json["songs"]: 
                  return clean_json["songs"][0]
-            # Fallback untuk struktur lain
             if isinstance(clean_json, dict) and len(clean_json) > 0:
                 key = list(clean_json.keys())[0]
                 if isinstance(clean_json[key], dict):
                     return clean_json[key]
             return None
 
-    # --- FUNGSI BARU UNTUK ALBUM ---
     async def get_album_details(self, session: aiohttp.ClientSession, token: str):
         params = {
             '__call': 'webapi.get',
@@ -49,9 +46,12 @@ class JioSaavnAPI:
                 return clean_json
             except:
                 return None
-    # -------------------------------
 
-    async def get_auth_url(self, session: aiohttp.ClientSession, encrypted_url: str):
+    async def get_auth_url(self, session: aiohttp.ClientSession, encrypted_url: str, preview_url: str = None):
+        """
+        Mencoba mendapatkan URL via API. Jika gagal, mencoba convert manual dari preview_url.
+        """
+        # 1. Coba Cara Resmi (API)
         params = {
             '__call': 'song.generateAuthToken',
             'url': encrypted_url,
@@ -61,8 +61,8 @@ class JioSaavnAPI:
             'ctx': 'web6dot0',
             '_marker': '0',
         }
-        async with session.get(self.base_url, params=params, headers=self.headers) as resp:
-            try:
+        try:
+            async with session.get(self.base_url, params=params, headers=self.headers) as resp:
                 data = await resp.json()
                 auth_url = data.get("auth_url")
                 if auth_url:
@@ -71,6 +71,17 @@ class JioSaavnAPI:
                     if "_96_p.mp4" in auth_url:
                         auth_url = auth_url.replace("_96_p.mp4", "_320.mp4")
                     return auth_url
-            except:
-                pass
-            return None
+        except Exception:
+            pass
+        
+        # 2. Cara Fallback (Manual Convert dari Preview URL)
+        # Berguna jika generateAuthToken gagal/rate limit
+        if preview_url:
+            # Ubah: https://preview.saavncdn.com/..._96_p.mp4 
+            # Menjadi: https://aac.saavncdn.com/..._320.mp4
+            fallback_url = preview_url.replace("preview.saavncdn.com", "aac.saavncdn.com") \
+                                      .replace("_96_p.mp4", "_320.mp4") \
+                                      .replace("_160_p.mp4", "_320.mp4")
+            return fallback_url
+
+        return None
