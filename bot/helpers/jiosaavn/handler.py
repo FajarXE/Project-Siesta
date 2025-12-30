@@ -9,9 +9,7 @@ from .manager import jiosaavn_manager
 from .metadata import set_jiosaavn_metadata
 from bot.helpers.uploder import track_upload, album_upload 
 from bot import Config
-# IMPOR UTILS untuk membaca setting user
-from bot.helpers.utils import fetch_zip_settings, format_string
-import bot.helpers.translations as lang
+from bot.helpers.utils import fetch_zip_settings 
 import yt_dlp
 
 def sanitize_filename(name: str) -> str:
@@ -56,8 +54,7 @@ async def process_single_track(token_id, user, session, api):
             'filepath': file_path, 'title': track_data.get("song"),
             'artist': track_data.get("primary_artists"), 'album': track_data.get("album"),
             'cover': cover_path, 'provider': 'JioSaavn', 'type': 'track',
-            'duration': duration, 
-            'quality': '320kbps' # FIX QUALITY N/A
+            'duration': duration, 'quality': '320kbps'
         }
         await track_upload(metadata, user)
         await edit_message(msg, "Selesai!")
@@ -80,6 +77,9 @@ async def process_album(token_id, user, session, api):
         
         await edit_message(msg, f"Album: {album_title} ({total} tracks)")
         
+        # Cek Explicit untuk Album (Jika salah satu lagu explicit, album dianggap explicit)
+        is_explicit_album = "False"
+        
         for i, track in enumerate(tracks):
             try:
                 t_token = track['perma_url'].split('/')[-1] if 'perma_url' in track else None
@@ -87,6 +87,10 @@ async def process_album(token_id, user, session, api):
                 full_track = await api.get_song_details(session, t_token)
                 if not full_track: full_track = track
                 
+                # Cek explicit per track
+                if str(full_track.get("explicit_content")) == "1":
+                    is_explicit_album = "True"
+
                 await edit_message(msg, f"[{i+1}/{total}] {full_track.get('song')}...")
                 path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=album_dir)
                 
@@ -103,11 +107,8 @@ async def process_album(token_id, user, session, api):
 
         await edit_message(msg, "Memproses Album...")
         
-        # --- AMBIL PENGATURAN USER ---
-        # playlist_zip, album_zip, artist_zip, art_poster
         _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
         
-        # --- MANUAL ZIP LOGIC ---
         zip_path = None
         if is_album_zip:
              await edit_message(msg, "Mengompres (ZIP)...")
@@ -116,38 +117,37 @@ async def process_album(token_id, user, session, api):
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-        # Siapkan Metadata untuk Uploader
+        # --- FIX: MANUAL ART POSTER (STYLE BARU) ---
+        if is_art_poster and downloaded_tracks:
+            cover_file = downloaded_tracks[0]['cover']
+            if cover_file and os.path.exists(cover_file):
+                try:
+                    # Format Caption Custom Style
+                    caption = (
+                        f"ᴛɪᴛʟᴇ : {album_title}\n"
+                        f"ᴀʀᴛɪsᴛ : {album_data.get('primary_artists')}\n"
+                        f"ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ : {album_data.get('year')}\n"
+                        f"ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs : {total}\n"
+                        f"ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs : 1\n"
+                        f"ǫᴜᴀʟɪᴛʏ : 320kbps\n"
+                        f"ᴘʀᴏᴠɪᴅᴇʀ : JioSaavn\n"
+                        f"ᴇxᴘʟɪᴄɪᴛ : {is_explicit_album}"
+                    )
+                    await send_message(user, cover_file, 'pic', caption=caption)
+                except Exception as e:
+                    LOGGER.error(f"Gagal kirim Poster JioSaavn: {e}")
+        # -------------------------------------------
+
         metadata = {
             'type': 'album', 'title': album_title,
             'artist': album_data.get("primary_artists"), 'folderpath': album_dir,
             'tracks': downloaded_tracks, 
             'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
             'zip_path': zip_path, 
-            'poster_msg': False, # Kita kirim manual di bawah, jadi set False agar uploader tidak bingung
-            'provider': 'JioSaavn', 
-            'release_date': album_data.get("year", ""), 
-            'track_count': total, 
-            'quality': '320kbps' # FIX QUALITY N/A
+            'poster_msg': False, 
+            'provider': 'JioSaavn', 'release_date': album_data.get("year", ""), 
+            'track_count': total, 'quality': '320kbps'
         }
-
-        # --- MANUAL ART POSTER LOGIC ---
-        # Kita kirim poster DI SINI sebelum memanggil uploader
-        if is_art_poster and metadata.get('cover') and os.path.exists(metadata['cover']):
-            try:
-                # Format caption (bisa disesuaikan dengan template bot Anda)
-                caption = (
-                    f"**Title:** {album_title}\n"
-                    f"**Artist:** {album_data.get('primary_artists')}\n"
-                    f"**Type:** Album\n"
-                    f"**Year:** {album_data.get('year')}\n"
-                    f"**Total Tracks:** {total}\n"
-                    f"**Quality:** 320kbps\n"
-                    f"**Provider:** JioSaavn"
-                )
-                await send_message(user, metadata['cover'], 'pic', caption=caption)
-            except Exception as e:
-                LOGGER.error(f"Gagal kirim Poster JioSaavn: {e}")
-        # --------------------------------
 
         await album_upload(metadata, user)
         
