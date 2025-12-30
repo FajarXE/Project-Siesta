@@ -92,7 +92,6 @@ async def process_album_gaana(identifier, user, session, api):
             track["track_count"] = str(total)
             track["label_name"] = data.get("label_name")
             
-            # Cek Explicit (parental_warning: 1 = Explicit)
             if track.get("parental_warning") == 1:
                 is_explicit_album = "True"
 
@@ -120,20 +119,20 @@ async def process_album_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-    # --- FIX: MANUAL ART POSTER (STYLE BARU) ---
+    # --- FIX: MANUAL ART POSTER (BOLD LABEL) ---
     if is_art_poster and downloaded:
         cover_file = downloaded[0]['cover']
         if cover_file and os.path.exists(cover_file):
             try:
                 caption = (
-                    f"ᴛɪᴛʟᴇ : {album_title}\n"
-                    f"ᴀʀᴛɪsᴛ : {downloaded[0]['artist']}\n"
-                    f"ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ : {data.get('release_date')}\n"
-                    f"ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs : {total}\n"
-                    f"ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs : 1\n"
-                    f"ǫᴜᴀʟɪᴛʏ : 320kbps\n"
-                    f"ᴘʀᴏᴠɪᴅᴇʀ : Gaana\n"
-                    f"ᴇxᴘʟɪᴄɪᴛ : {is_explicit_album}"
+                    f"**ᴛɪᴛʟᴇ** : {album_title}\n"
+                    f"**ᴀʀᴛɪsᴛ** : {downloaded[0]['artist']}\n"
+                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ** : {data.get('release_date')}\n"
+                    f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs** : {total}\n"
+                    f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs** : 1\n"
+                    f"**ǫᴜᴀʟɪᴛʏ** : 320kbps\n"
+                    f"**ᴘʀᴏᴠɪᴅᴇʀ** : Gaana\n"
+                    f"**ᴇxᴘʟɪᴄɪᴛ** : {is_explicit_album}"
                 )
                 await send_message(user, cover_file, 'pic', caption=caption)
             except Exception as e:
@@ -145,7 +144,7 @@ async def process_album_gaana(identifier, user, session, api):
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
         'zip_path': zip_path, 
-        'poster_msg': False, # Manual sent
+        'poster_msg': False, 
         'provider': 'Gaana', 'release_date': data.get("release_date", ""),
         'track_count': total, 'quality': '320kbps'
     }
