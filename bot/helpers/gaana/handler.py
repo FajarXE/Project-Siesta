@@ -4,10 +4,13 @@ import asyncio
 import shutil
 import aiofiles
 from bot.logger import LOGGER
-from bot.helpers.message import edit_message
+from bot.helpers.message import edit_message, edit_art_poster
+from bot.helpers.utils import format_string
+import bot.helpers.translations as lang
 from .manager import gaana_manager
 from .metadata import set_gaana_metadata
 from bot.helpers.uploder import track_upload, album_upload
+from bot.settings import bot_set
 import yt_dlp 
 
 def sanitize_filename(name: str) -> str:
@@ -23,6 +26,13 @@ def ensure_download_dir(user, subdir=None):
     if not os.path.exists(base):
         os.makedirs(base)
     return base
+
+# Helper Cek Setting
+def check_user_setting(user, key):
+    if user.get(key): return True
+    uid = user.get('user_id')
+    if uid and bot_set.user_data.get(uid, {}).get(key): return True
+    return False
 
 async def download_with_ytdlp(url, output_path):
     def run_ytdlp():
@@ -64,7 +74,7 @@ async def process_single_gaana(track, user, session, api):
             'artist': track.get("artist")[0]['name'] if track.get("artist") else "",
             'album': track.get("album_title"),
             'cover': cover, 'provider': 'Gaana', 'type': 'track',
-            'duration': dur # FIX: Durasi
+            'duration': dur
         }
         await track_upload(metadata, user)
         await edit_message(msg, "Selesai!")
@@ -81,7 +91,6 @@ async def process_album_gaana(identifier, user, session, api):
         return
 
     tracks = data['tracks']
-    # Ambil info album untuk folder name
     album_title = data.get("title") or tracks[0].get("album_title")
     album_dir = ensure_download_dir(user, subdir=album_title)
     
@@ -91,10 +100,10 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # Inject info track agar metadata lengkap
+            # Inject info
             track["track_number"] = str(i + 1)
             track["track_count"] = str(total)
-            track["label_name"] = data.get("label_name") # Inherit label dari album
+            track["label_name"] = data.get("label_name")
             
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
@@ -103,15 +112,15 @@ async def process_album_gaana(identifier, user, session, api):
                 'filepath': path, 'title': track.get("track_title"),
                 'artist': track.get("artist")[0]['name'] if track.get("artist") else "Unknown",
                 'album': album_title,
-                'cover': cover, 'duration': dur # FIX: Durasi
+                'cover': cover, 'duration': dur
             })
         except Exception as e:
             LOGGER.error(f"Skip Gaana: {e}")
 
-    # FIX ZIP LOGIC
+    # FIX ZIP
     await edit_message(msg, "Memproses Album...")
     zip_path = None
-    if user.get('zip') or user.get('zip_mode'):
+    if check_user_setting(user, 'zip') or check_user_setting(user, 'zip_mode'):
          await edit_message(msg, "Membuat ZIP...")
          zip_base = os.path.join(ensure_download_dir(user), sanitize_filename(album_title))
          zip_path = shutil.make_archive(zip_base, 'zip', album_dir)
@@ -121,9 +130,20 @@ async def process_album_gaana(identifier, user, session, api):
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
         'zip_path': zip_path,
-        'poster_msg': user.get('poster') or user.get('art_poster'),
-        'provider': 'Gaana'
+        'poster_msg': None, # Manual poster
+        'provider': 'Gaana',
+        'release_date': data.get("release_date", ""),
+        'track_count': total
     }
+
+    # FIX POSTER
+    if check_user_setting(user, 'poster') or check_user_setting(user, 'art_poster'):
+        try:
+            caption = await format_string(lang.s.ALBUM_TEMPLATE, metadata, user)
+            await edit_art_poster(metadata, user, None, None, caption)
+        except Exception as e:
+            LOGGER.error(f"Gagal poster gaana: {e}")
+
     await album_upload(metadata, user)
 
 async def download_gaana_track(track_info, user, session, api, custom_dir=None):
@@ -133,16 +153,18 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     
     decrypted_url = api.decrypt_stream_path(enc_path)
     
-    # --- FIX 320kbps (Lebih Agresif) ---
-    # Pola URL Gaana biasanya: .../medium.mp4, .../64.mp4, .../128.mp4
-    # Kita paksa replace ke 320.mp4 atau high.mp4
+    # --- FIX 320kbps (Super Agresif) ---
     final_url = decrypted_url
+    
+    # Logic Replace URL sesuai gaana.py user
+    # Biasa formatnya: blabla/medium.mp4 atau blabla/f.mp4
     if "medium.mp4" in final_url: final_url = final_url.replace("medium.mp4", "320.mp4")
     elif "128.mp4" in final_url: final_url = final_url.replace("128.mp4", "320.mp4")
-    elif "64.mp4" in final_url: final_url = final_url.replace("64.mp4", "320.mp4")
-    elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
-    else: final_url = final_url.replace(".mp4", "_320.mp4") # Coba append jika tidak ada pola
-                             
+    elif "f.mp4" in final_url: final_url = final_url.replace("f.mp4", "320.mp4") 
+    else: 
+        # Jika tidak ada pola, coba ganti ekstensi saja
+        final_url = final_url.replace(".mp4", "_320.mp4")
+
     # Download
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     filename = f"{sanitize_filename(title)}.m4a"
@@ -150,12 +172,12 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     
     if os.path.exists(path): os.remove(path)
     
-    # Coba download URL 320kbps
+    # 1. Coba download High Quality
     try:
         await download_with_ytdlp(final_url, path)
     except: pass
     
-    # Fallback ke URL asli (decrypted) jika 320 gagal
+    # 2. Fallback (URL Asli)
     if not os.path.exists(path) or os.path.getsize(path) < 10000:
          await download_with_ytdlp(decrypted_url, path)
 
