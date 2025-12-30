@@ -48,7 +48,6 @@ async def process_single_track(token_id, user, session, api):
         track_data = await api.get_song_details(session, token_id)
         if not track_data: raise Exception("Metadata tidak ditemukan.")
         
-        # Inject info track
         track_data['track_number'] = 1
         track_data['total_tracks'] = 1
         
@@ -89,7 +88,6 @@ async def process_album(token_id, user, session, api):
                 full_track = await api.get_song_details(session, t_token)
                 if not full_track: full_track = track
                 
-                # INJECT METADATA
                 current_num = i + 1
                 full_track['track_number'] = current_num
                 full_track['total_tracks'] = total
@@ -123,11 +121,9 @@ async def process_album(token_id, user, session, api):
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-        # --- FIX TANGGAL RILIS (YYYY-MM-DD) ---
         release_date = album_data.get("release_date")
         if not release_date:
             release_date = album_data.get("year", "Unknown")
-        # --------------------------------------
 
         if is_art_poster and downloaded_tracks:
             cover_file = downloaded_tracks[0]['cover']
@@ -167,13 +163,16 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
     title = track_data.get("song")
     enc_url = track_data.get("encrypted_media_url")
     
-    # --- FIX COVER 500x500 (Maksimal API) ---
-    image_url = track_data.get("image", "")
-    # Pastikan ambil resolusi tertinggi yang stabil (500x500)
-    image_url = image_url.replace("150x150", "500x500").replace("50x50", "500x500")
-    # ----------------------------------------
+    # --- LOGIKA COVER BARU (1200x1200 -> 500x500) ---
+    base_img = track_data.get("image", "")
+    # Default URL biasanya .../150x150.jpg
+    # Kita siapkan 2 kandidat
+    img_1200 = base_img.replace("150x150", "1200x1200").replace("50x50", "1200x1200")
+    img_500 = base_img.replace("150x150", "500x500").replace("50x50", "500x500")
     
-    # Format Nama File: 1 - Judul
+    dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
+    
+    # Nama File: 1 - Judul
     track_num = track_data.get('track_number')
     safe_title = sanitize_filename(title)
     if track_num:
@@ -181,7 +180,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
     else:
         filename = f"{safe_title}.m4a"
 
-    dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     file_path = os.path.join(dl_dir, filename)
 
     dl_url = await api.get_auth_url(session, enc_url)
@@ -218,12 +216,29 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
 
     if not downloaded: raise Exception("HTTP Error Download")
 
+    # --- DOWNLOAD COVER (Max Res Logic) ---
     cover_path = os.path.join(dl_dir, "cover.jpg")
-    if not os.path.exists(cover_path) and image_url:
-        async with session.get(image_url) as resp:
-            if resp.status == 200:
-                async with aiofiles.open(cover_path, mode='wb') as f:
-                    await f.write(await resp.read())
+    cover_downloaded = False
+    
+    if not os.path.exists(cover_path) and base_img:
+        # Coba download 1200x1200 dulu
+        try:
+            async with session.get(img_1200) as resp:
+                if resp.status == 200:
+                    async with aiofiles.open(cover_path, mode='wb') as f:
+                        await f.write(await resp.read())
+                    cover_downloaded = True
+        except: pass
+        
+        # Jika gagal, fallback ke 500x500
+        if not cover_downloaded:
+            try:
+                async with session.get(img_500) as resp:
+                    if resp.status == 200:
+                        async with aiofiles.open(cover_path, mode='wb') as f:
+                            await f.write(await resp.read())
+            except: pass
+    # --------------------------------------
     
     lyrics = None
     if track_data.get("has_lyrics") == "true":
