@@ -4,13 +4,12 @@ import asyncio
 import shutil
 import aiofiles
 from bot.logger import LOGGER
-from bot.helpers.message import edit_message, edit_art_poster
-from bot.helpers.utils import format_string
-import bot.helpers.translations as lang
+from bot.helpers.message import edit_message
+# HAPUS edit_art_poster
 from .manager import gaana_manager
 from .metadata import set_gaana_metadata
 from bot.helpers.uploder import track_upload, album_upload
-from bot.settings import bot_set
+from bot import Config
 import yt_dlp 
 
 def sanitize_filename(name: str) -> str:
@@ -19,20 +18,16 @@ def sanitize_filename(name: str) -> str:
 URL_REGEX = re.compile(r"gaana\.com/(song|album|playlist)/(.+)")
 
 def ensure_download_dir(user, subdir=None):
-    uid = user.get('user_id', 'temp_user')
-    base = os.path.join("downloads", str(uid))
+    base_dir = Config.DOWNLOAD_BASE_DIR
+    uid = user.get('user_id', 'temp')
+    user_dir = os.path.join(base_dir, str(uid))
+    
     if subdir:
-        base = os.path.join(base, sanitize_filename(subdir))
-    if not os.path.exists(base):
-        os.makedirs(base)
-    return base
-
-# Helper Cek Setting
-def check_user_setting(user, key):
-    if user.get(key): return True
-    uid = user.get('user_id')
-    if uid and bot_set.user_data.get(uid, {}).get(key): return True
-    return False
+        user_dir = os.path.join(user_dir, sanitize_filename(subdir))
+    
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir)
+    return user_dir
 
 async def download_with_ytdlp(url, output_path):
     def run_ytdlp():
@@ -100,7 +95,6 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # Inject info
             track["track_number"] = str(i + 1)
             track["track_count"] = str(total)
             track["label_name"] = data.get("label_name")
@@ -120,29 +114,25 @@ async def process_album_gaana(identifier, user, session, api):
     # FIX ZIP
     await edit_message(msg, "Memproses Album...")
     zip_path = None
-    if check_user_setting(user, 'zip') or check_user_setting(user, 'zip_mode'):
+    is_zip = user.get('zip', False)
+    
+    if is_zip:
          await edit_message(msg, "Membuat ZIP...")
-         zip_base = os.path.join(ensure_download_dir(user), sanitize_filename(album_title))
-         zip_path = shutil.make_archive(zip_base, 'zip', album_dir)
+         parent_dir = os.path.dirname(album_dir)
+         zip_name = sanitize_filename(album_title)
+         output_path = os.path.join(parent_dir, zip_name)
+         zip_path = shutil.make_archive(output_path, 'zip', album_dir)
 
     metadata = {
         'type': 'album', 'title': album_title,
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
         'zip_path': zip_path,
-        'poster_msg': None, # Manual poster
+        'poster_msg': False, # Matikan poster manual
         'provider': 'Gaana',
         'release_date': data.get("release_date", ""),
         'track_count': total
     }
-
-    # FIX POSTER
-    if check_user_setting(user, 'poster') or check_user_setting(user, 'art_poster'):
-        try:
-            caption = await format_string(lang.s.ALBUM_TEMPLATE, metadata, user)
-            await edit_art_poster(metadata, user, None, None, caption)
-        except Exception as e:
-            LOGGER.error(f"Gagal poster gaana: {e}")
 
     await album_upload(metadata, user)
 
@@ -153,19 +143,16 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     
     decrypted_url = api.decrypt_stream_path(enc_path)
     
-    # --- FIX 320kbps (Super Agresif) ---
+    # FIX 320kbps (Replace ke 'high' atau '320')
+    # Coba berbagai pola penggantian URL
     final_url = decrypted_url
-    
-    # Logic Replace URL sesuai gaana.py user
-    # Biasa formatnya: blabla/medium.mp4 atau blabla/f.mp4
     if "medium.mp4" in final_url: final_url = final_url.replace("medium.mp4", "320.mp4")
     elif "128.mp4" in final_url: final_url = final_url.replace("128.mp4", "320.mp4")
-    elif "f.mp4" in final_url: final_url = final_url.replace("f.mp4", "320.mp4") 
+    elif "64.mp4" in final_url: final_url = final_url.replace("64.mp4", "320.mp4")
+    elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
     else: 
-        # Jika tidak ada pola, coba ganti ekstensi saja
         final_url = final_url.replace(".mp4", "_320.mp4")
 
-    # Download
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     filename = f"{sanitize_filename(title)}.m4a"
     path = os.path.join(dl_dir, filename)
@@ -183,7 +170,6 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
 
     if not os.path.exists(path): raise Exception("Fail DL")
 
-    # Cover
     artwork_url = track_info.get('artwork', '').replace('size_s', 'size_l')
     cover_path = os.path.join(dl_dir, "cover.jpg")
     if artwork_url and not os.path.exists(cover_path):
