@@ -54,21 +54,15 @@ async def start_jiosaavn(link: str, user: dict):
         
         for i, track in enumerate(tracks):
             try:
-                # Cari Token ID
                 song_token = None
                 if 'perma_url' in track:
                     song_token = track['perma_url'].split('/')[-1]
-                elif 'url' in track: # Kadang key-nya url
+                elif 'url' in track:
                     song_token = track['url'].split('/')[-1]
                 
-                if not song_token:
-                    LOGGER.warning(f"Track {i+1} skip: Tidak ada token.")
-                    continue
+                if not song_token: continue
 
                 await edit_message(msg, f"[{i+1}/{total}] Mengunduh: {track.get('song', 'Unknown')}...")
-                
-                # Kita panggil process_track standar agar lebih stabil
-                # (Fetch metadata fresh + Auth URL fresh)
                 await process_track(song_token, user, session, api, is_album=True)
                 
             except Exception as e:
@@ -88,17 +82,19 @@ async def process_track(token_id, user, session, api, is_album=False):
 
         title = track_data.get("song")
         enc_url = track_data.get("encrypted_media_url")
+        # Ambil preview URL untuk fallback
+        preview_url = track_data.get("media_preview_url") 
         image_url = track_data.get("image", "").replace("150x150", "500x500")
 
         if not enc_url:
             raise Exception("URL media terenkripsi tidak ditemukan.")
 
-        # 2. Link Download
-        dl_url = await api.get_auth_url(session, enc_url)
+        # 2. Link Download (Kirim preview_url sebagai cadangan)
+        dl_url = await api.get_auth_url(session, enc_url, preview_url)
         if not dl_url:
             raise Exception("Gagal generate link download.")
 
-        # 3. Download File dengan Headers (FIX PENTING)
+        # 3. Download File
         filename = f"{sanitize_filename(title)}.m4a"
         dl_dir = ensure_download_dir(user)
         file_path = os.path.join(dl_dir, filename)
@@ -113,12 +109,11 @@ async def process_track(token_id, user, session, api, is_album=False):
             async with aiofiles.open(file_path, mode='wb') as f:
                 await f.write(await resp.read())
 
-        # Cek validitas file
         if os.path.getsize(file_path) < 1000:
              os.remove(file_path)
-             raise Exception("File kosong/corrupt (Geoblock?).")
+             raise Exception("File kosong/corrupt.")
 
-        # 4. Download Cover
+        # 4. Cover & Metadata
         cover_path = None
         if image_url:
             cover_path = os.path.join(dl_dir, "cover.jpg")
@@ -128,12 +123,11 @@ async def process_track(token_id, user, session, api, is_album=False):
                         async with aiofiles.open(cover_path, mode='wb') as f:
                             await f.write(await resp.read())
 
-        # 5. Metadata
         try:
              await set_jiosaavn_metadata(file_path, track_data, cover_path)
         except: pass
 
-        # 6. Upload
+        # 5. Upload
         chat_id = user.get('chat_id')
         client = user.get('client')
         if not client: from bot.tgclient import aio as client
@@ -155,5 +149,4 @@ async def process_track(token_id, user, session, api, is_album=False):
 
     except Exception as e:
         LOGGER.error(f"JioSaavn Error: {e}")
-        if not is_album:
-            raise e
+        if not is_album: raise e
