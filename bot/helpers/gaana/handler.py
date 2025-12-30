@@ -1,7 +1,8 @@
 import os
 import re
 import asyncio
-import aiofiles  # <--- INI YANG HILANG SEBELUMNYA
+import shutil
+import aiofiles
 from bot.logger import LOGGER
 from bot.helpers.message import edit_message
 from .manager import gaana_manager
@@ -56,13 +57,14 @@ async def process_single_gaana(track, user, session, api):
     msg = user['bot_msg']
     await edit_message(msg, "Mengunduh...")
     try:
-        path, cover = await download_gaana_track(track, user, session, api)
+        path, cover, dur = await download_gaana_track(track, user, session, api)
         metadata = {
             'filepath': path,
             'title': track.get("track_title"),
             'artist': track.get("artist")[0]['name'] if track.get("artist") else "",
             'album': track.get("album_title"),
-            'cover': cover, 'provider': 'Gaana', 'type': 'track'
+            'cover': cover, 'provider': 'Gaana', 'type': 'track',
+            'duration': dur # FIX: Durasi
         }
         await track_upload(metadata, user)
         await edit_message(msg, "Selesai!")
@@ -79,6 +81,7 @@ async def process_album_gaana(identifier, user, session, api):
         return
 
     tracks = data['tracks']
+    # Ambil info album untuk folder name
     album_title = data.get("title") or tracks[0].get("album_title")
     album_dir = ensure_download_dir(user, subdir=album_title)
     
@@ -88,26 +91,27 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
+            # Inject info track agar metadata lengkap
+            track["track_number"] = str(i + 1)
+            track["track_count"] = str(total)
+            track["label_name"] = data.get("label_name") # Inherit label dari album
+            
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
-            path, cover = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
+            path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
+            
             downloaded.append({
                 'filepath': path, 'title': track.get("track_title"),
                 'artist': track.get("artist")[0]['name'] if track.get("artist") else "Unknown",
                 'album': album_title,
-                'cover': cover
+                'cover': cover, 'duration': dur # FIX: Durasi
             })
         except Exception as e:
             LOGGER.error(f"Skip Gaana: {e}")
 
-    if not downloaded:
-        raise Exception("Gagal mengunduh semua lagu dalam album.")
-
-    # ZIP & Poster Logic
+    # FIX ZIP LOGIC
     await edit_message(msg, "Memproses Album...")
     zip_path = None
-    should_zip = user.get('zip', False) or user.get('zip_mode', False)
-    
-    if should_zip:
+    if user.get('zip') or user.get('zip_mode'):
          await edit_message(msg, "Membuat ZIP...")
          zip_base = os.path.join(ensure_download_dir(user), sanitize_filename(album_title))
          zip_path = shutil.make_archive(zip_base, 'zip', album_dir)
@@ -117,7 +121,7 @@ async def process_album_gaana(identifier, user, session, api):
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
         'zip_path': zip_path,
-        'poster_msg': user.get('poster', False) or user.get('art_poster', False),
+        'poster_msg': user.get('poster') or user.get('art_poster'),
         'provider': 'Gaana'
     }
     await album_upload(metadata, user)
@@ -129,10 +133,15 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     
     decrypted_url = api.decrypt_stream_path(enc_path)
     
-    # Replacement URL untuk kualitas tinggi
-    final_url = decrypted_url.replace("medium.mp4", "high.mp4") \
-                             .replace("128.mp4", "320.mp4") \
-                             .replace("64.mp4", "320.mp4")
+    # --- FIX 320kbps (Lebih Agresif) ---
+    # Pola URL Gaana biasanya: .../medium.mp4, .../64.mp4, .../128.mp4
+    # Kita paksa replace ke 320.mp4 atau high.mp4
+    final_url = decrypted_url
+    if "medium.mp4" in final_url: final_url = final_url.replace("medium.mp4", "320.mp4")
+    elif "128.mp4" in final_url: final_url = final_url.replace("128.mp4", "320.mp4")
+    elif "64.mp4" in final_url: final_url = final_url.replace("64.mp4", "320.mp4")
+    elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
+    else: final_url = final_url.replace(".mp4", "_320.mp4") # Coba append jika tidak ada pola
                              
     # Download
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
@@ -141,10 +150,12 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     
     if os.path.exists(path): os.remove(path)
     
-    # Gunakan YT-DLP
-    await download_with_ytdlp(final_url, path)
+    # Coba download URL 320kbps
+    try:
+        await download_with_ytdlp(final_url, path)
+    except: pass
     
-    # Fallback jika gagal high quality
+    # Fallback ke URL asli (decrypted) jika 320 gagal
     if not os.path.exists(path) or os.path.getsize(path) < 10000:
          await download_with_ytdlp(decrypted_url, path)
 
@@ -159,5 +170,5 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
                 async with aiofiles.open(cover_path, mode='wb') as f:
                      await f.write(await resp.read())
     
-    await set_gaana_metadata(path, track_info, cover_path)
-    return path, cover_path
+    dur = await set_gaana_metadata(path, track_info, cover_path)
+    return path, cover_path, dur
