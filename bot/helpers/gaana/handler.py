@@ -53,7 +53,6 @@ async def process_single_gaana(track, user, session, api):
     msg = user['bot_msg']
     await edit_message(msg, "Mengunduh...")
     try:
-        # Inject info track
         track['track_number'] = 1
         track['track_count'] = 1
         
@@ -92,15 +91,14 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            current_num = i + 1
-            track["track_number"] = str(current_num)
+            track["track_number"] = str(i + 1)
             track["track_count"] = str(total)
             track["label_name"] = data.get("label_name")
             
             if track.get("parental_warning") == 1:
                 is_explicit_album = "True"
 
-            await edit_message(msg, f"[{current_num}/{total}] {track.get('track_title')}...")
+            await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
             
             downloaded.append({
@@ -124,6 +122,13 @@ async def process_album_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
+    # --- FIX TANGGAL RILIS GAANA ---
+    release_date = data.get("release_date")
+    if not release_date:
+        # Coba ambil dari track pertama jika di album kosong
+        release_date = tracks[0].get("release_date", "Unknown")
+    # -------------------------------
+
     if is_art_poster and downloaded:
         cover_file = downloaded[0]['cover']
         if cover_file and os.path.exists(cover_file):
@@ -131,7 +136,7 @@ async def process_album_gaana(identifier, user, session, api):
                 caption = (
                     f"**ᴛɪᴛʟᴇ :** {album_title}\n"
                     f"**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
-                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {data.get('release_date')}\n"
+                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n"
                     f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
                     f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
                     f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
@@ -147,7 +152,7 @@ async def process_album_gaana(identifier, user, session, api):
         'folderpath': album_dir, 'tracks': downloaded,
         'cover': downloaded[0]['cover'] if downloaded else None,
         'zip_path': zip_path, 'poster_msg': False, 
-        'provider': 'Gaana', 'release_date': data.get("release_date", ""),
+        'provider': 'Gaana', 'release_date': release_date,
         'track_count': total, 'quality': '320kbps'
     }
 
@@ -167,14 +172,13 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
     else: final_url = final_url.replace(".mp4", "_320.mp4")
 
-    # --- NOMOR PADA NAMA FILE (Format: 1 - Judul) ---
+    # Format: 1 - Judul
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
     if track_num:
         filename = f"{int(track_num)} - {safe_title}.m4a"
     else:
         filename = f"{safe_title}.m4a"
-    # -----------------------------------------------
 
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     path = os.path.join(dl_dir, filename)
@@ -189,7 +193,22 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
 
     if not os.path.exists(path): raise Exception("Fail DL")
 
-    artwork_url = track_info.get('artwork', '').replace('size_s', 'size_l')
+    # --- FIX COVER GAANA (Try Max Res) ---
+    artwork_url = track_info.get('artwork', '')
+    if artwork_url:
+        # Coba paksa ganti size_s/size_m ke size_xl atau hapus suffix crop
+        # Gaana URL: .../crop_80x80_123.jpg -> .../crop_480x480_123.jpg
+        if "crop_80x80" in artwork_url:
+            artwork_url = artwork_url.replace("crop_80x80", "crop_480x480")
+        elif "size_s" in artwork_url:
+            artwork_url = artwork_url.replace("size_s", "size_xl")
+        elif "size_m" in artwork_url:
+            artwork_url = artwork_url.replace("size_m", "size_xl")
+        else:
+            # General replace
+            artwork_url = artwork_url.replace("size_s", "size_xl")
+    # -------------------------------------
+
     cover_path = os.path.join(dl_dir, "cover.jpg")
     if artwork_url and not os.path.exists(cover_path):
         async with session.get(artwork_url) as resp:
