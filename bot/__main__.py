@@ -119,6 +119,20 @@ except ImportError:
     moov_manager = None
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Impor Manajer JioSaavn & Gaana ---
+try:
+    from .helpers.jiosaavn.manager import jiosaavn_manager
+except ImportError:
+    logging.warning("Gagal mengimpor 'jiosaavn_manager' (Mungkin folder belum dibuat).")
+    jiosaavn_manager = None
+
+try:
+    from .helpers.gaana.manager import gaana_manager
+except ImportError:
+    logging.warning("Gagal mengimpor 'gaana_manager' (Mungkin folder belum dibuat).")
+    gaana_manager = None
+# --- BATAS TAMBAHAN ---
+
 
 # --- FUNGSI BARU UNTUK MEMUAT PENGATURAN PENGGUNA ---
 
@@ -144,9 +158,9 @@ async def load_all_user_settings_into_managers():
             'napster_qual': napster_manager,
             'idagio_qual': idagio_manager,
             'bugs_qual': bugs_manager,
-            # --- TAMBAHAN BARU: Moov ---
             'moov_qual': moov_manager,
-            # --- BATAS TAMBAHAN ---
+            # JioSaavn dan Gaana saat ini menggunakan auto/best quality,
+            # jadi belum perlu disinkronkan ke sini kecuali Anda menambahkan fitur set kualitas user nanti.
         }
 
         # Loop melalui cache global bot_set yang SEKARANG SUDAH DIISI oleh initialize_users()
@@ -298,7 +312,6 @@ async def main():
     logging.info("Memulai inisialisasi Manajer Beatsource...")
     await beatsource_manager.initialize_clients()
     if beatsource_manager.clients:
-        # Anda mungkin ingin menambahkan: bot_set.beatsource = True 
         logging.info(f"Manajer Beatsource berhasil diinisialisasi dengan {len(beatsource_manager.clients)} klien.")
     else:
         logging.warning("PERINGATAN: Tidak ada akun Beatsource yang berhasil login!")
@@ -308,7 +321,6 @@ async def main():
     logging.info("Memulai inisialisasi Manajer Soundcloud...")
     await soundcloud_manager.initialize_clients()
     if soundcloud_manager.get_client():
-        # Anda mungkin ingin menambahkan: bot_set.soundcloud = True 
         logging.info(f"Manajer Soundcloud berhasil diinisialisasi.")
     else:
         logging.warning("PERINGATAN: Manajer Soundcloud gagal diinisialisasi (Token mungkin hilang)!")
@@ -374,6 +386,26 @@ async def main():
             logging.warning("PERINGATAN: Tidak ada akun Moov yang berhasil login!")
     # --- BATAS TAMBAHAN ---
 
+    # --- TAMBAHAN BARU: Inisialisasi JioSaavn ---
+    if jiosaavn_manager:
+        logging.info("Memulai inisialisasi Manajer JioSaavn...")
+        try:
+            await jiosaavn_manager.initialize_clients()
+            logging.info("Manajer JioSaavn berhasil diinisialisasi.")
+        except Exception as e:
+            logging.error(f"Gagal inisialisasi JioSaavn: {e}")
+    # --- BATAS TAMBAHAN ---
+
+    # --- TAMBAHAN BARU: Inisialisasi Gaana ---
+    if gaana_manager:
+        logging.info("Memulai inisialisasi Manajer Gaana...")
+        try:
+            await gaana_manager.initialize_clients()
+            logging.info("Manajer Gaana berhasil diinisialisasi.")
+        except Exception as e:
+            logging.error(f"Gagal inisialisasi Gaana: {e}")
+    # --- BATAS TAMBAHAN ---
+
     logging.info("Menginisialisasi data pengguna...")
     await bot_set.initialize_users()
     
@@ -419,7 +451,9 @@ async def shutdown_all_services(loop):
         "Nugs": nugs_manager,
         "Bugs": bugs_manager,
         "HIGHRESAUDIO": highresaudio_manager,
-        "Moov": moov_manager, # Tambahan Moov
+        "Moov": moov_manager, 
+        "JioSaavn": jiosaavn_manager, # Tambahan
+        "Gaana": gaana_manager,       # Tambahan
     }
 
     for name, manager in all_managers.items():
