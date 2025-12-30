@@ -1,11 +1,17 @@
 import os
 import re
-import aiohttp
-import aiofiles
+import asyncio
 from bot.logger import LOGGER
 from bot.helpers.message import edit_message
 from .manager import jiosaavn_manager
 from .metadata import set_jiosaavn_metadata
+import yt_dlp
+
+# --- IMPOR UPLOADER ---
+try:
+    from bot.helpers.uploder import track_upload
+except ImportError:
+    from bot.helpers.uploader import track_upload
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
@@ -19,6 +25,21 @@ def ensure_download_dir(user):
     if not os.path.exists(user['dir']):
         os.makedirs(user['dir'])
     return user['dir']
+
+async def download_jiosaavn_ytdlp(url, output_path):
+    def run_ytdlp():
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': output_path,
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+            'geo_bypass': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    
+    await asyncio.to_thread(run_ytdlp)
 
 async def start_jiosaavn(link: str, user: dict):
     msg = user['bot_msg']
@@ -55,22 +76,25 @@ async def start_jiosaavn(link: str, user: dict):
         for i, track in enumerate(tracks):
             try:
                 song_token = None
+                target_link = None
+                
                 if 'perma_url' in track:
-                    song_token = track['perma_url'].split('/')[-1]
+                    target_link = track['perma_url']
+                    song_token = target_link.split('/')[-1]
                 elif 'url' in track:
                     song_token = track['url'].split('/')[-1]
                 
                 if not song_token: continue
 
                 await edit_message(msg, f"[{i+1}/{total}] Mengunduh: {track.get('song', 'Unknown')}...")
-                await process_track(song_token, user, session, api, is_album=True)
+                await process_track(song_token, user, session, api, is_album=True, link_override=target_link)
                 
             except Exception as e:
                 LOGGER.error(f"Gagal download track JioSaavn {i+1}: {e}")
                 
         await edit_message(msg, "Download Album Selesai!")
 
-async def process_track(token_id, user, session, api, is_album=False):
+async def process_track(token_id, user, session, api, is_album=False, link_override=None):
     msg = user['bot_msg']
     if not is_album:
         await edit_message(msg, "Mengambil info lagu...")
@@ -81,68 +105,34 @@ async def process_track(token_id, user, session, api, is_album=False):
              raise Exception("Metadata lagu tidak ditemukan.")
 
         title = track_data.get("song")
-        enc_url = track_data.get("encrypted_media_url")
-        preview_url = track_data.get("media_preview_url") 
         image_url = track_data.get("image", "").replace("150x150", "500x500")
+        perma_url = track_data.get("perma_url")
 
-        # --- LOGIKA RETRY DOWNLOAD ---
-        dl_url = await api.get_auth_url(session, enc_url, preview_url)
-        
-        # Siapkan opsi fallback manual jika link yang didapat juga 404
-        # Ini terjadi jika generateAuthToken gagal, dan fallback di api.py mengembalikan link _320 yang ternyata mati
-        fallback_urls = []
-        if preview_url:
-            # Link 320kbps
-            fallback_urls.append(preview_url.replace("preview.saavncdn.com", "aac.saavncdn.com").replace("_96_p.mp4", "_320.mp4"))
-            # Link 160kbps (Cadangan jika 320 mati)
-            fallback_urls.append(preview_url.replace("preview.saavncdn.com", "aac.saavncdn.com").replace("_96_p.mp4", "_160.mp4"))
-        
-        # Tambahkan link utama ke antrian
-        download_queue = []
-        if dl_url: download_queue.append(dl_url)
-        download_queue.extend(fallback_urls)
-
-        # Hapus duplikat
-        download_queue = list(dict.fromkeys(download_queue))
-
-        if not download_queue:
-            raise Exception("Gagal membuat link download.")
+        dl_target = link_override if link_override else perma_url
+        if not dl_target: raise Exception("Link lagu tidak ditemukan.")
 
         filename = f"{sanitize_filename(title)}.m4a"
         dl_dir = ensure_download_dir(user)
         file_path = os.path.join(dl_dir, filename)
         
-        downloaded = False
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        if os.path.exists(file_path): os.remove(file_path)
 
-        # Loop semua kemungkinan URL sampai berhasil
-        for url in download_queue:
-            try:
-                LOGGER.info(f"Mencoba download dari: {url}")
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
-                        if len(content) > 10000: # Cek jika bukan file error kecil
-                            async with aiofiles.open(file_path, mode='wb') as f:
-                                await f.write(content)
-                            downloaded = True
-                            break
-                    else:
-                        LOGGER.warning(f"Gagal {url} dengan status {resp.status}")
-            except Exception as e:
-                LOGGER.error(f"Error koneksi ke {url}: {e}")
+        try:
+            await download_jiosaavn_ytdlp(dl_target, file_path)
+        except Exception as e:
+            raise Exception(f"yt-dlp gagal: {e}")
 
-        if not downloaded:
-             raise Exception("Gagal download: Semua link mengembalikan 404/Error.")
-        # -----------------------------
+        if not os.path.exists(file_path) or os.path.getsize(file_path) < 1000:
+             raise Exception("File gagal didownload (Kosong/404).")
 
-        # 4. Cover & Metadata
+        # Download Cover
         cover_path = None
         if image_url:
             cover_path = os.path.join(dl_dir, "cover.jpg")
             if not os.path.exists(cover_path):
                 async with session.get(image_url) as resp:
                     if resp.status == 200:
+                        import aiofiles
                         async with aiofiles.open(cover_path, mode='wb') as f:
                             await f.write(await resp.read())
 
@@ -150,22 +140,21 @@ async def process_track(token_id, user, session, api, is_album=False):
              await set_jiosaavn_metadata(file_path, track_data, cover_path)
         except: pass
 
-        # 5. Upload
-        chat_id = user.get('chat_id')
-        client = user.get('client')
-        if not client: from bot.tgclient import aio as client
+        # UPLOAD (via uploder.py)
+        if not is_album:
+             await edit_message(msg, "Mengunggah...")
+             
+        metadata = {
+            'filepath': file_path,
+            'title': title,
+            'artist': track_data.get("primary_artists", "Unknown"),
+            'album': track_data.get("album", "Unknown"),
+            'cover': cover_path,
+            'provider': 'JioSaavn',
+            'type': 'track'
+        }
         
-        await client.send_audio(
-            chat_id=chat_id,
-            audio=file_path,
-            thumb=cover_path,
-            title=title,
-            performer=track_data.get("primary_artists", "Unknown"),
-            caption="Via JioSaavn DL"
-        )
-        
-        try: os.remove(file_path)
-        except: pass
+        await track_upload(metadata, user)
 
         if not is_album:
             await edit_message(msg, "Selesai!")
