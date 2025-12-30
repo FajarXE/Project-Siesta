@@ -40,46 +40,25 @@ async def album_upload(metadata, user):
     
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
-        
     elif bot_set.upload_mode == 'Telegram':
-        # --- LOGIKA BARU: KIRIM ART POSTER DI TELEGRAM ---
-        # Cek apakah setting poster aktif, cover tersedia, dan filenya ada
-        if metadata.get('poster_msg') and metadata.get('cover') and os.path.exists(metadata['cover']):
-            try:
-                # Buat caption ringkas untuk poster
-                caption = await create_simple_text(metadata, user)
-                # Kirim gambar
-                await send_message(user, metadata['cover'], 'pic', caption=caption)
-            except Exception as e:
-                LOGGER.error(f"Gagal mengirim Art Poster: {e}")
-        # ------------------------------------------------
-
         if metadata.get('zip_path'):
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str):
                 zip_files = [zip_files] 
             
             for item in zip_files: 
-                # Kirim file ZIP
                 await send_message(user, item, 'doc', 
                     caption=await create_simple_text(metadata, user),
                     meta=metadata
                 )
         else:
             await batch_telegram_upload(metadata, user)
-            
     else:
-        # Mode Rclone / Lainnya
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
-        
         if metadata.get('poster_msg'):
             try:
-                if metadata.get('cover'):
-                    caption = await create_simple_text(metadata, user)
-                    await send_message(user, metadata['cover'], 'pic', caption=caption)
-                else:
-                    await post_simple_message(user, metadata, rclone_link, index_link)
-            except Exception:
+                await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ALBUM_TEMPLATE, metadata, user))
+            except MessageNotModified:
                 pass
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
@@ -103,10 +82,16 @@ async def artist_upload(metadata, user):
                     meta=metadata
                 )
         else:
-            pass # Artist biasanya selalu zip di telegram mode bot ini
+            pass # Artist telegram uploads are handled by album function usually
     else:
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
-        await post_simple_message(user, metadata, rclone_link, index_link)
+        if metadata.get('poster_msg'):
+            try:
+                await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ARTIST_TEMPLATE, metadata, user))
+            except MessageNotModified:
+                pass
+        else:
+            await post_simple_message(user, metadata, rclone_link, index_link)
 
     await cleanup(None, metadata, user_dict)
 
@@ -128,16 +113,8 @@ async def playlist_upload(metadata, user):
         else:
             await batch_telegram_upload(metadata, user)
     else:
-        # Rclone playlist logic
-        # Kita perlu memanggil fetch_zip_settings di sini jika ingin konsisten, 
-        # tapi karena file ini hanya helper uploader, kita asumsikan logic zip sudah di handler.
-        # Namun code bawaan anda mengecek bot_set.playlist_sort disini.
-        
-        # Pengecekan manual sederhana karena kita tidak punya akses langsung ke fetch_zip_settings di scope ini tanpa import
-        # (Asumsi metadata sudah membawa info zip_path jika di-zip)
-        has_zip = metadata.get('zip_path') is not None
-
-        if bot_set.playlist_sort and not has_zip:
+        playlist_zip, _, __ = fetch_zip_settings(user)
+        if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
                 await rclone_upload(user, f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
             else:
@@ -150,13 +127,22 @@ async def playlist_upload(metadata, user):
                         pass
         else:
             rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
-            await post_simple_message(user, metadata, rclone_link, index_link)
+            if metadata.get('poster_msg'):
+                try:
+                    await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.PLAYLIST_TEMPLATE, metadata, user))
+                except MessageNotModified:
+                    pass
+            else:
+                await post_simple_message(user, metadata, rclone_link, index_link)
 
     await cleanup(None, metadata, user)
 
 
 #
-#  CORE FUNGSI UPLOAD
+#
+#  CORE
+#
+#
 #
 
 async def rclone_upload(user, realpath):
@@ -198,20 +184,19 @@ async def local_upload(metadata, user):
     
     shutil.rmtree(to_move)
 
-
 async def telegram_upload(track, user, batch_mode=False): 
     meta = track.copy()
     meta['batch_mode'] = batch_mode
+    
+    # --- FIX CRITICAL: Pastikan cover bukan string kosong ---
     if 'cover' in meta and (not meta['cover'] or not os.path.exists(meta['cover'])):
-        meta['cover'] = None 
+        meta['cover'] = None # Paksa None jika string kosong atau file hilang
+    # --------------------------------------------------------
     
     user_copy = user
     if batch_mode and 'bot_msg' in user:
         user_copy = user.copy()
-        try:
-            del user_copy['bot_msg']
-        except KeyError:
-            pass
+        del user_copy['bot_msg']
     
     filepath = track.get('filepath')
 
