@@ -82,36 +82,59 @@ async def process_track(token_id, user, session, api, is_album=False):
 
         title = track_data.get("song")
         enc_url = track_data.get("encrypted_media_url")
-        # Ambil preview URL untuk fallback
         preview_url = track_data.get("media_preview_url") 
         image_url = track_data.get("image", "").replace("150x150", "500x500")
 
-        if not enc_url:
-            raise Exception("URL media terenkripsi tidak ditemukan.")
-
-        # 2. Link Download (Kirim preview_url sebagai cadangan)
+        # --- LOGIKA RETRY DOWNLOAD ---
         dl_url = await api.get_auth_url(session, enc_url, preview_url)
-        if not dl_url:
-            raise Exception("Gagal generate link download.")
+        
+        # Siapkan opsi fallback manual jika link yang didapat juga 404
+        # Ini terjadi jika generateAuthToken gagal, dan fallback di api.py mengembalikan link _320 yang ternyata mati
+        fallback_urls = []
+        if preview_url:
+            # Link 320kbps
+            fallback_urls.append(preview_url.replace("preview.saavncdn.com", "aac.saavncdn.com").replace("_96_p.mp4", "_320.mp4"))
+            # Link 160kbps (Cadangan jika 320 mati)
+            fallback_urls.append(preview_url.replace("preview.saavncdn.com", "aac.saavncdn.com").replace("_96_p.mp4", "_160.mp4"))
+        
+        # Tambahkan link utama ke antrian
+        download_queue = []
+        if dl_url: download_queue.append(dl_url)
+        download_queue.extend(fallback_urls)
 
-        # 3. Download File
+        # Hapus duplikat
+        download_queue = list(dict.fromkeys(download_queue))
+
+        if not download_queue:
+            raise Exception("Gagal membuat link download.")
+
         filename = f"{sanitize_filename(title)}.m4a"
         dl_dir = ensure_download_dir(user)
         file_path = os.path.join(dl_dir, filename)
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        downloaded = False
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
 
-        async with session.get(dl_url, headers=headers) as resp:
-            if resp.status != 200:
-                raise Exception(f"HTTP Error: {resp.status}")
-            async with aiofiles.open(file_path, mode='wb') as f:
-                await f.write(await resp.read())
+        # Loop semua kemungkinan URL sampai berhasil
+        for url in download_queue:
+            try:
+                LOGGER.info(f"Mencoba download dari: {url}")
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        if len(content) > 10000: # Cek jika bukan file error kecil
+                            async with aiofiles.open(file_path, mode='wb') as f:
+                                await f.write(content)
+                            downloaded = True
+                            break
+                    else:
+                        LOGGER.warning(f"Gagal {url} dengan status {resp.status}")
+            except Exception as e:
+                LOGGER.error(f"Error koneksi ke {url}: {e}")
 
-        if os.path.getsize(file_path) < 1000:
-             os.remove(file_path)
-             raise Exception("File kosong/corrupt.")
+        if not downloaded:
+             raise Exception("Gagal download: Semua link mengembalikan 404/Error.")
+        # -----------------------------
 
         # 4. Cover & Metadata
         cover_path = None
