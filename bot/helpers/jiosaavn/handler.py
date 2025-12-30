@@ -74,11 +74,9 @@ async def process_album(token_id, user, session, api):
         
         total = len(tracks)
         downloaded_tracks = []
+        is_explicit_album = "False"
         
         await edit_message(msg, f"Album: {album_title} ({total} tracks)")
-        
-        # Cek Explicit untuk Album (Jika salah satu lagu explicit, album dianggap explicit)
-        is_explicit_album = "False"
         
         for i, track in enumerate(tracks):
             try:
@@ -87,7 +85,6 @@ async def process_album(token_id, user, session, api):
                 full_track = await api.get_song_details(session, t_token)
                 if not full_track: full_track = track
                 
-                # Cek explicit per track
                 if str(full_track.get("explicit_content")) == "1":
                     is_explicit_album = "True"
 
@@ -117,21 +114,20 @@ async def process_album(token_id, user, session, api):
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', album_dir)
 
-        # --- FIX: MANUAL ART POSTER (STYLE BARU) ---
+        # --- FIX: MANUAL ART POSTER (BOLD LABEL) ---
         if is_art_poster and downloaded_tracks:
             cover_file = downloaded_tracks[0]['cover']
             if cover_file and os.path.exists(cover_file):
                 try:
-                    # Format Caption Custom Style
                     caption = (
-                        f"ᴛɪᴛʟᴇ : {album_title}\n"
-                        f"ᴀʀᴛɪsᴛ : {album_data.get('primary_artists')}\n"
-                        f"ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ : {album_data.get('year')}\n"
-                        f"ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs : {total}\n"
-                        f"ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs : 1\n"
-                        f"ǫᴜᴀʟɪᴛʏ : 320kbps\n"
-                        f"ᴘʀᴏᴠɪᴅᴇʀ : JioSaavn\n"
-                        f"ᴇxᴘʟɪᴄɪᴛ : {is_explicit_album}"
+                        f"**ᴛɪᴛʟᴇ** : {album_title}\n"
+                        f"**ᴀʀᴛɪsᴛ** : {album_data.get('primary_artists')}\n"
+                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ** : {album_data.get('year')}\n"
+                        f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs** : {total}\n"
+                        f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs** : 1\n"
+                        f"**ǫᴜᴀʟɪᴛʏ** : 320kbps\n"
+                        f"**ᴘʀᴏᴠɪᴅᴇʀ** : JioSaavn\n"
+                        f"**ᴇxᴘʟɪᴄɪᴛ** : {is_explicit_album}"
                     )
                     await send_message(user, cover_file, 'pic', caption=caption)
                 except Exception as e:
