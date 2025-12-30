@@ -293,11 +293,13 @@ async def run_download_task(link: str, user: dict):
             pass 
             
     finally:
-        await cleanup(user) # Hapus file
+        await cleanup(user) # Hapus file sementara
         
         try:
             if task_successful:
-                await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
+                # --- KOMENTARI BARIS INI AGAR PESAN TIDAK HILANG ---
+                # await aio.delete_messages(user['chat_id'], user['bot_msg'].id)
+                pass # Ganti dengan pass
         except:
             pass
 
