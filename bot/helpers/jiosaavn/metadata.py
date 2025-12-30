@@ -6,55 +6,45 @@ async def set_jiosaavn_metadata(file_path, track_data, album_art_path, lyrics=No
     try:
         audio = MP4(file_path)
         
-        # --- Basic Tags ---
+        # Basic
         audio["\xa9nam"] = track_data.get("song", "Unknown Title")
         audio["\xa9alb"] = track_data.get("album", "Unknown Album")
         audio["\xa9ART"] = track_data.get("primary_artists", "Unknown Artist")
         audio["aART"] = track_data.get("primary_artists", "Unknown Artist")
         audio["\xa9day"] = str(track_data.get("year", ""))
-        audio["\xa9wrt"] = track_data.get("music", "") # Composer
+        audio["\xa9wrt"] = track_data.get("music", "")
         
-        # --- Advanced Tags (Sesuai Referensi) ---
-        # Label & Copyright
+        # Advanced (Reference: jiosaavn.py)
         if track_data.get("label"):
             audio["----:TXXX:Record label"] = bytes(track_data["label"], 'utf-8')
             audio["cprt"] = track_data.get("copyright_text", track_data["label"])
         
-        # Language
         if track_data.get("language"):
             audio["----:TXXX:Language"] = bytes(track_data["language"].title(), 'utf-8')
             
-        # Rating (Explicit)
         if "explicit_content" in track_data:
             audio["rtng"] = [2 if int(track_data["explicit_content"]) == 0 else 4]
 
-        # Singers
+        # Tag Khusus JioSaavn
         if track_data.get("singers"):
              audio["----:TXXX:Singers"] = bytes(track_data["singers"], 'utf-8')
-
-        # Starring
         if track_data.get("starring"):
              audio["----:TXXX:Starring"] = bytes(track_data["starring"], 'utf-8')
-             
-        # Featured Artists
         if track_data.get("featured_artists"):
              audio["----:TXXX:Featured artists"] = bytes(track_data["featured_artists"], 'utf-8')
 
-        # Lyrics
         if lyrics:
             clean_lyrics = lyrics.replace("<br>", "\n")
             audio["\xa9lyr"] = clean_lyrics
 
-        # Cover Art
         if album_art_path:
             with open(album_art_path, "rb") as f:
                 audio["covr"] = [MP4Cover(f.read(), imageformat=MP4Cover.FORMAT_JPEG)]
         
-        # Hapus tag yang tidak perlu
         audio.pop("©too", None) 
         audio.save()
         
-        # --- Ambil Durasi ---
+        # Get Duration
         audio = MP4(file_path)
         duration = int(audio.info.length)
 
