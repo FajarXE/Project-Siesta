@@ -111,8 +111,32 @@ async def process_album(token_id, user, session, api):
         _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
         
         zip_path = None
+        
+        # Referensi Cover Utama (misal dari track pertama)
+        final_cover_path = None
+        if downloaded_tracks and downloaded_tracks[0].get('cover'):
+            final_cover_path = downloaded_tracks[0]['cover']
+
         if is_album_zip:
-             await edit_message(msg, "Mengompres (ZIP)...")
+             await edit_message(msg, "Membersihkan & Membuat ZIP...")
+             
+             # --- LOGIKA CLEANUP ALBUM ---
+             # 1. Simpan satu cover sebagai 'cover.jpg'
+             if final_cover_path and os.path.exists(final_cover_path):
+                 clean_cover = os.path.join(dl_dir, "cover.jpg")
+                 try:
+                    shutil.copy(final_cover_path, clean_cover)
+                    final_cover_path = clean_cover
+                 except: pass
+             
+             # 2. Hapus semua file gambar lain
+             for f in os.listdir(dl_dir):
+                 if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                     if f != "cover.jpg":
+                         try: os.remove(os.path.join(dl_dir, f))
+                         except: pass
+             # ----------------------------
+
              parent_dir = os.path.dirname(dl_dir)
              zip_name = sanitize_filename(title)
              base_name = os.path.join(parent_dir, zip_name)
@@ -120,24 +144,21 @@ async def process_album(token_id, user, session, api):
 
         release_date = album_data.get("release_date") or album_data.get("year", "Unknown")
 
-        if is_art_poster and downloaded_tracks:
-            cover_file = downloaded_tracks[0]['cover']
-            if cover_file and os.path.exists(cover_file):
-                try:
-                    # Caption Album Tetap Lengkap
-                    caption = (
-                        f"**ᴛɪᴛʟᴇ :** {title}\n**ᴀʀᴛɪsᴛ :** {album_data.get('primary_artists')}\n"
-                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
-                        f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
-                        f"**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
-                    )
-                    await send_message(user, cover_file, 'pic', caption=caption)
-                except Exception as e: LOGGER.error(f"Gagal poster: {e}")
+        if is_art_poster and final_cover_path and os.path.exists(final_cover_path):
+            try:
+                caption = (
+                    f"**ᴛɪᴛʟᴇ :** {title}\n**ᴀʀᴛɪsᴛ :** {album_data.get('primary_artists')}\n"
+                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
+                    f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
+                    f"**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
+                )
+                await send_message(user, final_cover_path, 'pic', caption=caption)
+            except Exception as e: LOGGER.error(f"Gagal poster: {e}")
 
         metadata = {
             'type': 'album', 'title': title, 'artist': album_data.get("primary_artists"), 
             'folderpath': dl_dir, 'tracks': downloaded_tracks, 
-            'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
+            'cover': final_cover_path,
             'zip_path': zip_path, 'poster_msg': False, 'provider': 'JioSaavn', 
             'release_date': release_date, 'track_count': total, 'quality': '320kbps'
         }
@@ -159,7 +180,6 @@ async def process_playlist(token_id, user, session, api, is_album=False):
         
         dl_dir = ensure_download_dir(user, subdir=title)
         
-        # --- FIX: DOWNLOAD COVER PLAYLIST UTAMA ---
         playlist_img = pl_data.get("image", "")
         playlist_cover_path = None
         if playlist_img:
@@ -172,7 +192,6 @@ async def process_playlist(token_id, user, session, api, is_album=False):
                             await f.write(await resp.read())
             except: 
                 playlist_cover_path = None
-        # ------------------------------------------
         
         total = len(tracks)
         downloaded_tracks = []
@@ -211,28 +230,22 @@ async def process_playlist(token_id, user, session, api, is_album=False):
         if is_pl_zip:
              await edit_message(msg, "Membersihkan & Membuat ZIP...")
              
-             # --- FIX: HAPUS COVER INDIVIDUAL SEBELUM ZIP ---
-             # Hanya sisakan playlist_cover.jpg agar di dalam zip cuma ada 1 gambar
+             # Hapus cover individual, sisakan playlist_cover.jpg
              for f in os.listdir(dl_dir):
                  if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                     # Hapus jika bukan playlist_cover.jpg
                      if f != "playlist_cover.jpg":
-                         try:
-                            os.remove(os.path.join(dl_dir, f))
+                         try: os.remove(os.path.join(dl_dir, f))
                          except: pass
-             # -----------------------------------------------
 
              parent_dir = os.path.dirname(dl_dir)
              zip_name = sanitize_filename(title)
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-        # Gunakan Playlist Cover untuk Poster
         poster_img = playlist_cover_path if (playlist_cover_path and os.path.exists(playlist_cover_path)) else (downloaded_tracks[0]['cover'] if downloaded_tracks else None)
 
         if is_art_poster and poster_img:
             try:
-                # --- FIX: Caption Singkat untuk Playlist ---
                 caption = (
                     f"**ᴛɪᴛʟᴇ :** {title}\n"
                     f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
@@ -305,8 +318,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
 
     if not downloaded: raise Exception("HTTP Error Download")
 
-    # --- FIX: Cover Unik Per Track (Sesuai Judul Lagu) ---
-    # Jangan pakai "cover.jpg" statis agar tidak tertimpa/sama semua
     cover_filename = f"{safe_title}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
     cover_downloaded = False
