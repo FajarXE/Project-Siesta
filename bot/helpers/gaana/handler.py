@@ -153,44 +153,77 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     tracks = data['tracks']
     
-    # --- FIX 1: JUDUL (Hapus "Gaana Dj") ---
-    title = data.get("title") or data.get("english_title") or data.get("name") or "Unknown Playlist"
+    # --- LOGIKA JUDUL ANTI-UNKNOWN ---
+    # 1. Cek semua key yang mungkin berisi judul
+    title_candidates = [
+        data.get("title"),
+        data.get("name"),
+        data.get("playlist_title"),
+        data.get("english_title")
+    ]
+    # Ambil yang tidak None dan tidak kosong
+    valid_titles = [t for t in title_candidates if t and str(t).strip()]
     
-    # 1. Decode HTML entities (misal &amp; -> &)
+    title = "Unknown Playlist"
+    if valid_titles:
+        title = valid_titles[0]
+
+    # 2. Jika judul masih "Unknown" atau sama dengan identifier, PAKSA dari URL
+    clean_identifier = identifier.replace("-", " ").title()
+    
+    if "Unknown" in title or title.lower() == identifier.lower():
+        title = clean_identifier
+
+    # 3. Hapus kata "Gaana DJ" dari judul (Case Insensitive)
+    title = re.sub(r'(?i)gaana\s*dj\s*', '', title).strip()
+    
+    # 4. Bersihkan HTML entities
     title = title.replace("&amp;", "&")
     
-    # 2. Hapus awalan "Gaana DJ" (Case Insensitive)
-    # Contoh: "Gaana Dj Hindi Top 50" -> "Hindi Top 50"
-    title = re.sub(r'(?i)^gaana\s*dj\s*', '', title).strip()
-    
-    # 3. Jika setelah dihapus kosong (atau awalnya cuma slug), format slugnya
-    if not title or title.lower() == identifier.lower():
-        title = identifier.replace("-", " ").title()
-        # Bersihkan lagi "Gaana Dj" dari hasil slug
-        title = re.sub(r'(?i)^gaana\s*dj\s*', '', title).strip()
-    # ---------------------------------------
+    # Final check: Jika kosong setelah dibersihkan, pakai slug
+    if not title:
+        title = clean_identifier
+    # ---------------------------------
     
     dl_dir = ensure_download_dir(user, subdir=title)
     
-    # --- FIX 2: COVER PLAYLIST ASLI ---
-    # Prioritaskan artwork_large karena biasanya resolusi paling tinggi untuk playlist
+    # --- LOGIKA COVER PLAYLIST (ROBUST) ---
+    # Prioritaskan artwork_large > artwork_web > artwork
     playlist_artwork = data.get("artwork_large") or data.get("artwork_web") or data.get("artwork")
     
     playlist_cover_path = None
     if playlist_artwork:
-        # Bersihkan URL dari crop dan resize ke XL
-        playlist_artwork = re.sub(r'crop_\d+x\d+_', '', playlist_artwork)
-        playlist_artwork = playlist_artwork.replace("size_s", "size_xl").replace("size_m", "size_xl")
-        
         playlist_cover_path = os.path.join(dl_dir, "playlist_cover.jpg")
+        
+        # Opsi 1: URL Modifikasi (High Res)
+        hq_artwork = re.sub(r'crop_\d+x\d+_', '', playlist_artwork)
+        hq_artwork = hq_artwork.replace("size_s", "size_xl").replace("size_m", "size_xl")
+        
+        download_success = False
+        
+        # Coba download High Res
         try:
-            async with session.get(playlist_artwork) as resp:
+            async with session.get(hq_artwork) as resp:
                 if resp.status == 200:
                     async with aiofiles.open(playlist_cover_path, mode='wb') as f:
                         await f.write(await resp.read())
-        except: 
+                    download_success = True
+        except: pass
+        
+        # Opsi 2: Jika High Res gagal (404), pakai URL ASLI (Original) dari API
+        if not download_success:
+            try:
+                async with session.get(playlist_artwork) as resp:
+                    if resp.status == 200:
+                        async with aiofiles.open(playlist_cover_path, mode='wb') as f:
+                            await f.write(await resp.read())
+                        download_success = True
+            except: pass
+            
+        # Jika semua gagal, set None agar fallback ke cover lagu
+        if not download_success:
             playlist_cover_path = None
-    # ----------------------------------
+    # --------------------------------------
 
     downloaded = []
     total = len(tracks)
@@ -227,7 +260,7 @@ async def process_playlist_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    # Gunakan Cover Playlist Asli
+    # Gunakan Cover Playlist (jika berhasil download), jika tidak pakai cover track 1
     poster_img = playlist_cover_path if (playlist_cover_path and os.path.exists(playlist_cover_path)) else (downloaded[0]['cover'] if downloaded else None)
 
     if is_art_poster and poster_img:
