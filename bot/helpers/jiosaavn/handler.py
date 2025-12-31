@@ -7,7 +7,7 @@ from bot.logger import LOGGER
 from bot.helpers.message import edit_message, send_message
 from .manager import jiosaavn_manager
 from .metadata import set_jiosaavn_metadata
-from bot.helpers.uploder import track_upload, album_upload 
+from bot.helpers.uploder import track_upload, album_upload, playlist_upload 
 from bot import Config
 from bot.helpers.utils import fetch_zip_settings 
 import yt_dlp
@@ -15,7 +15,8 @@ import yt_dlp
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
 
-URL_REGEX = re.compile(r"jiosaavn\.com/(song|album)/.+?/(.+)")
+# UPDATE REGEX: Menambahkan 'featured' dan 'playlist'
+URL_REGEX = re.compile(r"jiosaavn\.com/(song|album|featured|playlist)/.+?/(.+)")
 
 def ensure_download_dir(user, subdir=None):
     base_dir = Config.DOWNLOAD_BASE_DIR
@@ -36,10 +37,14 @@ async def start_jiosaavn(link: str, user: dict):
     if not match: return
 
     kind, token_id = match.groups()
+    
     if kind == 'song':
         await process_single_track(token_id, user, session, api)
     elif kind == 'album':
         await process_album(token_id, user, session, api)
+    # Tambahkan support playlist
+    elif kind in ['featured', 'playlist']:
+        await process_playlist(token_id, user, session, api)
 
 async def process_single_track(token_id, user, session, api):
     msg = user['bot_msg']
@@ -72,14 +77,14 @@ async def process_album(token_id, user, session, api):
         tracks = album_data.get("list") or album_data.get("songs") or []
         if not tracks: raise Exception("Album kosong.")
         
-        album_title = album_data.get("title", "Unknown Album")
-        album_dir = ensure_download_dir(user, subdir=album_title)
+        title = album_data.get("title", "Unknown Album")
+        dl_dir = ensure_download_dir(user, subdir=title)
         
         total = len(tracks)
         downloaded_tracks = []
-        is_explicit_album = "False"
+        is_explicit = "False"
         
-        await edit_message(msg, f"Album: {album_title} ({total} tracks)")
+        await edit_message(msg, f"Album: {title} ({total} tracks)")
         
         for i, track in enumerate(tracks):
             try:
@@ -88,15 +93,13 @@ async def process_album(token_id, user, session, api):
                 full_track = await api.get_song_details(session, t_token)
                 if not full_track: full_track = track
                 
-                current_num = i + 1
-                full_track['track_number'] = current_num
+                full_track['track_number'] = i + 1
                 full_track['total_tracks'] = total
                 
-                if str(full_track.get("explicit_content")) == "1":
-                    is_explicit_album = "True"
+                if str(full_track.get("explicit_content")) == "1": is_explicit = "True"
 
-                await edit_message(msg, f"[{current_num}/{total}] {full_track.get('song')}...")
-                path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=album_dir)
+                await edit_message(msg, f"[{i+1}/{total}] {full_track.get('song')}...")
+                path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=dl_dir)
                 
                 downloaded_tracks.append({
                     'filepath': path, 'title': full_track.get("song"),
@@ -106,80 +109,140 @@ async def process_album(token_id, user, session, api):
             except Exception as e:
                 LOGGER.error(f"Skip track {i}: {e}")
 
-        if not downloaded_tracks:
-            raise Exception("Gagal mengunduh semua lagu.")
+        if not downloaded_tracks: raise Exception("Gagal mengunduh semua lagu.")
 
         await edit_message(msg, "Memproses Album...")
-        
         _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
         
         zip_path = None
         if is_album_zip:
              await edit_message(msg, "Mengompres (ZIP)...")
-             parent_dir = os.path.dirname(album_dir)
-             zip_name = sanitize_filename(album_title)
+             parent_dir = os.path.dirname(dl_dir)
+             zip_name = sanitize_filename(title)
              base_name = os.path.join(parent_dir, zip_name)
-             zip_path = shutil.make_archive(base_name, 'zip', album_dir)
+             zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-        release_date = album_data.get("release_date")
-        if not release_date:
-            release_date = album_data.get("year", "Unknown")
+        release_date = album_data.get("release_date") or album_data.get("year", "Unknown")
 
         if is_art_poster and downloaded_tracks:
             cover_file = downloaded_tracks[0]['cover']
             if cover_file and os.path.exists(cover_file):
                 try:
                     caption = (
-                        f"**ᴛɪᴛʟᴇ :** {album_title}\n"
-                        f"**ᴀʀᴛɪsᴛ :** {album_data.get('primary_artists')}\n"
-                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n"
-                        f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
-                        f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
-                        f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
-                        f"**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n"
-                        f"**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit_album}"
+                        f"**ᴛɪᴛʟᴇ :** {title}\n**ᴀʀᴛɪsᴛ :** {album_data.get('primary_artists')}\n"
+                        f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
+                        f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
+                        f"**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
                     )
                     await send_message(user, cover_file, 'pic', caption=caption)
-                except Exception as e:
-                    LOGGER.error(f"Gagal kirim Poster JioSaavn: {e}")
+                except Exception as e: LOGGER.error(f"Gagal poster: {e}")
 
         metadata = {
-            'type': 'album', 'title': album_title,
-            'artist': album_data.get("primary_artists"), 'folderpath': album_dir,
-            'tracks': downloaded_tracks, 
+            'type': 'album', 'title': title, 'artist': album_data.get("primary_artists"), 
+            'folderpath': dl_dir, 'tracks': downloaded_tracks, 
             'cover': downloaded_tracks[0]['cover'] if downloaded_tracks else None,
-            'zip_path': zip_path, 'poster_msg': False, 
-            'provider': 'JioSaavn', 'release_date': release_date, 
-            'track_count': total, 'quality': '320kbps'
+            'zip_path': zip_path, 'poster_msg': False, 'provider': 'JioSaavn', 
+            'release_date': release_date, 'track_count': total, 'quality': '320kbps'
         }
-
         await album_upload(metadata, user)
         
     except Exception as e:
         LOGGER.error(f"JioSaavn Album Error: {e}")
         raise e
 
+async def process_playlist(token_id, user, session, api):
+    msg = user['bot_msg']
+    await edit_message(msg, "Mengambil data Playlist...")
+    try:
+        # Gunakan fungsi get_playlist_details yang baru ditambahkan
+        pl_data = await api.get_playlist_details(session, token_id)
+        tracks = pl_data.get("list") or pl_data.get("songs") or []
+        if not tracks: raise Exception("Playlist kosong.")
+        
+        title = pl_data.get("title", "Unknown Playlist")
+        dl_dir = ensure_download_dir(user, subdir=title)
+        
+        total = len(tracks)
+        downloaded_tracks = []
+        is_explicit = "False"
+        
+        await edit_message(msg, f"Playlist: {title} ({total} tracks)")
+        
+        for i, track in enumerate(tracks):
+            try:
+                t_token = track['perma_url'].split('/')[-1] if 'perma_url' in track else None
+                if not t_token: continue
+                full_track = await api.get_song_details(session, t_token)
+                if not full_track: full_track = track
+                
+                full_track['track_number'] = i + 1
+                full_track['total_tracks'] = total
+                if str(full_track.get("explicit_content")) == "1": is_explicit = "True"
+
+                await edit_message(msg, f"[{i+1}/{total}] {full_track.get('song')}...")
+                path, cover, dur = await download_track_file(full_track, user, session, api, custom_dir=dl_dir)
+                
+                downloaded_tracks.append({
+                    'filepath': path, 'title': full_track.get("song"),
+                    'artist': full_track.get("primary_artists"), 'album': full_track.get("album"),
+                    'cover': cover, 'duration': dur, 'quality': '320kbps'
+                })
+            except Exception as e:
+                LOGGER.error(f"Skip track {i}: {e}")
+
+        if not downloaded_tracks: raise Exception("Gagal mengunduh playlist.")
+
+        await edit_message(msg, "Memproses Playlist...")
+        # Cek ZIP setting khusus playlist (index ke-0)
+        is_pl_zip, _, _, is_art_poster = fetch_zip_settings(user)
+        
+        zip_path = None
+        if is_pl_zip:
+             await edit_message(msg, "Mengompres (ZIP)...")
+             parent_dir = os.path.dirname(dl_dir)
+             zip_name = sanitize_filename(title)
+             base_name = os.path.join(parent_dir, zip_name)
+             zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
+
+        if is_art_poster and downloaded_tracks:
+            cover_file = downloaded_tracks[0]['cover']
+            if cover_file and os.path.exists(cover_file):
+                try:
+                    caption = (
+                        f"**ᴛɪᴛʟᴇ :** {title}\n**ᴛʏᴘᴇ :** Playlist\n"
+                        f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
+                        f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
+                    )
+                    await send_message(user, cover_file, 'pic', caption=caption)
+                except: pass
+
+        metadata = {
+            'type': 'playlist', 'title': title, 'folderpath': dl_dir, 
+            'tracks': downloaded_tracks, 'cover': downloaded_tracks[0]['cover'],
+            'zip_path': zip_path, 'poster_msg': False, 'provider': 'JioSaavn', 
+            'track_count': total, 'quality': '320kbps'
+        }
+        # Gunakan playlist_upload
+        await playlist_upload(metadata, user)
+        
+    except Exception as e:
+        LOGGER.error(f"JioSaavn Playlist Error: {e}")
+        raise e
+
 async def download_track_file(track_data, user, session, api, custom_dir=None):
     title = track_data.get("song")
     enc_url = track_data.get("encrypted_media_url")
-    
-    # --- LOGIKA COVER BARU (1200x1200 -> 500x500) ---
     base_img = track_data.get("image", "")
-    # Default URL biasanya .../150x150.jpg
-    # Kita siapkan 2 kandidat
+    
     img_1200 = base_img.replace("150x150", "1200x1200").replace("50x50", "1200x1200")
     img_500 = base_img.replace("150x150", "500x500").replace("50x50", "500x500")
     
-    dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
-    
-    # Nama File: 1 - Judul
     track_num = track_data.get('track_number')
     safe_title = sanitize_filename(title)
-    if track_num:
-        filename = f"{int(track_num)} - {safe_title}.m4a"
-    else:
-        filename = f"{safe_title}.m4a"
+    if track_num: filename = f"{int(track_num)} - {safe_title}.m4a"
+    else: filename = f"{safe_title}.m4a"
 
+    dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     file_path = os.path.join(dl_dir, filename)
 
     dl_url = await api.get_auth_url(session, enc_url)
@@ -216,12 +279,10 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
 
     if not downloaded: raise Exception("HTTP Error Download")
 
-    # --- DOWNLOAD COVER (Max Res Logic) ---
     cover_path = os.path.join(dl_dir, "cover.jpg")
     cover_downloaded = False
     
     if not os.path.exists(cover_path) and base_img:
-        # Coba download 1200x1200 dulu
         try:
             async with session.get(img_1200) as resp:
                 if resp.status == 200:
@@ -230,7 +291,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
                     cover_downloaded = True
         except: pass
         
-        # Jika gagal, fallback ke 500x500
         if not cover_downloaded:
             try:
                 async with session.get(img_500) as resp:
@@ -238,7 +298,6 @@ async def download_track_file(track_data, user, session, api, custom_dir=None):
                         async with aiofiles.open(cover_path, mode='wb') as f:
                             await f.write(await resp.read())
             except: pass
-    # --------------------------------------
     
     lyrics = None
     if track_data.get("has_lyrics") == "true":
