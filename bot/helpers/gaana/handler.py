@@ -152,12 +152,17 @@ async def process_playlist_gaana(identifier, user, session, api):
         return
 
     tracks = data['tracks']
-    title = data.get("title") or "Unknown Playlist"
+    
+    # --- PERBAIKAN 1: Ambil Title dari 'name' jika 'title' kosong ---
+    title = data.get("name") or data.get("title") or "Unknown Playlist"
+    # ----------------------------------------------------------------
+    
     dl_dir = ensure_download_dir(user, subdir=title)
     
-    # --- FIX COVER PLAYLIST SPESIFIK ---
-    playlist_artwork = data.get("artwork_web") or data.get("artwork")
+    # --- PERBAIKAN 2: Download Cover Playlist Spesifik ---
+    playlist_artwork = data.get("artwork_web") or data.get("artwork") or data.get("artwork_large")
     playlist_cover_path = None
+    
     if playlist_artwork:
         # Hapus crop agar Full Res
         playlist_artwork = re.sub(r'crop_\d+x\d+_', '', playlist_artwork)
@@ -169,8 +174,9 @@ async def process_playlist_gaana(identifier, user, session, api):
                 if resp.status == 200:
                     async with aiofiles.open(playlist_cover_path, mode='wb') as f:
                         await f.write(await resp.read())
-        except: playlist_cover_path = None
-    # -----------------------------------
+        except: 
+            playlist_cover_path = None
+    # -----------------------------------------------------
 
     downloaded = []
     total = len(tracks)
@@ -207,7 +213,7 @@ async def process_playlist_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    # Gunakan Cover Playlist yang sudah didownload
+    # Gunakan Playlist Cover yang benar
     poster_img = playlist_cover_path if (playlist_cover_path and os.path.exists(playlist_cover_path)) else (downloaded[0]['cover'] if downloaded else None)
 
     if is_art_poster and poster_img:
@@ -222,8 +228,7 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     metadata = {
         'type': 'playlist', 'title': title, 'folderpath': dl_dir, 
-        'tracks': downloaded, 
-        'cover': poster_img, # Kirim cover playlist
+        'tracks': downloaded, 'cover': poster_img, 
         'zip_path': zip_path, 'poster_msg': False, 'provider': 'Gaana', 
         'track_count': total, 'quality': '320kbps'
     }
