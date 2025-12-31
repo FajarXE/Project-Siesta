@@ -125,6 +125,7 @@ async def process_album_gaana(identifier, user, session, api):
         cover_file = downloaded[0]['cover']
         if cover_file and os.path.exists(cover_file):
             try:
+                # --- FORMAT POSTER ALBUM (TETAP LENGKAP) ---
                 caption = (
                     f"**ᴛɪᴛʟᴇ :** {album_title}\n**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
                     f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
@@ -180,12 +181,7 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # [FIX 2] Gunakan Nomor Track Asli dari API jika ada.
-            # Jangan ditimpa dengan (i+1) agar sesuai album aslinya.
-            # Jika API tidak memberikan nomor track, metadata.py akan mengabaikannya.
-            # Kita hanya set track_count untuk total playlist jika diperlukan, tapi 
-            # untuk track number biarkan natural.
-            
+            # Menggunakan Nomor Track Asli dari API (tidak di-overwrite i+1)
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
             
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir)
@@ -204,8 +200,7 @@ async def process_playlist_gaana(identifier, user, session, api):
     
     is_pl_zip, _, _, is_art_poster = fetch_zip_settings(user)
     
-    # [FIX 1 & Logic Poster]
-    # Cari gambar project-siesta
+    # Cari gambar project-siesta untuk Poster & ZIP
     siesta_jpg = "project-siesta.jpg"
     siesta_png = "project-siesta.png"
     
@@ -215,31 +210,31 @@ async def process_playlist_gaana(identifier, user, session, api):
     elif os.path.exists(siesta_png):
         poster_img = siesta_png
     
-    # Bersihkan folder sebelum ZIP jika mode ZIP aktif
+    # --- LOGIKA ZIP BERSIH ---
     if is_pl_zip:
          await edit_message(msg, "Membersihkan & Membuat ZIP...")
          
          # 1. Hapus semua file gambar (cover lagu) di dalam folder playlist
-         # agar ZIP bersih dan hanya berisi lagu + project-siesta
          for f in os.listdir(dl_dir):
              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
                  try:
                      os.remove(os.path.join(dl_dir, f))
                  except: pass
          
-         # 2. Salin project-siesta ke dalam folder (jika ada)
+         # 2. Salin project-siesta ke dalam folder (sebagai satu-satunya cover)
          if poster_img:
-             shutil.copy(poster_img, os.path.join(dl_dir, "project-siesta.jpg"))
+             try:
+                shutil.copy(poster_img, os.path.join(dl_dir, "project-siesta.jpg"))
+             except: pass
 
          parent_dir = os.path.dirname(dl_dir)
          zip_name = sanitize_filename(title)
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    # Kirim Art Poster dengan Format Baru
+    # --- FORMAT POSTER PLAYLIST (SINGKAT) ---
     if is_art_poster and poster_img:
         try:
-            # [FIX 3] Format Caption Sederhana
             caption = (
                 f"**ᴛɪᴛʟᴇ :** {title}\n"
                 f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
@@ -301,7 +296,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
-    # Simpan cover unik sementara untuk embedding metadata
+    # Cover Unik per Lagu
     cover_filename = f"{safe_title}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
     
