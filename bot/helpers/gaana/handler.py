@@ -27,18 +27,6 @@ def ensure_download_dir(user, subdir=None):
         os.makedirs(user_dir)
     return user_dir
 
-# Fungsi bantu untuk direct download (Jauh lebih cepat dari yt-dlp)
-async def direct_download(session, url, path):
-    try:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                async with aiofiles.open(path, mode='wb') as f:
-                    await f.write(await resp.read())
-                return True
-    except:
-        pass
-    return False
-
 async def download_with_ytdlp(url, output_path):
     def run_ytdlp():
         ydl_opts = {'format': 'bestaudio/best', 'outtmpl': output_path, 'quiet': True}
@@ -126,26 +114,31 @@ async def process_album_gaana(identifier, user, session, api):
     
     zip_path = None
     
+    # Ambil cover dari track pertama sebagai cover utama album
     final_cover_path = None
     if downloaded and downloaded[0].get('cover'):
         final_cover_path = downloaded[0]['cover']
 
+    # Jika ZIP aktif, bersihkan folder dulu
     if is_album_zip:
          await edit_message(msg, "Membersihkan & Membuat ZIP...")
          
-         # Cleanup Album: Sisakan 1 cover.jpg
+         # --- LOGIKA CLEANUP ALBUM ---
+         # 1. Amankan cover utama (copy ke nama standar 'cover.jpg')
          if final_cover_path and os.path.exists(final_cover_path):
              clean_cover = os.path.join(dl_dir, "cover.jpg")
              try:
                 shutil.copy(final_cover_path, clean_cover)
-                final_cover_path = clean_cover
+                final_cover_path = clean_cover # Update reference
              except: pass
          
+         # 2. Hapus SEMUA gambar lain di folder
          for f in os.listdir(dl_dir):
              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                 if f != "cover.jpg":
+                 if f != "cover.jpg": # Jangan hapus cover utama yang baru kita amankan
                      try: os.remove(os.path.join(dl_dir, f))
                      except: pass
+         # ----------------------------
 
          parent_dir = os.path.dirname(dl_dir)
          zip_name = sanitize_filename(album_title)
@@ -155,16 +148,17 @@ async def process_album_gaana(identifier, user, session, api):
     release_date = data.get("release_date")
     if not release_date: release_date = tracks[0].get("release_date", "Unknown")
 
-    if is_art_poster and final_cover_path and os.path.exists(final_cover_path):
-        try:
-            caption = (
-                f"**ᴛɪᴛʟᴇ :** {album_title}\n**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
-                f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
-                f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
-                f"**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
-            )
-            await send_message(user, final_cover_path, 'pic', caption=caption)
-        except: pass
+    if is_art_poster and final_cover_path:
+        if os.path.exists(final_cover_path):
+            try:
+                caption = (
+                    f"**ᴛɪᴛʟᴇ :** {album_title}\n**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
+                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
+                    f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
+                    f"**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
+                )
+                await send_message(user, final_cover_path, 'pic', caption=caption)
+            except: pass
 
     metadata = {
         'type': 'album', 'title': album_title, 'folderpath': dl_dir, 
@@ -185,6 +179,7 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     tracks = data['tracks']
     
+    # --- JUDUL ---
     title_candidates = [data.get("title"), data.get("name"), data.get("playlist_title"), data.get("english_title")]
     valid_titles = [t for t in title_candidates if t and str(t).strip()]
     title = valid_titles[0] if valid_titles else "Unknown Playlist"
@@ -223,20 +218,23 @@ async def process_playlist_gaana(identifier, user, session, api):
     
     is_pl_zip, _, _, is_art_poster = fetch_zip_settings(user)
     
+    # Gambar Project Siesta
     siesta_jpg = "project-siesta.jpg"
     siesta_png = "project-siesta.png"
     poster_img = None
     if os.path.exists(siesta_jpg): poster_img = siesta_jpg
     elif os.path.exists(siesta_png): poster_img = siesta_png
     
+    # --- CLEAN ZIP LOGIC (Only project-siesta) ---
     if is_pl_zip:
          await edit_message(msg, "Membersihkan & Membuat ZIP...")
-         # Cleanup Playlist: Hanya sisakan project-siesta
+         # 1. Hapus SEMUA gambar yang ada di folder download (cover per track)
          for f in os.listdir(dl_dir):
              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
                  try: os.remove(os.path.join(dl_dir, f))
                  except: pass
          
+         # 2. Copy project-siesta (jika ada)
          if poster_img:
              try: shutil.copy(poster_img, os.path.join(dl_dir, "project-siesta.jpg"))
              except: pass
@@ -246,6 +244,7 @@ async def process_playlist_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
+    # --- SIMPLE POSTER CAPTION ---
     if is_art_poster and poster_img:
         try:
             caption = (
@@ -271,10 +270,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     enc_path = track_info.get('urls', {}).get('auto', {}).get('message')
     if not enc_path: raise Exception("No stream")
     
-    # 1. Dapatkan URL asli hasil dekripsi
     decrypted_url = api.decrypt_stream_path(enc_path)
-    
-    # 2. Buat URL tebakan kualitas tinggi (320kbps)
     final_url = decrypted_url
     if "medium.mp4" in final_url: final_url = final_url.replace("medium.mp4", "320.mp4")
     elif "128.mp4" in final_url: final_url = final_url.replace("128.mp4", "320.mp4")
@@ -285,6 +281,8 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
 
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
+    
+    # Format: "1 - Judul.m4a"
     if track_num: 
         filename = f"{int(track_num)} - {safe_title}.m4a"
     else: 
@@ -294,30 +292,21 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     path = os.path.join(dl_dir, filename)
     
     if os.path.exists(path): os.remove(path)
-
-    # --- OPTIMASI SPEED: Direct Download via aiohttp ---
-    # Coba link 320kbps dulu
-    downloaded = await direct_download(session, final_url, path)
+    try:
+        await download_with_ytdlp(final_url, path)
+    except: pass
     
-    # Jika gagal atau file kekecilan (kurang dari 10KB), coba link asli (decrypted)
-    if not downloaded or os.path.getsize(path) < 10000:
-        downloaded = await direct_download(session, decrypted_url, path)
+    if not os.path.exists(path) or os.path.getsize(path) < 10000:
+         await download_with_ytdlp(decrypted_url, path)
 
-    # Fallback terakhir ke yt-dlp jika direct download masih gagal (misal stream m3u8)
-    if not downloaded or os.path.getsize(path) < 10000:
-        try:
-            await download_with_ytdlp(decrypted_url, path)
-        except: pass
-
-    if not os.path.exists(path) or os.path.getsize(path) < 10000: 
-        raise Exception("Fail DL")
-    # ---------------------------------------------------
+    if not os.path.exists(path): raise Exception("Fail DL")
 
     artwork_url = track_info.get('artwork', '')
     if artwork_url:
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
+    # Cover Unik per Lagu
     cover_filename = f"{safe_title}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
     
