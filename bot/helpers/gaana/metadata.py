@@ -1,10 +1,11 @@
-import os
+import os  # <-- INI YANG HILANG DAN MENYEBABKAN ERROR 'os is not defined'
 from mutagen.mp4 import MP4, MP4Cover
 from bot.logger import LOGGER
 
 async def set_gaana_metadata(file_path, track_data, album_art_path):
     duration = 0
     try:
+        # Cek apakah file ada sebelum diproses (mencegah error lanjutan)
         if not os.path.exists(file_path):
             return 0
 
@@ -42,12 +43,11 @@ async def set_gaana_metadata(file_path, track_data, album_art_path):
         audio["cprt"] = label 
         audio["----:TXXX:Record label"] = bytes(label, 'utf-8')
 
-        # --- NOMOR TRACK (METADATA ASLI) ---
-        # Menggunakan track_number asli dari album, bukan urutan playlist
+        # --- NOMOR TRACK ---
         if track_data.get("track_number"):
              try:
                  t_num = int(track_data["track_number"])
-                 t_cnt = 0 # Gaana jarang mengirim total track album di endpoint lagu
+                 t_cnt = 0 
                  audio["trkn"] = [(t_num, t_cnt)]
              except: pass
 
