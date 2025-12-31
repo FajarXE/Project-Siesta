@@ -154,60 +154,51 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     tracks = data['tracks']
     
-    # --- LOGIKA JUDUL BARU (ANTI UNKNOWN) ---
-    # 1. Cek kunci yang mungkin ada
+    # --- JUDUL FIX ---
     api_title = data.get("title") or data.get("name") or data.get("playlist_title") or data.get("english_title")
-    
-    # 2. Ambil dari URL (identifier) sebagai cadangan
-    # contoh: gaana-dj-punjabi-top-50 -> Punjabi Top 50
     slug_title = identifier.replace("-", " ").title()
-
     if api_title and "Unknown" not in api_title:
         title = api_title
     else:
         title = slug_title
-        
-    # 3. Bersihkan "Gaana DJ" dan HTML entities
+    
     title = re.sub(r'(?i)gaana\s*dj\s*', '', title).strip()
     title = title.replace("&amp;", "&")
-    
-    # Jika hasil bersih kosong, fallback lagi ke slug
-    if not title: 
-        title = slug_title
-    # ----------------------------------------
+    if not title: title = slug_title
     
     dl_dir = ensure_download_dir(user, subdir=title)
     
-    # --- DOWNLOAD COVER PLAYLIST (ROBUST) ---
+    # --- COVER PLAYLIST FIX (Agar Muncul di Poster & ZIP) ---
     playlist_artwork = data.get("artwork_large") or data.get("artwork_web") or data.get("artwork")
     
-    # Nama file cover playlist KHUSUS (beda dengan cover lagu)
     playlist_cover_path = os.path.join(dl_dir, "playlist_cover_final.jpg")
     playlist_cover_exists = False
 
     if playlist_artwork:
-        # Coba 1: High Res (Hapus crop, ganti ke XL)
-        hq_url = re.sub(r'crop_\d+x\d+_', '', playlist_artwork)
-        hq_url = hq_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
+        # STRATEGI BARU: 
+        # 1. Coba URL Asli dulu (Paling aman, pasti muncul)
+        # 2. Kalau gagal, baru coba URL modifikasi (High Res)
         
-        # Coba 2: Original URL
         orig_url = playlist_artwork
+        hq_url = re.sub(r'crop_\d+x\d+_', '', playlist_artwork).replace("size_s", "size_xl").replace("size_m", "size_xl")
         
-        urls_to_try = [hq_url, orig_url]
+        # Urutan: Original -> HighRes (Fallback kalau original gagal/kecil, tapi Original biasanya 100% connect)
+        urls_to_try = [orig_url, hq_url]
         
         for url in urls_to_try:
             try:
                 async with session.get(url) as resp:
                     if resp.status == 200:
-                        async with aiofiles.open(playlist_cover_path, mode='wb') as f:
-                            await f.write(await resp.read())
-                        playlist_cover_exists = True
-                        break
+                        content = await resp.read()
+                        if len(content) > 1000: # Pastikan file tidak kosong
+                            async with aiofiles.open(playlist_cover_path, mode='wb') as f:
+                                await f.write(content)
+                            playlist_cover_exists = True
+                            break
             except: pass
             
-    # Jika gagal download cover playlist, path jadi None
     if not playlist_cover_exists: playlist_cover_path = None
-    # ----------------------------------------
+    # -------------------------------------------------------
 
     downloaded = []
     total = len(tracks)
@@ -221,7 +212,6 @@ async def process_playlist_gaana(identifier, user, session, api):
 
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
             
-            # Download lagu (cover lagu disimpan beda nama agar tidak timpa playlist cover)
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir, playlist_index=i+1)
             
             downloaded.append({
@@ -244,9 +234,9 @@ async def process_playlist_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    # PILIH COVER UNTUK POSTER:
-    # 1. Cover Playlist (jika sukses download)
-    # 2. Cover Lagu Pertama (fallback)
+    # PILIH COVER YANG VALID UNTUK POSTER & ZIP
+    # Jika cover playlist sukses download, pakai itu.
+    # Jika gagal, ambil cover dari lagu pertama yang sukses didownload.
     final_poster = playlist_cover_path if playlist_cover_exists else (downloaded[0]['cover'] if downloaded else None)
 
     if is_art_poster and final_poster and os.path.exists(final_poster):
@@ -263,7 +253,7 @@ async def process_playlist_gaana(identifier, user, session, api):
     metadata = {
         'type': 'playlist', 'title': title, 'folderpath': dl_dir, 
         'tracks': downloaded, 
-        'cover': final_poster, # Kirim path cover yang benar ke uploader
+        'cover': final_poster, # Mengirim path cover yang benar ke uploader untuk ZIP Thumbnail
         'zip_path': zip_path, 'poster_msg': False, 'provider': 'Gaana', 
         'track_count': total, 'quality': '320kbps'
     }
@@ -304,14 +294,14 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None, 
 
     if not os.path.exists(path): raise Exception("Fail DL")
 
+    # Cover Unik per Track
     artwork_url = track_info.get('artwork', '')
     if artwork_url:
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
-    # Cover Lagu: Pakai ID Lagu agar unik
     track_id = track_info.get("track_id", "unknown")
-    cover_filename = f"cover_{track_id}.jpg" 
+    cover_filename = f"cover_{track_id}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
     
     if artwork_url and not os.path.exists(cover_path):
@@ -322,7 +312,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None, 
     
     dur = await set_gaana_metadata(path, track_info, cover_path)
     
-    # Hapus cover lagu individual setelah embed (Opsional, biar bersih)
+    # Hapus cover lagu individual setelah embed (biar ga menuhin folder)
     if os.path.exists(cover_path):
         try: os.remove(cover_path)
         except: pass
