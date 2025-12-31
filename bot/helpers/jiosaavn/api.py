@@ -12,6 +12,7 @@ class JioSaavnAPI:
         async with session.get(self.base_url, params=params, headers=self.headers) as resp:
             try:
                 text = await resp.text()
+                # API kadang mengembalikan komentar JSON, kita bersihkan
                 return json.loads(text.split('-->')[-1] if '-->' in text else text)
             except:
                 return None
@@ -31,12 +32,18 @@ class JioSaavnAPI:
             '__call': 'webapi.get', 'token': token, 'type': 'album', '_format': 'json', 'ctx': 'web6dot0'
         })
 
-    # --- FUNGSI BARU UNTUK PLAYLIST ---
+    # --- PERBAIKAN: Tambah n=1000 agar full track ---
     async def get_playlist_details(self, session: aiohttp.ClientSession, token: str):
         return await self._get(session, {
-            '__call': 'webapi.get', 'token': token, 'type': 'playlist', '_format': 'json', 'ctx': 'web6dot0'
+            '__call': 'webapi.get', 
+            'token': token, 
+            'type': 'playlist', 
+            'n': '1000', # Limit lagu
+            'p': '1',    # Page 1
+            '_format': 'json', 
+            'ctx': 'web6dot0'
         })
-    # ----------------------------------
+    # ------------------------------------------------
 
     async def get_lyrics(self, session: aiohttp.ClientSession, song_id: str):
         data = await self._get(session, {
