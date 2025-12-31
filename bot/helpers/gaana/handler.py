@@ -92,7 +92,7 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # UNTUK ALBUM: Urutan list API biasanya sesuai urutan album (1, 2, 3...)
+            # UNTUK ALBUM: Urutan list API biasanya sesuai urutan album
             if not track.get("track_number"):
                 track["track_number"] = str(i + 1)
             
@@ -176,27 +176,36 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # --- PERBAIKAN UTAMA: FETCH DETAIL SETIAP LAGU ---
-            # Kita TIDAK PERCAYA data dari object playlist. 
-            # Kita ambil ulang metadata langsung dari ID lagunya.
+            # --- AGGRESSIVE TRACK NUMBER FETCHING ---
+            # Kita bersihkan dulu data 'track_number' bawaan playlist yang mungkin salah/kosong
+            track.pop("track_number", None)
+            
+            real_track_num = None
+            
+            # 1. Cek detail via API
             if track.get("track_id"):
                 try:
-                    # Request detail metadata lagu (ini yang mengandung info album asli)
                     song_detail = await api.get_metadata(session, track.get("track_id"), 'songDetail')
-                    
                     if song_detail and 'tracks' in song_detail and song_detail['tracks']:
-                        real_track_data = song_detail['tracks'][0]
+                        real_data = song_detail['tracks'][0]
+                        # Update semua info track dengan data asli
+                        track.update(real_data)
                         
-                        # Timpa metadata track playlist dengan metadata asli dari Song Detail
-                        # Ini akan mengisi 'track_number', 'album_title', dll yang benar
-                        track.update(real_track_data)
-                        
+                        # Cari nomor track secara eksplisit di data asli
+                        real_track_num = real_data.get("track_number") or real_data.get("track_index") or real_data.get("index")
                 except Exception as e:
-                    LOGGER.warning(f"Gagal fetch detail lagu utk {track.get('track_title')}: {e}")
+                    LOGGER.warning(f"Gagal fetch detail lagu: {e}")
+            
+            # 2. Assign nomor track jika ditemukan
+            if real_track_num:
+                track["track_number"] = real_track_num
+            else:
+                # JANGAN gunakan (i+1). Biarkan kosong jika API tidak memberikannya.
+                # Ini akan menghasilkan file tanpa nomor (Judul.m4a), sesuai "jangan berurutan".
+                pass
 
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
             
-            # Download menggunakan metadata yang sudah di-update (track_number asli)
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir)
             
             downloaded.append({
@@ -220,16 +229,16 @@ async def process_playlist_gaana(identifier, user, session, api):
     if os.path.exists(siesta_jpg): poster_img = siesta_jpg
     elif os.path.exists(siesta_png): poster_img = siesta_png
     
-    # --- CLEAN ZIP LOGIC ---
+    # --- CLEAN ZIP LOGIC (Only project-siesta) ---
     if is_pl_zip:
          await edit_message(msg, "Membersihkan & Membuat ZIP...")
-         # 1. Hapus cover individual
+         # 1. Hapus SEMUA gambar yang ada di folder download (cover per track)
          for f in os.listdir(dl_dir):
              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
                  try: os.remove(os.path.join(dl_dir, f))
                  except: pass
          
-         # 2. Copy siesta image
+         # 2. Copy project-siesta (jika ada)
          if poster_img:
              try: shutil.copy(poster_img, os.path.join(dl_dir, "project-siesta.jpg"))
              except: pass
@@ -277,9 +286,12 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
     
-    # Nama file menggunakan nomor track jika ada
-    if track_num: filename = f"{int(track_num)} - {safe_title}.m4a"
-    else: filename = f"{safe_title}.m4a"
+    # Gunakan nomor track jika ada dan valid
+    # Jika tidak ada, gunakan nama file tanpa nomor (tidak urut)
+    if track_num and str(track_num).strip() != "0": 
+        filename = f"{int(track_num)} - {safe_title}.m4a"
+    else: 
+        filename = f"{safe_title}.m4a"
 
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     path = os.path.join(dl_dir, filename)
@@ -299,6 +311,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
+    # Download cover sementara untuk metadata (akan dihapus oleh clean zip logic nanti)
     cover_filename = f"{safe_title}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
     
