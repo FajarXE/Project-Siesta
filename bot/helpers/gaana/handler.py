@@ -7,7 +7,7 @@ from bot.logger import LOGGER
 from bot.helpers.message import edit_message, send_message
 from .manager import gaana_manager
 from .metadata import set_gaana_metadata
-from bot.helpers.uploder import track_upload, album_upload
+from bot.helpers.uploder import track_upload, album_upload, playlist_upload
 from bot import Config
 from bot.helpers.utils import fetch_zip_settings
 import yt_dlp 
@@ -48,6 +48,9 @@ async def start_gaana(link: str, user: dict):
             await process_single_gaana(data['tracks'][0], user, session, api)
     elif content_type == 'album':
         await process_album_gaana(identifier, user, session, api)
+    # Tambahkan support playlist
+    elif content_type == 'playlist':
+        await process_playlist_gaana(identifier, user, session, api)
 
 async def process_single_gaana(track, user, session, api):
     msg = user['bot_msg']
@@ -58,12 +61,10 @@ async def process_single_gaana(track, user, session, api):
         
         path, cover, dur = await download_gaana_track(track, user, session, api)
         metadata = {
-            'filepath': path,
-            'title': track.get("track_title"),
+            'filepath': path, 'title': track.get("track_title"),
             'artist': track.get("artist")[0]['name'] if track.get("artist") else "",
-            'album': track.get("album_title"),
-            'cover': cover, 'provider': 'Gaana', 'type': 'track',
-            'duration': dur, 'quality': '320kbps'
+            'album': track.get("album_title"), 'cover': cover, 'provider': 'Gaana', 
+            'type': 'track', 'duration': dur, 'quality': '320kbps'
         }
         await track_upload(metadata, user)
         await edit_message(msg, "Selesai!")
@@ -81,81 +82,135 @@ async def process_album_gaana(identifier, user, session, api):
 
     tracks = data['tracks']
     album_title = data.get("title") or tracks[0].get("album_title")
-    album_dir = ensure_download_dir(user, subdir=album_title)
+    dl_dir = ensure_download_dir(user, subdir=album_title)
     
     downloaded = []
     total = len(tracks)
-    is_explicit_album = "False"
+    is_explicit = "False"
 
     await edit_message(msg, f"Album: {album_title} ({total} tracks)")
 
     for i, track in enumerate(tracks):
         try:
-            current_num = i + 1
-            track["track_number"] = str(current_num)
+            track["track_number"] = str(i + 1)
             track["track_count"] = str(total)
             track["label_name"] = data.get("label_name")
-            
-            if track.get("parental_warning") == 1:
-                is_explicit_album = "True"
+            if track.get("parental_warning") == 1: is_explicit = "True"
 
-            await edit_message(msg, f"[{current_num}/{total}] {track.get('track_title')}...")
-            path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=album_dir)
+            await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
+            path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir)
             
             downloaded.append({
                 'filepath': path, 'title': track.get("track_title"),
                 'artist': track.get("artist")[0]['name'] if track.get("artist") else "Unknown",
-                'album': album_title, 'cover': cover, 'duration': dur,
-                'quality': '320kbps'
+                'album': album_title, 'cover': cover, 'duration': dur, 'quality': '320kbps'
             })
         except Exception as e:
             LOGGER.error(f"Skip Gaana: {e}")
 
     await edit_message(msg, "Memproses Album...")
-    
     _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
     
     zip_path = None
     if is_album_zip:
          await edit_message(msg, "Membuat ZIP...")
-         parent_dir = os.path.dirname(album_dir)
+         parent_dir = os.path.dirname(dl_dir)
          zip_name = sanitize_filename(album_title)
          base_name = os.path.join(parent_dir, zip_name)
-         zip_path = shutil.make_archive(base_name, 'zip', album_dir)
+         zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    # Fix Release Date
     release_date = data.get("release_date")
-    if not release_date:
-        release_date = tracks[0].get("release_date", "Unknown")
+    if not release_date: release_date = tracks[0].get("release_date", "Unknown")
 
     if is_art_poster and downloaded:
         cover_file = downloaded[0]['cover']
         if cover_file and os.path.exists(cover_file):
             try:
                 caption = (
-                    f"**ᴛɪᴛʟᴇ :** {album_title}\n"
-                    f"**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
-                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n"
-                    f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
-                    f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
-                    f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
-                    f"**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n"
-                    f"**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit_album}"
+                    f"**ᴛɪᴛʟᴇ :** {album_title}\n**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
+                    f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
+                    f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
+                    f"**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
                 )
                 await send_message(user, cover_file, 'pic', caption=caption)
-            except Exception as e:
-                LOGGER.error(f"Gagal kirim poster Gaana: {e}")
+            except: pass
 
     metadata = {
-        'type': 'album', 'title': album_title,
-        'folderpath': album_dir, 'tracks': downloaded,
-        'cover': downloaded[0]['cover'] if downloaded else None,
-        'zip_path': zip_path, 'poster_msg': False, 
-        'provider': 'Gaana', 'release_date': release_date,
+        'type': 'album', 'title': album_title, 'folderpath': dl_dir, 
+        'tracks': downloaded, 'cover': downloaded[0]['cover'] if downloaded else None,
+        'zip_path': zip_path, 'poster_msg': False, 'provider': 'Gaana', 
+        'release_date': release_date, 'track_count': total, 'quality': '320kbps'
+    }
+    await album_upload(metadata, user)
+
+async def process_playlist_gaana(identifier, user, session, api):
+    msg = user['bot_msg']
+    await edit_message(msg, "Mengambil data Playlist...")
+    data = await api.get_metadata(session, identifier, 'playlistDetail')
+    
+    if not data or 'tracks' not in data:
+        await edit_message(msg, "Playlist gagal.")
+        return
+
+    tracks = data['tracks']
+    title = data.get("title") or "Unknown Playlist"
+    dl_dir = ensure_download_dir(user, subdir=title)
+    
+    downloaded = []
+    total = len(tracks)
+    is_explicit = "False"
+
+    await edit_message(msg, f"Playlist: {title} ({total} tracks)")
+
+    for i, track in enumerate(tracks):
+        try:
+            track["track_number"] = str(i + 1)
+            track["track_count"] = str(total)
+            if track.get("parental_warning") == 1: is_explicit = "True"
+
+            await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
+            path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir)
+            
+            downloaded.append({
+                'filepath': path, 'title': track.get("track_title"),
+                'artist': track.get("artist")[0]['name'] if track.get("artist") else "Unknown",
+                'album': title, 'cover': cover, 'duration': dur, 'quality': '320kbps'
+            })
+        except Exception as e:
+            LOGGER.error(f"Skip Gaana: {e}")
+
+    await edit_message(msg, "Memproses Playlist...")
+    
+    # Playlist ZIP settings
+    is_pl_zip, _, _, is_art_poster = fetch_zip_settings(user)
+    
+    zip_path = None
+    if is_pl_zip:
+         await edit_message(msg, "Membuat ZIP...")
+         parent_dir = os.path.dirname(dl_dir)
+         zip_name = sanitize_filename(title)
+         base_name = os.path.join(parent_dir, zip_name)
+         zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
+
+    if is_art_poster and downloaded:
+        cover_file = downloaded[0]['cover']
+        if cover_file and os.path.exists(cover_file):
+            try:
+                caption = (
+                    f"**ᴛɪᴛʟᴇ :** {title}\n**ᴛʏᴘᴇ :** Playlist\n"
+                    f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
+                    f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
+                )
+                await send_message(user, cover_file, 'pic', caption=caption)
+            except: pass
+
+    metadata = {
+        'type': 'playlist', 'title': title, 'folderpath': dl_dir, 
+        'tracks': downloaded, 'cover': downloaded[0]['cover'] if downloaded else None,
+        'zip_path': zip_path, 'poster_msg': False, 'provider': 'Gaana', 
         'track_count': total, 'quality': '320kbps'
     }
-
-    await album_upload(metadata, user)
+    await playlist_upload(metadata, user)
 
 async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     title = track_info.get("track_title")
@@ -171,13 +226,10 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
     else: final_url = final_url.replace(".mp4", "_320.mp4")
 
-    # Nama File: 1 - Judul
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
-    if track_num:
-        filename = f"{int(track_num)} - {safe_title}.m4a"
-    else:
-        filename = f"{safe_title}.m4a"
+    if track_num: filename = f"{int(track_num)} - {safe_title}.m4a"
+    else: filename = f"{safe_title}.m4a"
 
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     path = os.path.join(dl_dir, filename)
@@ -192,12 +244,9 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
 
     if not os.path.exists(path): raise Exception("Fail DL")
 
-    # --- FIX COVER ORIGINAL (Max Res) ---
     artwork_url = track_info.get('artwork', '')
     if artwork_url:
-        # Menghapus 'crop_..._' dari URL untuk mendapatkan file asli
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
-        # Atau fallback ganti size_s ke size_xl jika pola crop tidak ada
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
     cover_path = os.path.join(dl_dir, "cover.jpg")
