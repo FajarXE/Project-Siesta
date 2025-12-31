@@ -55,7 +55,6 @@ async def process_single_gaana(track, user, session, api):
     msg = user['bot_msg']
     await edit_message(msg, "Mengunduh...")
     try:
-        # Single track: Default 1/1
         track['track_number'] = 1
         track['track_count'] = 1
         
@@ -92,7 +91,6 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # UNTUK ALBUM: Urutan list API biasanya sesuai urutan album
             if not track.get("track_number"):
                 track["track_number"] = str(i + 1)
             
@@ -115,8 +113,33 @@ async def process_album_gaana(identifier, user, session, api):
     _, is_album_zip, _, is_art_poster = fetch_zip_settings(user)
     
     zip_path = None
+    
+    # Ambil cover dari track pertama sebagai cover utama album
+    final_cover_path = None
+    if downloaded and downloaded[0].get('cover'):
+        final_cover_path = downloaded[0]['cover']
+
+    # Jika ZIP aktif, bersihkan folder dulu
     if is_album_zip:
-         await edit_message(msg, "Membuat ZIP...")
+         await edit_message(msg, "Membersihkan & Membuat ZIP...")
+         
+         # --- LOGIKA CLEANUP ALBUM ---
+         # 1. Amankan cover utama (copy ke nama standar 'cover.jpg')
+         if final_cover_path and os.path.exists(final_cover_path):
+             clean_cover = os.path.join(dl_dir, "cover.jpg")
+             try:
+                shutil.copy(final_cover_path, clean_cover)
+                final_cover_path = clean_cover # Update reference
+             except: pass
+         
+         # 2. Hapus SEMUA gambar lain di folder
+         for f in os.listdir(dl_dir):
+             if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                 if f != "cover.jpg": # Jangan hapus cover utama yang baru kita amankan
+                     try: os.remove(os.path.join(dl_dir, f))
+                     except: pass
+         # ----------------------------
+
          parent_dir = os.path.dirname(dl_dir)
          zip_name = sanitize_filename(album_title)
          base_name = os.path.join(parent_dir, zip_name)
@@ -125,23 +148,21 @@ async def process_album_gaana(identifier, user, session, api):
     release_date = data.get("release_date")
     if not release_date: release_date = tracks[0].get("release_date", "Unknown")
 
-    if is_art_poster and downloaded:
-        cover_file = downloaded[0]['cover']
-        if cover_file and os.path.exists(cover_file):
+    if is_art_poster and final_cover_path:
+        if os.path.exists(final_cover_path):
             try:
-                # --- FORMAT POSTER ALBUM (LENGKAP) ---
                 caption = (
                     f"**ᴛɪᴛʟᴇ :** {album_title}\n**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
                     f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
                     f"**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n**ǫᴜᴀʟɪᴛʏ :** 320kbps\n"
                     f"**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
                 )
-                await send_message(user, cover_file, 'pic', caption=caption)
+                await send_message(user, final_cover_path, 'pic', caption=caption)
             except: pass
 
     metadata = {
         'type': 'album', 'title': album_title, 'folderpath': dl_dir, 
-        'tracks': downloaded, 'cover': downloaded[0]['cover'] if downloaded else None,
+        'tracks': downloaded, 'cover': final_cover_path,
         'zip_path': zip_path, 'poster_msg': False, 'provider': 'Gaana', 
         'release_date': release_date, 'track_count': total, 'quality': '320kbps'
     }
@@ -176,7 +197,6 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # --- SET NOMOR BERURUTAN ---
             track["track_number"] = str(i + 1)
             track["track_count"] = str(total)
 
@@ -262,8 +282,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
     
-    # --- FORMAT PENAMAAN FILE (NOMOR - JUDUL) ---
-    # Sesuai request: "1 - Judul.m4a" (bukan "1. Judul" atau "1 Judul")
+    # Format: "1 - Judul.m4a"
     if track_num: 
         filename = f"{int(track_num)} - {safe_title}.m4a"
     else: 
@@ -287,7 +306,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
-    # Download cover sementara untuk metadata (akan dihapus oleh clean zip logic nanti)
+    # Cover Unik per Lagu
     cover_filename = f"{safe_title}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
     
