@@ -15,7 +15,6 @@ import yt_dlp
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
 
-# UPDATE REGEX: Menambahkan 'featured' dan 'playlist'
 URL_REGEX = re.compile(r"jiosaavn\.com/(song|album|featured|playlist)/.+?/(.+)")
 
 def ensure_download_dir(user, subdir=None):
@@ -37,12 +36,10 @@ async def start_jiosaavn(link: str, user: dict):
     if not match: return
 
     kind, token_id = match.groups()
-    
     if kind == 'song':
         await process_single_track(token_id, user, session, api)
     elif kind == 'album':
         await process_album(token_id, user, session, api)
-    # Tambahkan support playlist
     elif kind in ['featured', 'playlist']:
         await process_playlist(token_id, user, session, api)
 
@@ -95,7 +92,6 @@ async def process_album(token_id, user, session, api):
                 
                 full_track['track_number'] = i + 1
                 full_track['total_tracks'] = total
-                
                 if str(full_track.get("explicit_content")) == "1": is_explicit = "True"
 
                 await edit_message(msg, f"[{i+1}/{total}] {full_track.get('song')}...")
@@ -154,13 +150,31 @@ async def process_playlist(token_id, user, session, api):
     msg = user['bot_msg']
     await edit_message(msg, "Mengambil data Playlist...")
     try:
-        # Gunakan fungsi get_playlist_details yang baru ditambahkan
         pl_data = await api.get_playlist_details(session, token_id)
         tracks = pl_data.get("list") or pl_data.get("songs") or []
         if not tracks: raise Exception("Playlist kosong.")
         
-        title = pl_data.get("title", "Unknown Playlist")
+        # --- FIX TITLE (Cek 'listname' dulu, lalu 'title') ---
+        title = pl_data.get("listname") or pl_data.get("title") or "Unknown Playlist"
+        # -----------------------------------------------------
+        
         dl_dir = ensure_download_dir(user, subdir=title)
+        
+        # --- FIX COVER PLAYLIST SPESIFIK ---
+        playlist_img = pl_data.get("image", "")
+        playlist_cover_path = None
+        if playlist_img:
+            # Resolusi Tinggi
+            img_url = playlist_img.replace("150x150", "500x500").replace("50x50", "500x500")
+            playlist_cover_path = os.path.join(dl_dir, "playlist_cover.jpg")
+            try:
+                async with session.get(img_url) as resp:
+                    if resp.status == 200:
+                        async with aiofiles.open(playlist_cover_path, mode='wb') as f:
+                            await f.write(await resp.read())
+            except: 
+                playlist_cover_path = None
+        # -----------------------------------
         
         total = len(tracks)
         downloaded_tracks = []
@@ -193,7 +207,6 @@ async def process_playlist(token_id, user, session, api):
         if not downloaded_tracks: raise Exception("Gagal mengunduh playlist.")
 
         await edit_message(msg, "Memproses Playlist...")
-        # Cek ZIP setting khusus playlist (index ke-0)
         is_pl_zip, _, _, is_art_poster = fetch_zip_settings(user)
         
         zip_path = None
@@ -204,25 +217,26 @@ async def process_playlist(token_id, user, session, api):
              base_name = os.path.join(parent_dir, zip_name)
              zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-        if is_art_poster and downloaded_tracks:
-            cover_file = downloaded_tracks[0]['cover']
-            if cover_file and os.path.exists(cover_file):
-                try:
-                    caption = (
-                        f"**ᴛɪᴛʟᴇ :** {title}\n**ᴛʏᴘᴇ :** Playlist\n"
-                        f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
-                        f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
-                    )
-                    await send_message(user, cover_file, 'pic', caption=caption)
-                except: pass
+        # Gunakan Playlist Cover yang benar untuk Poster
+        poster_img = playlist_cover_path if (playlist_cover_path and os.path.exists(playlist_cover_path)) else (downloaded_tracks[0]['cover'] if downloaded_tracks else None)
+
+        if is_art_poster and poster_img:
+            try:
+                caption = (
+                    f"**ᴛɪᴛʟᴇ :** {title}\n**ᴛʏᴘᴇ :** Playlist\n"
+                    f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
+                    f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n**ᴘʀᴏᴠɪᴅᴇʀ :** JioSaavn\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
+                )
+                await send_message(user, poster_img, 'pic', caption=caption)
+            except: pass
 
         metadata = {
             'type': 'playlist', 'title': title, 'folderpath': dl_dir, 
-            'tracks': downloaded_tracks, 'cover': downloaded_tracks[0]['cover'],
+            'tracks': downloaded_tracks, 
+            'cover': poster_img, # Kirim cover playlist yang benar ke uploader
             'zip_path': zip_path, 'poster_msg': False, 'provider': 'JioSaavn', 
             'track_count': total, 'quality': '320kbps'
         }
-        # Gunakan playlist_upload
         await playlist_upload(metadata, user)
         
     except Exception as e:
