@@ -48,7 +48,6 @@ async def start_gaana(link: str, user: dict):
             await process_single_gaana(data['tracks'][0], user, session, api)
     elif content_type == 'album':
         await process_album_gaana(identifier, user, session, api)
-    # Tambahkan support playlist
     elif content_type == 'playlist':
         await process_playlist_gaana(identifier, user, session, api)
 
@@ -156,6 +155,23 @@ async def process_playlist_gaana(identifier, user, session, api):
     title = data.get("title") or "Unknown Playlist"
     dl_dir = ensure_download_dir(user, subdir=title)
     
+    # --- FIX COVER PLAYLIST SPESIFIK ---
+    playlist_artwork = data.get("artwork_web") or data.get("artwork")
+    playlist_cover_path = None
+    if playlist_artwork:
+        # Hapus crop agar Full Res
+        playlist_artwork = re.sub(r'crop_\d+x\d+_', '', playlist_artwork)
+        playlist_artwork = playlist_artwork.replace("size_s", "size_xl").replace("size_m", "size_xl")
+        
+        playlist_cover_path = os.path.join(dl_dir, "playlist_cover.jpg")
+        try:
+            async with session.get(playlist_artwork) as resp:
+                if resp.status == 200:
+                    async with aiofiles.open(playlist_cover_path, mode='wb') as f:
+                        await f.write(await resp.read())
+        except: playlist_cover_path = None
+    # -----------------------------------
+
     downloaded = []
     total = len(tracks)
     is_explicit = "False"
@@ -181,7 +197,6 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     await edit_message(msg, "Memproses Playlist...")
     
-    # Playlist ZIP settings
     is_pl_zip, _, _, is_art_poster = fetch_zip_settings(user)
     
     zip_path = None
@@ -192,21 +207,23 @@ async def process_playlist_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    if is_art_poster and downloaded:
-        cover_file = downloaded[0]['cover']
-        if cover_file and os.path.exists(cover_file):
-            try:
-                caption = (
-                    f"**ᴛɪᴛʟᴇ :** {title}\n**ᴛʏᴘᴇ :** Playlist\n"
-                    f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
-                    f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
-                )
-                await send_message(user, cover_file, 'pic', caption=caption)
-            except: pass
+    # Gunakan Cover Playlist yang sudah didownload
+    poster_img = playlist_cover_path if (playlist_cover_path and os.path.exists(playlist_cover_path)) else (downloaded[0]['cover'] if downloaded else None)
+
+    if is_art_poster and poster_img:
+        try:
+            caption = (
+                f"**ᴛɪᴛʟᴇ :** {title}\n**ᴛʏᴘᴇ :** Playlist\n"
+                f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
+                f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
+            )
+            await send_message(user, poster_img, 'pic', caption=caption)
+        except: pass
 
     metadata = {
         'type': 'playlist', 'title': title, 'folderpath': dl_dir, 
-        'tracks': downloaded, 'cover': downloaded[0]['cover'] if downloaded else None,
+        'tracks': downloaded, 
+        'cover': poster_img, # Kirim cover playlist
         'zip_path': zip_path, 'poster_msg': False, 'provider': 'Gaana', 
         'track_count': total, 'quality': '320kbps'
     }
