@@ -172,36 +172,62 @@ async def process_playlist_gaana(identifier, user, session, api):
     downloaded = []
     total = len(tracks)
 
+    # Cache untuk menyimpan data album yang sudah diambil agar hemat kuota/waktu
+    album_cache = {} 
+
     await edit_message(msg, f"Playlist: {title} ({total} tracks)")
 
     for i, track in enumerate(tracks):
         try:
-            # --- AGGRESSIVE TRACK NUMBER FETCHING ---
-            # Kita bersihkan dulu data 'track_number' bawaan playlist yang mungkin salah/kosong
+            # --- SUPER AGGRESSIVE TRACK NUMBER FIX ---
+            # Hapus data track_number bawaan playlist (seringkali salah/urut)
             track.pop("track_number", None)
             
-            real_track_num = None
+            final_track_num = None
             
-            # 1. Cek detail via API
+            # Step 1: Cek Song Detail
             if track.get("track_id"):
                 try:
                     song_detail = await api.get_metadata(session, track.get("track_id"), 'songDetail')
                     if song_detail and 'tracks' in song_detail and song_detail['tracks']:
                         real_data = song_detail['tracks'][0]
-                        # Update semua info track dengan data asli
-                        track.update(real_data)
+                        track.update(real_data) # Update info lain
                         
-                        # Cari nomor track secara eksplisit di data asli
-                        real_track_num = real_data.get("track_number") or real_data.get("track_index") or real_data.get("index")
+                        raw_num = real_data.get("track_number") or real_data.get("index")
+                        if raw_num and str(raw_num) != "0":
+                            final_track_num = raw_num
+                        
+                        # Step 2: Jika masih kosong, CEK KE ALBUM ASLINYA (Cross-Check)
+                        album_id = real_data.get("album_id")
+                        track_id = real_data.get("track_id")
+                        
+                        if not final_track_num and album_id:
+                            # Cek cache dulu
+                            if album_id in album_cache:
+                                album_data = album_cache[album_id]
+                            else:
+                                # Fetch album detail
+                                album_data = await api.get_metadata(session, album_id, 'albumDetail')
+                                if album_data: album_cache[album_id] = album_data
+                            
+                            # Cari lagu ini di dalam list album tersebut
+                            if album_data and 'tracks' in album_data:
+                                for idx, alb_track in enumerate(album_data['tracks']):
+                                    # Cocokkan ID
+                                    if str(alb_track.get('track_id')) == str(track_id):
+                                        # HORE! Ketemu posisi aslinya.
+                                        # Gunakan track_number dari album, atau index+1
+                                        final_track_num = alb_track.get('track_number') or str(idx + 1)
+                                        break
+                                        
                 except Exception as e:
-                    LOGGER.warning(f"Gagal fetch detail lagu: {e}")
+                    LOGGER.warning(f"Gagal deep fetch lagu: {e}")
             
-            # 2. Assign nomor track jika ditemukan
-            if real_track_num:
-                track["track_number"] = real_track_num
+            # Terapkan nomor yang ditemukan
+            if final_track_num:
+                track["track_number"] = final_track_num
             else:
-                # JANGAN gunakan (i+1). Biarkan kosong jika API tidak memberikannya.
-                # Ini akan menghasilkan file tanpa nomor (Judul.m4a), sesuai "jangan berurutan".
+                # Biarkan kosong, jangan pakai (i+1)
                 pass
 
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
@@ -286,8 +312,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
     
-    # Gunakan nomor track jika ada dan valid
-    # Jika tidak ada, gunakan nama file tanpa nomor (tidak urut)
+    # Gunakan nomor track jika ada dan valid (tidak nol)
     if track_num and str(track_num).strip() != "0": 
         filename = f"{int(track_num)} - {safe_title}.m4a"
     else: 
