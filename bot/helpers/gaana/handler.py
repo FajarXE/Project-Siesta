@@ -13,7 +13,6 @@ from bot.helpers.utils import fetch_zip_settings
 import yt_dlp 
 
 def sanitize_filename(name: str) -> str:
-    # Bersihkan nama file dari karakter ilegal
     return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
 
 URL_REGEX = re.compile(r"gaana\.com/(song|album|playlist)/(.+)")
@@ -154,29 +153,31 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     tracks = data['tracks']
     
-    # --- FIX TITLE PRIORITY ---
-    # Prioritaskan 'title' (Display Name) daripada 'name' (Slug)
-    title = data.get("title") or data.get("english_title") or data.get("playlist_title") or data.get("name") or "Unknown Playlist"
+    # --- FIX 1: JUDUL PLAYLIST (Deep Search) ---
+    # Gaana kadang menaruh judul di english_title atau playlist_title untuk Top Charts
+    title = data.get("title")
+    if not title: title = data.get("english_title")
+    if not title: title = data.get("playlist_title")
+    if not title: title = data.get("name") # Fallback ke Slug jika semua kosong
     
-    # Jika title masih sama dengan identifier (slug), coba format manual
-    if title == identifier:
-        title = identifier.replace("-", " ").title()
-        
-    # Bersihkan HTML entity (seperti &amp;)
+    # Jika masih kosong, gunakan identifier dan rapikan
+    if not title: title = identifier.replace("-", " ").title()
+    
+    # Bersihkan HTML entity
     title = title.replace("&amp;", "&")
-    # --------------------------
+    # ------------------------------------------
     
     dl_dir = ensure_download_dir(user, subdir=title)
     
-    # --- FIX COVER PLAYLIST PRIORITY ---
-    # Coba artwork_web atau artwork_large terlebih dahulu
-    playlist_artwork = data.get("artwork_web") or data.get("artwork_large") or data.get("artwork")
+    # --- FIX 2: COVER PLAYLIST (Aggressive Cleaning) ---
+    # Prioritas: artwork_large > artwork_web > artwork
+    playlist_artwork = data.get("artwork_large") or data.get("artwork_web") or data.get("artwork")
     
     playlist_cover_path = None
     if playlist_artwork:
-        # Bersihkan URL dari parameter crop untuk dapat resolusi asli
+        # Regex untuk menghapus segala variasi crop (crop_480x480_, crop_175x175_, dll)
         playlist_artwork = re.sub(r'crop_\d+x\d+_', '', playlist_artwork)
-        # Ganti ukuran thumbnail ke ukuran besar
+        # Ganti ukuran thumbnail ke ukuran terbesar (XL)
         playlist_artwork = playlist_artwork.replace("size_s", "size_xl").replace("size_m", "size_xl")
         
         playlist_cover_path = os.path.join(dl_dir, "playlist_cover.jpg")
@@ -187,7 +188,7 @@ async def process_playlist_gaana(identifier, user, session, api):
                         await f.write(await resp.read())
         except: 
             playlist_cover_path = None
-    # -----------------------------------
+    # ---------------------------------------------------
 
     downloaded = []
     total = len(tracks)
@@ -224,7 +225,7 @@ async def process_playlist_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    # Gunakan Cover Playlist yang benar
+    # Prioritaskan Cover Playlist Asli, jika gagal baru pake cover lagu pertama
     poster_img = playlist_cover_path if (playlist_cover_path and os.path.exists(playlist_cover_path)) else (downloaded[0]['cover'] if downloaded else None)
 
     if is_art_poster and poster_img:
@@ -277,9 +278,9 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
 
     if not os.path.exists(path): raise Exception("Fail DL")
 
+    # Cover Lagu
     artwork_url = track_info.get('artwork', '')
     if artwork_url:
-        # Bersihkan URL cover lagu
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
