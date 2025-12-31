@@ -176,22 +176,27 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # --- FIX: AMBIL TRACK NUMBER DARI ALBUM ASLI ---
-            # Jika track number kosong di playlist, kita MINTA detail lagu ini ke API
-            if not track.get("track_number") and track.get("track_id"):
+            # --- PERBAIKAN UTAMA: FETCH DETAIL SETIAP LAGU ---
+            # Kita TIDAK PERCAYA data dari object playlist. 
+            # Kita ambil ulang metadata langsung dari ID lagunya.
+            if track.get("track_id"):
                 try:
-                    # Request detail metadata lagu (agak lambat tapi akurat)
+                    # Request detail metadata lagu (ini yang mengandung info album asli)
                     song_detail = await api.get_metadata(session, track.get("track_id"), 'songDetail')
+                    
                     if song_detail and 'tracks' in song_detail and song_detail['tracks']:
                         real_track_data = song_detail['tracks'][0]
-                        # Ambil track number asli dari respon detail
-                        if real_track_data.get("track_number"):
-                            track["track_number"] = real_track_data["track_number"]
+                        
+                        # Timpa metadata track playlist dengan metadata asli dari Song Detail
+                        # Ini akan mengisi 'track_number', 'album_title', dll yang benar
+                        track.update(real_track_data)
+                        
                 except Exception as e:
-                    LOGGER.warning(f"Gagal fetch detail track number utk {track.get('track_title')}: {e}")
+                    LOGGER.warning(f"Gagal fetch detail lagu utk {track.get('track_title')}: {e}")
 
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
             
+            # Download menggunakan metadata yang sudah di-update (track_number asli)
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir)
             
             downloaded.append({
