@@ -31,6 +31,13 @@ class JioSaavnAPI:
             '__call': 'webapi.get', 'token': token, 'type': 'album', '_format': 'json', 'ctx': 'web6dot0'
         })
 
+    # --- FUNGSI BARU UNTUK PLAYLIST ---
+    async def get_playlist_details(self, session: aiohttp.ClientSession, token: str):
+        return await self._get(session, {
+            '__call': 'webapi.get', 'token': token, 'type': 'playlist', '_format': 'json', 'ctx': 'web6dot0'
+        })
+    # ----------------------------------
+
     async def get_lyrics(self, session: aiohttp.ClientSession, song_id: str):
         data = await self._get(session, {
             '__call': 'lyrics.getLyrics', 'lyrics_id': song_id, 'ctx': 'web6dot0', 'api_version': '4', '_format': 'json'
@@ -38,7 +45,6 @@ class JioSaavnAPI:
         return data.get("lyrics") if data else None
 
     async def get_auth_url(self, session: aiohttp.ClientSession, encrypted_url: str):
-        # Meminta URL 320kbps
         data = await self._get(session, {
             '__call': 'song.generateAuthToken',
             'url': encrypted_url,
@@ -51,12 +57,9 @@ class JioSaavnAPI:
         
         if data and "auth_url" in data:
             url = data["auth_url"]
-            # REPLACEMENT SESUAI JIOSAAVN.PY ANDA
-            # web -> aac (PENTING!)
             if "web" in url: url = url.replace("web", "aac")
             if "preview" in url: url = url.replace("preview", "aac")
             
-            # Paksa ekstensi 320
             if "_96_p.mp4" in url: url = url.replace("_96_p.mp4", "_320.mp4")
             if "_160_p.mp4" in url: url = url.replace("_160_p.mp4", "_320.mp4")
             if "_96.mp4" in url: url = url.replace("_96.mp4", "_320.mp4")
