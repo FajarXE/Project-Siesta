@@ -55,6 +55,7 @@ async def process_single_gaana(track, user, session, api):
     msg = user['bot_msg']
     await edit_message(msg, "Mengunduh...")
     try:
+        # Single track: Default 1/1
         track['track_number'] = 1
         track['track_count'] = 1
         
@@ -91,8 +92,14 @@ async def process_album_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            track["track_number"] = str(i + 1)
+            # UNTUK ALBUM: Urutan list API biasanya sesuai urutan album (1, 2, 3...)
+            # Jadi kita aman menggunakan i+1 sebagai fallback jika track_number kosong
+            if not track.get("track_number"):
+                track["track_number"] = str(i + 1)
+            
+            # Set total tracks album
             track["track_count"] = str(total)
+            
             track["label_name"] = data.get("label_name")
             if track.get("parental_warning") == 1: is_explicit = "True"
 
@@ -125,7 +132,7 @@ async def process_album_gaana(identifier, user, session, api):
         cover_file = downloaded[0]['cover']
         if cover_file and os.path.exists(cover_file):
             try:
-                # --- FORMAT POSTER ALBUM (TETAP LENGKAP) ---
+                # --- FORMAT POSTER ALBUM (LENGKAP) ---
                 caption = (
                     f"**ᴛɪᴛʟᴇ :** {album_title}\n**ᴀʀᴛɪsᴛ :** {downloaded[0]['artist']}\n"
                     f"**ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ :** {release_date}\n**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n"
@@ -181,7 +188,26 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     for i, track in enumerate(tracks):
         try:
-            # Menggunakan Nomor Track Asli dari API (tidak di-overwrite i+1)
+            # --- LOGIKA NOMOR TRACK (ALBUM MATCHING) ---
+            # 1. Jangan gunakan i+1 (karena itu urutan playlist).
+            # 2. Cek apakah ada 'track_number' asli.
+            # 3. Jika kosong, cari di key alternatif seperti 'track_index' atau 'index'.
+            
+            if not track.get("track_number"):
+                if track.get("track_index"):
+                    track["track_number"] = track["track_index"]
+                elif track.get("index"):
+                    track["track_number"] = track["index"]
+                # Jika masih kosong, metadata.py akan membiarkannya kosong (tidak ada nomor)
+                # Ini lebih baik daripada nomor palsu (urutan playlist).
+            
+            # --- LOGIKA TOTAL TRACK (ALBUM MATCHING) ---
+            # Jangan set 'track_count' ke total playlist.
+            # Biarkan kosong atau ambil dari 'track_count' asli jika ada,
+            # agar player membaca "Track 5" (dari album X), bukan "Track 5 of 50" (dari playlist).
+            if "track_count" not in track:
+                track.pop("track_count", None) # Hapus jika ada sisa sampah
+
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
             
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir)
@@ -275,8 +301,12 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
 
     track_num = track_info.get('track_number')
     safe_title = sanitize_filename(title)
-    if track_num: filename = f"{int(track_num)} - {safe_title}.m4a"
-    else: filename = f"{safe_title}.m4a"
+    
+    # Gunakan nama file: "Nomor - Judul" jika nomor ada, jika tidak cukup "Judul"
+    if track_num: 
+        filename = f"{int(track_num)} - {safe_title}.m4a"
+    else: 
+        filename = f"{safe_title}.m4a"
 
     dl_dir = custom_dir if custom_dir else ensure_download_dir(user)
     path = os.path.join(dl_dir, filename)
@@ -296,7 +326,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None):
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
-    # Cover Unik per Lagu
+    # Cover Unik per Lagu (disimpan sementara untuk metadata)
     cover_filename = f"{safe_title}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
     
