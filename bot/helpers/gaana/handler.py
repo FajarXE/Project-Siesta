@@ -55,6 +55,9 @@ async def process_single_gaana(track, user, session, api):
     msg = user['bot_msg']
     await edit_message(msg, "Mengunduh...")
     try:
+        track['track_number'] = 1
+        track['track_count'] = 1
+        
         path, cover, dur = await download_gaana_track(track, user, session, api)
         metadata = {
             'filepath': path, 'title': track.get("track_title"),
@@ -93,8 +96,6 @@ async def process_album_gaana(identifier, user, session, api):
             if track.get("parental_warning") == 1: is_explicit = "True"
 
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
-            
-            # Album: Playlist Index = i+1 agar file urut
             path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir, playlist_index=i+1)
             
             downloaded.append({
@@ -151,45 +152,55 @@ async def process_playlist_gaana(identifier, user, session, api):
 
     tracks = data['tracks']
     
-    # --- JUDUL: Hapus "Gaana Dj" ---
-    title = data.get("title") or data.get("english_title") or data.get("name") or "Unknown Playlist"
-    title = title.replace("&amp;", "&")
-    title = re.sub(r'(?i)gaana\s*dj\s*', '', title).strip() # Hapus kata Gaana Dj
+    # --- PERBAIKAN 1: Logika Judul "Anti-Unknown" ---
+    # 1. Cek semua kemungkinan key judul dari API
+    api_title = data.get("title") or data.get("name") or data.get("playlist_title") or data.get("english_title")
     
-    if not title:
-        title = identifier.replace("-", " ").title()
-        title = re.sub(r'(?i)gaana\s*dj\s*', '', title).strip()
+    # 2. Ambil Judul dari URL (Slug) sebagai cadangan kuat
+    # Contoh: gaana-dj-punjabi-all-time-top-50 -> Punjabi All Time Top 50
+    slug_title = identifier.replace("-", " ").title()
+    
+    # 3. Tentukan Judul Akhir
+    if not api_title or "Unknown" in api_title or api_title.lower() == identifier.lower():
+        title = slug_title
+    else:
+        title = api_title
+
+    # 4. Bersihkan kata "Gaana DJ" dan HTML Entities
+    title = re.sub(r'(?i)gaana\s*dj\s*', '', title).strip()
+    title = title.replace("&amp;", "&")
+    
+    # Final check: Jika kosong, pakai slug lagi
+    if not title: title = slug_title
+    # ------------------------------------------------
     
     dl_dir = ensure_download_dir(user, subdir=title)
     
-    # --- COVER PLAYLIST SPESIFIK ---
+    # --- PERBAIKAN 2: Download Cover Playlist (3 Lapis Cadangan) ---
     playlist_artwork = data.get("artwork_large") or data.get("artwork_web") or data.get("artwork")
-    
     playlist_cover_path = os.path.join(dl_dir, "playlist_cover_final.jpg")
     playlist_cover_exists = False
 
     if playlist_artwork:
-        hq_artwork = re.sub(r'crop_\d+x\d+_', '', playlist_artwork)
-        hq_artwork = hq_artwork.replace("size_s", "size_xl").replace("size_m", "size_xl")
+        # URL Candidates
+        url_high = re.sub(r'crop_\d+x\d+_', '', playlist_artwork).replace("size_s", "size_xl").replace("size_m", "size_xl")
+        url_original = playlist_artwork # URL apa adanya dari API
+        url_fallback = playlist_artwork.replace("size_xl", "size_m") # Versi lebih kecil jika gagal
+
+        urls_to_try = [url_high, url_original, url_fallback]
         
-        try:
-            async with session.get(hq_artwork) as resp:
-                if resp.status == 200:
-                    async with aiofiles.open(playlist_cover_path, mode='wb') as f:
-                        await f.write(await resp.read())
-                    playlist_cover_exists = True
-        except: pass
-        
-        if not playlist_cover_exists:
+        for url in urls_to_try:
             try:
-                async with session.get(playlist_artwork) as resp:
+                async with session.get(url) as resp:
                     if resp.status == 200:
                         async with aiofiles.open(playlist_cover_path, mode='wb') as f:
                             await f.write(await resp.read())
                         playlist_cover_exists = True
+                        break # Berhenti jika berhasil
             except: pass
     
-    # -------------------------------
+    if not playlist_cover_exists: playlist_cover_path = None
+    # -------------------------------------------------------------
 
     downloaded = []
     total = len(tracks)
@@ -202,11 +213,7 @@ async def process_playlist_gaana(identifier, user, session, api):
             if track.get("parental_warning") == 1: is_explicit = "True"
 
             await edit_message(msg, f"[{i+1}/{total}] {track.get('track_title')}...")
-            
-            # PASS i+1 AGAR FILENAME URUT (1 - Judul, 2 - Judul)
-            path, cover, dur = await download_gaana_track(
-                track, user, session, api, custom_dir=dl_dir, playlist_index=i+1
-            )
+            path, cover, dur = await download_gaana_track(track, user, session, api, custom_dir=dl_dir, playlist_index=i+1)
             
             downloaded.append({
                 'filepath': path, 'title': track.get("track_title"),
@@ -228,23 +235,23 @@ async def process_playlist_gaana(identifier, user, session, api):
          base_name = os.path.join(parent_dir, zip_name)
          zip_path = shutil.make_archive(base_name, 'zip', dl_dir)
 
-    # Gunakan cover playlist
-    poster_img = playlist_cover_path if playlist_cover_exists else (downloaded[0]['cover'] if downloaded else None)
+    # Pilih Cover: Prioritaskan Cover Playlist, jika gagal pakai cover track pertama
+    final_cover = playlist_cover_path if playlist_cover_exists else (downloaded[0]['cover'] if downloaded else None)
 
-    if is_art_poster and poster_img:
+    if is_art_poster and final_cover:
         try:
             caption = (
                 f"**ᴛɪᴛʟᴇ :** {title}\n**ᴛʏᴘᴇ :** Playlist\n"
                 f"**ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs :** {total}\n**ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs :** 1\n"
                 f"**ǫᴜᴀʟɪᴛʏ :** 320kbps\n**ᴘʀᴏᴠɪᴅᴇʀ :** Gaana\n**ᴇxᴘʟɪᴄɪᴛ :** {is_explicit}"
             )
-            await send_message(user, poster_img, 'pic', caption=caption)
+            await send_message(user, final_cover, 'pic', caption=caption)
         except: pass
 
     metadata = {
         'type': 'playlist', 'title': title, 'folderpath': dl_dir, 
         'tracks': downloaded, 
-        'cover': poster_img, # PENTING: Kirim cover playlist ke uploader
+        'cover': final_cover, # Mengirim cover yang benar ke uploader (untuk thumbnail ZIP)
         'zip_path': zip_path, 'poster_msg': False, 'provider': 'Gaana', 
         'track_count': total, 'quality': '320kbps'
     }
@@ -264,12 +271,10 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None, 
     elif "low.mp4" in final_url: final_url = final_url.replace("low.mp4", "320.mp4")
     else: final_url = final_url.replace(".mp4", "_320.mp4")
 
-    # --- FILENAME (Pakai index playlist jika ada, agar urut) ---
     safe_title = sanitize_filename(title)
     if playlist_index:
         filename = f"{int(playlist_index)} - {safe_title}.m4a"
     else:
-        # Fallback ke track number asli jika bukan playlist
         t_num = track_info.get('track_number')
         if t_num: filename = f"{int(t_num)} - {safe_title}.m4a"
         else: filename = f"{safe_title}.m4a"
@@ -287,13 +292,12 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None, 
 
     if not os.path.exists(path): raise Exception("Fail DL")
 
-    # --- COVER UNIK PER LAGU (PENTING AGAR TIDAK SALING TIMPA) ---
+    # Cover Unik per Track
     artwork_url = track_info.get('artwork', '')
     if artwork_url:
         artwork_url = re.sub(r'crop_\d+x\d+_', '', artwork_url)
         artwork_url = artwork_url.replace("size_s", "size_xl").replace("size_m", "size_xl")
 
-    # Gunakan Track ID untuk nama file cover yang unik
     track_id = track_info.get("track_id", "unknown")
     cover_filename = f"cover_{track_id}.jpg"
     cover_path = os.path.join(dl_dir, cover_filename)
@@ -306,7 +310,7 @@ async def download_gaana_track(track_info, user, session, api, custom_dir=None, 
     
     dur = await set_gaana_metadata(path, track_info, cover_path)
     
-    # Hapus file cover sementara setelah di-embed
+    # Hapus cover lagu setelah embed (Opsional, agar folder bersih)
     if os.path.exists(cover_path):
         try: os.remove(cover_path)
         except: pass
