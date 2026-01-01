@@ -20,8 +20,6 @@ def custom_url_parse(link: str):
     match = re.match(pattern, link)
     
     if match:
-        # Skrip HRA-DL hanya mendukung album.
-        # Kita teruskan seluruh URL sebagai 'item_id' untuk diproses oleh metadata.
         return 'album', link, {}
     else:
         raise HighResAudioError('URL HighResAudio tidak valid atau tidak didukung.')
@@ -29,7 +27,6 @@ def custom_url_parse(link: str):
 
 async def _process_cover(metadata: dict, url: str):
     """Memproses sampul dari URL (jika ditemukan)."""
-    # create_cover_file mengharapkan URL string, atau None
     if not url:
         LOGGER.warning("HighResAudio: Tidak ada URL sampul valid yang ditemukan.")
         return metadata['tempfolder'] + "cover.jpg" # Fallback
@@ -39,14 +36,13 @@ async def _process_cover(metadata: dict, url: str):
 async def process_album_metadata(album_url: str, r_id: str, user: dict):
     """
     Memproses metadata untuk satu album.
-    Ini melakukan proses 2 langkah: scrape ID, lalu panggil API.
     """
     client = user['highresaudio_api']
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     try:
-        # LANGKAH 1: Scrape halaman HTML untuk mendapatkan ID internal
+        # LANGKAH 1: Scrape halaman HTML
         LOGGER.debug(f"HighResAudio: Scraping ID dari {album_url}")
         album_id = await asyncio.to_thread(
             client.get_album_id_from_url, 
@@ -54,7 +50,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
         )
         LOGGER.debug(f"HighResAudio: Mendapatkan album_id internal: {album_id}")
 
-        # LANGKAH 2: Panggil API menggunakan ID internal
+        # LANGKAH 2: Panggil API
         api_data = await asyncio.to_thread(
             client.get_album_metadata, 
             album_id
@@ -80,38 +76,22 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
-    # --- PERBAIKAN: Perbaikan Logika Tanggal & Subgenre ---
-    
-    # 1. RELEASE DATE (TDRL): (PERBAIKAN) Menggunakan 'releaseDate'
-    # Kita asumsikan base_meta memiliki field 'release_date'
+    # --- Metadata Dasar ---
     release_date_raw = data.get('releaseDate', '') 
     if ' ' in release_date_raw:
-        metadata['release_date'] = release_date_raw.split(' ')[0] # '2016-11-04'
+        metadata['release_date'] = release_date_raw.split(' ')[0] 
     else:
         metadata['release_date'] = release_date_raw
 
-    # 1b. RECORDED DATE (TDRC): (PERBAIKAN) Menggunakan 'productionYear'
-    # Ini akan mengisi bidang 'date' utama dengan tahun produksi asli
-    metadata['date'] = str(data.get('productionYear', '')) # '1982'
-    
-    # 2. TOTAL VOLUMES
+    metadata['date'] = str(data.get('productionYear', '')) 
     total_volumes = data.get('discCount', 1) 
     metadata['totalvolumes'] = str(total_volumes)
-    
-    # 3. EXPLICIT
     metadata['explicit'] = bool(data.get('explicit', False))
-
-    # 4. GENRE
     metadata['genre'] = data.get('genre', '') 
-
-    # 5. SUBGENRE: (KODE SUDAH BENAR) Menggunakan 'subgenre' (lowercase)
-    metadata['subgenre'] = data.get('subgenre', '') # 'Pop Rock'
-
-    # 6. COMPOSER
+    metadata['subgenre'] = data.get('subgenre', '') 
     metadata['composer'] = data.get('composer', '')
-    # --- BATAS PERBAIKAN ---
 
-    # --- Logika Sampul (Cover) ---
+    # --- Logika Sampul ---
     cover_url_str = None
     try:
         cover_data = data.get('cover') 
@@ -119,7 +99,6 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             file_url = cover_data.get('master', {}).get('file_url')
             if file_url:
                 cover_url_str = f"https://{file_url}"
-                LOGGER.debug(f"HighResAudio: Menemukan URL sampul: {cover_url_str}")
         elif isinstance(cover_data, str):
             cover_url_str = cover_data
     except Exception as e:
@@ -128,9 +107,8 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
 
     metadata['cover'] = await _process_cover(metadata, cover_url_str)
     metadata['thumbnail'] = metadata['cover']
-    # --- BATAS PERBAIKAN ---
 
-    # Memetakan Metadata Lagu
+    # --- Memetakan Metadata Lagu ---
     metadata['tracks'] = []
     for track in track_list:
         try:
@@ -147,33 +125,30 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['cover'] = metadata['cover']
             track_meta['thumbnail'] = metadata['thumbnail']
             
-            # --- PERBAIKAN: Salin data baru ke metadata lagu ---
-            track_meta['date'] = metadata['date'] # Recorded Date (e.g., 1982)
-            track_meta['release_date'] = metadata['release_date'] # Release Date (e.g., 2016-11-04)
+            # Data tambahan
+            track_meta['date'] = metadata['date'] 
+            track_meta['release_date'] = metadata['release_date'] 
             track_meta['explicit'] = metadata['explicit']
             track_meta['genre'] = metadata['genre']
-            track_meta['subgenre'] = metadata['subgenre'] # 'Pop Rock'
+            track_meta['subgenre'] = metadata['subgenre']
             track_meta['composer'] = metadata['composer']
-            # --- BATAS PERBAIKAN ---
 
             # Metadata spesifik lagu
-            track_meta['itemid'] = track.get('id') # Asumsi
+            track_meta['itemid'] = track.get('id') 
             track_meta['tracknumber'] = str(track.get('trackNumber')).zfill(2)
             track_meta['totaltracks'] = metadata['totaltracks']
             
-            # --- PERBAIKAN: Gunakan fallback 1 (logika sebelumnya) ---
+            # ISRC
+            track_meta['isrc'] = track.get('isrc')
+            
             disc_num = track.get('discNumber', 1) 
             track_meta['discnumber'] = str(disc_num)
             track_meta['totalvolumes'] = metadata['totalvolumes']
-            # --- BATAS PERBAIKAN ---
 
-            # Kualitas & Ekstensi (HRA-DL selalu FLAC)
             track_meta['quality'] = f"{track.get('format')} kHz FLAC"
             track_meta['extension'] = 'flac'
             
-            # Info Unduhan Kritis
             track_meta['download_url'] = track.get('url')
-            # 'album_id_referer' diperlukan oleh API untuk header Referer
             track_meta['album_id_referer'] = album_id 
 
             if not track_meta['download_url']:
@@ -185,11 +160,16 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             LOGGER.error(f"HighResAudio: Gagal memproses track {track.get('title')}: {e}\n{traceback.format_exc()}")
             continue
 
-    # Booklet (dari HRA-DL.py)
+    # --- PERBAIKAN: Logika Booklet ---
     if "booklet" in data and data['booklet']:
-        # URL booklet sudah lengkap 'https://...'
-        metadata['booklet_url'] = data['booklet']
-        LOGGER.info(f"HighResAudio: Menemukan booklet di {data['booklet']}")
+        booklet_url = data['booklet']
+        # Cek apakah URL memiliki skema (http/https), jika tidak tambahkan https://
+        if not booklet_url.startswith('http'):
+            booklet_url = f"https://{booklet_url}"
+            
+        metadata['booklet_url'] = booklet_url
+        LOGGER.info(f"HighResAudio: Menemukan booklet di {metadata['booklet_url']}")
+    # ---------------------------------
 
     if not metadata['tracks']:
         raise Exception(f"Tidak ada lagu yang valid ditemukan untuk album {metadata['title']}")
