@@ -8,6 +8,7 @@ from time import time, sleep
 from random import randrange
 from Cryptodome.Cipher import ARC4
 from Cryptodome.Hash import MD5
+from bot.logger import LOGGER
 
 class KkboxAPI:
     def __init__(self, exception, kc1_key, secret_key, kkid = None):
@@ -50,9 +51,12 @@ class KkboxAPI:
 
     def kc1_decrypt(self, data):
         cipher = ARC4.new(self.kc1_key)
-        return cipher.decrypt(data).decode('utf-8')
+        try:
+            return cipher.decrypt(data).decode('utf-8')
+        except Exception:
+            return None
 
-    def api_call(self, host, path, params={}, payload=None):
+    def api_call(self, host, path, params={}, payload=None, timeout=10):
         if host == 'ticket':
             payload = json.dumps(payload)
 
@@ -68,13 +72,26 @@ class KkboxAPI:
         params.update({'timestamp': timestamp})
 
         url = f'https://api-{host}.kkbox.com.tw/{path}'
-        if not payload:
-            r = self.s.get(url, params=params)
-        else:
-            r = self.s.post(url, params=params, data=payload)
+        try:
+            if not payload:
+                r = self.s.get(url, params=params, timeout=timeout)
+            else:
+                r = self.s.post(url, params=params, data=payload, timeout=timeout)
+        except Exception:
+            return None
 
-        resp = json.loads(self.kc1_decrypt(r.content)) if r.content else None
-        return resp
+        if not r.content:
+            return None
+
+        decrypted = self.kc1_decrypt(r.content)
+        if not decrypted:
+            return None
+
+        try:
+            resp = json.loads(decrypted)
+            return resp
+        except json.JSONDecodeError:
+            return None
 
     def login(self, email, password):
         md5 = MD5.new()
@@ -87,6 +104,9 @@ class KkboxAPI:
             'kkid': self.kkid,
             'registration_id': '',
         })
+
+        if not resp:
+            raise self.exception('Login failed: No response from API')
 
         if resp['status'] not in (2, 3):
             if resp['status'] == -1:
@@ -103,7 +123,7 @@ class KkboxAPI:
 
     def renew_session(self):
         resp = self.api_call('login', 'check.php')
-        if resp['status'] not in (2, 3):
+        if not resp or resp['status'] not in (2, 3):
             raise self.exception('Session renewal failed')
         self.apply_session(resp)
 
@@ -119,13 +139,15 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        fields_req = 'album,release_date,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality'
+        # --- PERBAIKAN: Menambahkan 'isrc' ---
+        fields_req = 'album,release_date,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,isrc'
+        # -------------------------------------
         
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
             'fields': fields_req
         })
-        if resp['status']['type'] != 'OK':
+        if not resp or resp['status']['type'] != 'OK':
             raise self.exception('Track not found')
         return resp['data']['songs']
 
@@ -133,10 +155,8 @@ class KkboxAPI:
         return self.api_call('ds', f'v1/song/{id}/lyrics')
 
     def get_album(self, id):
-        # --- PERBAIKAN: Upgrade ke V2 ---
         resp = self.api_call('ds', f'v2/album/{id}')
-        # -------------------------------
-        if resp['status']['type'] != 'OK':
+        if not resp or resp['status']['type'] != 'OK':
             raise self.exception('Album not found')
         return resp['data']
 
@@ -147,7 +167,7 @@ class KkboxAPI:
 
     def get_artist(self, id):
         resp = self.api_call('ds', f'v3/artist/{id}')
-        if resp['status']['type'] != 'OK':
+        if not resp or resp['status']['type'] != 'OK':
             raise self.exception('Artist not found')
         return resp['data']
     
@@ -156,7 +176,7 @@ class KkboxAPI:
             'limit': limit,
             'offset': offset,
         })
-        if resp['status']['type'] != 'OK':
+        if not resp or resp['status']['type'] != 'OK':
             raise self.exception('Artist not found')
         return resp['data']['album']
 
@@ -164,9 +184,46 @@ class KkboxAPI:
         resp = self.api_call('ds', f'v1/playlists', params={
             'playlist_ids': ','.join(ids)
         })
-        if resp['status']['type'] != 'OK':
+        
+        if not resp or resp['status']['type'] != 'OK':
+             resp = self.api_call('ds', f'v1/shared-playlists', params={
+                'playlist_ids': ','.join(ids)
+             })
+
+        if not resp or resp['status']['type'] != 'OK':
             raise self.exception('Playlist not found')
         return resp['data']['playlists']
+    
+    def get_playlist_tracks(self, playlist_id):
+        try:
+            resp = self.api_call('ds', f'v1/playlists/{playlist_id}/tracks', 
+                               params={'limit': 500}, timeout=5)
+            if resp and resp.get('status', {}).get('type') == 'OK':
+                 data = resp.get('data', [])
+                 if data: return data
+        except Exception:
+            pass
+             
+        try:
+            resp = self.api_call('ds', f'v1/shared-playlists/{playlist_id}/tracks', 
+                               params={'limit': 500}, timeout=5)
+            if resp and resp.get('status', {}).get('type') == 'OK':
+                 data = resp.get('data', [])
+                 if data: return data
+        except Exception:
+            pass
+
+        try:
+             resp = self.api_call('ds', f'v1/charts/{playlist_id}/tracks', 
+                                params={'limit': 500}, timeout=3)
+             if resp and resp.get('status', {}).get('type') == 'OK':
+                  data = resp.get('data', [])
+                  if data: return data
+        except Exception:
+            pass
+
+        LOGGER.error(f"KKBox API: Gagal menemukan tracks di semua endpoint untuk ID {playlist_id}")
+        return []
 
     def search(self, query, types, limit):
         return self.api_call('ds', 'search_music.php', params={
@@ -189,6 +246,10 @@ class KkboxAPI:
             'timestamp': int(time()),
             'play_mode': play_mode,
         })
+
+        if not resp:
+            self.renew_session()
+            return self.get_ticket(song_id, play_mode)
 
         if resp['status'] != 1:
             if resp['status'] == -1:
@@ -217,7 +278,7 @@ class KkboxAPI:
             'oenc': 'kc1',
             'osver': '13',
         })
-        if resp['status'] != 1:
+        if not resp or resp['status'] != 1:
             raise self.exception("Couldn't auth device")
 
     def kkdrm_dl(self, url, path):
