@@ -8,10 +8,10 @@ from config import Config
 try:
     from ..database.mongo_async import database
 except (ImportError, ModuleNotFoundError):
-    LOGGER.critical("Beatsource Manager: Gagal mengimpor 'database'. Fungsi pemuatan kualitas mungkin gagal.")
+    LOGGER.critical("Beatsource Manager: No Database.")
     class DummyDatabase:
         async def get_variable(self, *args, **kwargs): return {}
-        # Tambahkan mock client untuk menghindari error saat startup
+        async def set_variable(self, *args, **kwargs): pass
         class MockClient:
             class MockUsers:
                 async def find(self, *args, **kwargs): return self
@@ -23,183 +23,121 @@ except (ImportError, ModuleNotFoundError):
 try:
     from .api import BeatsourceAPI
 except ImportError:
-    LOGGER.critical("Beatsource: Gagal mengimpor 'BeatsourceAPI' dari 'bot/helpers/beatsource/api.py'. File inti tidak ada.")
+    LOGGER.critical("Beatsource: API Error.")
     class BeatsourceAPI:
         def __init__(self, *args, **kwargs): pass
-        async def login(self, *args, **kwargs): raise NotImplementedError("File 'BeatsourceAPI' inti tidak ditemukan.")
+        async def login(self, *args, **kwargs): raise NotImplementedError("API Error")
         async def close_session(self): pass
 
 
 class BeatsourceLoginManager:
-    """
-    Mengelola kumpulan instans klien BeatsourceAPI yang sudah login.
-    Juga mengelola pengaturan kualitas default dan per-pengguna.
-    """
     def __init__(self, account_configs: list):
         self.account_configs = account_configs
         self.clients = [] 
         self._client_cycler = None
-        
-        # Kualitas default, "medium" adalah yang paling aman
         self.quality = "medium" 
         self.user_data = {} 
-        # Cache untuk status langganan agar tidak dicek setiap unduhan
-        self.subscription_cache = {} # { client_hash: "pro" / "basic" }
+        self.subscription_cache = {} 
 
     async def initialize_clients(self):
-        """
-        Mencoba login ke semua akun Beatsource dari Config
-        dan memuat pengaturan kualitas default DAN PENGGUNA.
-        """
-        
+        saved_tokens = {}
         try:
-            all_settings = await database.get_variable()
-            if not all_settings:
-                all_settings = {}
-
-            # 1. Muat Kualitas DEFAULT Bot dari DB
+            all_settings = await database.get_variable() or {}
             db_quality = all_settings.get('BEATSOURCE_QUALITY')
-            
             if db_quality in ["lossless", "high", "medium"]:
                 self.quality = db_quality
-                LOGGER.info(f"Beatsource Manager: Kualitas default dimuat dari DB: {self.quality}")
-            else:
-                LOGGER.info(f"Beatsource Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
-        except Exception as e:
-            LOGGER.error(f"Beatsource Manager: Gagal memuat kualitas dari DB: {e}. Menggunakan default: {self.quality}")
+            saved_tokens = all_settings.get('BEATSOURCE_TOKENS', {})
+        except Exception: pass
 
-        # --- PERBAIKAN: Muat Pengaturan Kualitas PENGGUNA dari DB ---
         try:
-            LOGGER.debug("Beatsource Manager: Memuat pengaturan Beatsource pengguna dari DB...")
-            # Ambil semua dokumen pengguna dari koleksi 'users'
-            all_users_from_db = await database.client.users.find({}).to_list(None)
-            
-            count = 0
-            for user_doc in all_users_from_db:
-                user_id = user_doc.get('_id')
-                # Cari key 'beatsource_qual'
-                beatsource_qual = user_doc.get('beatsource_qual') 
-                
-                if user_id and beatsource_qual:
-                    # Panggil setup_quality untuk memuatnya ke cache (self.user_data)
-                    await self.setup_quality(user_id, beatsource_qual)
-                    count += 1
-            LOGGER.info(f"Beatsource Manager: Berhasil memuat {count} pengaturan kualitas pengguna.")
-        except Exception as e:
-            LOGGER.error(f"Beatsource Manager: Gagal memuat pengaturan pengguna dari DB: {e}")
-            LOGGER.warning("Pengaturan kualitas pengguna mungkin tidak akan persisten.")
-        # --- AKHIR PERBAIKAN ---
+            all_users = await database.client.users.find({}).to_list(None)
+            for u in all_users:
+                if u.get('beatsource_qual'): 
+                    await self.setup_quality(u['_id'], u['beatsource_qual'])
+        except: pass
 
-        if not self.account_configs:
-            LOGGER.warning("Beatsource Manager: Tidak ada akun untuk diinisialisasi.")
-            return
+        if not self.account_configs: return
 
-        LOGGER.info(f"Beatsource Manager: Menginisialisasi {len(self.account_configs)} akun...")
+        LOGGER.info(f"Beatsource Manager: Init {len(self.account_configs)} accounts...")
         tasks = []
         for account in self.account_configs:
-            tasks.append(self._login_task(account))
+            tasks.append(self._login_task(account, saved_tokens.get(account['email'])))
         
         results = await asyncio.gather(*tasks)
+        self.clients = [c for c in results if c]
         
-        self.clients = [client for client in results if client is not None]
-        
-        if not self.clients:
-            LOGGER.error("Beatsource Manager: Gagal login ke SEMUA akun Beatsource.")
-            return
+        if self.clients:
+            LOGGER.info(f"Beatsource Manager: {len(self.clients)} clients ready.")
+            self._client_cycler = itertools.cycle(self.clients)
+            await self.save_all_tokens()
+            await self._cache_subscriptions()
 
-        LOGGER.info(f"Beatsource Manager: Berhasil login ke {len(self.clients)} dari {len(self.account_configs)} akun.")
-        self._client_cycler = itertools.cycle(self.clients)
-        
-        # Pre-cache status langganan
-        await self._cache_subscriptions()
-
-    async def _login_task(self, account: dict):
-        """Tugas login untuk satu akun."""
+    async def _login_task(self, account: dict, saved_token: dict = None):
         client = BeatsourceAPI()
+        email, password = account['email'], account['password']
+
+        if saved_token and saved_token.get('refresh_token'):
+            try:
+                saved_token['email'] = email
+                await client.load_session(saved_token)
+                await client.refresh()
+                return client
+            except Exception: pass
+
         try:
-            await client.login(
-                email=account['email'], 
-                password=account['password']
-            )
-            LOGGER.info(f"Beatsource Manager: Berhasil login ke Akun #{account['id']}")
+            await client.login(email=email, password=password)
             return client
         except Exception as e:
-            LOGGER.error(f"Beatsource Manager: Gagal login ke Akun #{account['id']}. Error: {e}")
-            await client.close_session() # Pastikan sesi ditutup
+            LOGGER.error(f"Beatsource Login Failed {email}: {e}")
+            await client.close_session()
             return None
 
+    async def save_all_tokens(self):
+        if not self.clients: return
+        try:
+            tokens_map = {}
+            for client in self.clients:
+                if hasattr(client, 'email') and client.email and client.refresh_token:
+                    tokens_map[client.email] = {
+                        'access_token': client.access_token,
+                        'refresh_token': client.refresh_token,
+                        'email': client.email
+                    }
+            
+            # --- PERBAIKAN DISINI ---
+            # Menggunakan format (KEY, VALUE) sesuai error log
+            await database.set_variable('BEATSOURCE_TOKENS', tokens_map)
+            LOGGER.info("Beatsource Manager: Tokens saved.")
+            
+        except Exception as e:
+            LOGGER.error(f"Beatsource Manager: Gagal menyimpan token: {e}")
+
     async def _cache_subscriptions(self):
-        """Mengambil dan menyimpan status langganan untuk semua klien yang login."""
-        LOGGER.info(f"Beatsource Manager: Memeriksa status langganan...")
         for client in self.clients:
             try:
-                account_data = await client.get_account()
-                sub = account_data.get("subscription")
-                
-                LOGGER.info(f"Beatsource Manager: Ditemukan status langganan: '{sub}'")
-
-                # Cek berdasarkan nama langganan Pro Anda
-                if sub == "bsrc_link_pro_plus":
-                    self.subscription_cache[client] = "pro"
-                    LOGGER.info(" -> Ditemukan langganan 'Pro'. Kualitas Lossless/High diaktifkan.")
-                else:
-                    self.subscription_cache[client] = "basic"
-                    LOGGER.info(f" -> Langganan '{sub}' bukan 'Pro'. Kualitas dibatasi ke 'Medium' (128k AAC).")
-            except Exception as e:
-                LOGGER.warning(f"Beatsource Manager: Gagal memeriksa langganan untuk satu klien: {e}")
-                self.subscription_cache[client] = "basic" # Asumsikan basic jika gagal
+                acc = await client.get_account()
+                self.subscription_cache[client] = "pro" if acc.get("subscription") == "bsrc_link_pro_plus" else "basic"
+            except: self.subscription_cache[client] = "basic"
 
     def get_client_and_sub(self) -> (BeatsourceAPI | None, str):
-        """
-        Mendapatkan klien berikutnya dari kumpulan (round-robin) dan status langganannya.
-        """
-        if not self._client_cycler:
-            LOGGER.error("Beatsource Manager: Tidak ada klien yang tersedia.")
-            return None, "basic"
-        
+        if not self._client_cycler: return None, "basic"
         try:
             client = next(self._client_cycler)
-            sub_status = self.subscription_cache.get(client, "basic") # Default ke basic
-            return client, sub_status
-        except StopIteration:
-            LOGGER.error("Beatsource Manager: Kumpulan klien kosong.")
-            return None, "basic"
+            return client, self.subscription_cache.get(client, "basic")
+        except: return None, "basic"
     
     async def setup_quality(self, user_id: int, qual: str = None):
-        """Mengatur cache kualitas untuk pengguna tertentu."""
-        if user_id not in self.user_data:
-            self.user_data[user_id] = {}
+        if user_id not in self.user_data: self.user_data[user_id] = {}
         if qual in ["lossless", "high", "medium"]:
             self.user_data[user_id]['beatsource_qual'] = qual
-            LOGGER.debug(f"Beatsource Manager: Mengatur kualitas user {user_id} ke {qual}")
 
     def get_user_quality(self, user_id: int) -> str:
-        """Mendapatkan kualitas untuk pengguna, fallback ke default."""
-        user_qual = self.user_data.get(user_id, {}).get('beatsource_qual')
-        if user_qual in ["lossless", "high", "medium"]:
-            return user_qual
-        return self.quality 
+        return self.user_data.get(user_id, {}).get('beatsource_qual', self.quality)
 
-    # --- TAMBAHAN BARU: Metode Shutdown ---
     async def shutdown(self):
-        """Menutup semua sesi klien BeatsourceAPI yang dikelola."""
-        LOGGER.info(f"Beatsource Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien.")
-        tasks = []
-        for client in self.clients:
-            # Memanggil 'close_session' sesuai dengan nama metode di api.py
-            if hasattr(client, 'close_session'):
-                tasks.append(client.close_session())
-        
-        # Jalankan semua tugas penutupan secara bersamaan
-        try:
-            await asyncio.gather(*tasks)
-        except Exception as e:
-            LOGGER.error(f"Beatsource Manager: Terjadi error saat shutdown: {e}")
-            
+        await self.save_all_tokens()
+        tasks = [c.close_session() for c in self.clients if hasattr(c, 'close_session')]
+        if tasks: await asyncio.gather(*tasks)
         self.clients = []
-        self._client_cycler = None
-        LOGGER.info("Beatsource Manager: Semua sesi klien telah ditutup.")
-    # --- AKHIR TAMBAHAN ---
 
-# Buat instance global
 beatsource_manager = BeatsourceLoginManager(Config.BEATSOURCE_ACCOUNTS)
