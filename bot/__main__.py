@@ -2,10 +2,13 @@
 
 import os
 import signal
-import asyncio, sys, logging, traceback
+import asyncio
+import sys
+import logging
+import traceback
+from pyrogram import idle # PENTING: Gunakan idle resmi
 
 from bot import Config
-
 from .tgclient import aio
 from .settings import bot_set
 
@@ -13,142 +16,44 @@ from .settings import bot_set
 try:
     from .helpers.qobuz.qopy import QoClient
 except ImportError:
-    logging.critical("Gagal mengimpor QoClient! Pastikan path 'from .helpers.qobuz.qopy import QoClient' benar.")
+    logging.critical("Gagal mengimpor QoClient!")
     sys.exit(1)
 from bot import BOT_QOBUZ_CLIENTS
+
 try:
     from .helpers.database.mongo_async import database
 except ImportError:
-    logging.critical("Gagal mengimpor 'database' dari .helpers.database.mongo_async!")
-    sys.exit(1)
-# --- Batas Blok Impor Qobuz ---
-
-
-# --- Impor Manajer Deezer ---
-try:
-    from .helpers.deezer.manager import deezer_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'deezer_manager'!")
+    logging.critical("Gagal mengimpor 'database'!")
     sys.exit(1)
 
-# --- Impor Manajer Beatport ---
-try:
-    from .helpers.beatport.manager import beatport_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'beatport_manager'!")
-    sys.exit(1)
-# --- Batas Impor ---
+# --- Impor Manajer Layanan (Safe Imports) ---
+def safe_import(module_path, class_name):
+    try:
+        mod = __import__(module_path, fromlist=[class_name])
+        return getattr(mod, class_name)
+    except (ImportError, AttributeError):
+        return None
 
-# --- Impor Manajer Tidal ---
-try:
-    from .helpers.tidal.manager import tidal_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'tidal_manager'!")
-    sys.exit(1)
-# --- Batas Impor ---
+deezer_manager = safe_import('bot.helpers.deezer.manager', 'deezer_manager')
+beatport_manager = safe_import('bot.helpers.beatport.manager', 'beatport_manager')
+tidal_manager = safe_import('bot.helpers.tidal.manager', 'tidal_manager')
+kkbox_manager = safe_import('bot.helpers.kkbox.manager', 'kkbox_manager')
+beatsource_manager = safe_import('bot.helpers.beatsource.manager', 'beatsource_manager')
+soundcloud_manager = safe_import('bot.helpers.soundcloud.manager', 'soundcloud_manager')
+napster_manager = safe_import('bot.helpers.napster.manager', 'napster_manager')
+idagio_manager = safe_import('bot.helpers.idagio.manager', 'idagio_manager')
+nugs_manager = safe_import('bot.helpers.nugs.manager', 'nugs_manager')
+bugs_manager = safe_import('bot.helpers.bugs.manager', 'bugs_manager')
+highresaudio_manager = safe_import('bot.helpers.highresaudio.manager', 'highresaudio_manager')
+moov_manager = safe_import('bot.helpers.moov.manager', 'moov_manager')
+jiosaavn_manager = safe_import('bot.helpers.jiosaavn.manager', 'jiosaavn_manager')
+gaana_manager = safe_import('bot.helpers.gaana.manager', 'gaana_manager')
 
-# --- Impor Manajer KKBox ---
-try:
-    from .helpers.kkbox.manager import kkbox_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'kkbox_manager'!")
-    sys.exit(1)
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN: Impor Manajer Beatsource ---
-try:
-    from .helpers.beatsource.manager import beatsource_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'beatsource_manager'!")
-    sys.exit(1)
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN: Impor Manajer Soundcloud ---
-try:
-    from .helpers.soundcloud.manager import soundcloud_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'soundcloud_manager'!")
-    sys.exit(1)
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN BARU: Impor Manajer Napster ---
-try:
-    from .helpers.napster.manager import napster_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'napster_manager'!")
-    napster_manager = None
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN BARU: Impor Manajer Idagio ---
-try:
-    from .helpers.idagio.manager import idagio_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'idagio_manager'!")
-    idagio_manager = None
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN BARU: Impor Manajer Nugs.net ---
-try:
-    from .helpers.nugs.manager import nugs_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'nugs_manager'!")
-    nugs_manager = None
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN BARU: Impor Manajer Bugs ---
-try:
-    from .helpers.bugs.manager import bugs_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'bugs_manager'!")
-    bugs_manager = None
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN BARU: Impor Manajer HIGHRESAUDIO ---
-try:
-    from .helpers.highresaudio.manager import highresaudio_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'highresaudio_manager'!")
-    highresaudio_manager = None
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN BARU: Impor Manajer Moov ---
-try:
-    from .helpers.moov.manager import moov_manager
-except ImportError:
-    logging.critical("Gagal mengimpor 'moov_manager'!")
-    moov_manager = None
-# --- BATAS TAMBAHAN ---
-
-# --- TAMBAHAN BARU: Impor Manajer JioSaavn & Gaana ---
-try:
-    from .helpers.jiosaavn.manager import jiosaavn_manager
-except ImportError:
-    logging.warning("Gagal mengimpor 'jiosaavn_manager' (Mungkin folder belum dibuat).")
-    jiosaavn_manager = None
-
-try:
-    from .helpers.gaana.manager import gaana_manager
-except ImportError:
-    logging.warning("Gagal mengimpor 'gaana_manager' (Mungkin folder belum dibuat).")
-    gaana_manager = None
-# --- BATAS TAMBAHAN ---
-
-
-# --- FUNGSI BARU UNTUK MEMUAT PENGATURAN PENGGUNA ---
 
 async def load_all_user_settings_into_managers():
-    """
-    Menyinkronkan pengaturan dari cache global (bot_set.user_data)
-    ke dalam cache RAM manajer lokal (seperti Napster, Deezer, dll.)
-    
-    Ini diperlukan agar pengaturan tetap ada setelah bot di-restart.
-    Qobuz dan Tidal menangani ini secara berbeda dan tidak disertakan di sini.
-    """
-    logging.info("Menyinkronkan pengaturan pengguna dari bot_set ke cache manajer lokal...")
+    logging.info("Main: Sinkronisasi pengaturan pengguna ke cache manajer...")
     try:
         count = 0
-        
-        # Manajer ini menggunakan cache RAM lokal via setup_quality()
         settings_map = {
             'deezer_qual': deezer_manager,
             'beatport_qual': beatport_manager,
@@ -159,362 +64,141 @@ async def load_all_user_settings_into_managers():
             'idagio_qual': idagio_manager,
             'bugs_qual': bugs_manager,
             'moov_qual': moov_manager,
-            # JioSaavn dan Gaana saat ini menggunakan auto/best quality,
-            # jadi belum perlu disinkronkan ke sini kecuali Anda menambahkan fitur set kualitas user nanti.
         }
 
-        # Loop melalui cache global bot_set yang SEKARANG SUDAH DIISI oleh initialize_users()
+        # Pastikan user_data sudah terisi
+        if not bot_set.user_data:
+            logging.warning("Main: bot_set.user_data kosong/belum dimuat.")
+            return
+
         for user_id, user_data in bot_set.user_data.items():
-            if not user_id:
-                continue
-            
+            if not user_id: continue
             for key, manager in settings_map.items():
                 quality_val = user_data.get(key)
-                # Jika nilai ditemukan di bot_set DAN manajer-nya ada
                 if quality_val and manager:
                     try:
-                        # Panggil setup_quality untuk mengisi cache lokal manajer
                         await manager.setup_quality(user_id, quality_val)
                         count += 1
-                    except Exception as e:
-                        logging.error(f"Gagal memuat {key} untuk user {user_id} ke cache manajer: {e}")
-        
-        logging.info(f"Berhasil menyinkronkan {count} pengaturan pengguna individual ke cache RAM manajer.")
-
+                    except Exception: pass
+        logging.info(f"Main: Berhasil menyinkronkan {count} pengaturan.")
     except Exception as e:
-        logging.error(f"Gagal total menyinkronkan pengaturan pengguna ke manajer: {e}\n{traceback.format_exc()}")
-        logging.warning("Pengaturan kualitas pengguna mungkin tidak akan persisten saat restart.")
+        logging.error(f"Main: Gagal sinkronisasi pengaturan pengguna: {e}")
 
 
-# --- Fungsi Login Qobuz ---
 async def login_single_client(creds: dict):
-    """
-    Helper untuk meloginkan satu klien, memuat pengaturannya dari DB,
-    dan menyimpannya ke dictionary global.
-    """
     creds_copy = creds.copy()
-    account_id = creds_copy.pop("id")
-    
+    account_id = creds_copy.pop("id", "Unknown")
     client = QoClient(**creds_copy) 
-    
     try:
-        # 1. Login Klien
         await client.login()
-        
-        # 2. Muat Kualitas Default Bot dari DB
-        try:
-            db_settings = await database.get_variable()
-            if not db_settings:
-                db_settings = {}
-            db_default_q = db_settings.get('QOBUZ_QUALITY')
-            client.quality = int(db_default_q) if db_default_q else 6 # Default 6 (Lossless) jika tidak ada
-            logging.debug(f"Berhasil memuat Kualitas Default Qobuz '{client.quality}' untuk Akun #{account_id}.")
-        except Exception as e:
-            logging.error(f"Gagal memuat Kualitas Default Qobuz dari DB untuk Akun #{account_id}: {e}. Menggunakan default 6.")
-            client.quality = 6
-
-        # 3. Muat Semua Pengaturan Kualitas Pengguna dari DB
-        try:
-            logging.debug(f"Memuat pengaturan Qobuz pengguna dari DB untuk Akun #{account_id}...")
-            all_users_from_db = await database.client.users.find({}).to_list(None)
-            
-            count = 0
-            for user_doc in all_users_from_db:
-                user_id = user_doc.get('_id')
-                qobuz_qual = user_doc.get('qobuz_qual') 
-                
-                if user_id and qobuz_qual:
-                    await client.setup_quality(user_id, int(qobuz_qual))
-                    count += 1
-            logging.debug(f"Berhasil memuat {count} pengaturan Qobuz pengguna untuk Akun #{account_id}.")
-        except Exception as e:
-            logging.error(f"Gagal memuat pengaturan Qobuz pengguna dari DB: {e}")
-            logging.warning("Pengaturan kualitas pengguna mungkin tidak akan persisten.")
-
-        # 4. Simpan klien yang SUDAH LOGIN & DIKONFIGURASI ke dictionary global
         BOT_QOBUZ_CLIENTS[account_id] = client
-        logging.debug(f"Berhasil login & konfigurasi Akun Qobuz #{account_id} (Label: {client.label})")
-        
+        logging.info(f"Main: Qobuz #{account_id} LOGIN SUKSES.")
     except Exception as e:
-        logging.error(f"Gagal login utama Akun Qobuz #{account_id}: {e}")
+        logging.error(f"Main: Qobuz #{account_id} GAGAL: {e}")
         await client.close_session()
 
-
 async def load_all_bot_qobuz_clients():
-    """
-    Me-loop Config.QOBUZ_ACCOUNTS dan meloginkan semuanya
-    saat bot startup.
-    """
-    logging.info(f"Memuat {len(Config.QOBUZ_ACCOUNTS)} akun Qobuz dari config...")
-    
-    tasks = []
-    for account_creds in Config.QOBUZ_ACCOUNTS:
-        tasks.append(login_single_client(account_creds))
-        
+    if not Config.QOBUZ_ACCOUNTS: return
+    logging.info(f"Main: Mencoba login {len(Config.QOBUZ_ACCOUNTS)} akun Qobuz...")
+    tasks = [login_single_client(acc) for acc in Config.QOBUZ_ACCOUNTS]
     await asyncio.gather(*tasks)
+
+
+async def start_services():
+    """Fungsi inisialisasi utama."""
+    logging.info("------------------------------------------------")
+    logging.info("Main: Memulai Inisialisasi Layanan...")
     
-    if not BOT_QOBUZ_CLIENTS:
-        logging.warning("PERINGATAN: Tidak ada akun Qobuz bot yang berhasil login! Fungsi Qobuz tidak akan bekerja.")
-    else:
-        logging.info(f"Berhasil login total {len(BOT_QOBUZ_CLIENTS)} akun Qobuz.")
-# --- Batas Fungsi Login Qobuz ---
-
-
-def signal_handler(s, f):
-    try:
-        logging.info("Signal received! Exiting....")
-        sys.exit(0)
-    except KeyboardInterrupt:
-        sys.exit(1)
-
-
-async def main():
     await bot_set.set_language()
     
-    # 1. Login Qobuz
+    # 1. Start Qobuz
     await load_all_bot_qobuz_clients()
 
-    # 2. Login Deezer
-    logging.info("Memulai inisialisasi Manajer Deezer...")
-    await deezer_manager.initialize_clients()
-    if deezer_manager.clients: 
-        bot_set.deezer = True 
-        logging.info(f"Manajer Deezer berhasil diinisialisasi dengan {len(deezer_manager.clients)} klien.")
-    else:
-        logging.warning("PERINGATAN: Tidak ada akun Deezer yang berhasil login!")
+    # 2. Start Managers
+    managers = [
+        (deezer_manager, "Deezer"), (beatport_manager, "Beatport"), 
+        (tidal_manager, "Tidal"), (kkbox_manager, "KKBox"),
+        (beatsource_manager, "Beatsource"), (soundcloud_manager, "Soundcloud"),
+        (napster_manager, "Napster"), (idagio_manager, "Idagio"),
+        (nugs_manager, "Nugs"), (bugs_manager, "Bugs"),
+        (highresaudio_manager, "HIGHRESAUDIO"), (moov_manager, "Moov"),
+        (jiosaavn_manager, "JioSaavn"), (gaana_manager, "Gaana")
+    ]
 
-    # 3. Login Beatport
-    logging.info("Memulai inisialisasi Manajer Beatport...")
-    await beatport_manager.initialize_clients()
-    if beatport_manager.clients:
-        bot_set.beatport = True 
-        logging.info(f"Manajer Beatport berhasil diinisialisasi dengan {len(beatport_manager.clients)} klien.")
-    else:
-        logging.warning("PERINGATAN: Tidak ada akun Beatport yang berhasil login!")
+    for mgr, name in managers:
+        if mgr:
+            logging.info(f"Main: Menginisialisasi {name}...")
+            try: 
+                # Gunakan timeout agar jika macet tidak selamanya
+                await asyncio.wait_for(mgr.initialize_clients(), timeout=45.0)
+                logging.info(f"Main: {name} OK.")
+            except asyncio.TimeoutError:
+                logging.error(f"Main: {name} TIMEOUT (Melewati...)")
+            except Exception as e: 
+                logging.error(f"Main: Gagal init {name}: {e}")
 
-    # 4. Login Tidal
-    logging.info("Memulai inisialisasi Manajer Tidal...")
-    await tidal_manager.initialize_clients()
-    if tidal_manager.clients:
-        logging.info(f"Manajer Tidal berhasil diinisialisasi dengan {len(tidal_manager.clients)} klien.")
-    else:
-        logging.warning("PERINGATAN: Tidak ada akun Tidal yang berhasil login! (Gunakan /settings untuk login)")
+    # Set flags
+    if deezer_manager and deezer_manager.clients: bot_set.deezer = True 
+    if beatport_manager and beatport_manager.clients: bot_set.beatport = True 
 
-    # 5. Login KKBox
-    logging.info("Memulai inisialisasi Manajer KKBox...")
-    await kkbox_manager.initialize_clients()
-    if kkbox_manager.clients:
-        logging.info(f"Manajer KKBox berhasil diinisialisasi dengan {len(kkbox_manager.clients)} klien.")
-    else:
-        logging.warning("PERINGATAN: Tidak ada akun KKBox yang berhasil login!")
-        
-    # --- TAMBAHAN: Login Beatsource ---
-    logging.info("Memulai inisialisasi Manajer Beatsource...")
-    await beatsource_manager.initialize_clients()
-    if beatsource_manager.clients:
-        logging.info(f"Manajer Beatsource berhasil diinisialisasi dengan {len(beatsource_manager.clients)} klien.")
-    else:
-        logging.warning("PERINGATAN: Tidak ada akun Beatsource yang berhasil login!")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN: Login Soundcloud ---
-    logging.info("Memulai inisialisasi Manajer Soundcloud...")
-    await soundcloud_manager.initialize_clients()
-    if soundcloud_manager.get_client():
-        logging.info(f"Manajer Soundcloud berhasil diinisialisasi.")
-    else:
-        logging.warning("PERINGATAN: Manajer Soundcloud gagal diinisialisasi (Token mungkin hilang)!")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN BARU: Login Napster ---
-    if napster_manager:
-        logging.info("Memulai inisialisasi Manajer Napster...")
-        await napster_manager.initialize_clients()
-        if napster_manager.clients:
-            logging.info(f"Manajer Napster berhasil diinisialisasi dengan {len(napster_manager.clients)} klien.")
-        else:
-            logging.warning("PERINGATAN: Tidak ada akun Napster yang berhasil login!")
-    # --- BATAS TAMBAHAN ---
-    
-    # --- TAMBAHAN BARU: Login Idagio ---
-    if idagio_manager:
-        logging.info("Memulai inisialisasi Manajer Idagio...")
-        await idagio_manager.initialize_clients()
-        if idagio_manager.clients:
-            logging.info(f"Manajer Idagio berhasil diinisialisasi dengan {len(idagio_manager.clients)} klien.")
-        else:
-            logging.warning("PERINGATAN: Tidak ada akun Idagio yang berhasil login!")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN BARU: Login Nugs.net ---
-    if nugs_manager:
-        logging.info("Memulai inisialisasi Manajer Nugs.net...")
-        await nugs_manager.initialize_clients()
-        if nugs_manager.clients:
-            logging.info(f"Manajer Nugs.net berhasil diinisialisasi dengan {len(nugs_manager.clients)} klien.")
-        else:
-            logging.warning("PERINGATAN: Tidak ada akun Nugs.net yang berhasil login!")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN BARU: Login Bugs ---
-    if bugs_manager:
-        logging.info("Memulai inisialisasi Manajer Bugs...")
-        await bugs_manager.initialize_clients()
-        if bugs_manager.clients:
-            logging.info(f"Manajer Bugs berhasil diinisialisasi dengan {len(bugs_manager.clients)} klien.")
-        else:
-            logging.warning("PERINGATAN: Tidak ada akun Bugs yang berhasil login!")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN BARU: Login HIGHRESAUDIO ---
-    if highresaudio_manager:
-        logging.info("Memulai inisialisasi Manajer HIGHRESAUDIO...")
-        await highresaudio_manager.initialize_clients()
-        if highresaudio_manager.clients:
-            logging.info(f"Manajer HIGHRESAUDIO berhasil diinisialisasi dengan {len(highresaudio_manager.clients)} klien.")
-        else:
-            logging.warning("PERINGATAN: Tidak ada akun HIGHRESAUDIO yang berhasil login!")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN BARU: Login Moov ---
-    if moov_manager:
-        logging.info("Memulai inisialisasi Manajer Moov...")
-        await moov_manager.initialize_clients()
-        if moov_manager.clients:
-            logging.info(f"Manajer Moov berhasil diinisialisasi dengan {len(moov_manager.clients)} klien.")
-        else:
-            logging.warning("PERINGATAN: Tidak ada akun Moov yang berhasil login!")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN BARU: Inisialisasi JioSaavn ---
-    if jiosaavn_manager:
-        logging.info("Memulai inisialisasi Manajer JioSaavn...")
-        try:
-            await jiosaavn_manager.initialize_clients()
-            logging.info("Manajer JioSaavn berhasil diinisialisasi.")
-        except Exception as e:
-            logging.error(f"Gagal inisialisasi JioSaavn: {e}")
-    # --- BATAS TAMBAHAN ---
-
-    # --- TAMBAHAN BARU: Inisialisasi Gaana ---
-    if gaana_manager:
-        logging.info("Memulai inisialisasi Manajer Gaana...")
-        try:
-            await gaana_manager.initialize_clients()
-            logging.info("Manajer Gaana berhasil diinisialisasi.")
-        except Exception as e:
-            logging.error(f"Gagal inisialisasi Gaana: {e}")
-    # --- BATAS TAMBAHAN ---
-
-    logging.info("Menginisialisasi data pengguna...")
+    # 3. Load User Data
+    logging.info("Main: Memuat Database Pengguna...")
     await bot_set.initialize_users()
-    
-    # --- PERBAIKAN: Panggil fungsi baru untuk memuat pengaturan ke RAM ---
-    # Ini harus dipanggil SETELAH initialize_users() yang mengisi bot_set.user_data
     await load_all_user_settings_into_managers()
-    # --- BATAS PERBAIKAN ---
 
+    # 4. Start Telegram Client
+    logging.info("Main: Menghubungkan ke Telegram...")
     await aio.start()
-    signal.signal(signal.SIGINT, signal_handler)
+    
+    me = await aio.get_me()
+    logging.info(f"------------------------------------------------")
+    logging.info(f"BOT BERHASIL START SEBAGAI: @{me.username}")
+    logging.info(f"------------------------------------------------")
+    
+    # 5. Keep Alive dengan IDLE
+    await idle()
+    
+    # 6. Stop Sequence (After Idle breaks)
+    logging.info("Main: Menerima sinyal stop, mematikan layanan...")
+    await aio.stop()
+    await shutdown_all_services()
 
 
-# --- TAMBAHAN BARU: Fungsi Shutdown Terpusat ---
-async def shutdown_all_services(loop):
-    """
-    Menjalankan semua tugas pembersihan untuk SEMUA layanan 
-    (Klien TG, Qobuz, Tidal, Deezer, dll.)
-    """
-    logging.info("Memulai shutdown layanan...")
+async def shutdown_all_services():
     tasks = []
-
-    # 1. Hentikan Klien Telegram (aio)
-    if aio and aio.is_initialized:
-        logging.info("Menghentikan klien Telegram (aio)...")
-        tasks.append(aio.stop())
-
-    # 2. Tutup Klien Qobuz (mereka menggunakan .close_session())
-    logging.info(f"Menutup {len(BOT_QOBUZ_CLIENTS)} klien Qobuz...")
-    for client_id, client in BOT_QOBUZ_CLIENTS.items():
+    # Close Qobuz
+    for client in BOT_QOBUZ_CLIENTS.values():
         if client and hasattr(client, 'close_session'):
             tasks.append(client.close_session())
-
-    # 3. Tutup Semua Manajer Lainnya (mereka menggunakan .shutdown())
-    all_managers = {
-        "Tidal": tidal_manager,
-        "Deezer": deezer_manager,
-        "Beatport": beatport_manager,
-        "KKBox": kkbox_manager,
-        "Beatsource": beatsource_manager,
-        "Soundcloud": soundcloud_manager,
-        "Napster": napster_manager,
-        "Idagio": idagio_manager,
-        "Nugs": nugs_manager,
-        "Bugs": bugs_manager,
-        "HIGHRESAUDIO": highresaudio_manager,
-        "Moov": moov_manager, 
-        "JioSaavn": jiosaavn_manager, # Tambahan
-        "Gaana": gaana_manager,       # Tambahan
-    }
-
-    for name, manager in all_managers.items():
-        # Cek jika manajer diimpor (tidak None) & memiliki metode shutdown
-        if manager and hasattr(manager, 'shutdown'):
-            logging.info(f"Memulai shutdown untuk Manajer {name}...")
-            tasks.append(manager.shutdown())
-        elif manager:
-            logging.warning(f"Manajer {name} ada tetapi tidak memiliki metode 'shutdown'!")
-
-    # Jalankan semua tugas shutdown secara bersamaan
-    if tasks:
-        logging.info(f"Menjalankan {len(tasks)} tugas shutdown...")
-        # return_exceptions=True agar 1 kegagalan tidak menghentikan yg lain
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logging.error(f"Error saat shutdown tugas ke-{i}: {result}")
     
-    logging.info("Semua layanan telah dihentikan.")
-# --- AKHIR TAMBAHAN BARU ---
+    # Close Managers
+    managers_list = [
+        deezer_manager, beatport_manager, tidal_manager, kkbox_manager,
+        beatsource_manager, soundcloud_manager, napster_manager, idagio_manager,
+        nugs_manager, bugs_manager, highresaudio_manager, moov_manager,
+        jiosaavn_manager, gaana_manager
+    ]
+    for mgr in managers_list:
+        if mgr and hasattr(mgr, 'shutdown'):
+            tasks.append(mgr.shutdown())
+
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
-# --- MODIFIKASI: Blok __main__ untuk menangani shutdown ---
 if __name__ == "__main__":
     if not os.path.isdir(Config.DOWNLOAD_BASE_DIR):
         os.makedirs(Config.DOWNLOAD_BASE_DIR)
+    
+    # Gunakan get_event_loop agar konsisten dengan environment Pyrogram
     loop = asyncio.get_event_loop()
     
     try:
-        logging.info("Memulai bot...")
-        loop.run_until_complete(main())
-        logging.info("Bot sekarang berjalan. loop.run_forever() dipanggil.")
-        loop.run_forever()
-        
+        loop.run_until_complete(start_services())
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Shutdown diminta (KeyboardInterrupt/SystemExit)...")
-        
-    except Exception:
-        # Menangkap error fatal yang tidak terduga dari loop utama
-        logging.critical("Error fatal di loop utama:")
-        logging.critical(traceback.format_exc())
-        
+        logging.info("Main: Dipaksa berhenti oleh pengguna.")
+    except Exception as e:
+        logging.critical(f"Main: ERROR FATAL UTAMA: {e}")
+        traceback.print_exc()
     finally:
-        # Blok ini akan SELALU berjalan saat loop dihentikan
-        logging.info("Memulai proses shutdown di blok 'finally'...")
-        
-        # Jalankan fungsi shutdown asinkron kita
-        if loop.is_running():
-            loop.run_until_complete(shutdown_all_services(loop))
-        else:
-            # Jika loop sudah ditutup, coba jalankan minimal
-            # Ini mungkin tidak sempurna tapi lebih baik daripada tidak sama sekali
-            asyncio.run(shutdown_all_services(loop))
-
-        # Hentikan dan tutup loop secara eksplisit
-        logging.info("Menutup event loop...")
-        loop.stop()
-        loop.close()
-        
-        logging.info("Shutdown selesai. Keluar.")
-        sys.exit(0) # Keluar dengan bersih
-# --- AKHIR MODIFIKASI ---
+        logging.info("Main: Selesai.")
