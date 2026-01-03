@@ -8,139 +8,115 @@ from config import Config
 try:
     from ..database.mongo_async import database
 except (ImportError, ModuleNotFoundError):
-    LOGGER.critical("Beatport Manager: Gagal mengimpor 'database'. Fungsi pemuatan kualitas mungkin gagal.")
+    LOGGER.critical("Beatport Manager: Gagal mengimpor 'database'.")
     class DummyDatabase:
         async def get_variable(self, *args, **kwargs): return {}
+        async def set_variable(self, *args, **kwargs): pass
     database = DummyDatabase()
 
 try:
     from .api import BeatportAPI
 except ImportError:
-    LOGGER.critical("Beatport: Gagal mengimpor 'BeatportAPI' dari 'bot/helpers/beatport/api.py'. File inti tidak ada.")
+    LOGGER.critical("Beatport: Gagal mengimpor 'BeatportAPI'.")
     class BeatportAPI:
         def __init__(self, *args, **kwargs): pass
-        async def login(self, *args, **kwargs): raise NotImplementedError("File 'BeatportAPI' inti tidak ditemukan.")
+        async def login(self, *args, **kwargs): raise NotImplementedError("API Error")
         async def close_session(self): pass
 
 
 class BeatportLoginManager:
-    """
-    Mengelola kumpulan instans klien BeatportAPI yang sudah login.
-    Juga mengelola pengaturan kualitas default dan per-pengguna.
-    """
     def __init__(self, account_configs: list):
         self.account_configs = account_configs
         self.clients = [] 
         self._client_cycler = None
-        
         self.quality = "lossless" 
         self.user_data = {} 
 
     async def initialize_clients(self):
-        """
-        Mencoba login ke semua akun Beatport dari Config
-        dan memuat pengaturan kualitas default.
-        """
-        
-        # --- PERBAIKAN: Muat Kualitas Default ---
+        saved_tokens = {}
         try:
-            all_settings = await database.get_variable() # Ambil SEMUA pengaturan
-            if not all_settings:
-                all_settings = {}
-
-            db_quality = all_settings.get('BEATPORT_QUALITY')
+            all_settings = await database.get_variable() 
+            if not all_settings: all_settings = {}
             
+            db_quality = all_settings.get('BEATPORT_QUALITY')
             if db_quality in ["lossless", "high", "medium"]:
                 self.quality = db_quality
-                LOGGER.info(f"Beatport Manager: Kualitas default dimuat dari DB: {self.quality}")
-            else:
-                LOGGER.info(f"Beatport Manager: Kualitas default DB tidak ada/valid, menggunakan: {self.quality}")
-        except Exception as e:
-            LOGGER.error(f"Beatport Manager: Gagal memuat kualitas dari DB: {e}. Menggunakan default: {self.quality}")
-        # --- PERBAIKAN SELESAI ---
+            
+            saved_tokens = all_settings.get('BEATPORT_TOKENS', {})
+        except Exception: pass
 
-        if not self.account_configs:
-            LOGGER.warning("Beatport Manager: Tidak ada akun untuk diinisialisasi.")
-            return
+        if not self.account_configs: return
 
-        LOGGER.info(f"Beatport Manager: Menginisialisasi {len(self.account_configs)} akun...")
+        LOGGER.info(f"Beatport Manager: Init {len(self.account_configs)} accounts...")
         tasks = []
         for account in self.account_configs:
-            tasks.append(self._login_task(account))
+            token_data = saved_tokens.get(account['email'])
+            tasks.append(self._login_task(account, token_data))
         
         results = await asyncio.gather(*tasks)
+        self.clients = [c for c in results if c]
         
-        self.clients = [client for client in results if client is not None]
-        
-        if not self.clients:
-            LOGGER.error("Beatport Manager: Gagal login ke SEMUA akun Beatport.")
-            return
+        if self.clients:
+            LOGGER.info(f"Beatport Manager: {len(self.clients)} clients ready.")
+            self._client_cycler = itertools.cycle(self.clients)
+            await self.save_all_tokens()
 
-        LOGGER.info(f"Beatport Manager: Berhasil login ke {len(self.clients)} dari {len(self.account_configs)} akun.")
-        self._client_cycler = itertools.cycle(self.clients)
-
-    async def _login_task(self, account: dict):
-        """Tugas login untuk satu akun."""
+    async def _login_task(self, account: dict, saved_token: dict = None):
         client = BeatportAPI()
+        email, password = account['email'], account['password']
+
+        if saved_token and saved_token.get('refresh_token'):
+            try:
+                saved_token['email'] = email
+                await client.load_session(saved_token)
+                await client.refresh()
+                return client
+            except Exception: pass
+        
         try:
-            await client.login(
-                email=account['email'], 
-                password=account['password']
-            )
-            LOGGER.info(f"Beatport Manager: Berhasil login ke Akun #{account['id']}")
+            await client.login(email=email, password=password)
             return client
         except Exception as e:
-            LOGGER.error(f"Beatport Manager: Gagal login ke Akun #{account['id']}. Error: {e}")
+            LOGGER.error(f"Beatport Login Failed {email}: {e}")
             return None
+
+    async def save_all_tokens(self):
+        if not self.clients: return
+        try:
+            tokens_map = {}
+            for client in self.clients:
+                if hasattr(client, 'email') and client.email and client.refresh_token:
+                    tokens_map[client.email] = {
+                        'access_token': client.access_token,
+                        'refresh_token': client.refresh_token,
+                        'email': client.email
+                    }
+            
+            # --- PERBAIKAN DISINI ---
+            # Menggunakan format (KEY, VALUE) sesuai error log
+            await database.set_variable('BEATPORT_TOKENS', tokens_map)
+            LOGGER.info("Beatport Manager: Tokens saved.")
+            
+        except Exception as e:
+            LOGGER.error(f"Beatport Manager: Gagal menyimpan token: {e}")
 
     def get_client(self) -> BeatportAPI | None:
-        """
-        Mendapatkan klien berikutnya dari kumpulan (round-robin).
-        """
-        if not self._client_cycler:
-            LOGGER.error("Beatport Manager: Tidak ada klien yang tersedia.")
-            return None
-        
-        try:
-            return next(self._client_cycler)
-        except StopIteration:
-            LOGGER.error("Beatport Manager: Kumpulan klien kosong.")
-            return None
+        if not self._client_cycler: return None
+        try: return next(self._client_cycler)
+        except: return None
     
     async def setup_quality(self, user_id: int, qual: str = None):
-        """Mengatur cache kualitas untuk pengguna tertentu."""
-        if user_id not in self.user_data:
-            self.user_data[user_id] = {}
+        if user_id not in self.user_data: self.user_data[user_id] = {}
         if qual in ["lossless", "high", "medium"]:
             self.user_data[user_id]['beatport_qual'] = qual
-            LOGGER.debug(f"Beatport Manager: Mengatur kualitas user {user_id} ke {qual}")
 
     def get_user_quality(self, user_id: int) -> str:
-        """Mendapatkan kualitas untuk pengguna, fallback ke default."""
-        user_qual = self.user_data.get(user_id, {}).get('beatport_qual')
-        if user_qual in ["lossless", "high", "medium"]:
-            return user_qual
-        return self.quality 
+        return self.user_data.get(user_id, {}).get('beatport_qual', self.quality)
 
-    # --- TAMBAHAN BARU: Metode Shutdown ---
     async def shutdown(self):
-        """Menutup semua sesi klien BeatportAPI yang dikelola."""
-        LOGGER.info(f"Beatport Manager: Memulai shutdown... Menutup {len(self.clients)} sesi klien.")
-        tasks = []
-        for client in self.clients:
-            # Memanggil 'close_session' sesuai dengan nama metode di api.py
-            if hasattr(client, 'close_session'):
-                tasks.append(client.close_session())
-        
-        # Jalankan semua tugas penutupan secara bersamaan
-        try:
-            await asyncio.gather(*tasks)
-        except Exception as e:
-            LOGGER.error(f"Beatport Manager: Terjadi error saat shutdown: {e}")
-            
+        await self.save_all_tokens()
+        tasks = [c.close_session() for c in self.clients if hasattr(c, 'close_session')]
+        if tasks: await asyncio.gather(*tasks)
         self.clients = []
-        self._client_cycler = None
-        LOGGER.info("Beatport Manager: Semua sesi klien telah ditutup.")
-    # --- AKHIR TAMBAHAN ---
 
 beatport_manager = BeatportLoginManager(Config.BEATPORT_ACCOUNTS)
