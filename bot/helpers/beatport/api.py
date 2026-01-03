@@ -1,4 +1,4 @@
-# [FILE BARU: bot/helpers/beatport/api.py]
+# [GANTI SELURUH FILE: bot/helpers/beatport/api.py]
 
 import aiohttp
 import asyncio
@@ -14,7 +14,6 @@ class BeatportError(Exception):
 class BeatportAPI:
     def __init__(self):
         self.API_URL = "https://api.beatport.com/v4/"
-        # Client ID dari file Anda
         self.client_id = "Zy2K9Wvy6DkUds7g8s1GNMHfk17E5Ch2BWHlyaGY"
         self.redirect_uri = "seratodjlite://beatport"
 
@@ -22,7 +21,10 @@ class BeatportAPI:
         self.refresh_token = None
         self.expires = None
         
-        self.session = None # Akan menjadi ClientSession aiohttp
+        # Simpan email untuk referensi database
+        self.email = None
+        
+        self.session = None 
 
     async def _init_session(self):
         """Membuat sesi aiohttp jika belum ada."""
@@ -43,8 +45,24 @@ class BeatportAPI:
             headers['authorization'] = f'Bearer {self.access_token}'
         return headers
 
+    async def load_session(self, token_data: dict):
+        """
+        Memuat sesi dari data yang tersimpan di DB tanpa login ulang.
+        """
+        await self._init_session()
+        self.access_token = token_data.get('access_token')
+        self.refresh_token = token_data.get('refresh_token')
+        self.email = token_data.get('email')
+        
+        # Set expires ke waktu lampau agar memaksa refresh saat request pertama
+        # Ini memastikan token divalidasi ulang
+        self.expires = datetime.now() - timedelta(seconds=10)
+        
+        LOGGER.debug(f"BeatportAPI: Sesi dimuat untuk {self.email} (Pending Refresh)")
+
     async def login(self, email: str, password: str):
         """Melakukan alur login OAuth lengkap secara async."""
+        self.email = email
         await self._init_session()
         
         acc_headers = {
@@ -52,7 +70,7 @@ class BeatportAPI:
                           "Chrome/131.0.0.0 Safari/537.36",
         }
         
-        # 1. Otorisasi (dapatkan URL referer)
+        # 1. Otorisasi
         params_auth = {
             "client_id": self.client_id,
             "response_type": "code",
@@ -64,19 +82,19 @@ class BeatportAPI:
             base_url = str(r.url).replace(r.request_info.url.path_qs, '')
             referer = base_url + r.headers['location']
 
-        # 2. Login (kirim email/pass)
+        # 2. Login
         json_login = {"username": email, "password": password}
         async with self.session.post(f"{self.API_URL}auth/login/", json=json_login, headers={**acc_headers, "Referer": referer}) as r:
             if r.status != 200:
                 raise BeatportError(f"Auth step 2 (Login) gagal: {await r.text()}")
 
-        # 3. Otorisasi lagi (dapatkan kode)
+        # 3. Otorisasi lagi
         async with self.session.get(f"{self.API_URL}auth/o/authorize/", params=params_auth, headers=acc_headers, allow_redirects=False) as r:
             if r.status != 302:
                 raise BeatportError(f"Auth step 3 (Get Code) gagal: {await r.text()}")
             code = r.headers['location'].split('code=')[1]
 
-        # 4. Tukarkan kode dengan token
+        # 4. Tukar kode dengan token
         data_token = {
             "client_id": self.client_id,
             "code": code,
@@ -91,7 +109,7 @@ class BeatportAPI:
             self.access_token = resp_json['access_token']
             self.refresh_token = resp_json['refresh_token']
             self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
-            LOGGER.info(f"Beatport: Login berhasil untuk {email}")
+            LOGGER.info(f"Beatport: Login Password berhasil untuk {email}")
 
     async def refresh(self):
         """Me-refresh access token."""
@@ -118,7 +136,6 @@ class BeatportAPI:
         if not params:
             params = {}
 
-        # Cek jika token kedaluwarsa
         if self.expires and datetime.now() > self.expires:
             try:
                 await self.refresh()
@@ -142,7 +159,7 @@ class BeatportAPI:
 
             return await r.json()
 
-    # --- Endpoint Katalog (Berdasarkan beatport_api.py) ---
+    # --- Endpoint Katalog ---
 
     async def get_account(self):
         return await self._get('auth/o/introspect')
@@ -175,5 +192,4 @@ class BeatportAPI:
         return await self._get(f'catalog/artists/{artist_id}/tracks', params={'page': page, 'per_page': per_page})
 
     async def get_track_download(self, track_id: str, quality: str):
-        # 'quality' bisa "medium", "high", atau "lossless"
         return await self._get(f'catalog/tracks/{track_id}/download', params={'quality': quality})
