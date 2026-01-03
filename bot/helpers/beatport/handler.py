@@ -1,10 +1,12 @@
-# [GANTI FILE: bot/helpers/beatport/handler.py]
+# [GANTI SELURUH FILE: bot/helpers/beatport/handler.py]
 
 import aiohttp
 import aiofiles
 import os
-import shutil # TAMBAHAN UNTUK COPY FILE
+import shutil 
 import traceback
+import asyncio 
+import random 
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -19,31 +21,25 @@ from .api import BeatportError
 
 from ..utils import *
 
-# --- PERBAIKAN FINAL (JALUR YANG BENAR) ---
+# --- PERBAIKAN SINTAKS DI SINI ---
 try:
-    # 'handler.py' ada di bot/helpers/beatport/
-    # 'uploder.py' ada di bot/helpers/
-    # Kita perlu naik 1 level (..)
-    from ..uploder import * # Dua titik, dan nama 'uploder.py'
+    from ..uploder import *
 except ImportError as e:
-    # Fallback jika impor gagal lagi (seharusnya tidak)
     raise ImportError(f"Gagal mengimpor uploder.py: {e}")
-# --- PERBAIKAN SELESAI ---
+# ---------------------------------
 
 from ..metadata import set_metadata
 from ..message import edit_message
 from ..utils import fetch_zip_settings
-from ...settings import bot_set # Tiga titik untuk settings.py (bot/settings.py)
+from ...settings import bot_set 
 
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
-# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
 try:
     from bot.helpers.lyrics.manager import lyrics_manager
 except ImportError:
     lyrics_manager = None
-# --- BATAS TAMBAHAN ---
 
 
 async def start_beatport(url: str, user: dict):
@@ -52,7 +48,6 @@ async def start_beatport(url: str, user: dict):
         media_type, item_id, extra_kwargs = custom_url_parse(url)
 
         if media_type == 'artist':
-            # (Belum didukung oleh file Anda, bisa ditambahkan nanti)
             raise NotImplementedError("Unduhan Artis Beatport belum didukung.")
         
         elif media_type == 'track':
@@ -66,20 +61,14 @@ async def start_beatport(url: str, user: dict):
         elif media_type == 'playlist':
             await start_playlist(item_id, user, extra_kwargs)
         
-        # --- PERBAIKAN: Hapus 'TASK_COMPLETED' agar tidak menimpa status akhir ---
-        # await edit_message(user['bot_msg'], lang.s.TASK_COMPLETED)
-        # --- AKHIR PERBAIKAN ---
-        
     except Exception as e:
         LOGGER.error(f"Error fatal di Beatport handler: {e}\n{traceback.format_exc()}")
-        # Melempar error agar download.py tahu tugasnya gagal
         raise e 
 
 
 async def download_beatport_track(url: str, filepath: str):
     """Pengunduh HTTP async sederhana untuk file Beatport (MP4/FLAC)."""
     try:
-        # Kita perlu sesi baru karena API menggunakan sesi terpisah
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 response.raise_for_status()
@@ -87,13 +76,18 @@ async def download_beatport_track(url: str, filepath: str):
                 async with aiofiles.open(filepath, "wb") as f:
                     async for chunk in response.content.iter_chunked(8192):
                         await f.write(chunk)
-        return None # Sukses
+        return None 
     except Exception as e:
         return f"Gagal mengunduh file: {e}"
 
 
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
+
+    # --- RATE LIMITING / ANTI-BAN ---
+    delay = random.uniform(2.0, 6.0)
+    await asyncio.sleep(delay)
+    # --------------------------------
 
     if not track_meta:
         try:
@@ -118,16 +112,13 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
-    # Memanggil pengunduh HTTP sederhana kita
     err = await download_beatport_track(download_url, track_meta['filepath'])
     if err:
         LOGGER.error(f"Beatport dl_track gagal untuk {item_id}: {err}")
         return False
 
     try:
-        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
         await set_metadata(track_meta, user['user_id'])
-        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Beatport: {filepath}")
         return False
@@ -154,7 +145,7 @@ async def start_album(album_id: str, user: dict, upload=True):
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
     
     album_folder = sanitize_filepath(album_folder)
-    album_meta['folderpath'] = album_folder # Path direktori asli (string)
+    album_meta['folderpath'] = album_folder 
 
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
@@ -179,31 +170,23 @@ async def start_album(album_id: str, user: dict, upload=True):
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Beatport yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
         
-        # --- PERBAIKAN BUG #2: Simpan Cover ke Folder sebelum Zip ---
         try:
             cover_src = album_meta.get('cover')
             if cover_src:
                 target_cover = os.path.join(album_meta['folderpath'], "cover.jpg")
                 if os.path.exists(cover_src):
-                    # Jika source file lokal, copy
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    # Jika source URL, download ulang
                     await download_beatport_track(cover_src, target_cover)
         except Exception as e:
             LOGGER.warning(f"Gagal menyalin cover ke ZIP: {e}")
-        # -----------------------------------------------------------
 
-        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
@@ -218,7 +201,7 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
 
     playlist_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{play_meta['provider']}/{play_meta['title']}"
     playlist_folder = sanitize_filepath(playlist_folder)
-    play_meta['folderpath'] = playlist_folder # Path direktori asli (string)
+    play_meta['folderpath'] = playlist_folder 
 
     if upload:
         play_meta['poster_msg'] = await post_art_poster(user, play_meta)
@@ -243,31 +226,23 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Beatport yang berhasil diunduh untuk playlist {play_meta['title']}.")
 
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
 
-        # --- PERBAIKAN BUG #2: Simpan Cover ke Folder sebelum Zip ---
         try:
             cover_src = play_meta.get('cover')
             if cover_src:
                 target_cover = os.path.join(play_meta['folderpath'], "cover.jpg")
                 if os.path.exists(cover_src):
-                    # Jika source file lokal, copy
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    # Jika source URL, download ulang
                     await download_beatport_track(cover_src, target_cover)
         except Exception as e:
             LOGGER.warning(f"Gagal menyalin cover ke ZIP: {e}")
-        # -----------------------------------------------------------
 
-        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
