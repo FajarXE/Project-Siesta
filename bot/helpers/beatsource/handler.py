@@ -1,9 +1,11 @@
-# [GANTI FILE: bot/helpers/beatsource/handler.py]
+# [GANTI SELURUH FILE: bot/helpers/beatsource/handler.py]
 
 import aiohttp
 import aiofiles
 import os
 import traceback
+import asyncio # Penting
+import random  # Penting
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -18,7 +20,6 @@ from .api import BeatsourceError
 
 from ..utils import *
 
-# Impor uploder.py (sesuaikan jalur jika perlu)
 try:
     from ..uploder import *
 except ImportError as e:
@@ -32,12 +33,10 @@ from ...settings import bot_set
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
-# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
 try:
     from bot.helpers.lyrics.manager import lyrics_manager
 except ImportError:
     lyrics_manager = None
-# --- BATAS TAMBAHAN ---
 
 
 async def start_beatsource(url: str, user: dict):
@@ -65,7 +64,7 @@ async def start_beatsource(url: str, user: dict):
 
 
 async def download_beatsource_track(url: str, filepath: str):
-    """Pengunduh HTTP async sederhana untuk file Beatsource (M4A/FLAC)."""
+    """Pengunduh HTTP async sederhana."""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -74,13 +73,19 @@ async def download_beatsource_track(url: str, filepath: str):
                 async with aiofiles.open(filepath, "wb") as f:
                     async for chunk in response.content.iter_chunked(8192):
                         await f.write(chunk)
-        return None # Sukses
+        return None 
     except Exception as e:
         return f"Gagal mengunduh file: {e}"
 
 
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
+
+    # --- RATE LIMITING / ANTI-BAN ---
+    # Jeda acak 2-6 detik agar tidak terlihat seperti bot agresif
+    delay = random.uniform(2.0, 6.0)
+    await asyncio.sleep(delay)
+    # --------------------------------
 
     if not track_meta:
         try:
@@ -111,9 +116,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         return False
 
     try:
-        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
         await set_metadata(track_meta, user['user_id'])
-        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download Beatsource: {filepath}")
         return False
@@ -165,15 +168,11 @@ async def start_album(album_id: str, user: dict, upload=True):
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Beatsource yang berhasil diunduh untuk album {album_meta['title']}.")
 
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
-        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
@@ -213,15 +212,11 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu Beatsource yang berhasil diunduh untuk playlist {play_meta['title']}.")
 
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
-        # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
-        # --- AKHIR PERBAIKAN ---
 
     if upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
