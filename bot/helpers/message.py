@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/message.py]
+# [GANTI SELURUH FILE: bot/helpers/message.py]
 
 import os
 import asyncio
@@ -7,8 +7,9 @@ import math
 import traceback 
 
 from pyrogram.types import Message
-from pyrogram.errors import MessageNotModified, FloodWait, MessageIdInvalid
+from pyrogram.errors import MessageNotModified, FloodWait, MessageIdInvalid, RPCError
 
+# Impor global client untuk fallback
 from bot.tgclient import aio
 from bot.settings import bot_set
 from bot.logger import LOGGER
@@ -30,13 +31,7 @@ user_details = {
 
 
 async def fetch_user_details(msg: Message, reply=False) -> dict:
-    """
-    args:
-        msg - pyrogram Message()
-        reply - if user message was reply to another message
-    """
     details = user_details.copy()
-
     details['user_id'] = msg.from_user.id
     details['name'] = msg.from_user.first_name
     if msg.from_user.username:
@@ -53,15 +48,6 @@ async def fetch_user_details(msg: Message, reply=False) -> dict:
 
 
 async def check_user(uid=None, msg=None, restricted=False) -> bool:
-    """
-    Args:
-        uid - User ID (only needed for restricted access)
-        msg - Pyrogram Message (for getting chatid and userid)
-        restricted - Access only to admins (bool)
-    Returns:
-        True - Can access
-        False - Cannot Access 
-    """
     if restricted:
         if uid in bot_set.admins:
             return True
@@ -74,21 +60,10 @@ async def check_user(uid=None, msg=None, restricted=False) -> bool:
                 return True
             elif msg.chat.id in all_chats:
                 return True
-
     return False
 
 
 async def antiSpam(uid=None, cid=None, revoke=False) -> bool:
-    """
-    Checks if user/chat in waiting mode(anti spam)
-    Args
-        uid: User id (int)
-        cid: Chat id (int)
-        revoke: bool (if to revoke the given ID)
-    Returns:
-        True - if spam
-        False - if not spam
-    """
     if revoke:
         if bot_set.anti_spam == 'CHAT+':
             if cid in current_user:
@@ -110,21 +85,10 @@ async def antiSpam(uid=None, cid=None, revoke=False) -> bool:
         return False
 
 
-
 async def send_message(user, item, itype='text',
     caption=None, markup=None, chat_id=None,
     meta=None
   ):
-    """
-    user: user details (dict)
-    item: to send
-    itype: pic|doc|text|audio (str)
-    caption: text
-    markup: buttons
-    chat_id: if override chat from user details
-    thumb: thumbnail for sending audio
-    meta: metadata for the audio file
-    """
     if not isinstance(user, dict):
         user = await fetch_user_details(user)
     chat_id = chat_id if chat_id else user['chat_id']
@@ -165,7 +129,7 @@ async def send_message(user, item, itype='text',
                         f"`{os.path.basename(item)}`\n\n"
                         f"{progress_bar} {percentage}%"
                     )
-                    
+                    # Gunakan create_task agar tidak memblokir upload
                     asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
                 except Exception:
                     pass
@@ -180,16 +144,12 @@ async def send_message(user, item, itype='text',
             )
 
         elif itype == 'audio':
-            
-            # --- FIX: Validasi Cover/Thumbnail ---
             thumb_path = None
             cover_candidate = meta.get('cover') or meta.get('thumbnail')
             if cover_candidate and isinstance(cover_candidate, str):
                 if os.path.exists(cover_candidate):
                     thumb_path = cover_candidate
             
-            # --- FIX: Konversi Durasi Aman ---
-            # Menangani string kosong atau format float (misal '123.45')
             duration = 0
             raw_duration = meta.get('duration')
             if raw_duration:
@@ -197,7 +157,6 @@ async def send_message(user, item, itype='text',
                     duration = int(float(str(raw_duration)))
                 except:
                     duration = 0
-            # ---------------------------------
 
             progress_callback = None 
             
@@ -227,7 +186,6 @@ async def send_message(user, item, itype='text',
                             f"`{title}`\n\n"
                             f"{progress_bar} {percentage}%"
                         )
-                        
                         asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
                     except Exception:
                         pass
@@ -238,7 +196,7 @@ async def send_message(user, item, itype='text',
                 chat_id=chat_id,
                 audio=item,
                 caption=caption,
-                duration=duration, # Gunakan durasi yang sudah diamankan
+                duration=duration,
                 performer=meta.get('artist'),
                 title=meta.get('title'),
                 thumb=thumb_path, 
@@ -257,28 +215,57 @@ async def send_message(user, item, itype='text',
     except FloodWait as e:
         await asyncio.sleep(e.value)
         return await send_message(user, item, itype, caption, markup, chat_id, meta)
+    except Exception as e:
+        LOGGER.error(f"Send Message Error: {e}")
+        return None
 
     return msg
 
 
-async def edit_message(msg: Message, text, markup=None, antiflood=True):
+# --- FUNGSI UTAMA YANG DIPERBAIKI ---
+async def edit_message(msg: Message, text: str, markup=None, antiflood=True):
+    """
+    Mengedit pesan dengan fallback ke 'aio.edit_message_text' 
+    jika 'msg.edit_text' gagal karena masalah koneksi.
+    """
+    if not msg:
+        return None
+
     try:
-        edited = await msg.edit_text(
-            text=text,
-            reply_markup=markup,
-            disable_web_page_preview=True
-        )
-        return edited
+        # METODE 1: Coba edit langsung dari objek pesan (Standard)
+        # Cek msg._client agar tidak error "Client has not been started yet"
+        if msg._client and msg._client.is_connected:
+            return await msg.edit_text(
+                text=text,
+                reply_markup=markup,
+                disable_web_page_preview=True
+            )
+        
+        # METODE 2: Fallback ke Klien Global (aio)
+        # Jika metode 1 gagal atau klien terputus, gunakan ini.
+        elif aio.is_connected:
+            return await aio.edit_message_text(
+                chat_id=msg.chat.id,
+                message_id=msg.id,
+                text=text,
+                reply_markup=markup,
+                disable_web_page_preview=True
+            )
+        else:
+            LOGGER.warning("Edit Message: Gagal, kedua klien (msg & aio) tidak terhubung.")
+            return None
+
     except MessageNotModified:
-        pass
+        pass # Isi pesan sama, abaikan
     except FloodWait as e:
         if antiflood:
             await asyncio.sleep(e.value)
             return await edit_message(msg, text, markup, antiflood)
-        else:
-            return None
     except MessageIdInvalid:
-        pass
+        pass # Pesan sudah dihapus
+    except RPCError as e:
+        LOGGER.error(f"RPCError Edit Message: {e}")
     except Exception as e:
-        LOGGER.error(f"Gagal mengedit pesan (Tipe msg: {type(msg)}). Error: {e}\n{traceback.format_exc()}")
-        pass
+        # Log error generik, tapi jangan crash
+        LOGGER.error(f"Error Edit Message: {e}")
+        return None
