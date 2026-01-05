@@ -39,46 +39,47 @@ try:
 except ImportError:
     kkbox_manager = _DummyManager()
 
-# --- TAMBAHAN: Impor Manajer Beatsource ---
+# Impor Manajer Beatsource
 try:
     from bot.helpers.beatsource.manager import beatsource_manager
 except ImportError:
     beatsource_manager = _DummyManager()
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN: Impor Manajer Soundcloud ---
+# Impor Manajer Soundcloud
 try:
     from bot.helpers.soundcloud.manager import soundcloud_manager
 except ImportError:
     soundcloud_manager = _DummyManager()
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Napster ---
+# Impor Manajer Napster
 try:
     from bot.helpers.napster.manager import napster_manager
 except ImportError:
     napster_manager = _DummyManager()
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Idagio ---
+# Impor Manajer Idagio
 try:
     from bot.helpers.idagio.manager import idagio_manager
 except ImportError:
     idagio_manager = _DummyManager()
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Bugs ---
+# Impor Manajer Bugs
 try:
     from bot.helpers.bugs.manager import bugs_manager
 except ImportError:
     bugs_manager = _DummyManager()
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Moov ---
+# Impor Manajer Moov
 try:
     from bot.helpers.moov.manager import moov_manager
 except ImportError:
     moov_manager = _DummyManager()
+
+# --- TAMBAHAN BARU: Impor Manajer LivePhish ---
+try:
+    from bot.helpers.livephish.manager import livephish_manager
+except ImportError:
+    livephish_manager = _DummyManager()
 # --- BATAS TAMBAHAN ---
 
 
@@ -214,13 +215,23 @@ def providers_button():
             ]
         )
 
-    # --- TAMBAHAN BARU: Tombol Moov ---
     if moov_manager and moov_manager.clients:
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
                     text="MOOV", 
                     callback_data='mvP' # Moov Panel
+                )
+            ]
+        )
+
+    # --- TAMBAHAN BARU: Tombol LivePhish ---
+    if livephish_manager and livephish_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="LIVEPHISH", 
+                    callback_data='lpP' # LivePhish Panel
                 )
             ]
         )
@@ -409,15 +420,12 @@ def qb_button(qualities: dict, user_id: int = 0):
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
-# --- MODIFIKASI: tidal_quality_button ---
 def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'):
     inline_keyboard = []
     usetting = user_id != 0
     spatial_to_show = spatial
     
-    # Ambil pengaturan spesifik pengguna jika ini adalah panel pengguna
     if usetting:
-        # Ambil semua 4 pengaturan dari manager
         _, spatial_to_show, user_mqa_fix, user_convert_m4a = tidal_manager.get_user_quality_settings(user_id)
 
     # 1. Tombol Kualitas
@@ -443,15 +451,13 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
     
     # 3. Tombol MQA & Convert (HANYA untuk panel pengguna)
     if usetting:
-        # Tombol MQA
         if user_mqa_fix == "ON":
             mqa_text = "✅ MQA Fix: ON"
-            mqa_callback = "utdqs_mqa_OFF" # utdqs_ = User Tidal Quality Setting
+            mqa_callback = "utdqs_mqa_OFF"
         else:
             mqa_text = "❌ MQA Fix: OFF"
             mqa_callback = "utdqs_mqa_ON"
         
-        # Tombol Convert M4A
         if user_convert_m4a == "ON":
             convert_text = "✅ Convert M4A: ON"
             convert_callback = "utdqs_convert_OFF"
@@ -476,7 +482,6 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
             ]
         )
     
-    # 4. Tombol 'Back' (HANYA untuk panel pengguna)
     if usetting:
         inline_keyboard.append(
             [
@@ -485,11 +490,9 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
         )
         return InlineKeyboardMarkup(inline_keyboard)
         
-    # Tombol 'Main Menu' & 'Close' (HANYA untuk panel admin)
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
-# --- AKHIR MODIFIKASI ---
 
 
 # Beatport Button
@@ -521,7 +524,7 @@ def bp_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN: Tombol Beatsource ---
+# Beatsource Button
 def bs_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -550,7 +553,7 @@ def bs_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN: Tombol Soundcloud ---
+# Soundcloud Button
 def sc_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -608,7 +611,7 @@ def dz_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 
 
-# Tombol KKBox
+# KKBox Button
 def kk_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -639,7 +642,7 @@ def kk_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN BARU: Tombol Napster ---
+# Napster Button
 def np_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -670,7 +673,7 @@ def np_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN BARU: Tombol Idagio ---
+# Idagio Button
 def id_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -699,7 +702,7 @@ def id_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN BARU: Tombol Bugs ---
+# Bugs Button
 def bugs_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -733,7 +736,7 @@ def bugs_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN BARU: Tombol Moov ---
+# Moov Button
 def mv_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -763,9 +766,39 @@ def mv_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
+
+# --- TAMBAHAN BARU: LivePhish Button ---
+def lp_button(quality: dict, user_id: int = None):
+    buttons = []
+    usetting = user_id is not None
+    # Prefix 'lpQ' untuk admin/global, 'ulps' untuk user setting
+    prefix = "lpQ" if not usetting else f"ulps"
+    
+    row = []
+    for k, v in quality.items():
+        row.append(InlineKeyboardButton(v, callback_data=f"{prefix}_{k}"))
+        
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+            
+    if row:
+        buttons.append(row)
+
+    if usetting:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+        
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
 # --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Tombol Lyrics ---
+# Lyrics Button
 def lyrics_button(user_settings: dict, user_id):
     buttons = []
     
@@ -793,7 +826,6 @@ def lyrics_button(user_settings: dict, user_id):
 
     buttons.append([InlineKeyboardButton(text="Back", callback_data="uset_back")])
     return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
 
 
 def usetting_button() -> InlineKeyboardMarkup:
@@ -832,9 +864,10 @@ def usetting_button() -> InlineKeyboardMarkup:
     if moov_manager and moov_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Moov Quality", callback_data=f"uset_moov")])
 
-    # --- TAMBAHAN BARU: Tombol Lyrics ---
+    if livephish_manager and livephish_manager.clients:
+        buttons.append([InlineKeyboardButton(text=f"LivePhish Quality", callback_data=f"uset_livephish")])
+
     buttons.append([InlineKeyboardButton(text="LYRICS SETTINGS", callback_data="uset_lyrics")])
-    # --- BATAS TAMBAHAN ---
     
     buttons.append([InlineKeyboardButton(text="PLAYLIST_ZIP", callback_data="zip_playlist")])
     buttons.append([InlineKeyboardButton(text="ALBUM_ZIP", callback_data="zip_album")])
