@@ -1,12 +1,9 @@
-# [GANTI FILE: bot/helpers/livephish/handler.py]
-
 import re
 import os
 import aiohttp
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
 
-# --- IMPOR YG SAMA DENGAN DEEZER ---
 from bot.helpers.utils import download_file, zip_handler, fetch_zip_settings
 from bot.helpers.uploder import track_upload, album_upload, post_art_poster
 
@@ -163,25 +160,29 @@ async def start_livephish(link: str, user: dict):
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
 
-    # --- LOGIKA ZIP & POSTER (KONSISTEN DENGAN DEEZER) ---
+    # --- LOGIKA ZIP & POSTER ---
     if completed_tracks:
         base_meta['tracks'] = completed_tracks
         base_meta['folderpath'] = base_meta['tempfolder']
         
-        # 1. Ambil Settings (Sama seperti Deezer)
+        # 1. Ambil Settings
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
 
         # 2. Buat ZIP jika diaktifkan
         if album_zip:
             await edit_message(user['bot_msg'], "Membuat file ZIP...")
-            # Panggil zip_handler dari utils (sama seperti Deezer)
             base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
-        # 3. Kirim Art Poster jika diaktifkan (Sama seperti Deezer)
+        # 3. Kirim Art Poster (DENGAN PENGECEKAN AMAN)
         if art_poster:
-            # Panggil post_art_poster dari uploder (sama seperti Deezer)
-            # Poster akan dikirim ke chat dan msg ID-nya disimpan
-            base_meta['poster_msg'] = await post_art_poster(user, base_meta)
+            # FIX: Cek apakah cover benar-benar ada sebelum mencoba mengirim poster
+            if base_meta.get('cover') and os.path.exists(base_meta['cover']):
+                try:
+                    base_meta['poster_msg'] = await post_art_poster(user, base_meta)
+                except Exception as e:
+                    LOGGER.error(f"Gagal mengirim Art Poster: {e}")
+            else:
+                LOGGER.warning("LivePhish: Melewati Art Poster karena Cover Art tidak ditemukan (Error 410).")
 
         # 4. Upload Album
         await album_upload(base_meta, user)
