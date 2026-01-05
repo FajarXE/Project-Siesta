@@ -1,10 +1,7 @@
-# [GANTI FILE: bot/helpers/livephish/handler.py]
-
 import re
 import os
 import aiohttp
 import asyncio
-import urllib.parse
 from config import Config
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
@@ -86,18 +83,26 @@ async def start_livephish(link: str, user: dict):
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    # --- PERBAIKAN DATE (Agar Release Date muncul) ---
-    # Prioritaskan Tanggal Lengkap (performanceDate) -> Tahun (performanceDateYear)
-    full_date = resp.get("performanceDate", "")      # Contoh: "12/30/2025"
-    year_only = str(resp.get("performanceDateYear", "")) # Contoh: "2025"
+    # --- PERBAIKAN DATE/TAHUN (ROBUST) ---
+    # Cek berbagai field tanggal, ambil yang pertama kali ada isinya
+    # or "" digunakan untuk mengubah None menjadi string kosong
+    possible_dates = [
+        str(resp.get("performanceDate") or ""),           # "12/30/2025"
+        str(resp.get("performanceDateFormatted") or ""),  # "Dec 30, 2025"
+        str(resp.get("releaseDateFormatted") or ""),      # Format lain
+        str(resp.get("performanceDateYear") or "")        # "2025"
+    ]
     
-    if full_date:
-        release_date = full_date
-        # Jika tahun kosong tapi full date ada, ambil tahun dari full date
-        if not year_only:
-            year_only = full_date.split("/")[-1]
-    else:
-        release_date = year_only
+    # Ambil tanggal valid pertama
+    release_date = next((d for d in possible_dates if d), "Unknown Date")
+    
+    # Ambil Tahun
+    year = str(resp.get("performanceDateYear") or "")
+    # Jika tahun kosong tapi kita punya tanggal, ekstrak tahun dari tanggal
+    if not year and release_date != "Unknown Date":
+        match_year = re.search(r'(\d{4})', release_date)
+        if match_year:
+            year = match_year.group(1)
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -120,8 +125,8 @@ async def start_livephish(link: str, user: dict):
         'album': album_name,
         'albumartist': artist_name,
         'artist': artist_name,
-        'year': year_only,
-        'date': release_date, # INI YANG DIBACA ART POSTER
+        'year': year,
+        'date': release_date, # SEKARANG SUDAH ADA CADANGANNYA
         'cover': "", 
         'totaltracks': str(total_tracks),
         'totalvolume': str(max_disc),
@@ -146,9 +151,8 @@ async def start_livephish(link: str, user: dict):
         track_id = t.get("trackID") or t.get("songID")
         title = t.get("songTitle", f"Track {i+1}")
         
-        # --- PERBAIKAN TRACK NUMBER (01 - ) ---
+        # Track Number 2 Digit (01, 02)
         raw_track_num = t.get("trackNum", i+1)
-        # Format menjadi 2 digit (01, 02, dst)
         track_num_padded = f"{int(raw_track_num):02d}"
         
         disc_num = t.get("discNum", 1)
@@ -178,7 +182,7 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
-        # FORMAT NAMA FILE BARU: "01 - Judul.m4a"
+        # Format Nama File: "01 - Judul.m4a"
         fname = f"{track_num_padded} - {clean_title}{ext}"
         
         full_file_path = os.path.join(base_meta['tempfolder'], fname)
@@ -201,7 +205,7 @@ async def start_livephish(link: str, user: dict):
         track_meta = base_meta.copy()
         track_meta.update({
             'title': title,
-            'tracknumber': str(raw_track_num), # Metadata internal tetap angka asli
+            'tracknumber': str(raw_track_num),
             'volume': str(disc_num),
             'filepath': full_file_path,
             'itemid': str(track_id),
@@ -219,10 +223,12 @@ async def start_livephish(link: str, user: dict):
         
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
 
+        # ZIP
         if album_zip:
             await edit_message(user['bot_msg'], f"Membuat file ZIP...\n{album_name}")
             base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
+        # ART POSTER
         if art_poster:
             if cover_found and os.path.exists(base_meta['cover']):
                 try:
