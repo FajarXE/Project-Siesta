@@ -2,27 +2,43 @@
 
 import re
 import os
+import math
 import aiohttp
+from config import Config
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
 
-# Import standar sesuai modul Deezer Anda
+# Import Helper standar
 from bot.helpers.utils import download_file, zip_handler, fetch_zip_settings
 from bot.helpers.uploder import track_upload, album_upload, post_art_poster
-
 from bot.helpers.message import edit_message
 from bot.logger import LOGGER
-from config import Config
 
-# Regex ID
+# Regex ID LivePhish
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
-# URL Fallback (Logo LivePhish) jika API memberikan link mati
-FALLBACK_COVER_URL = "https://www.livephish.com/images/logo-livephish-200.png"
-
 def sanitize_name(name):
-    """Membersihkan nama file/folder dari karakter ilegal."""
-    return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+    """Membersihkan nama file/folder dari karakter ilegal Windows/Linux."""
+    return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
+
+def get_progress_bar_text(current, total, title, type_str):
+    """Membuat tampilan progress bar visual sesuai permintaan."""
+    percentage = current / total
+    filled_length = int(10 * percentage)
+    bar = '▰' * filled_length + '▱' * (10 - filled_length)
+    
+    text = (
+        f"╭─ ᴘʀᴏɢʀᴇss\n"
+        f"│\n"
+        f"├ {bar}\n"
+        f"│\n"
+        f"├ ᴅᴏɴᴇ : {current} / {total}\n"
+        f"│\n"
+        f"├ ᴛɪᴛʟᴇ : {title}\n"
+        f"│\n"
+        f"╰─ ᴛʏᴘᴇ : {type_str}"
+    )
+    return text
 
 async def check_url_exists(url):
     try:
@@ -51,84 +67,74 @@ async def start_livephish(link: str, user: dict):
         err_msg = meta_json.get("ResponseStatus", {}).get("message", "Response kosong.")
         raise Exception(f"Gagal metadata ID {album_id}: {err_msg}")
 
-    # Metadata Dasar
+    # Metadata Album
     raw_album = resp.get("containerInfo", "Unknown Album")
     raw_artist = resp.get("artistName", "Phish")
-    
-    # Sanitasi untuk nama folder/file
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    # Parsing Tahun
     year = str(resp.get("performanceDateYear", ""))
     if not year:
         p_date = resp.get("performanceDate") 
         if p_date:
             year = p_date.split("/")[-1]
 
-    # --- LOGIKA COVER ART (DENGAN FINAL FALLBACK) ---
+    # --- LOGIKA COVER ART ---
     cover_path = ""
     pics = resp.get("pics", [])
     
-    # Kumpulkan kandidat URL
-    candidates = []
-    
-    # 1. Dari API (High Res ke Low Res)
     if pics:
+        # Sortir resolusi tinggi ke rendah
         pics.sort(key=lambda x: x.get("width", 0), reverse=True)
+        
         for p in pics:
             raw_url = p.get("url", "")
-            if raw_url:
-                if raw_url.startswith("/"):
-                    candidates.append("https://www.livephish.com" + raw_url)
-                else:
-                    candidates.append(raw_url)
-                    if "static.livephish.com" in raw_url:
-                        candidates.append(raw_url.replace("static.livephish.com", "www.livephish.com"))
-
-    # 2. Tambahkan Fallback Statis (Logo) di urutan terakhir
-    candidates.append(FALLBACK_COVER_URL)
-
-    # 3. Coba download satu per satu
-    for url in candidates:
-        try:
-            temp_path = await create_cover_file(
-                url, 
-                {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
-            )
+            if not raw_url: continue
             
-            # Cek sukses: File ada, size > 0, dan BUKAN gambar default sistem (project-siesta)
-            # Kecuali jika candidates tinggal satu (fallback url), maka terima apa adanya.
-            is_valid = False
-            if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                if "project-siesta" not in temp_path:
-                    is_valid = True
-                elif url == FALLBACK_COVER_URL:
-                    # Jika URL fallback pun gagal dan kembali ke siesta, ya sudah terima saja
-                    is_valid = True 
-            
-            if is_valid:
-                cover_path = temp_path
-                break
-        except:
-            pass
+            # Coba variasi domain
+            candidates = []
+            if raw_url.startswith("/"):
+                candidates.append("https://www.livephish.com" + raw_url)
+                candidates.append("https://static.livephish.com" + raw_url)
+            else:
+                candidates.append(raw_url)
 
-    if not cover_path:
-        LOGGER.warning(f"LivePhish: Gagal total mendapatkan cover art (bahkan fallback).")
+            success = False
+            for url in candidates:
+                try:
+                    # Download cover
+                    temp_path = await create_cover_file(
+                        url, 
+                        {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
+                    )
+                    
+                    # Cek validitas: Ada file, size > 0, dan BUKAN gambar default 'project-siesta'
+                    if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        if "project-siesta" not in temp_path:
+                            cover_path = temp_path
+                            success = True
+                            break
+                        else:
+                            # Hapus gambar siesta jika terdownload, kita ingin cover asli atau kosong
+                            try: os.remove(temp_path)
+                            except: pass
+                except:
+                    pass
+            
+            if success: break
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
 
-    await edit_message(user['bot_msg'], f"Ditemukan: {artist_name} - {album_name} ({total_tracks} tracks).")
-
-    # --- PERBAIKAN STRUKTUR FOLDER (FIX NAMA ZIP) ---
-    # Buat subfolder: ID_PESAN/Nama Artis - Nama Album/
-    # Ini agar ZIP nanti bernama "Nama Artis - Nama Album.zip"
+    # --- PERBAIKAN NAMA ZIP (HAPUS SLASH DI AKHIR) ---
+    # Path folder: downloads/RID/Artist - Album
     folder_name = f"{artist_name} - {album_name}"
-    # Batasi panjang folder agar tidak error OS
-    if len(folder_name) > 100: folder_name = folder_name[:100]
+    # Potong nama folder jika terlalu panjang (batas OS)
+    if len(folder_name) > 150: 
+        folder_name = folder_name[:150]
     
-    base_folder_path = f"{str(user['r_id'])}/{folder_name}/"
+    # Gunakan os.path.join agar path benar dan TANPA SLASH di akhir
+    base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
     base_meta = {
         'album': album_name,
@@ -140,8 +146,8 @@ async def start_livephish(link: str, user: dict):
         'totaltracks': str(total_tracks),
         'provider': 'LivePhish',
         'quality': livephish_manager.quality,
-        'tempfolder': base_folder_path, # Path baru
-        'type': 'album',
+        'tempfolder': base_folder_path, 
+        'type': 'Album', # Huruf besar untuk tampilan
         'genre': 'Rock',
         'copyright': 'LivePhish',
         'explicit': False
@@ -149,20 +155,27 @@ async def start_livephish(link: str, user: dict):
     
     completed_tracks = []
 
+    # Update tampilan awal progress
+    init_progress = get_progress_bar_text(0, total_tracks, album_name, base_meta['type'])
+    await edit_message(user['bot_msg'], init_progress)
+
     for i, t in enumerate(tracks):
         track_id = t.get("trackID") or t.get("songID")
         title = t.get("songTitle", f"Track {i+1}")
         track_num = t.get("trackNum", str(i+1))
         disc_num = t.get("discNum", 1)
         
-        # PERBAIKAN DURASI (Pastikan Integer)
         try:
             duration = int(float(t.get("length", 0)))
         except:
             duration = 0
         
-        msg_text = f"Mendownload {i+1}/{total_tracks}: {title}"
-        await edit_message(user['bot_msg'], msg_text)
+        # --- PERBAIKAN PROGRESS BAR ---
+        progress_text = get_progress_bar_text(i+1, total_tracks, title, base_meta['type'])
+        try:
+            await edit_message(user['bot_msg'], progress_text)
+        except:
+            pass # Hindari flood wait error
 
         try:
             stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
@@ -178,12 +191,16 @@ async def start_livephish(link: str, user: dict):
         if livephish_manager.quality == "FLAC":
             ext = ".flac"
 
-        # Nama file bersih
         clean_title = sanitize_name(title)
         fname = f"{track_num}. {clean_title}{ext}"
-        fpath = base_meta['tempfolder'] + fname
+        
+        # Pastikan folder ada (karena kita mengubah path logic)
+        full_file_path = os.path.join(base_meta['tempfolder'], fname)
+        
+        # Tambahkan ke metadata
+        base_meta['folderpath'] = base_meta['tempfolder']
 
-        err = await download_file(stream_url, fpath)
+        err = await download_file(stream_url, full_file_path)
         if err:
             LOGGER.error(f"Download error {title}: {err}")
             continue
@@ -193,41 +210,41 @@ async def start_livephish(link: str, user: dict):
             'title': title,
             'tracknumber': str(track_num),
             'volume': str(disc_num),
-            'filepath': fpath,
+            'filepath': full_file_path,
             'itemid': str(track_id),
-            'duration': duration, 
+            'duration': duration,
             'extension': ext.replace(".", "")
         })
         
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
 
-    # --- FINALISASI & UPLOAD ---
+    # --- FINALISASI ---
     if completed_tracks:
         base_meta['tracks'] = completed_tracks
+        # Pastikan folderpath tersetting dengan benar untuk ZIP
         base_meta['folderpath'] = base_meta['tempfolder']
         
-        # Ambil Settings
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
 
-        # 1. Buat ZIP (Nama ZIP akan mengikuti nama folder 'base_meta['folderpath']')
+        # 1. Buat ZIP (Nama ZIP sekarang akan mengikuti nama folder 'Artist - Album')
         if album_zip:
-            await edit_message(user['bot_msg'], "Membuat file ZIP...")
-            # zip_handler biasanya mengambil nama folder terakhir sebagai nama ZIP
+            await edit_message(user['bot_msg'], f"Membuat file ZIP...\n{album_name}")
             base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
         # 2. Kirim Art Poster
         if art_poster:
-            # Karena sudah ada fallback URL, cover_path harusnya tidak kosong
+            # Hanya kirim jika cover path valid dan ada filenya
             if base_meta.get('cover') and os.path.exists(base_meta['cover']):
                 try:
                     base_meta['poster_msg'] = await post_art_poster(user, base_meta)
                 except Exception as e:
                     LOGGER.error(f"Gagal mengirim Art Poster: {e}")
             else:
-                LOGGER.warning("Cover Art tetap tidak ditemukan, Art Poster dilewati.")
+                LOGGER.warning("Cover Art tidak ditemukan, melewati Art Poster.")
 
-        # 3. Upload Album
+        # 3. Upload
+        await edit_message(user['bot_msg'], f"Mengunggah...\n{album_name}")
         await album_upload(base_meta, user)
     else:
         raise Exception("Tidak ada track yang berhasil diunduh.")
