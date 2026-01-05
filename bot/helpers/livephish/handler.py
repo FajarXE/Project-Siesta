@@ -1,7 +1,6 @@
-# [GANTI FILE: bot/helpers/livephish/handler.py]
-
 import re
 import aiohttp
+import os
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
 
@@ -11,14 +10,6 @@ from bot.helpers.message import edit_message
 from bot.logger import LOGGER
 
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
-
-async def check_url_exists(url):
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.head(url, timeout=5) as resp:
-                return resp.status == 200
-    except:
-        return False
 
 async def start_livephish(link: str, user: dict):
     client = user.get('livephish_api')
@@ -42,46 +33,58 @@ async def start_livephish(link: str, user: dict):
     album_name = resp.get("containerInfo", "Unknown Album")
     artist_name = resp.get("artistName", "Phish")
     
-    # Parsing Tahun
     year = str(resp.get("performanceDateYear", ""))
     if not year:
         p_date = resp.get("performanceDate") 
         if p_date:
             year = p_date.split("/")[-1]
 
-    # --- LOGIKA COVER ART ---
-    cover_url = ""
+    # --- LOGIKA BARU DOWNLOAD COVER (ROBUST) ---
+    cover_path = ""
     pics = resp.get("pics", [])
+    
     if pics:
+        # Urutkan dari resolusi terbesar ke terkecil
         pics.sort(key=lambda x: x.get("width", 0), reverse=True)
-        for p in pics:
-            raw = p.get("url", "")
-            if not raw: continue
+        
+        # Coba satu per satu sampai berhasil
+        for i, p in enumerate(pics):
+            raw_url = p.get("url", "")
+            if not raw_url: continue
             
-            # Fix domain
-            if raw.startswith("/"):
-                # Coba www dulu karena static sering 410
-                cover_url = "https://www.livephish.com" + raw
+            # Konstruksi URL lengkap
+            if raw_url.startswith("/"):
+                # Coba domain utama (paling stabil)
+                candidate_url = "https://www.livephish.com" + raw_url
             else:
-                cover_url = raw
-            break
+                candidate_url = raw_url
 
-    # Download Cover (Non-Fatal)
-    try:
-        cover_path = await create_cover_file(
-            cover_url, 
-            {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
-        )
-    except Exception as e:
-        LOGGER.warning(f"Gagal download cover: {e}. Melanjutkan tanpa cover.")
-        cover_path = ""
+            try:
+                # Coba download
+                temp_path = await create_cover_file(
+                    candidate_url, 
+                    {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
+                )
+                
+                # Verifikasi file ada dan ukurannya valid (>0 bytes)
+                if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                    cover_path = temp_path
+                    LOGGER.info(f"LivePhish: Berhasil download cover (Percobaan #{i+1}): {candidate_url}")
+                    break # Berhenti jika sudah berhasil
+                else:
+                    LOGGER.warning(f"LivePhish: Gagal/Kosong cover #{i+1} ({candidate_url}). Mencoba berikutnya...")
+            except Exception as e:
+                LOGGER.warning(f"LivePhish: Error download cover #{i+1}: {e}")
+                continue
+    
+    if not cover_path:
+        LOGGER.warning("LivePhish: Tidak ada cover art yang berhasil diunduh dari daftar 'pics'.")
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
 
     await edit_message(user['bot_msg'], f"Ditemukan: {artist_name} - {album_name} ({total_tracks} tracks).")
 
-    # Metadata dasar
     base_meta = {
         'album': album_name,
         'albumartist': artist_name,
@@ -94,8 +97,7 @@ async def start_livephish(link: str, user: dict):
         'quality': livephish_manager.quality,
         'tempfolder': str(user['r_id']) + "/",
         'type': 'album',
-        # Default value untuk mencegah KeyError di helper metadata
-        'genre': 'Rock', 
+        'genre': 'Rock',
         'copyright': 'LivePhish',
         'explicit': False
     }
@@ -107,8 +109,6 @@ async def start_livephish(link: str, user: dict):
         title = t.get("songTitle")
         track_num = t.get("trackNum")
         disc_num = t.get("discNum", 1)
-        
-        # PERBAIKAN: Ambil durasi (biasanya 'length' dalam detik di LivePhish)
         duration = t.get("length", 0)
         
         msg_text = f"Mendownload {i+1}/{total_tracks}: {title}"
@@ -120,7 +120,6 @@ async def start_livephish(link: str, user: dict):
             LOGGER.error(f"Stream URL kosong untuk: {title}")
             continue
 
-        # Deteksi ekstensi dari URL atau kualitas
         ext = ".m4a"
         s_url_lower = str(stream_url).lower()
         if "flac" in s_url_lower:
@@ -128,7 +127,6 @@ async def start_livephish(link: str, user: dict):
         elif "mp3" in s_url_lower:
             ext = ".mp3"
         elif livephish_manager.quality == "FLAC":
-            # Jika user minta FLAC tapi URL tidak ada indikasi, default ke .flac jika tidak fallback
             ext = ".flac"
 
         fname = f"{track_num}. {title}{ext}".replace("/", "_")
@@ -139,7 +137,6 @@ async def start_livephish(link: str, user: dict):
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # Update metadata per track
         track_meta = base_meta.copy()
         track_meta.update({
             'title': title,
@@ -147,7 +144,7 @@ async def start_livephish(link: str, user: dict):
             'volume': str(disc_num),
             'filepath': fpath,
             'itemid': str(track_id),
-            'duration': str(duration), # SOLUSI KEYERROR
+            'duration': str(duration),
             'extension': ext.replace(".", "")
         })
         
@@ -159,4 +156,4 @@ async def start_livephish(link: str, user: dict):
         base_meta['folderpath'] = base_meta['tempfolder']
         await album_upload(base_meta, user)
     else:
-        raise Exception("Tidak ada track yang berhasil diunduh. Periksa log.")
+        raise Exception("Tidak ada track yang berhasil diunduh.")
