@@ -4,14 +4,14 @@ import re
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
 
-# PERBAIKAN IMPORT DI SINI:
+# Import yang benar dari uploder dan utils
 from bot.helpers.utils import download_file
-from bot.helpers.uploder import track_upload, album_upload # Diambil dari uploder.py
+from bot.helpers.uploder import track_upload, album_upload 
 
 from bot.helpers.message import edit_message
 from bot.logger import LOGGER
 
-# REGEX BARU
+# Regex untuk menangkap ID dari berbagai format URL LivePhish
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
 async def start_livephish(link: str, user: dict):
@@ -39,6 +39,7 @@ async def start_livephish(link: str, user: dict):
     artist_name = resp.get("artistName", "Phish")
     year = resp.get("performanceDateYear", "")
     if not year:
+        # Fallback date parsing
         p_date = resp.get("performanceDate") # e.g. 1/3/2003
         if p_date:
             year = p_date.split("/")[-1]
@@ -52,7 +53,11 @@ async def start_livephish(link: str, user: dict):
         cover_url = pics[0].get("url", "")
     
     # Download Cover
-    cover_path = await create_cover_file(cover_url, {"itemid": album_id, "tempfolder": user['r_id'] + "/"})
+    # PERBAIKAN DI SINI: str(user['r_id']) agar tidak error TypeError
+    cover_path = await create_cover_file(
+        cover_url, 
+        {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
+    )
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -69,8 +74,9 @@ async def start_livephish(link: str, user: dict):
         'cover': cover_path,
         'totaltracks': str(total_tracks),
         'provider': 'LivePhish',
-        'quality': livephish_manager.quality,
-        'tempfolder': user['r_id'] + "/",
+        'quality': livephish_manager.quality, # FLAC/ALAC/AAC
+        # PERBAIKAN DI SINI JUGA:
+        'tempfolder': str(user['r_id']) + "/",
         'type': 'album'
     }
     
@@ -100,7 +106,7 @@ async def start_livephish(link: str, user: dict):
         if livephish_manager.quality == "FLAC":
             ext = ".flac"
         elif livephish_manager.quality == "ALAC":
-            ext = ".m4a"
+            ext = ".m4a" # ALAC biasanya dikemas dalam m4a container
 
         fname = f"{track_num}. {title}{ext}".replace("/", "_")
         fpath = base_meta['tempfolder'] + fname
