@@ -11,16 +11,6 @@ from bot.logger import LOGGER
 
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
-async def check_url_exists(url):
-    """Cek apakah URL valid (bukan 404/410) sebelum mencoba download"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            # Gunakan HEAD request agar cepat
-            async with session.head(url, timeout=5) as resp:
-                return resp.status == 200
-    except:
-        return False
-
 async def start_livephish(link: str, user: dict):
     client = user.get('livephish_api')
     if not client:
@@ -49,72 +39,39 @@ async def start_livephish(link: str, user: dict):
         if p_date:
             year = p_date.split("/")[-1]
 
-    # --- DEBUG & FIX COVER ART ---
+    # --- Cover Art Logic ---
     cover_path = ""
     pics = resp.get("pics", [])
     
-    # [DEBUG LOG] Cetak semua opsi gambar yang diberikan API
-    LOGGER.info(f"[DEBUG LIVEPHISH] Raw Pics Array untuk ID {album_id}: {pics}")
-
     if pics:
-        # Urutkan dari resolusi terbesar ke terkecil
+        # Sort by width desc
         pics.sort(key=lambda x: x.get("width", 0), reverse=True)
         
-        found_valid_url = False
-        
-        # Daftar domain yang mungkin menjadi host gambar
-        possible_domains = [
-            "https://static.livephish.com",
-            "https://www.livephish.com",
-            "https://plus.livephish.com"
-        ]
-
-        # Loop setiap gambar di array
         for i, p in enumerate(pics):
             raw_url = p.get("url", "")
             if not raw_url: continue
             
-            candidate_urls = []
-            
-            # Jika URL relatif, coba tempel ke semua domain
+            # Coba www.livephish.com sebagai domain utama
             if raw_url.startswith("/"):
-                for domain in possible_domains:
-                    candidate_urls.append(domain + raw_url)
+                candidate_url = "https://www.livephish.com" + raw_url
             else:
-                # Jika absolut, coba langsung
-                candidate_urls.append(raw_url)
-                # Coba replace domain jika absolut tapi 410
-                if "www.livephish.com" in raw_url:
-                    candidate_urls.append(raw_url.replace("www.livephish.com", "static.livephish.com"))
+                candidate_url = raw_url
 
-            # Cek setiap kandidat URL untuk gambar ini
-            for url_to_try in candidate_urls:
-                LOGGER.info(f"[DEBUG] Mencoba URL Cover: {url_to_try}")
+            try:
+                temp_path = await create_cover_file(
+                    candidate_url, 
+                    {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
+                )
                 
-                # Cek dulu apakah hidup (HEAD request)
-                if await check_url_exists(url_to_try):
-                    try:
-                        temp_path = await create_cover_file(
-                            url_to_try, 
-                            {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
-                        )
-                        
-                        # Pastikan bukan fallback image
-                        if temp_path and "project-siesta" not in temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                            cover_path = temp_path
-                            found_valid_url = True
-                            LOGGER.info(f"LivePhish: Berhasil download cover: {url_to_try}")
-                            break
-                    except Exception as e:
-                        LOGGER.warning(f"Gagal download {url_to_try}: {e}")
-                else:
-                    LOGGER.warning(f"URL Mati (404/410): {url_to_try}")
-
-            if found_valid_url:
-                break
+                # Cek jika berhasil (bukan fallback 'project-siesta')
+                if temp_path and "project-siesta" not in temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                    cover_path = temp_path
+                    break
+            except:
+                continue
     
     if not cover_path:
-        LOGGER.warning("LivePhish: Semua upaya download cover gagal.")
+        LOGGER.warning(f"LivePhish: Gagal mendapatkan cover art untuk ID {album_id}.")
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -150,19 +107,18 @@ async def start_livephish(link: str, user: dict):
         msg_text = f"Mendownload {i+1}/{total_tracks}: {title}"
         await edit_message(user['bot_msg'], msg_text)
 
-        stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
+        try:
+            stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
+        except Exception as e:
+            LOGGER.error(f"LivePhish API Error: {e}")
+            stream_url = None
 
         if not stream_url:
             LOGGER.error(f"Stream URL kosong untuk: {title}")
             continue
 
         ext = ".m4a"
-        s_url_lower = str(stream_url).lower()
-        if "flac" in s_url_lower:
-            ext = ".flac"
-        elif "mp3" in s_url_lower:
-            ext = ".mp3"
-        elif livephish_manager.quality == "FLAC":
+        if livephish_manager.quality == "FLAC":
             ext = ".flac"
 
         fname = f"{track_num}. {title}{ext}".replace("/", "_")
