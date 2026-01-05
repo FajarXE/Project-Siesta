@@ -42,7 +42,7 @@ def get_progress_bar_text(current, total, title, type_str):
 def format_date_standard(date_str):
     """
     Mengubah format tanggal LivePhish menjadi standar ISO (YYYY-MM-DD).
-    Menangani: MM/DD/YYYY, YYYY/MM/DD, dll.
+    Mengubah '/' menjadi '-' jika format sudah benar tapi pemisah salah.
     """
     if not date_str:
         return ""
@@ -51,9 +51,9 @@ def format_date_standard(date_str):
     
     # Daftar format yang mungkin masuk
     formats = [
-        "%m/%d/%Y", # 12/30/2025 (Format US Umum)
-        "%Y/%m/%d", # 2025/12/30 (Format yang Anda hindari)
-        "%Y-%m-%d", # 2025-12-30 (Sudah benar)
+        "%m/%d/%Y", # 12/30/2025
+        "%Y/%m/%d", # 2025/12/30
+        "%Y-%m-%d", # 2025-12-30
         "%b %d, %Y", # Dec 30, 2025
         "%d/%m/%Y", # 30/12/2025
     ]
@@ -61,11 +61,11 @@ def format_date_standard(date_str):
     for fmt in formats:
         try:
             dt = datetime.strptime(date_str, fmt)
-            return dt.strftime("%Y-%m-%d") # Output wajib YYYY-MM-DD
+            return dt.strftime("%Y-%m-%d") # Output Pasti YYYY-MM-DD
         except ValueError:
             continue
             
-    # Jika gagal parsing, kembalikan string asli tapi ganti slash jadi dash sebagai fallback
+    # Fallback: ganti slash dengan dash jika parsing gagal
     return date_str.replace("/", "-")
 
 async def extract_cover_from_audio(audio_path, output_path):
@@ -115,7 +115,6 @@ async def start_livephish(link: str, user: dict):
     
     # --- LOGIKA TANGGAL (FIX: YYYY-MM-DD) ---
     raw_date = ""
-    # Cek berbagai field tanggal
     possible_keys = ["performanceDate", "releaseDateFormatted", "performanceDateFormatted", "performanceDateYear"]
     for k in possible_keys:
         val = str(resp.get(k) or "")
@@ -125,8 +124,6 @@ async def start_livephish(link: str, user: dict):
 
     # Format menjadi YYYY-MM-DD
     release_date = format_date_standard(raw_date)
-    
-    # Ambil Tahun (4 digit pertama)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
     tracks = resp.get("tracks", [])
@@ -235,19 +232,35 @@ async def start_livephish(link: str, user: dict):
             'extension': ext.replace(".", "")
         })
 
-        # --- FIX 1: METADATA KHUSUS FLAC ---
-        # Memastikan field Part/Total dkk terbaca oleh tagger FLAC
+        # --- FIX UTAMA: PENGATURAN TAG KHUSUS ---
+        
+        # A. Metadata FLAC (Part/Total, cpr, dll)
         if ext == ".flac":
-            track_meta['discnumber'] = str(disc_num)       # Part/Position
-            track_meta['totaldiscs'] = str(max_disc)       # Part/Total (Discs)
-            track_meta['tracktotal'] = str(total_tracks)   # Track Total
-            # Pastikan copyright masuk
+            # Kita masukkan semua variasi key yang umum digunakan oleh tagger
+            # 1. Disc Number & Total (Part/Position & Part/Total)
+            track_meta['discnumber'] = str(disc_num)
+            track_meta['totaldiscs'] = str(max_disc)
+            track_meta['disk_total'] = str(max_disc)
+            track_meta['disctotal'] = str(max_disc)
+            
+            # 2. Track Total (Track name/Total)
+            track_meta['tracktotal'] = str(total_tracks)
+            track_meta['totaltracks'] = str(total_tracks)
+            track_meta['track_total'] = str(total_tracks)
+            
+            # 3. Copyright (cpr)
+            track_meta['cpr'] = base_meta['copyright']
             track_meta['copyright'] = base_meta['copyright']
             
-        # --- FIX 2: HAPUS COMMENT DI ALAC ---
-        # ALAC biasanya menggunakan ekstensi .m4a
-        if ext == ".m4a" or livephish_manager.quality != "FLAC":
-            track_meta['comment'] = "" # Kosongkan tag Comment
+            # 4. Date (Tagged date)
+            track_meta['date'] = release_date
+            
+        # B. Metadata ALAC (.m4a)
+        elif ext == ".m4a":
+            # Hapus Comment
+            track_meta['comment'] = ""
+            # Pastikan copyright tetap ada untuk ALAC juga
+            track_meta['copyright'] = base_meta['copyright']
 
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
