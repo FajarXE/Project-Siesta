@@ -228,9 +228,9 @@ async def resolve_shortlink(link: str) -> str:
     """
     Membuka shortlink dengan penanganan Manual Redirect untuk menangkap fragment (#) URL.
     """
-    target_domains = ["2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", "youtu.be", "bandcamp.com"]
+    target_domains = ["2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", "youtu.be", "bandcamp.com", "livephi.sh"]
     
-    if any(d in link for d in target_domains) or "bandcamp.com" in link:
+    if any(d in link for d in target_domains) or "bandcamp.com" in link or "livephi.sh" in link:
         try:
             # Gunakan User-Agent Desktop
             headers = {
