@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/livephish/handler.py]
+
 import re
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
@@ -5,9 +7,8 @@ from bot.helpers.utils import download_file, track_upload, album_upload
 from bot.helpers.message import edit_message
 from bot.logger import LOGGER
 
-# Regex dari Go Code: ^https://plus.livephish.com/(?:index.html|)#/catalog/recording/(\d+)$
-# Dan: ^https://www.livephish.com/browse/music/0,(\d+)/[\w-]+$
-ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/)(\d+)')
+# REGEX BARU: Mendukung format URL lama dan format URL 'show.aspx?show=123'
+ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
 async def start_livephish(link: str, user: dict):
     client = user.get('livephish_api')
@@ -17,7 +18,7 @@ async def start_livephish(link: str, user: dict):
     # 1. Extract ID
     match = ID_REGEX.search(link)
     if not match:
-        raise Exception("Gagal mengekstrak Album ID dari link LivePhish.")
+        raise Exception(f"Gagal mengekstrak Album ID dari link: {link}")
     album_id = match.group(1)
 
     await edit_message(user['bot_msg'], f"Mengambil metadata ID: {album_id}...")
@@ -27,7 +28,9 @@ async def start_livephish(link: str, user: dict):
     resp = meta_json.get("Response", {})
     
     if not resp:
-        raise Exception("Gagal mengambil metadata album (Response kosong).")
+        # Coba periksa apakah error dari API
+        err_msg = meta_json.get("ResponseStatus", {}).get("message", "Response kosong")
+        raise Exception(f"Gagal mengambil metadata (ID: {album_id}): {err_msg}")
 
     album_name = resp.get("containerInfo", "Unknown Album")
     artist_name = resp.get("artistName", "Phish")
