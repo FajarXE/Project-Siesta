@@ -49,6 +49,7 @@ moov_manager = safe_import('bot.helpers.moov.manager', 'moov_manager')
 jiosaavn_manager = safe_import('bot.helpers.jiosaavn.manager', 'jiosaavn_manager')
 gaana_manager = safe_import('bot.helpers.gaana.manager', 'gaana_manager')
 bandcamp_manager = safe_import('bot.helpers.bandcamp.manager', 'bandcamp_manager')
+livephish_manager = safe_import('bot.helpers.livephish.manager', 'livephish_manager')
 
 
 async def load_all_user_settings_into_managers():
@@ -65,6 +66,7 @@ async def load_all_user_settings_into_managers():
             'idagio_qual': idagio_manager,
             'bugs_qual': bugs_manager,
             'moov_qual': moov_manager,
+            'livephish_qual': livephish_manager,
         }
 
         # Pastikan user_data sudah terisi
@@ -123,7 +125,7 @@ async def start_services():
         (napster_manager, "Napster"), (idagio_manager, "Idagio"),
         (nugs_manager, "Nugs"), (bugs_manager, "Bugs"),
         (highresaudio_manager, "HIGHRESAUDIO"), (moov_manager, "Moov"),
-        (jiosaavn_manager, "JioSaavn"), (gaana_manager, "Gaana"), (bandcamp_manager, "Bandcamp")
+        (jiosaavn_manager, "JioSaavn"), (gaana_manager, "Gaana"), (bandcamp_manager, "Bandcamp"), (livephish_manager, "LivePhish")
     ]
 
     for mgr, name in managers:
@@ -177,7 +179,7 @@ async def shutdown_all_services():
         deezer_manager, beatport_manager, tidal_manager, kkbox_manager,
         beatsource_manager, soundcloud_manager, napster_manager, idagio_manager,
         nugs_manager, bugs_manager, highresaudio_manager, moov_manager,
-        jiosaavn_manager, gaana_manager, bandcamp_manager
+        jiosaavn_manager, gaana_manager, bandcamp_manager, livephish_manager
     ]
     for mgr in managers_list:
         if mgr and hasattr(mgr, 'shutdown'):
