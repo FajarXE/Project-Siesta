@@ -6,12 +6,9 @@ import aiohttp
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
 
-# Import Utils & Uploder
-from bot.helpers.utils import download_file, create_zip, create_art_poster
-from bot.helpers.uploder import track_upload, album_upload 
-
-# Import Settings untuk cek status ZIP/Poster
-from bot.settings import bot_set
+# --- IMPOR YG SAMA DENGAN DEEZER ---
+from bot.helpers.utils import download_file, zip_handler, fetch_zip_settings
+from bot.helpers.uploder import track_upload, album_upload, post_art_poster
 
 from bot.helpers.message import edit_message
 from bot.logger import LOGGER
@@ -59,17 +56,13 @@ async def start_livephish(link: str, user: dict):
     pics = resp.get("pics", [])
     
     if pics:
-        # Sortir: Lebar terbesar dulu
         pics.sort(key=lambda x: x.get("width", 0), reverse=True)
-        
         for i, p in enumerate(pics):
             raw_url = p.get("url", "")
             if not raw_url: continue
             
-            # Coba konstruksi URL
             candidates = []
             if raw_url.startswith("/"):
-                # Prioritaskan www.livephish.com
                 candidates.append("https://www.livephish.com" + raw_url)
             else:
                 candidates.append(raw_url)
@@ -79,13 +72,11 @@ async def start_livephish(link: str, user: dict):
             success = False
             for url in candidates:
                 try:
-                    # Gunakan create_cover_file
                     temp_path = await create_cover_file(
                         url, 
                         {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
                     )
                     
-                    # Validasi: File ada, size > 0, dan bukan fallback image default
                     if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
                         if "project-siesta" not in temp_path:
                             cover_path = temp_path
@@ -93,9 +84,7 @@ async def start_livephish(link: str, user: dict):
                             break
                 except:
                     pass
-            
-            if success:
-                break
+            if success: break
 
     if not cover_path:
         LOGGER.warning(f"LivePhish: Gagal mendapatkan cover art valid untuk ID {album_id}.")
@@ -130,7 +119,6 @@ async def start_livephish(link: str, user: dict):
         track_num = t.get("trackNum")
         disc_num = t.get("discNum", 1)
         
-        # PERBAIKAN DURASI: Konversi ke Int (Detik)
         try:
             duration = int(float(t.get("length", 0)))
         except:
@@ -168,41 +156,34 @@ async def start_livephish(link: str, user: dict):
             'volume': str(disc_num),
             'filepath': fpath,
             'itemid': str(track_id),
-            'duration': duration, # Pastikan ini INT
+            'duration': duration,
             'extension': ext.replace(".", "")
         })
         
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
 
-    # --- LOGIKA ZIP & ART POSTER (DITAMBAHKAN) ---
+    # --- LOGIKA ZIP & POSTER (KONSISTEN DENGAN DEEZER) ---
     if completed_tracks:
         base_meta['tracks'] = completed_tracks
         base_meta['folderpath'] = base_meta['tempfolder']
         
-        # 1. Cek & Buat ZIP
-        if bot_set.album_zip:
+        # 1. Ambil Settings (Sama seperti Deezer)
+        playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
+
+        # 2. Buat ZIP jika diaktifkan
+        if album_zip:
             await edit_message(user['bot_msg'], "Membuat file ZIP...")
-            try:
-                # create_zip biasanya mengembalikan path zip
-                zip_path = await create_zip(base_meta)
-                if zip_path:
-                    base_meta['zip_path'] = zip_path
-            except Exception as e:
-                LOGGER.error(f"Gagal membuat ZIP: {e}")
+            # Panggil zip_handler dari utils (sama seperti Deezer)
+            base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
-        # 2. Cek & Buat Art Poster
-        if bot_set.art_poster:
-            await edit_message(user['bot_msg'], "Membuat Art Poster...")
-            try:
-                # create_art_poster biasanya mengembalikan path poster
-                poster_path = await create_art_poster(base_meta)
-                if poster_path:
-                    base_meta['poster_path'] = poster_path
-            except Exception as e:
-                LOGGER.error(f"Gagal membuat Art Poster: {e}")
+        # 3. Kirim Art Poster jika diaktifkan (Sama seperti Deezer)
+        if art_poster:
+            # Panggil post_art_poster dari uploder (sama seperti Deezer)
+            # Poster akan dikirim ke chat dan msg ID-nya disimpan
+            base_meta['poster_msg'] = await post_art_poster(user, base_meta)
 
-        # 3. Upload
+        # 4. Upload Album
         await album_upload(base_meta, user)
     else:
         raise Exception("Tidak ada track yang berhasil diunduh.")
