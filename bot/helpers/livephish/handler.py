@@ -11,6 +11,14 @@ from bot.logger import LOGGER
 
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
+async def check_url_exists(url):
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url, timeout=5) as resp:
+                return resp.status == 200
+    except:
+        return False
+
 async def start_livephish(link: str, user: dict):
     client = user.get('livephish_api')
     if not client:
@@ -39,7 +47,7 @@ async def start_livephish(link: str, user: dict):
         if p_date:
             year = p_date.split("/")[-1]
 
-    # --- LOGIKA BARU DOWNLOAD COVER (ROBUST) ---
+    # --- LOGIKA BARU DOWNLOAD COVER (DIPERBAIKI) ---
     cover_path = ""
     pics = resp.get("pics", [])
     
@@ -54,7 +62,7 @@ async def start_livephish(link: str, user: dict):
             
             # Konstruksi URL lengkap
             if raw_url.startswith("/"):
-                # Coba domain utama (paling stabil)
+                # Coba domain utama
                 candidate_url = "https://www.livephish.com" + raw_url
             else:
                 candidate_url = raw_url
@@ -66,13 +74,18 @@ async def start_livephish(link: str, user: dict):
                     {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
                 )
                 
+                # FIX KRUSIAL: Cek jika create_cover_file mengembalikan fallback default ('project-siesta')
+                # Jika iya, berarti download gagal (404/410), jadi kita harus lanjut loop (continue)
+                if "project-siesta" in temp_path:
+                    LOGGER.warning(f"LivePhish: Cover #{i+1} gagal/mati ({candidate_url}). Mencoba gambar berikutnya...")
+                    continue
+
                 # Verifikasi file ada dan ukurannya valid (>0 bytes)
                 if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
                     cover_path = temp_path
                     LOGGER.info(f"LivePhish: Berhasil download cover (Percobaan #{i+1}): {candidate_url}")
-                    break # Berhenti jika sudah berhasil
-                else:
-                    LOGGER.warning(f"LivePhish: Gagal/Kosong cover #{i+1} ({candidate_url}). Mencoba berikutnya...")
+                    break # Berhenti jika sudah berhasil dapat cover asli
+                
             except Exception as e:
                 LOGGER.warning(f"LivePhish: Error download cover #{i+1}: {e}")
                 continue
