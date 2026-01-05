@@ -212,10 +212,15 @@ except ImportError as e:
     async def start_bandcamp(*args, **kwargs):
         raise NotImplementedError(f"Modul Bandcamp Rusak: {err_bc}")
 
-# LivePhish (BARU)
+# LivePhish
 try:
     from ..helpers.livephish.handler import start_livephish
-except ImportError:
+except Exception as e:
+    # --- BARIS INI AKAN MENAMPILKAN PENYEBAB ASLINYA DI LOG ---
+    LOGGER.error(f"GAGAL IMPORT LIVEPHISH: {e}") 
+    import traceback
+    LOGGER.error(traceback.format_exc())
+    # ----------------------------------------------------------
     async def start_livephish(*args, **kwargs):
         raise NotImplementedError("Modul LivePhish belum diimplementasikan.")
 
