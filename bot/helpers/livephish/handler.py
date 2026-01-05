@@ -4,14 +4,13 @@ import re
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
 
-# Import yang benar dari uploder dan utils
+# Import utils
 from bot.helpers.utils import download_file
 from bot.helpers.uploder import track_upload, album_upload 
 
 from bot.helpers.message import edit_message
 from bot.logger import LOGGER
 
-# Regex untuk menangkap ID dari berbagai format URL LivePhish
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
 async def start_livephish(link: str, user: dict):
@@ -39,8 +38,7 @@ async def start_livephish(link: str, user: dict):
     artist_name = resp.get("artistName", "Phish")
     year = resp.get("performanceDateYear", "")
     if not year:
-        # Fallback date parsing
-        p_date = resp.get("performanceDate") # e.g. 1/3/2003
+        p_date = resp.get("performanceDate") 
         if p_date:
             year = p_date.split("/")[-1]
 
@@ -48,12 +46,14 @@ async def start_livephish(link: str, user: dict):
     cover_url = ""
     pics = resp.get("pics", [])
     if pics:
-        # Sort by width desc
         pics.sort(key=lambda x: x.get("width", 0), reverse=True)
         cover_url = pics[0].get("url", "")
     
+    # PERBAIKAN 1: Handle Relative URL untuk Cover
+    if cover_url and cover_url.startswith("/"):
+        cover_url = "https://www.livephish.com" + cover_url
+    
     # Download Cover
-    # PERBAIKAN DI SINI: str(user['r_id']) agar tidak error TypeError
     cover_path = await create_cover_file(
         cover_url, 
         {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
@@ -74,8 +74,7 @@ async def start_livephish(link: str, user: dict):
         'cover': cover_path,
         'totaltracks': str(total_tracks),
         'provider': 'LivePhish',
-        'quality': livephish_manager.quality, # FLAC/ALAC/AAC
-        # PERBAIKAN DI SINI JUGA:
+        'quality': livephish_manager.quality, 
         'tempfolder': str(user['r_id']) + "/",
         'type': 'album'
     }
@@ -95,7 +94,11 @@ async def start_livephish(link: str, user: dict):
         await edit_message(user['bot_msg'], msg_text)
 
         # Get Stream
-        stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
+        try:
+            stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
+        except Exception as e:
+            LOGGER.error(f"LivePhish API Error ({title}): {e}")
+            continue
         
         if not stream_url:
             LOGGER.error(f"LivePhish: Gagal dapat stream URL untuk {title}")
@@ -106,7 +109,7 @@ async def start_livephish(link: str, user: dict):
         if livephish_manager.quality == "FLAC":
             ext = ".flac"
         elif livephish_manager.quality == "ALAC":
-            ext = ".m4a" # ALAC biasanya dikemas dalam m4a container
+            ext = ".m4a"
 
         fname = f"{track_num}. {title}{ext}".replace("/", "_")
         fpath = base_meta['tempfolder'] + fname
