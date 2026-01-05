@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/modules/download.py]
+# [FILE: bot/modules/download.py]
 
 from pyrogram.types import Message
 from pyrogram import Client, filters
@@ -14,77 +14,107 @@ import bot.helpers.translations as lang
 from bot import BOT_QOBUZ_CLIENTS
 from bot.tgclient import aio 
 
-# Impor semua manajer
-from bot.helpers.deezer.manager import deezer_manager
-from bot.helpers.beatport.manager import beatport_manager
-from bot.helpers.tidal.manager import tidal_manager
-from bot.helpers.kkbox.manager import kkbox_manager
-from bot.helpers.beatsource.manager import beatsource_manager
-from bot.helpers.soundcloud.manager import soundcloud_manager
+# --- IMPOR MANAJER LAYANAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Moov ---
+# 1. Deezer
+try:
+    from bot.helpers.deezer.manager import deezer_manager
+    from bot.helpers.deezer.manager import DeezerError
+except ImportError:
+    deezer_manager = None
+    class DeezerError(Exception): pass
+
+# 2. Beatport
+try:
+    from bot.helpers.beatport.manager import beatport_manager
+except ImportError:
+    beatport_manager = None
+
+# 3. Tidal
+try:
+    from bot.helpers.tidal.manager import tidal_manager
+except ImportError:
+    tidal_manager = None
+
+# 4. KKBox
+try:
+    from bot.helpers.kkbox.manager import kkbox_manager
+except ImportError:
+    kkbox_manager = None
+
+# 5. Beatsource
+try:
+    from bot.helpers.beatsource.manager import beatsource_manager
+except ImportError:
+    beatsource_manager = None
+
+# 6. Soundcloud
+try:
+    from bot.helpers.soundcloud.manager import soundcloud_manager
+except ImportError:
+    soundcloud_manager = None
+
+# 7. Moov
 try:
     from bot.helpers.moov.manager import moov_manager
 except ImportError:
     moov_manager = None
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Napster ---
+# 8. Napster
 try:
     from bot.helpers.napster.manager import napster_manager
+    from bot.helpers.napster.manager import NapsterError
 except ImportError:
     napster_manager = None
-# --- BATAS TAMBAHAN ---
+    class NapsterError(Exception): pass
 
-# --- TAMBAHAN BARU: Impor Manajer Idagio ---
+# 9. Idagio
 try:
     from bot.helpers.idagio.manager import idagio_manager
 except ImportError:
     idagio_manager = None
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Nugs.net ---
+# 10. Nugs.net
 try:
     from bot.helpers.nugs.manager import nugs_manager
 except ImportError:
     nugs_manager = None
-# --- BATAS TAMBAHAN ---
 
-# --- TAMBAHAN BARU: Impor Manajer Bugs ---
+# 11. Bugs
 try:
     from bot.helpers.bugs.manager import bugs_manager
+    from bot.helpers.bugs.manager import BugsError
 except ImportError:
     bugs_manager = None
-# --- BATAS TAMBAHAN ---
+    class BugsError(Exception): pass
 
-# --- PERBAIKAN IMPOR: Pisahkan Manajer dari Handler ---
-# Selalu impor manajer terlebih dahulu
+# 12. HIGHRESAUDIO
 try:
     from bot.helpers.highresaudio.manager import highresaudio_manager, HighResAudioError
 except ImportError:
     highresaudio_manager = None
     class HighResAudioError(Exception): pass
 
-# --- TAMBAHAN BARU: Impor Manajer JioSaavn & Gaana ---
+# 13. JioSaavn
 try:
     from bot.helpers.jiosaavn.manager import jiosaavn_manager
 except ImportError:
     jiosaavn_manager = None
 
+# 14. Gaana
 try:
     from bot.helpers.gaana.manager import gaana_manager
 except ImportError:
     gaana_manager = None
-# --- BATAS TAMBAHAN JIOSAAVN & GAANA ---
 
-# Impor handler secara terpisah
+# 15. Bandcamp (BARU)
 try:
-    from bot.helpers.highresaudio.handler import start_highresaudio
+    from bot.helpers.bandcamp.manager import bandcamp_manager
 except ImportError:
-    async def start_highresaudio(*args, **kwargs):
-        raise NotImplementedError("Modul HIGHRESAUDIO ('handler.py') belum diimplementasikan.")
-# --- BATAS PERBAIKAN ---
+    bandcamp_manager = None
 
+
+# --- IMPOR HANDLER LAYANAN ---
 
 from ..helpers.soundcloud.handler import start_soundcloud
 from ..helpers.utils import cleanup
@@ -93,107 +123,101 @@ from ..helpers.tidal.handler import start_tidal
 from ..helpers.deezer.handler import start_deezer
 from ..helpers.beatport.handler import start_beatport
 
-# --- PERBAIKAN: Impor DeezerError ---
-try:
-    from ..helpers.deezer.manager import DeezerError
-except ImportError:
-    class DeezerError(Exception): pass
-# --- BATAS PERBAIKAN ---
-
+# KKBox
 try:
     from ..helpers.kkbox.handler import start_kkbox
 except ImportError:
     async def start_kkbox(*args, **kwargs):
-        raise NotImplementedError("Modul KKBox ('handler.py') belum diimplementasikan.")
-        
+        raise NotImplementedError("Modul KKBox belum diimplementasikan.")
+
+# Beatsource
 try:
     from ..helpers.beatsource.handler import start_beatsource
 except ImportError:
     async def start_beatsource(*args, **kwargs):
-        raise NotImplementedError("Modul Beatsource ('handler.py') belum diimplementasikan.")
+        raise NotImplementedError("Modul Beatsource belum diimplementasikan.")
 
-# --- TAMBAHAN BARU: Impor Handler Moov ---
+# Moov
 try:
     from ..helpers.moov.handler import start_moov
 except ImportError:
     async def start_moov(*args, **kwargs):
-        raise NotImplementedError("Modul Moov ('handler.py') belum diimplementasikan.")
-# --- BATAS TAMBAHAN ---
+        raise NotImplementedError("Modul Moov belum diimplementasikan.")
 
-# --- TAMBAHAN BARU: Impor Handler Napster ---
+# Napster
 try:
     from ..helpers.napster.handler import start_napster
-    # --- TAMBAHAN BARU: Impor error Napster ---
-    from ..helpers.napster.manager import NapsterError
 except ImportError:
     async def start_napster(*args, **kwargs):
-        raise NotImplementedError("Modul Napster ('handler.py') belum diimplementasikan.")
-    class NapsterError(Exception): pass
-# --- BATAS TAMBAHAN ---
+        raise NotImplementedError("Modul Napster belum diimplementasikan.")
 
-# --- TAMBAHAN BARU: Impor Handler Idagio ---
+# Idagio
 try:
     from ..helpers.idagio.handler import start_idagio
 except ImportError:
     async def start_idagio(*args, **kwargs):
-        raise NotImplementedError("Modul Idagio ('handler.py') belum diimplementasikan.")
-# --- BATAS TAMBAHAN ---
+        raise NotImplementedError("Modul Idagio belum diimplementasikan.")
 
-# --- TAMBAHAN BARU: Impor Handler Nugs.net ---
+# Nugs.net
 try:
     from ..helpers.nugs.handler import start_nugs
 except ImportError:
     async def start_nugs(*args, **kwargs):
-        raise NotImplementedError("Modul Nugs.net ('handler.py') belum diimplementasikan.")
-# --- BATAS TAMBAHAN ---
+        raise NotImplementedError("Modul Nugs.net belum diimplementasikan.")
 
-# --- TAMBAHAN BARU: Impor Handler Bugs ---
+# Bugs
 try:
     from ..helpers.bugs.handler import start_bugs
-    from ..helpers.bugs.manager import BugsError
 except ImportError:
     async def start_bugs(*args, **kwargs):
-        raise NotImplementedError("Modul Bugs ('handler.py') belum diimplementasikan.")
-    class BugsError(Exception): pass
-# --- BATAS TAMBAHAN ---
+        raise NotImplementedError("Modul Bugs belum diimplementasikan.")
 
-# --- TAMBAHAN BARU: Impor Handler JioSaavn & Gaana ---
+# HIGHRESAUDIO
+try:
+    from bot.helpers.highresaudio.handler import start_highresaudio
+except ImportError:
+    async def start_highresaudio(*args, **kwargs):
+        raise NotImplementedError("Modul HIGHRESAUDIO belum diimplementasikan.")
+
+# JioSaavn
 try:
     from ..helpers.jiosaavn.handler import start_jiosaavn
 except ImportError as e:
     err_jio = str(e)
-    LOGGER.error(f"Gagal Import JioSaavn: {err_jio}")
+    LOGGER.error(f"Gagal Import JioSaavn Handler: {err_jio}")
     async def start_jiosaavn(*args, **kwargs):
         raise NotImplementedError(f"Modul JioSaavn Rusak: {err_jio}")
 
+# Gaana
 try:
     from ..helpers.gaana.handler import start_gaana
 except ImportError as e:
     err_gaana = str(e)
-    LOGGER.error(f"Gagal Import Gaana: {err_gaana}")
+    LOGGER.error(f"Gagal Import Gaana Handler: {err_gaana}")
     async def start_gaana(*args, **kwargs):
         raise NotImplementedError(f"Modul Gaana Rusak: {err_gaana}")
 
-
+# Bandcamp (BARU)
 try:
-    from ..helpers.gaana.handler import start_gaana
-except ImportError:
-    async def start_gaana(*args, **kwargs):
-        raise NotImplementedError("Modul Gaana ('handler.py') belum diimplementasikan.")
-# --- BATAS TAMBAHAN ---
+    from ..helpers.bandcamp.handler import start_bandcamp
+except ImportError as e:
+    err_bc = str(e)
+    LOGGER.error(f"Gagal Import Bandcamp Handler: {err_bc}")
+    async def start_bandcamp(*args, **kwargs):
+        raise NotImplementedError(f"Modul Bandcamp Rusak: {err_bc}")
 
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
 
 
-# --- FUNGSI BARU UNTUK MEMBUKA SHORTLINK ---
+# --- FUNGSI UNTUK MEMBUKA SHORTLINK ---
 async def resolve_shortlink(link: str) -> str:
     """
     Membuka shortlink dengan penanganan Manual Redirect untuk menangkap fragment (#) URL.
     """
-    target_domains = ["2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", "youtu.be"]
+    target_domains = ["2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", "youtu.be", "bandcamp.com"]
     
-    if any(d in link for d in target_domains):
+    if any(d in link for d in target_domains) or "bandcamp.com" in link:
         try:
             # Gunakan User-Agent Desktop
             headers = {
@@ -207,8 +231,7 @@ async def resolve_shortlink(link: str) -> str:
                         if 'Location' in resp.headers:
                             new_url = resp.headers['Location']
                             
-                            # Logika Khusus Moov: Tangkap URL yang ada '/album/' atau '/song/'
-                            # meskipun itu ada di dalam redirect sementara
+                            # Logika Khusus Moov
                             if "moov.hk" in new_url and ("/album/" in new_url or "/song/" in new_url):
                                 LOGGER.info(f"Shortlink Detected Target: {link} -> {new_url}")
                                 return new_url
@@ -220,10 +243,8 @@ async def resolve_shortlink(link: str) -> str:
                             
                             current_url = new_url
                         else:
-                            # Stop jika tidak ada redirect lagi
                             break
                 
-                # Jika loop selesai, kembalikan URL terakhir yang didapat
                 LOGGER.info(f"Shortlink Final: {link} -> {current_url}")
                 return current_url
 
@@ -231,7 +252,6 @@ async def resolve_shortlink(link: str) -> str:
             LOGGER.error(f"Gagal me-resolve shortlink {link}: {e}")
             return link 
     return link
-# --- BATAS FUNGSI BARU ---
 
 
 async def run_download_task(link: str, user: dict):
@@ -254,7 +274,7 @@ async def run_download_task(link: str, user: dict):
             
     except Exception as e:
         error_str = str(e)
-        # --- MODIFIKASI: Deteksi Error yang Dapat Dimaafkan (Tanpa Traceback) ---
+        # Deteksi Error yang Dapat Dimaafkan (Tanpa Traceback)
         is_handled_error = False
         if "not available in any" in error_str or \
            "Maaf, tidak ada akun" in error_str or \
@@ -264,20 +284,18 @@ async def run_download_task(link: str, user: dict):
            "Track not available" in error_str or \
            "Stream key kosong" in error_str or \
            "Region Locked" in error_str or \
+           "Link Bandcamp tidak valid" in error_str or \
            isinstance(e, NapsterError) or \
            isinstance(e, BugsError) or \
            (highresaudio_manager and isinstance(e, HighResAudioError)) or \
            isinstance(e, DeezerError): 
             is_handled_error = True
-        # --- BATAS MODIFIKASI ---
         
         error_message = f"Tugas Gagal: {e}" if is_handled_error else f"Tugas Gagal: Terjadi error.\n`{e}`"
 
         if is_handled_error:
-             # Log sebagai warning biasa, tanpa traceback panjang
              LOGGER.warning(f"Download Task Gagal (Handled): {e}")
         else:
-             # Log sebagai error fatal dengan traceback
              LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
 
         try:
@@ -353,39 +371,26 @@ async def start_link(link: str, user: dict) -> None:
     
     kkbox = ["https://play.kkbox.com", "https://www.kkbox.com", "kkbox.com"]
     
-    # --- TAMBAHAN BARU: URL Moov ---
     moov = ["https://moov.hk", "https://app.moov.hk", "moov.hk", "app.moov.hk"]
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: URL Napster ---
     napster = [
         "https://app.napster.com", "napster.com", "http://app.napster.com", 
         "https://play.napster.com", "play.napster.com", 
         "https://web.napster.com", "web.napster.com"
     ]
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: URL Idagio ---
     idagio = ["https://www.idagio.com", "idagio.com", "https://app.idagio.com"]
-    # --- BATAS TAMBAHAN ---
     
-    # --- MODIFIKASI: URL Nugs.net ---
     nugs = ["https://play.nugs.net", "play.nugs.net", "https://streamapi.nugs.net"]
-    # --- BATAS MODIFIKASI ---
 
-    # --- PERBAIKAN: URL Bugs (Tambahkan m.bugs.co.kr) ---
     bugs = ["https://music.bugs.co.kr", "music.bugs.co.kr", "https://m.bugs.co.kr", "m.bugs.co.kr"]
-    # --- BATAS PERBAIKAN ---
 
-    # --- TAMBAHAN BARU: URL HIGHRESAUDIO ---
     highresaudio = ["https://www.highresaudio.com", "highresaudio.com"]
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: URL JioSaavn & Gaana ---
     jiosaavn = ["https://www.jiosaavn.com", "jiosaavn.com"]
     gaana = ["https://gaana.com", "gaana.com"]
-    # --- BATAS TAMBAHAN ---
     
+    # Blok TIDAL
     if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
         
@@ -418,6 +423,7 @@ async def start_link(link: str, user: dict) -> None:
         else:
             raise Exception("Gagal mengunduh Tidal karena alasan yang tidak diketahui setelah mencoba semua akun.")
         
+    # Blok DEEZER
     elif link.startswith(tuple(deezer)):
         user['provider'] = 'Deezer'
         
@@ -433,11 +439,9 @@ async def start_link(link: str, user: dict) -> None:
                 LOGGER.info(f"Deezer: Unduhan berhasil menggunakan ARL ID {client.user['USER']['USER_ID']}")
                 return 
             except Exception as e:
-                # --- PERBAIKAN LOGIC RETRY ---
                 error_str = str(e).lower()
                 is_retryable = False
                 
-                # Cek DeezerError atau pesan error string
                 if isinstance(e, DeezerError) or \
                    "not available in your country" in error_str or \
                    "not available by your subscription" in error_str or \
@@ -449,15 +453,14 @@ async def start_link(link: str, user: dict) -> None:
                     last_error = e
                     continue 
                 else:
-                    # Error fatal lainnya (misal: parsing gagal)
                     LOGGER.error(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Fatal): {e}")
                     raise e 
         if last_error:
-            # Ini akan ditangkap di run_download_task tanpa traceback
             raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Deezer yang dicoba. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh Deezer karena alasan yang tidak diketahui setelah mencoba semua akun.")
         
+    # Blok QOBUZ
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
 
@@ -469,6 +472,7 @@ async def start_link(link: str, user: dict) -> None:
         user['qobuz_clients_list'] = clients_list
         await start_qobuz(link, user)
 
+    # Blok BEATPORT
     elif link.startswith(tuple(beatport)):
         user['provider'] = 'Beatport'
         
@@ -501,6 +505,7 @@ async def start_link(link: str, user: dict) -> None:
         else:
             raise Exception("Gagal mengunduh Beatport karena alasan yang tidak diketahui setelah mencoba semua akun.")
 
+    # Blok BEATSOURCE
     elif link.startswith(tuple(beatsource)):
         user['provider'] = 'Beatsource'
         
@@ -538,6 +543,7 @@ async def start_link(link: str, user: dict) -> None:
         else:
             raise Exception("Gagal mengunduh Beatsource karena alasan yang tidak diketahui setelah mencoba semua akun.")
     
+    # Blok SOUNDCLOUD
     elif link.startswith(tuple(soundcloud)):
         user['provider'] = 'Soundcloud'
         
@@ -555,6 +561,7 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.error(f"Soundcloud: Tugas gagal (Fatal): {e}")
             raise e 
     
+    # Blok KKBOX
     elif link.startswith(tuple(kkbox)):
         user['provider'] = 'KKBox'
         
@@ -587,7 +594,7 @@ async def start_link(link: str, user: dict) -> None:
         else:
             raise Exception("Gagal mengunduh KKBox karena alasan yang tidak diketahui setelah mencoba semua akun.")
 
-    # --- TAMBAHAN BARU: Blok Moov ---
+    # Blok MOOV
     elif link.startswith(tuple(moov)):
         user['provider'] = 'Moov'
         
@@ -606,9 +613,8 @@ async def start_link(link: str, user: dict) -> None:
         except Exception as e:
             LOGGER.error(f"Moov: Tugas gagal (Fatal): {e}")
             raise e
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: Blok Napster ---
+    # Blok NAPSTER
     elif link.startswith(tuple(napster)):
         user['provider'] = 'Napster'
         
@@ -632,9 +638,8 @@ async def start_link(link: str, user: dict) -> None:
             else:
                 LOGGER.error(f"Napster: Tugas gagal (Fatal): {e}")
                 raise e
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: Blok Idagio ---
+    # Blok IDAGIO
     elif link.startswith(tuple(idagio)):
         user['provider'] = 'Idagio'
         
@@ -653,9 +658,8 @@ async def start_link(link: str, user: dict) -> None:
         except Exception as e:
             LOGGER.error(f"Idagio: Tugas gagal (Fatal): {e}")
             raise e
-    # --- BATAS TAMBAHAN ---
     
-    # --- TAMBAHAN BARU: Blok Nugs.net ---
+    # Blok NUGS.NET
     elif link.startswith(tuple(nugs)):
         user['provider'] = 'Nugs.net'
         
@@ -674,9 +678,8 @@ async def start_link(link: str, user: dict) -> None:
         except Exception as e:
             LOGGER.error(f"Nugs.net: Tugas gagal (Fatal): {e}")
             raise e
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: Blok Bugs ---
+    # Blok BUGS
     elif link.startswith(tuple(bugs)):
         user['provider'] = 'Bugs'
         
@@ -700,9 +703,8 @@ async def start_link(link: str, user: dict) -> None:
             else:
                 LOGGER.error(f"Bugs: Tugas gagal (Fatal): {e}")
                 raise e 
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: Blok HIGHRESAUDIO ---
+    # Blok HIGHRESAUDIO
     elif link.startswith(tuple(highresaudio)):
         user['provider'] = 'HIGHRESAUDIO'
         
@@ -725,9 +727,8 @@ async def start_link(link: str, user: dict) -> None:
             else:
                 LOGGER.error(f"HIGHRESAUDIO: Tugas gagal (Fatal): {e}")
                 raise e 
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: Blok JioSaavn ---
+    # Blok JIOSAAVN
     elif link.startswith(tuple(jiosaavn)):
         user['provider'] = 'JioSaavn'
         if not jiosaavn_manager:
@@ -740,9 +741,8 @@ async def start_link(link: str, user: dict) -> None:
         except Exception as e:
             LOGGER.error(f"JioSaavn Gagal: {e}")
             raise e
-    # --- BATAS TAMBAHAN ---
 
-    # --- TAMBAHAN BARU: Blok Gaana ---
+    # Blok GAANA
     elif link.startswith(tuple(gaana)):
         user['provider'] = 'Gaana'
         if not gaana_manager:
@@ -755,9 +755,23 @@ async def start_link(link: str, user: dict) -> None:
         except Exception as e:
             LOGGER.error(f"Gaana Gagal: {e}")
             raise e
+
+    # --- TAMBAHAN BARU: Blok BANDCAMP ---
+    # Bandcamp menggunakan banyak subdomain (artist.bandcamp.com), jadi kita cek substring
+    elif "bandcamp.com" in link:
+        user['provider'] = 'Bandcamp'
+        if not bandcamp_manager:
+             raise Exception("Modul Bandcamp tidak dimuat (Folder/file helper hilang).")
+        
+        try:
+            await start_bandcamp(link, user)
+            LOGGER.info("Bandcamp: Unduhan berhasil.")
+            return
+        except Exception as e:
+            LOGGER.error(f"Bandcamp Gagal: {e}")
+            raise e
     # --- BATAS TAMBAHAN ---
 
     else:
         LOGGER.warning(f"Link tidak dikenali: {link}")
         raise Exception(f"Link tidak dikenali. Bot tidak tahu cara mengunduh dari: {link}")
-
