@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/modules/provider_settings.py]
+# [FILE: bot/modules/provider_settings.py]
 
 import bot.helpers.translations as lang
 import traceback 
@@ -63,306 +63,46 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor bugs_manager.")
     bugs_manager = None
-
-# --- TAMBAHAN BARU: Moov Manager ---
 try:
     from ..helpers.moov.manager import moov_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor moov_manager.")
     moov_manager = None
-# --- BATAS TAMBAHAN ---
-
-
-@Client.on_callback_query(filters.regex(pattern=r"^providerPanel"))
-async def provider_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        await edit_message(
-            cb.message,
-            lang.s.PROVIDERS_PANEL,
-            providers_button()
-        )
+try:
+    from ..helpers.livephish.manager import livephish_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor livephish_manager.")
+    livephish_manager = None
 
 #----------------
-# QOBUZ (DIPERBAIKI)
+# QOBUZ
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^qbP"))
 async def qobuz_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # Key harus Integer agar sesuai dengan logika di qopy.py
-        quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ', 27:'24B>96KHZ'}
-        
-        if not BOT_QOBUZ_CLIENTS:
-            return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
-        
-        client_to_check = list(BOT_QOBUZ_CLIENTS.values())[0]
-        
-        # FIX: Pastikan current dibaca sebagai Integer
-        try:
-            current = int(client_to_check.quality)
-        except:
-            current = 6 # Fallback default
-        
-        if current in quality:
-            quality[current] = quality[current] + '✅'
-        await edit_message(cb.message, lang.s.QOBUZ_QUALITY_PANEL, markup=qb_button(quality))
+        qualities = {
+            "5": "MP3 320",
+            "6": "FLAC Lossless",
+            "7": "FLAC 24bit/96kHz",
+            "27": "FLAC 24bit/192kHz"
+        }
+        current_q = str(bot_set.qobuz_quality)
+        if current_q in qualities:
+            qualities[current_q] = qualities[current_q] + "✅"
+            
+        await edit_message(
+            cb.message,
+            f"**QOBUZ PANEL**\n\n{len(BOT_QOBUZ_CLIENTS)} Klien Aktif.\n\nKualitas Default:",
+            markup=qb_button(qualities)
+        )
 
 @Client.on_callback_query(filters.regex(pattern=r"^qbQ"))
 async def qobuz_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qobuz = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ', 27:'24B>96KHZ'}
-        to_set = cb.data.split('_')[1]
-        
-        # Ambil Key Integer
-        qobuz_qual = list(filter(lambda x: qobuz[x] == to_set, qobuz))[0]
-        
-        if not BOT_QOBUZ_CLIENTS:
-            return await edit_message(cb.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
-        
-        for client in BOT_QOBUZ_CLIENTS.values():
-            # FIX: Paksa simpan sebagai Integer
-            client.quality = int(qobuz_qual)
-            
-        # Simpan ke DB sebagai Integer
-        await database.set_variable('QOBUZ_QUALITY', int(qobuz_qual))
+        to_set = int(cb.data.split('_')[1])
+        bot_set.qobuz_quality = to_set
+        await database.set_variable("QOBUZ_QUALITY", to_set)
         await qobuz_cb(c, cb)
-
-
-#----------------
-# TIDAL
-#----------------
-@Client.on_callback_query(filters.regex(pattern=r"^tdP"))
-async def tidal_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        await edit_message(
-            cb.message,
-            lang.s.TIDAL_PANEL,
-            tidal_buttons() 
-        )
-    
-@Client.on_callback_query(filters.regex(pattern=r"^tdQ"))
-async def tidal_quality_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        qualities = {
-            'LOW': 'LOW',
-            'HIGH': 'HIGH',
-            'LOSSLESS': 'LOSSLESS'
-        }
-        if any(c.mobile_hires for c in tidal_manager.clients):
-            qualities['HI_RES'] = 'MAX'
-        qualities[tidal_manager.quality] += '✅'
-
-        await edit_message(
-            cb.message,
-            lang.s.TIDAL_PANEL,
-            tidal_quality_button(qualities, spatial=tidal_manager.spatial) 
-        )
-
-@Client.on_callback_query(filters.regex(pattern=r"^tdSQ"))
-async def tidal_set_quality_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        to_set = cb.data.split('_')[1]
-        if to_set == 'spatial':
-            options = ['OFF', 'ATMOS AC3 JOC']
-            if any(c.mobile_atmos for c in tidal_manager.clients):
-                options.append('ATMOS AC4')
-            if any(c.mobile_atmos or c.mobile_hires for c in tidal_manager.clients):
-                options.append('Sony 360RA')
-            try:
-                current = options.index(tidal_manager.spatial)
-            except:
-                current = 0
-            nexti = (current + 1) % len(options) 
-            tidal_manager.spatial = options[nexti]
-            await database.set_variable('TIDAL_SPATIAL', options[nexti])
-        else:
-            qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
-            to_set = list(filter(lambda x: qualities[x] == to_set, qualities))[0]
-            tidal_manager.quality = to_set
-            await database.set_variable('TIDAL_QUALITY', to_set)
-        await tidal_quality_cb(c, cb)
-
-@Client.on_callback_query(filters.regex(pattern=r"^tdAuth"))
-async def tidal_auth_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        text = f"{len(tidal_manager.clients)} akun Tidal terhubung.\n\n"
-        for i, client in enumerate(tidal_manager.clients):
-            sub_type = client.sub_type or "Unknown"
-            text += f"  **Akun {i+1} (User {client.user_id})**\n"
-            text += f"  > Tipe: {sub_type}\n"
-            text += f"  > Hires: {bool(client.mobile_hires)}, Atmos: {bool(client.mobile_atmos)}\n"
-        text += "\nGunakan tombol di bawah untuk menambah akun baru (via TV) atau menghapus *semua* akun."
-        await edit_message(cb.message, text, tidal_auth_buttons())
-
-@Client.on_callback_query(filters.regex(pattern=r"^tdLogin"))
-async def tidal_login_cb(c:Client, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        temp_client = TidalApi() 
-        try:
-            auth_url, err = await temp_client.get_tv_login_url()
-            if err:
-                return await c.answer_callback_query(cb.id, err, True)
-            await edit_message(cb.message, lang.s.TIDAL_AUTH_URL.format(auth_url), tidal_auth_buttons())
-            sub, err = await temp_client.login_tv()
-            if err:
-                return await edit_message(cb.message, lang.s.ERR_LOGIN_TIDAL_TV_FAILED.format(err), tidal_auth_buttons())
-            if sub:
-                auth_data = {
-                    'refresh_token': temp_client.tv_session.refresh_token,
-                    'country_code': temp_client.tv_session.country_code,
-                    'user_id': temp_client.tv_session.user_id
-                }
-                all_settings = await database.get_variable()
-                if not all_settings:
-                    all_settings = {}
-                accounts_list = all_settings.get("TIDAL_ACCOUNTS_LIST", [])
-                accounts_list.append(auth_data)
-                await database.set_variable('TIDAL_ACCOUNTS_LIST', accounts_list)
-                await tidal_manager.initialize_clients()
-                await temp_client.session.close() 
-                await edit_message(cb.message, f"Akun {sub} (User {auth_data['user_id']}) berhasil ditambahkan.\n"
-                                f"Total akun: {len(tidal_manager.clients)}", tidal_auth_buttons())
-        except Exception as e:
-            LOGGER.error(f"Gagal login Tidal: {traceback.format_exc()}")
-            if temp_client.session:
-                await temp_client.session.close() 
-            await c.answer_callback_query(cb.id, f"Error: {e}", True)
-
-@Client.on_callback_query(filters.regex(pattern=r"^tdRemove"))
-async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        for client in tidal_manager.clients:
-            if hasattr(client, "session") and client.session:
-                await client.session.close()
-        await database.set_variable("TIDAL_ACCOUNTS_LIST", [])
-        await tidal_manager.initialize_clients()
-        await c.answer_callback_query(cb.id, "Semua akun Tidal telah dihapus.", True)
-        await tidal_auth_cb(c, cb)
-
-
-#----------------
-# BEATPORT
-#----------------
-@Client.on_callback_query(filters.regex(pattern=r"^bpP"))
-async def beatport_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        quality = {
-            "lossless": "Lossless (FLAC)",
-            "high": "High (AAC 256)",
-            "medium": "Medium (AAC 128)"
-        }
-        if not beatport_manager or not beatport_manager.clients:
-            return await edit_message(cb.message, "Layanan Beatport tidak aktif (tidak ada klien yang login).")
-        current = beatport_manager.quality 
-        if current in quality:
-            quality[current] = quality[current] + '✅'
-        await edit_message(cb.message, "Pilih kualitas default untuk Beatport:", markup=bp_button(quality))
-
-@Client.on_callback_query(filters.regex(pattern=r"^bpQ"))
-async def beatport_quality_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "Lossless (FLAC)": "lossless",
-            "High (AAC 256)": "high",
-            "Medium (AAC 128)": "medium"
-        }
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not beatport_manager or not beatport_manager.clients:
-            return await edit_message(cb.message, "Layanan Beatport tidak aktif (tidak ada klien yang login).")
-        beatport_manager.quality = to_set
-        await database.set_variable('BEATPORT_QUALITY', to_set)
-        await beatport_cb(c, cb)
-
-
-#----------------
-# BEATSOURCE
-#----------------
-@Client.on_callback_query(filters.regex(pattern=r"^bsP")) 
-async def beatsource_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        quality = {
-            "lossless": "Lossless (FLAC)",
-            "high": "High (AAC 256)",
-            "medium": "Medium (AAC 128)"
-        }
-        if not beatsource_manager or not beatsource_manager.clients:
-            return await edit_message(cb.message, "Layanan Beatsource tidak aktif (tidak ada klien yang login).")
-        
-        current = beatsource_manager.quality 
-        if current in quality:
-            quality[current] = quality[current] + '✅'
-        
-        await edit_message(
-            cb.message,
-            "Pilih kualitas default untuk Beatsource:\n(Klien non-Pro akan tetap di 128k)",
-            markup=bs_button(quality) 
-        )
-
-@Client.on_callback_query(filters.regex(pattern=r"^bsQ")) 
-async def beatsource_quality_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "Lossless (FLAC)": "lossless",
-            "High (AAC 256)": "high",
-            "Medium (AAC 128)": "medium"
-        }
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not beatsource_manager or not beatsource_manager.clients:
-            return await edit_message(cb.message, "Layanan Beatsource tidak aktif (tidak ada klien yang login).")
-        
-        beatsource_manager.quality = to_set
-        await database.set_variable('BEATSOURCE_QUALITY', to_set)
-        
-        await beatsource_cb(c, cb)
-
-
-#----------------
-# SOUNDCLOUD
-#----------------
-@Client.on_callback_query(filters.regex(pattern=r"^scP")) 
-async def soundcloud_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        quality = {
-            "original": "Original (Jika Ada)",
-            "stream": "Stream (Default AAC/MP3)"
-        }
-        if not soundcloud_manager or not soundcloud_manager.get_client():
-            return await edit_message(cb.message, "Layanan Soundcloud tidak aktif (Token salah/hilang).")
-        
-        current = soundcloud_manager.quality 
-        if current in quality:
-            quality[current] = quality[current] + '✅'
-        
-        await edit_message(
-            cb.message,
-            "Pilih kualitas default untuk Soundcloud:",
-            markup=sc_button(quality) 
-        )
-
-@Client.on_callback_query(filters.regex(pattern=r"^scQ")) 
-async def soundcloud_quality_cb(c, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "Original (Jika Ada)": "original",
-            "Stream (Default AAC/MP3)": "stream"
-        }
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not soundcloud_manager or not soundcloud_manager.get_client():
-            return await edit_message(cb.message, "Layanan Soundcloud tidak aktif.")
-        
-        soundcloud_manager.quality = to_set
-        await database.set_variable('SOUNDCLOUD_QUALITY', to_set)
-        
-        await soundcloud_cb(c, cb)
-
 
 #----------------
 # DEEZER
@@ -372,75 +112,223 @@ async def deezer_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
             "FLAC": "FLAC",
-            "MP3_320": "MP3 320",
-            "MP3_128": "MP3 128"
+            "MP3_320": "MP3_320",
+            "MP3_128": "MP3_128"
         }
         if not deezer_manager or not deezer_manager.clients:
-            return await edit_message(cb.message, "Layanan Deezer tidak aktif (tidak ada klien yang login).")
+            return await edit_message(cb.message, "Layanan Deezer tidak aktif.")
+            
         current = deezer_manager.quality
         if current in quality:
             quality[current] = quality[current] + '✅'
-        await edit_message(cb.message, "Pilih kualitas default untuk Deezer:", markup=dz_button(quality))
+        
+        await edit_message(
+            cb.message, 
+            f"**DEEZER PANEL**\n\n{len(deezer_manager.clients)} ARL Aktif.\n\nKualitas Default:", 
+            markup=dz_button(quality)
+        )
 
 @Client.on_callback_query(filters.regex(pattern=r"^dzQ"))
 async def deezer_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "FLAC": "FLAC",
-            "MP3 320": "MP3_320",
-            "MP3 128": "MP3_128"
-        }
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not deezer_manager or not deezer_manager.clients:
-            return await edit_message(cb.message, "Layanan Deezer tidak aktif (tidak ada klien yang login).")
+        to_set = cb.data.split('_')[1]
         deezer_manager.quality = to_set
-        await database.set_variable('DEEZER_QUALITY', to_set)
+        await database.set_variable("DEEZER_QUALITY", to_set)
         await deezer_cb(c, cb)
 
+#----------------
+# TIDAL
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^tdP"))
+async def tidal_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        await edit_message(
+            cb.message,
+            "**TIDAL PANEL**",
+            markup=tidal_buttons()
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^tdQ")) 
+async def tidal_quality_menu(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        qualities = {
+            "HI_RES": "HI_RES (Max)",
+            "LOSSLESS": "LOSSLESS (High)",
+            "HIGH": "HIGH (Low)"
+        }
+        if not tidal_manager or not tidal_manager.clients:
+            return await edit_message(cb.message, "Layanan Tidal tidak aktif.")
+
+        current = tidal_manager.quality
+        if current in qualities:
+            qualities[current] = qualities[current] + '✅'
+            
+        current_spatial = "ON" if tidal_manager.spatial else "OFF"
+        
+        await edit_message(
+            cb.message, 
+            f"**TIDAL QUALITY**\n\nDefault Quality: {current}\nSpatial Audio: {current_spatial}", 
+            markup=tidal_quality_button(qualities, spatial=current_spatial)
+        )
+
+@Client.on_callback_query(filters.regex(pattern=r"^tdSQ")) 
+async def tidal_quality_set(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        data = cb.data.split('_')
+        
+        # Cek tombol Spatial
+        if len(data) > 1 and data[1] == "spatial":
+            tidal_manager.spatial = not tidal_manager.spatial
+            # Simpan state spatial
+            await database.set_variable("TIDAL_SPATIAL", tidal_manager.spatial)
+            return await tidal_quality_menu(c, cb)
+            
+        to_set = data[1]
+        tidal_manager.quality = to_set
+        await database.set_variable("TIDAL_QUALITY", to_set)
+        await tidal_quality_menu(c, cb)
+
+#----------------
+# BEATPORT
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^bpP")) 
+async def beatport_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "lossless": "Lossless (FLAC)",
+            "high": "High (AAC)",
+            "medium": "Medium (AAC)"
+        }
+        if not beatport_manager or not beatport_manager.clients:
+            return await edit_message(cb.message, "Layanan Beatport tidak aktif.")
+            
+        current = beatport_manager.quality
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(cb.message, "**BEATPORT PANEL**", markup=bp_button(quality))
+
+@Client.on_callback_query(filters.regex(pattern=r"^bpQ")) 
+async def beatport_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        to_set = cb.data.split('_')[1]
+        if to_set == "Lossless (FLAC)":
+            real_val = "lossless"
+        elif to_set == "High (AAC 256)":
+            real_val = "high"
+        else:
+            real_val = "medium"
+            
+        beatport_manager.quality = real_val
+        await database.set_variable("BEATPORT_QUALITY", real_val)
+        await beatport_cb(c, cb)
+
+#----------------
+# BEATSOURCE
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^bsP")) 
+async def beatsource_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "lossless": "Lossless (FLAC)",
+            "high": "High (AAC)",
+            "medium": "Medium (AAC)"
+        }
+        if not beatsource_manager or not beatsource_manager.clients:
+            return await edit_message(cb.message, "Layanan Beatsource tidak aktif.")
+        
+        current = beatsource_manager.quality
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(cb.message, "**BEATSOURCE PANEL**", markup=bs_button(quality))
+
+@Client.on_callback_query(filters.regex(pattern=r"^bsQ")) 
+async def beatsource_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        to_set = cb.data.split('_')[1]
+        # Mapping dari teks tombol kembali ke value
+        if "Lossless" in to_set:
+            real_val = "lossless"
+        elif "High" in to_set:
+            real_val = "high"
+        else:
+            real_val = "medium"
+            
+        beatsource_manager.quality = real_val
+        await database.set_variable("BEATSOURCE_QUALITY", real_val)
+        await beatsource_cb(c, cb)
+
+#----------------
+# SOUNDCLOUD
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^scP")) 
+async def soundcloud_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "original": "Original",
+            "stream": "Stream"
+        }
+        if not soundcloud_manager:
+            return await edit_message(cb.message, "Layanan Soundcloud tidak aktif.")
+            
+        current = soundcloud_manager.quality
+        if current in quality:
+            quality[current] = quality[current] + '✅'
+        
+        await edit_message(cb.message, "**SOUNDCLOUD PANEL**", markup=sc_button(quality))
+
+@Client.on_callback_query(filters.regex(pattern=r"^scQ")) 
+async def soundcloud_quality_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        data_text = cb.data.split('_')[1]
+        if "Original" in data_text:
+            real_val = "original"
+        else:
+            real_val = "stream"
+            
+        soundcloud_manager.quality = real_val
+        await database.set_variable("SOUNDCLOUD_QUALITY", real_val)
+        await soundcloud_cb(c, cb)
 
 #----------------
 # KKBOX
 #----------------
-@Client.on_callback_query(filters.regex(pattern=r"^kkbP"))
+@Client.on_callback_query(filters.regex(pattern=r"^kkbP")) 
 async def kkbox_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
-            "128k": "MP3 128k",
-            "192k": "MP3 192k",
-            "320k": "AAC 320k",
-            "hifi": "FLAC 16-bit",
-            "hires": "FLAC 24-bit"
+            "hires": "Hi-Res",
+            "hifi": "Hi-Fi",
+            "320k": "320k",
+            "192k": "192k",
+            "128k": "128k"
         }
         if not kkbox_manager or not kkbox_manager.clients:
-            return await edit_message(cb.message, "Layanan KKBox tidak aktif (tidak ada klien yang login).")
-        current = kkbox_manager.quality 
+            return await edit_message(cb.message, "Layanan KKBox tidak aktif.")
+            
+        current = kkbox_manager.quality
         if current in quality:
             quality[current] = quality[current] + '✅'
-        await edit_message(cb.message, "Pilih kualitas default untuk KKBox:", markup=kk_button(quality))
+        
+        await edit_message(cb.message, "**KKBOX PANEL**", markup=kk_button(quality))
 
-@Client.on_callback_query(filters.regex(pattern=r"^kkbQ"))
+@Client.on_callback_query(filters.regex(pattern=r"^kkbQ")) 
 async def kkbox_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "MP3 128k": "128k",
-            "MP3 192k": "192k",
-            "AAC 320k": "320k",
-            "FLAC 16-bit": "hifi",
-            "FLAC 24-bit": "hires"
-        }
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not kkbox_manager or not kkbox_manager.clients:
-            return await edit_message(cb.message, "Layanan KKBox tidak aktif (tidak ada klien yang login).")
-        kkbox_manager.quality = to_set
-        await database.set_variable('KKBOX_QUALITY', to_set)
+        # Format tombol: kkbQ_MP3 128k, kkbQ_FLAC 16-bit, dll
+        text = cb.data.split('_')[1]
+        
+        # Mapping balik
+        if "Hi-Res" in text or "24-bit" in text: real_val = "hires"
+        elif "Hi-Fi" in text or "16-bit" in text: real_val = "hifi"
+        elif "320k" in text: real_val = "320k"
+        elif "192k" in text: real_val = "192k"
+        else: real_val = "128k"
+        
+        kkbox_manager.quality = real_val
+        await database.set_variable("KKBOX_QUALITY", real_val)
         await kkbox_cb(c, cb)
-
 
 #----------------
 # NAPSTER
@@ -449,47 +337,37 @@ async def kkbox_quality_cb(c, cb:CallbackQuery):
 async def napster_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
-            "FLAC": "FLAC (HiRes/Lossless)",
-            "MP3_320": "AAC 320k",
-            "MP3_192": "AAC 192k",
-            "MP3_128": "AAC 128k",
-            "MP3_64": "HE-AAC 64k"
+            "FLAC": "FLAC",
+            "MP3_320": "AAC 320",
+            "MP3_192": "AAC 192",
+            "MP3_128": "AAC 128",
+            "MP3_64": "HE-AAC 64"
         }
         if not napster_manager or not napster_manager.clients:
-            return await edit_message(cb.message, "Layanan Napster tidak aktif (tidak ada klien yang login).")
+            return await edit_message(cb.message, "Layanan Napster tidak aktif.")
         
-        current = napster_manager.quality 
+        current = napster_manager.quality
         if current in quality:
             quality[current] = quality[current] + '✅'
         
-        await edit_message(
-            cb.message,
-            "Pilih kualitas default untuk Napster:\n(Kualitas akhir tergantung langganan akun bot)",
-            markup=np_button(quality)
-        )
+        await edit_message(cb.message, "**NAPSTER PANEL**", markup=np_button(quality))
 
 @Client.on_callback_query(filters.regex(pattern=r"^npQ")) 
 async def napster_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "FLAC (HiRes/Lossless)": "FLAC",
-            "AAC 320k": "MP3_320",
-            "AAC 192k": "MP3_192",
-            "AAC 128k": "MP3_128",
-            "HE-AAC 64k": "MP3_64"
-        }
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not napster_manager or not napster_manager.clients:
-            return await edit_message(cb.message, "Layanan Napster tidak aktif.")
+        text = cb.data.split('_')[1]
         
-        napster_manager.quality = to_set
-        await database.set_variable('NAPSTER_QUALITY', to_set)
+        # Mapping balik dari text tombol
+        if "FLAC" in text: real_val = "FLAC"
+        elif "320k" in text: real_val = "MP3_320"
+        elif "192k" in text: real_val = "MP3_192"
+        elif "128k" in text: real_val = "MP3_128"
+        elif "64k" in text: real_val = "MP3_64"
+        else: real_val = "MP3_320"
         
+        napster_manager.quality = real_val
+        await database.set_variable("NAPSTER_QUALITY", real_val)
         await napster_cb(c, cb)
-
 
 #----------------
 # IDAGIO
@@ -499,42 +377,29 @@ async def idagio_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         quality = {
             "FLAC": "FLAC",
-            "MP3_320": "AAC 320k",
-            "MP3_160": "AAC 160k"
+            "MP3_320": "AAC 320",
+            "MP3_160": "AAC 160"
         }
         if not idagio_manager or not idagio_manager.clients:
-            return await edit_message(cb.message, "Layanan Idagio tidak aktif (tidak ada klien yang login).")
+            return await edit_message(cb.message, "Layanan Idagio tidak aktif.")
         
-        current = idagio_manager.quality 
+        current = idagio_manager.quality
         if current in quality:
             quality[current] = quality[current] + '✅'
-        
-        await edit_message(
-            cb.message,
-            "Pilih kualitas default untuk Idagio:\n(Semua akun bot diasumsikan Premium+)",
-            markup=id_button(quality)
-        )
+            
+        await edit_message(cb.message, "**IDAGIO PANEL**", markup=id_button(quality))
 
 @Client.on_callback_query(filters.regex(pattern=r"^idQ")) 
 async def idagio_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "FLAC": "FLAC",
-            "AAC 320k": "MP3_320",
-            "AAC 160k": "MP3_160"
-        }
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not idagio_manager or not idagio_manager.clients:
-            return await edit_message(cb.message, "Layanan Idagio tidak aktif.")
+        text = cb.data.split('_')[1]
+        if "FLAC" in text: real_val = "FLAC"
+        elif "320k" in text: real_val = "MP3_320"
+        else: real_val = "MP3_160"
         
-        idagio_manager.quality = to_set
-        await database.set_variable('IDAGIO_QUALITY', to_set)
-        
+        idagio_manager.quality = real_val
+        await database.set_variable("IDAGIO_QUALITY", real_val)
         await idagio_cb(c, cb)
-
 
 #----------------
 # BUGS
@@ -542,46 +407,37 @@ async def idagio_quality_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^bgP")) 
 async def bugs_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # PERBAIKAN: Sesuaikan label dengan tombol (AAC 320k)
         quality = {
-            "flac": "FLAC 16-bit",
-            "aac256": "AAC 320k",
-            "320k": "MP3 320k",
-            "aac": "AAC 128k"
+            "flac": "FLAC",
+            "aac256": "AAC 320", # Bugs uses slightly different naming
+            "320k": "MP3 320",
+            "aac": "AAC 128"
         }
-        
         if not bugs_manager or not bugs_manager.clients:
-            return await edit_message(cb.message, "Layanan Bugs tidak aktif (tidak ada klien yang login).")
-        
-        current = bugs_manager.quality 
+            return await edit_message(cb.message, "Layanan Bugs tidak aktif.")
+            
+        current = bugs_manager.quality
+        # Handling display mark
+        # Karena bugs_button pakai mapping sendiri, kita cukup kirim dict apa adanya
+        # Tapi tombol butuh tahu mana yang aktif untuk '✅' jika ingin custom
+        # Di sini kita modifikasi value di dict untuk display saja
         if current in quality:
-            quality[current] = quality[current] + '✅'
-        
-        await edit_message(
-            cb.message,
-            "Pilih kualitas default untuk Bugs:\n(Kualitas FLAC tergantung langganan akun bot)",
-            markup=bugs_button(quality)
-        )
+            quality[current] += '✅'
+
+        await edit_message(cb.message, "**BUGS PANEL**", markup=bugs_button(quality))
 
 @Client.on_callback_query(filters.regex(pattern=r"^bgQ")) 
 async def bugs_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        qual_map_display = {
-            "FLAC 16-bit": "flac",
-            "AAC 320k": "aac256", # FIX
-            "MP3 320k": "320k",
-            "AAC 128k": "aac"
-        }
+        text = cb.data.split('_')[1]
         
-        to_set_display = cb.data.split('_')[1]
-        to_set = qual_map_display.get(to_set_display)
-        if not to_set:
-            return await c.answer_callback_query(cb.id, "Kualitas tidak valid.", True)
-        if not bugs_manager or not bugs_manager.clients:
-            return await edit_message(cb.message, "Layanan Bugs tidak aktif.")
+        if "FLAC" in text: to_set = "flac"
+        elif "AAC 320" in text: to_set = "aac256"
+        elif "MP3 320" in text: to_set = "320k"
+        else: to_set = "aac"
         
         bugs_manager.quality = to_set
-        await database.set_variable('BUGS_QUALITY', to_set)
+        await database.set_variable("BUGS_QUALITY", to_set)
         
         await bugs_cb(c, cb)
 
@@ -601,7 +457,6 @@ async def moov_cb(c, cb:CallbackQuery):
             return await edit_message(cb.message, "Layanan Moov tidak aktif (tidak ada akun).")
         
         current = moov_manager.quality 
-
         if current in quality:
             quality[current] = quality[current] + '✅'
         
@@ -616,12 +471,36 @@ async def moov_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^mvQ")) 
 async def moov_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        to_set = cb.data.split('_')[1] # FLAC atau MP3_320
-        
-        if not moov_manager:
-            return await edit_message(cb.message, "Layanan Moov tidak aktif.")
+        to_set = cb.data.split('_')[1]
         
         moov_manager.quality = to_set
-        await database.set_variable('MOOV_QUALITY', to_set)
-        
+        await database.set_variable("MOOV_QUALITY", to_set)
         await moov_cb(c, cb)
+
+#----------------
+# LIVEPHISH
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^lpP")) 
+async def livephish_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "FLAC": "FLAC (16-bit)",
+            "ALAC": "ALAC (16-bit)",
+            "AAC": "AAC"
+        }
+        if not livephish_manager or not livephish_manager.clients:
+            return await edit_message(cb.message, "Layanan LivePhish tidak aktif.")
+            
+        current = livephish_manager.quality
+        if current in quality:
+            quality[current] += '✅'
+            
+        await edit_message(cb.message, "**LIVEPHISH PANEL**\nPilih kualitas LivePhish:", markup=lp_button(quality))
+
+@Client.on_callback_query(filters.regex(pattern=r"^lpQ")) 
+async def livephish_qual_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        to_set = cb.data.split('_')[1]
+        livephish_manager.quality = to_set
+        await database.set_variable("LIVEPHISH_QUALITY", to_set)
+        await livephish_cb(c, cb)
