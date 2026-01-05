@@ -1,5 +1,3 @@
-# [GANTI FILE: bot/helpers/livephish/livephish_api.py]
-
 import aiohttp
 import hashlib
 import time
@@ -10,12 +8,12 @@ LOGGER = logging.getLogger(__name__)
 
 class LivePhishApi:
     def __init__(self):
-        # Kunci API sesuai kode Go
+        # Kunci API Sesuai Go Code
         self.client_id = "Fujeij8d764ydxcnh4676scsr7f4"
         self.developer_key = "njeurd876frhdjxy6sxxe721"
         self.sig_key = "jdfirj8475jf_"
         
-        # User Agent Android (Sesuai kode Go)
+        # User Agent Utama (Sama persis dengan Go const userAgent)
         self.user_agent = "LivePhish/3.4.5.357 (Android; 7.1.2; Asus; ASUS_Z01QD)"
         
         self.api_base = "https://www.livephish.com/"
@@ -31,7 +29,7 @@ class LivePhishApi:
         await self.session.close()
 
     def _generate_sig(self, offset=0):
-        # Generate signature: sigKey + timestamp (detik)
+        # Sama dengan Go: time.Now().Unix() + epochComp
         timestamp = str(int(time.time()) + offset)
         raw = self.sig_key + timestamp
         sig = hashlib.md5(raw.encode('utf-8')).hexdigest()
@@ -40,11 +38,11 @@ class LivePhishApi:
     async def _request(self, method, url, **kwargs):
         async with self.session.request(method, url, **kwargs) as resp:
             try:
-                # Paksa baca sebagai JSON (handling content-type text/html)
+                # Paksa baca JSON (Go tidak peduli content-type, Python strict)
                 return await resp.json(content_type=None)
             except Exception:
                 text = await resp.text()
-                LOGGER.error(f"LivePhish API Non-JSON Response: {text[:200]}")
+                LOGGER.error(f"LivePhish API Error (Non-JSON): {text[:200]}")
                 return {"error": True, "raw": text}
 
     async def login(self, email, password):
@@ -93,20 +91,14 @@ class LivePhishApi:
         js = await self._request("GET", self.api_base + "secureApi.aspx", params=params, headers=headers_auth)
         sub_info = js.get("Response", {}).get("subscriptionInfo", {})
         
-        # --- DEBUG LOGGING ---
-        sub_id = sub_info.get("subscriptionID")
-        can_stream = sub_info.get("canStreamSubContent")
-        label = sub_info.get("label")
-        cost_plan = sub_info.get("subCostplanIDAccessList")
-        
-        LOGGER.info(f"LivePhish Login: ID={sub_id}, CanStream={can_stream}, Label={label}, Plan={cost_plan}")
-        
-        if not can_stream and not sub_id:
-            LOGGER.warning("!!! PERINGATAN LIVEPHISH: Akun tidak memiliki Subscription ID atau Streaming Access. Download mungkin gagal.")
+        LOGGER.info(f"LivePhish Login OK. ID: {sub_info.get('subscriptionID')}, CanStream: {sub_info.get('canStreamSubContent')}")
+
+        if not sub_info.get("canStreamSubContent"):
+            LOGGER.warning("Warning: Akun ini mungkin tidak memiliki akses streaming aktif.")
 
         self.stream_params = {
-            "subscriptionID": str(sub_id) if sub_id else "0",
-            "subCostplanIDAccessList": str(cost_plan) if cost_plan else "",
+            "subscriptionID": str(sub_info.get("subscriptionID")),
+            "subCostplanIDAccessList": str(sub_info.get("subCostplanIDAccessList")),
             "userID": str(sub_info.get("userID")),
             "startDateStamp": str(sub_info.get("startDateStamp")),
             "endDateStamp": str(sub_info.get("endDateStamp"))
@@ -123,29 +115,29 @@ class LivePhishApi:
         return await self._request("GET", self.api_base + "api.aspx", params=params, headers={"User-Agent": self.user_agent})
 
     async def get_stream_url(self, track_id, quality_code):
-        # 1. Request utama
+        # 1. Coba kualitas utama
         url = await self._fetch_stream_with_retries(track_id, quality_code)
         
-        # 2. Fallback AAC
+        # 2. Fallback ke AAC jika FLAC gagal (Sama seperti logika Go yang mencoba format lain jika gagal)
         if not url and quality_code in ["FLAC", "ALAC"]:
-            LOGGER.warning(f"LivePhish: Gagal {quality_code}, fallback AAC...")
+            LOGGER.warning(f"LivePhish: Gagal {quality_code}, mencoba fallback ke AAC...")
             url = await self._fetch_stream_with_retries(track_id, "AAC")
             
         return url
 
     async def _fetch_stream_with_retries(self, track_id, quality_code):
-        # Mapping Sesuai Go Code
-        # 1 (AAC) -> platform 4
-        # 2 (ALAC) -> platform 2
-        # 3 (FLAC) -> platform 3
+        # Mapping Sesuai Go Code (func parseCfg)
+        # 1 -> 4 (AAC), 2 -> 2 (ALAC), 3 -> 3 (FLAC)
         platform_map = {"AAC": "4", "ALAC": "2", "FLAC": "3"}
         platform_id = platform_map.get(quality_code, "4")
         
-        # Header Khusus untuk streaming (WAJIB ADA)
+        # PENTING: User-Agent HARUS "LivePhishAndroid" saat minta stream (Lihat main.go baris 191)
+        # Jangan pakai self.user_agent yang panjang di sini.
         headers = {"User-Agent": "LivePhishAndroid"}
 
-        # Offset waktu (Epoch Compensation)
-        offsets = [0, -1, 1, -2, 2, -3, 3, -5, 5, -10, 10, -15, 15, -30, 30]
+        # Epoch Compensation (Sama seperti Go flag -epochCompensation)
+        # Mencoba rentang waktu jika jam server tidak sinkron
+        offsets = [0, 5, -5, 10, -10, 15, -15, 30, -30]
         
         last_js_response = None
 
@@ -154,7 +146,7 @@ class LivePhishApi:
             
             params = {
                 "trackID": str(track_id),
-                "app": "1", # Go Code menggunakan app=1
+                "app": "1", # Sesuai Go Code
                 "platformID": platform_id,
                 "subscriptionID": self.stream_params["subscriptionID"],
                 "subCostplanIDAccessList": self.stream_params["subCostplanIDAccessList"],
@@ -169,10 +161,11 @@ class LivePhishApi:
             link = js.get("streamLink")
             
             if link:
+                if offset != 0:
+                    LOGGER.info(f"LivePhish: Stream OK dengan Time Offset {offset}s.")
                 return link
             
             last_js_response = js
         
-        # Gagal total
-        LOGGER.error(f"LivePhish Stream Fail (ID: {track_id}). Last Response: {last_js_response}")
+        LOGGER.error(f"LivePhish Stream Fail (ID: {track_id}, Q: {quality_code}). Last Resp: {last_js_response}")
         return None
