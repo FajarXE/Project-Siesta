@@ -1,13 +1,12 @@
-# [GANTI FILE: bot/helpers/livephish/handler.py]
-
 import re
 import os
 import aiohttp
-import urllib.parse
+import asyncio
 from config import Config
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
 
+# Import Helper standar
 from bot.helpers.utils import download_file, zip_handler, fetch_zip_settings
 from bot.helpers.uploder import track_upload, album_upload, post_art_poster
 from bot.helpers.message import edit_message
@@ -18,9 +17,7 @@ ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d
 
 def sanitize_name(name):
     """Membersihkan nama file/folder."""
-    # Hapus karakter ilegal file system
-    clean = re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
-    return clean
+    return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
 
 def get_progress_bar_text(current, total, title, type_str):
     """Visual Progress Bar."""
@@ -41,21 +38,32 @@ def get_progress_bar_text(current, total, title, type_str):
     )
     return text
 
-async def get_itunes_cover(artist, album):
-    """Mencari cover art di iTunes jika server LivePhish mati."""
+async def extract_cover_from_audio(audio_path, output_path):
+    """
+    Mengekstrak cover art (embedded) dari file audio menggunakan FFmpeg.
+    Solusi paling akurat jika API memberikan link mati.
+    """
     try:
-        term = urllib.parse.quote(f"{artist} {album}")
-        url = f"https://itunes.apple.com/search?term={term}&entity=album&limit=1"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    if data['resultCount'] > 0:
-                        # Ambil resolusi tinggi
-                        return data['results'][0]['artworkUrl100'].replace('100x100bb', '1000x1000bb')
+        # Perintah FFmpeg untuk ekstrak cover tanpa re-encode audio
+        cmd = [
+            "ffmpeg", "-y", "-i", audio_path, 
+            "-an", "-vcodec", "copy", output_path
+        ]
+        
+        # Jalankan subprocess
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+        
+        # Cek hasil
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return True
     except Exception as e:
-        LOGGER.warning(f"iTunes Fallback Error: {e}")
-    return None
+        LOGGER.error(f"Gagal ekstrak cover dari file audio: {e}")
+    return False
 
 async def start_livephish(link: str, user: dict):
     client = user.get('livephish_api')
@@ -71,10 +79,8 @@ async def start_livephish(link: str, user: dict):
     
     meta_json = await client.get_album_meta(album_id)
     resp = meta_json.get("Response", {})
-    
     if not resp:
-        err_msg = meta_json.get("ResponseStatus", {}).get("message", "Response kosong.")
-        raise Exception(f"Gagal metadata ID {album_id}: {err_msg}")
+        raise Exception(f"Gagal metadata ID {album_id}: Response kosong.")
 
     # Metadata Album
     raw_album = resp.get("containerInfo", "Unknown Album")
@@ -88,79 +94,25 @@ async def start_livephish(link: str, user: dict):
         if p_date:
             year = p_date.split("/")[-1]
 
-    # --- LOGIKA COVER ART (LivePhish -> iTunes Fallback) ---
-    cover_path = ""
-    pics = resp.get("pics", [])
-    
-    candidates = []
-    # 1. Kumpulkan URL dari LivePhish
-    if pics:
-        pics.sort(key=lambda x: x.get("width", 0), reverse=True)
-        for p in pics:
-            raw_url = p.get("url", "")
-            if not raw_url: continue
-            if raw_url.startswith("/"):
-                candidates.append("https://www.livephish.com" + raw_url)
-                candidates.append("https://static.livephish.com" + raw_url)
-            else:
-                candidates.append(raw_url)
-
-    # 2. Coba Download dari LivePhish
-    success_cover = False
-    for url in candidates:
-        try:
-            temp_path = await create_cover_file(
-                url, 
-                {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
-            )
-            # Cek jika file valid dan BUKAN fallback default (project-siesta)
-            if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                if "project-siesta" not in temp_path:
-                    cover_path = temp_path
-                    success_cover = True
-                    break
-        except:
-            pass
-
-    # 3. JIKA GAGAL: Coba Fallback ke iTunes (Solusi Cover Asli)
-    if not success_cover:
-        LOGGER.info("Cover LivePhish mati, mencoba mencari di iTunes...")
-        itunes_url = await get_itunes_cover(raw_artist, raw_album)
-        if itunes_url:
-            try:
-                temp_path = await create_cover_file(
-                    itunes_url, 
-                    {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
-                )
-                if temp_path and os.path.exists(temp_path):
-                    cover_path = temp_path
-                    LOGGER.info(f"Berhasil mendapatkan cover dari iTunes: {itunes_url}")
-            except Exception as e:
-                LOGGER.warning(f"Gagal download cover iTunes: {e}")
-
-    # 4. Jika masih gagal, hapus path agar tidak pakai gambar 'Project Siesta'
-    if cover_path and "project-siesta" in cover_path:
-        cover_path = "" # Lebih baik kosong daripada salah gambar
-
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
 
-    # --- PERBAIKAN NAMA ZIP & FOLDER ---
+    # --- SETUP FOLDER ---
     folder_name = f"{artist_name} - {album_name}"
-    if len(folder_name) > 150: 
-        folder_name = folder_name[:150]
+    if len(folder_name) > 150: folder_name = folder_name[:150]
     
-    # Path folder bersih tanpa trailing slash
+    # Gunakan os.path.join agar path folder bersih (tanpa slash di akhir)
+    # Ini memperbaiki nama file ZIP menjadi "Artist - Album.zip"
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
     base_meta = {
-        'title': album_name, # FIX NAME: N/A
+        'title': album_name, # PENTING: Untuk Caption Telegram (Name: ...)
         'album': album_name,
         'albumartist': artist_name,
         'artist': artist_name,
         'year': year,
         'date': year,
-        'cover': cover_path,
+        'cover': "", # Nanti diisi setelah track pertama didownload
         'totaltracks': str(total_tracks),
         'provider': 'LivePhish',
         'quality': livephish_manager.quality,
@@ -172,10 +124,13 @@ async def start_livephish(link: str, user: dict):
     }
     
     completed_tracks = []
-
+    
     # Init Progress
-    init_progress = get_progress_bar_text(0, total_tracks, album_name, base_meta['type'])
-    await edit_message(user['bot_msg'], init_progress)
+    init_txt = get_progress_bar_text(0, total_tracks, album_name, base_meta['type'])
+    await edit_message(user['bot_msg'], init_txt)
+
+    extracted_cover_path = os.path.join(base_folder_path, "cover.jpg")
+    cover_found = False
 
     for i, t in enumerate(tracks):
         track_id = t.get("trackID") or t.get("songID")
@@ -189,20 +144,17 @@ async def start_livephish(link: str, user: dict):
             duration = 0
         
         # Update Progress Bar
-        progress_text = get_progress_bar_text(i+1, total_tracks, title, base_meta['type'])
-        try:
-            await edit_message(user['bot_msg'], progress_text)
-        except:
-            pass
+        prog_txt = get_progress_bar_text(i+1, total_tracks, title, base_meta['type'])
+        try: await edit_message(user['bot_msg'], prog_txt)
+        except: pass
 
         try:
             stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
-        except Exception as e:
-            LOGGER.error(f"LivePhish API Error: {e}")
+        except:
             stream_url = None
 
         if not stream_url:
-            LOGGER.error(f"Stream URL kosong untuk: {title}")
+            LOGGER.error(f"Stream URL kosong: {title}")
             continue
 
         ext = ".m4a"
@@ -213,13 +165,22 @@ async def start_livephish(link: str, user: dict):
         fname = f"{track_num}. {clean_title}{ext}"
         
         full_file_path = os.path.join(base_meta['tempfolder'], fname)
-        base_meta['folderpath'] = base_meta['tempfolder'] # Update path untuk ZIP handler
+        base_meta['folderpath'] = base_meta['tempfolder'] # Pastikan konsisten
 
+        # 1. DOWNLOAD TRACK
         err = await download_file(stream_url, full_file_path)
         if err:
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
+        # 2. EKSTRAK COVER DARI FILE (Hanya sekali untuk track pertama yg berhasil)
+        if not cover_found and os.path.exists(full_file_path):
+            if await extract_cover_from_audio(full_file_path, extracted_cover_path):
+                base_meta['cover'] = extracted_cover_path
+                cover_found = True
+                LOGGER.info(f"LivePhish: Berhasil ekstrak cover dari file {fname}")
+
+        # 3. SET METADATA
         track_meta = base_meta.copy()
         track_meta.update({
             'title': title,
@@ -231,33 +192,31 @@ async def start_livephish(link: str, user: dict):
             'extension': ext.replace(".", "")
         })
         
+        # set_metadata akan menggunakan 'cover' dari base_meta yang sudah diekstrak
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
 
-    # --- FINALISASI ---
+    # --- UPLOAD ---
     if completed_tracks:
         base_meta['tracks'] = completed_tracks
+        # Update path zip dengan cover yg baru didapat
         base_meta['folderpath'] = base_meta['tempfolder']
         
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
 
-        # 1. Buat ZIP (Nama ZIP akan mengikuti nama folder yang sudah diperbaiki)
+        # ZIP
         if album_zip:
             await edit_message(user['bot_msg'], f"Membuat file ZIP...\n{album_name}")
             base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
-        # 2. Kirim Art Poster
+        # ART POSTER (Menggunakan cover hasil ekstrak)
         if art_poster:
-            # Hanya kirim jika cover valid (bukan kosong/siesta)
-            if base_meta.get('cover') and os.path.exists(base_meta['cover']):
+            if cover_found and os.path.exists(base_meta['cover']):
                 try:
                     base_meta['poster_msg'] = await post_art_poster(user, base_meta)
                 except Exception as e:
-                    LOGGER.error(f"Gagal mengirim Art Poster: {e}")
-            else:
-                LOGGER.warning("Melewati Art Poster karena cover asli tidak ditemukan.")
+                    LOGGER.error(f"Gagal poster: {e}")
 
-        # 3. Upload
         await edit_message(user['bot_msg'], f"Mengunggah...\n{album_name}")
         await album_upload(base_meta, user)
     else:
