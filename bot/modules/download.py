@@ -107,11 +107,17 @@ try:
 except ImportError:
     gaana_manager = None
 
-# 15. Bandcamp (BARU)
+# 15. Bandcamp
 try:
     from bot.helpers.bandcamp.manager import bandcamp_manager
 except ImportError:
     bandcamp_manager = None
+
+# 16. LivePhish (BARU)
+try:
+    from bot.helpers.livephish.manager import livephish_manager
+except ImportError:
+    livephish_manager = None
 
 
 # --- IMPOR HANDLER LAYANAN ---
@@ -197,7 +203,7 @@ except ImportError as e:
     async def start_gaana(*args, **kwargs):
         raise NotImplementedError(f"Modul Gaana Rusak: {err_gaana}")
 
-# Bandcamp (BARU)
+# Bandcamp
 try:
     from ..helpers.bandcamp.handler import start_bandcamp
 except ImportError as e:
@@ -205,6 +211,13 @@ except ImportError as e:
     LOGGER.error(f"Gagal Import Bandcamp Handler: {err_bc}")
     async def start_bandcamp(*args, **kwargs):
         raise NotImplementedError(f"Modul Bandcamp Rusak: {err_bc}")
+
+# LivePhish (BARU)
+try:
+    from ..helpers.livephish.handler import start_livephish
+except ImportError:
+    async def start_livephish(*args, **kwargs):
+        raise NotImplementedError("Modul LivePhish belum diimplementasikan.")
 
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
@@ -389,6 +402,9 @@ async def start_link(link: str, user: dict) -> None:
 
     jiosaavn = ["https://www.jiosaavn.com", "jiosaavn.com"]
     gaana = ["https://gaana.com", "gaana.com"]
+
+    # LivePhish Domains
+    livephish = ["https://plus.livephish.com", "https://www.livephish.com"]
     
     # Blok TIDAL
     if link.startswith(tuple(tidal)):
@@ -756,8 +772,7 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.error(f"Gaana Gagal: {e}")
             raise e
 
-    # --- TAMBAHAN BARU: Blok BANDCAMP ---
-    # Bandcamp menggunakan banyak subdomain (artist.bandcamp.com), jadi kita cek substring
+    # Blok BANDCAMP
     elif "bandcamp.com" in link:
         user['provider'] = 'Bandcamp'
         if not bandcamp_manager:
@@ -770,7 +785,25 @@ async def start_link(link: str, user: dict) -> None:
         except Exception as e:
             LOGGER.error(f"Bandcamp Gagal: {e}")
             raise e
-    # --- BATAS TAMBAHAN ---
+
+    # Blok LIVEPHISH (BARU)
+    elif link.startswith(tuple(livephish)):
+        user['provider'] = 'LivePhish'
+        
+        if not livephish_manager or not livephish_manager.clients:
+            raise Exception("Maaf, tidak ada akun LivePhish bot yang aktif.")
+            
+        # Gunakan klien pertama (biasanya cukup)
+        client = livephish_manager.get_client()
+        
+        try:
+            user['livephish_api'] = client
+            await start_livephish(link, user)
+            LOGGER.info("LivePhish: Unduhan berhasil.")
+            return
+        except Exception as e:
+            LOGGER.error(f"LivePhish Gagal: {e}")
+            raise e
 
     else:
         LOGGER.warning(f"Link tidak dikenali: {link}")
