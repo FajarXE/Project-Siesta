@@ -57,13 +57,18 @@ try:
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor bugs_manager.")
     bugs_manager = None
-
-# --- TAMBAHAN BARU: Impor Moov Manager ---
 try:
     from ..helpers.moov.manager import moov_manager
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor moov_manager.")
     moov_manager = None
+
+# --- TAMBAHAN BARU: LivePhish Manager ---
+try:
+    from ..helpers.livephish.manager import livephish_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor livephish_manager.")
+    livephish_manager = None
 # --- BATAS TAMBAHAN ---
 
 # --- IMPORT BUTTONS ---
@@ -71,9 +76,9 @@ from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
-    bugs_button, lyrics_button,
-    # --- TAMBAHAN BARU: mv_button ---
-    mv_button 
+    bugs_button, lyrics_button, mv_button,
+    # --- TAMBAHAN BARU: lp_button ---
+    lp_button
     # --- BATAS TAMBAHAN ---
 )
 from ..helpers.database.mongo_async import database
@@ -121,7 +126,8 @@ Choose Menu option bellow:
 
 
 # --- HANDLER UTAMA TOMBOL MENU ---
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs|moov)"))
+# Tambahkan 'livephish' ke regex pattern
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs|moov|livephish)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -172,12 +178,10 @@ async def uset_cb(client, query, datatype=""):
         main_user_dict = bot_set.user_data.get(user_id, {})
         current = main_user_dict.get("qobuz_qual", client_to_check.quality) 
         
-        # FIX SINKRONISASI QOBUZ: Update memori semua klien aktif
         if "qobuz_qual" in main_user_dict:
             for qc in BOT_QOBUZ_CLIENTS.values():
                 await qc.setup_quality(int(user_id), int(current))
         
-        # Pastikan current adalah int agar match dengan key dictionary
         try:
             current = int(current)
         except:
@@ -353,12 +357,12 @@ async def uset_cb(client, query, datatype=""):
             quality[current] = quality[current] + '✅'
         return await edit_message(query.message, text + "\n(Kualitas FLAC tergantung langganan akun bot)", markup=bugs_button(quality, user_id))
 
-    # --- TAMBAHAN BARU: MOOV MENU ---
+    # --- MOOV MENU ---
     if data[1] == "moov" or datatype == "moov":
         text = f"Choose Moov Audio Quality bellow:\n(Moov menyediakan FLAC 16bit & 24bit)"
         quality = {
             "FLAC": "Max (24bit/HR)",
-            "MP3_320": "Std (16bit/LL)" # Mapping LL Moov ke tombol MP3_320 agar konsisten UI
+            "MP3_320": "Std (16bit/LL)"
         }
         if not moov_manager or not moov_manager.clients:
             return await edit_message(query.message, "Layanan Moov tidak aktif.")
@@ -372,6 +376,28 @@ async def uset_cb(client, query, datatype=""):
             quality[current] = quality[current] + '✅'
         
         return await edit_message(query.message, text, markup=mv_button(quality, user_id))
+
+    # --- TAMBAHAN BARU: LIVEPHISH MENU ---
+    if data[1] == "livephish" or datatype == "livephish":
+        text = f"Choose LivePhish Audio Quality bellow:"
+        quality = {
+            "FLAC": "FLAC (16-bit)",
+            "ALAC": "ALAC (16-bit)",
+            "AAC": "AAC"
+        }
+        if not livephish_manager or not livephish_manager.clients:
+             return await edit_message(query.message, "Layanan LivePhish tidak aktif.")
+        
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        current = main_user_dict.get("livephish_qual", livephish_manager.quality)
+        
+        # Simpan state ke manager jika perlu
+        await livephish_manager.setup_quality(user_id, current)
+        
+        if current in quality:
+            quality[current] += '✅'
+        
+        return await edit_message(query.message, text, markup=lp_button(quality, user_id))
     # --- BATAS TAMBAHAN ---
 
 
@@ -458,12 +484,9 @@ async def uset_qobuz(client, query):
 
     user_id = query.from_user.id
     
-    # 1. Simpan ke Database & Bot Settings (Cache Global)
     bot_set.user_data.setdefault(user_id, {})["qobuz_qual"] = int(qobuz_qual)
     await database.save_user_settings(user_id, {"qobuz_qual": int(qobuz_qual)})
     
-    # 2. FIX UTAMA: Update Memori Client (qopy.py) secara langsung!
-    # Ini memastikan downloader langsung tahu setting berubah tanpa restart.
     for q_client in BOT_QOBUZ_CLIENTS.values():
         await q_client.setup_quality(int(user_id), int(qobuz_qual))
     
@@ -490,7 +513,6 @@ async def uset_beatport(client, query):
         return
     user_id = query.from_user.id
     
-    # Update Manager & DB
     await beatport_manager.setup_quality(user_id, to_set) 
     bot_set.user_data.setdefault(user_id, {})['beatport_qual'] = to_set 
     await database.save_user_settings(user_id, {'beatport_qual': to_set})
@@ -700,7 +722,7 @@ async def uset_bugs(client, query):
     await uset_cb(client, query, "bugs")
 
 
-# --- TAMBAHAN BARU: HANDLER MOOV SPECIFIC ---
+# --- HANDLER MOOV SPECIFIC ---
 @Client.on_callback_query(filters.regex("^umvs"))
 async def uset_moov_handler(client, query):
     m = query.message
@@ -722,6 +744,30 @@ async def uset_moov_handler(client, query):
     await database.save_user_settings(user_id, {'moov_qual': to_set})
     
     await uset_cb(client, query, "moov")
+
+
+# --- TAMBAHAN BARU: HANDLER LIVEPHISH SPECIFIC ---
+@Client.on_callback_query(filters.regex("^ulps"))
+async def uset_livephish_handler(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    
+    # Data format: ulps_FLAC, ulps_AAC
+    to_set = query.data.split('_')[1]
+    
+    if not livephish_manager or not livephish_manager.clients:
+        await query.answer("Layanan LivePhish tidak aktif!", show_alert=True)
+        return
+
+    user_id = query.from_user.id
+    
+    # Simpan ke Manager & DB
+    await livephish_manager.setup_quality(user_id, to_set)
+    bot_set.user_data.setdefault(user_id, {})['livephish_qual'] = to_set
+    await database.save_user_settings(user_id, {'livephish_qual': to_set})
+    
+    await uset_cb(client, query, "livephish")
 # --- BATAS TAMBAHAN ---
 
 
@@ -932,11 +978,20 @@ async def debug(c, m):
     else:
         dt_mv += "Tidak ada klien Moov yang aktif."
 
+    # LIVEPHISH DEBUG (BARU)
+    dt_lp = "\n\nLIVEPHISH:\n"
+    if livephish_manager and livephish_manager.clients:
+        dt_lp += f"{len(livephish_manager.clients)} klien LivePhish aktif.\n"
+        dt_lp += f"Kualitas Default: {livephish_manager.quality}\n"
+        dt_lp += f"Cache User (Global): {len([u for u in bot_set.user_data if 'livephish_qual' in bot_set.user_data[u]])} pengguna"
+    else:
+        dt_lp += "Tidak ada klien LivePhish yang aktif."
+
     # ZIP SETTINGS DEBUG
     zips = f"\n\nAlbum Zip (Global): {bot_set.album_zip}"
     
     # Combine all debug texts
-    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + dt_mv + zips
+    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + dt_mv + dt_lp + zips
     
     # Reply safely
     await m.reply(final_debug_text, True)
