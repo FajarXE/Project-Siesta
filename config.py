@@ -376,6 +376,29 @@ class Config:
 #--------------------
 # --- BATAS TAMBAHAN ---
 
+# --- TAMBAHAN BARU: Blok LivePhish ---
+#--------------------    
+# LIVEPHISH
+#--------------------
+    LIVEPHISH_ACCOUNTS = []
+    i = 1
+    while True:
+        email = getenv(f"LIVEPHISH_EMAIL_{i}")
+        password = getenv(f"LIVEPHISH_PASSWORD_{i}")
+        
+        if email and password:
+            logging.info(f"Ditemukan LivePhish Akun #{i}")
+            account_data = {"email": email, "password": password, "id": i}
+            LIVEPHISH_ACCOUNTS.append(account_data)
+            i += 1
+        else:
+            break
+    
+    if not LIVEPHISH_ACCOUNTS:
+        logging.warning("Tidak ada kredensial LivePhish di .env")
+#--------------------
+# --- BATAS TAMBAHAN ---
+
 # CONCURRENT
 #--------------------
     MAX_WORKERS = int(getenv("MAX_WORKERS", "100"))
