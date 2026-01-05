@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/livephish/livephish_api.py]
+
 import aiohttp
 import hashlib
 import time
@@ -23,8 +25,6 @@ class LivePhishApi:
         await self.session.close()
 
     def _generate_sig(self):
-        # Porting dari Go: generateSig
-        # timestamp + epoch compensation (kita pakai standar time.time())
         timestamp = str(int(time.time()))
         raw = self.sig_key + timestamp
         sig = hashlib.md5(raw.encode('utf-8')).hexdigest()
@@ -46,11 +46,12 @@ class LivePhishApi:
         
         async with self.session.post(self.api_base_id + "token", data=data, headers=headers) as resp:
             if resp.status != 200:
-                raise Exception(f"Login Step 1 Failed: {resp.status}")
+                text = await resp.text()
+                raise Exception(f"Login Step 1 Failed: {resp.status} - {text}")
             js = await resp.json()
             self.access_token = js.get("access_token")
 
-        # 2. Get User Token (secureApi.aspx)
+        # 2. Get User Token
         params = {
             "method": "session.getUserToken",
             "clientID": self.client_id,
@@ -59,10 +60,11 @@ class LivePhishApi:
             "pw": password
         }
         async with self.session.get(self.api_base + "secureApi.aspx", params=params, headers={"User-Agent": self.user_agent}) as resp:
-            js = await resp.json()
+            # Kadang API ini juga return text/html
+            js = await resp.json(content_type=None)
             self.user_token = js.get("Response", {}).get("tokenValue")
 
-        # 3. Get Subscriber Info (untuk Stream Params)
+        # 3. Get Subscriber Info
         params = {
             "method": "user.getSubscriberInfo",
             "developerKey": self.developer_key,
@@ -74,13 +76,12 @@ class LivePhishApi:
             "User-Agent": self.user_agent
         }
         async with self.session.get(self.api_base + "secureApi.aspx", params=params, headers=headers_auth) as resp:
-            js = await resp.json()
+            js = await resp.json(content_type=None)
             sub_info = js.get("Response", {}).get("subscriptionInfo", {})
             
             if not sub_info.get("canStreamSubContent"):
                 raise Exception("Akun tidak memiliki langganan aktif (canStreamSubContent=False).")
 
-            # Simpan parameter penting untuk streaming (Porting struct StreamParams)
             self.stream_params = {
                 "subscriptionID": str(sub_info.get("subscriptionID")),
                 "subCostplanIDAccessList": str(sub_info.get("subCostplanIDAccessList")),
@@ -98,19 +99,15 @@ class LivePhishApi:
             "vdisp": "1"
         }
         async with self.session.get(self.api_base + "api.aspx", params=params, headers={"User-Agent": self.user_agent}) as resp:
-            return await resp.json()
+            return await resp.json(content_type=None)
 
     async def get_stream_url(self, track_id, quality_code):
-        # Quality Mapping dari Go:
-        # 1 (AAC) -> platform 4
-        # 2 (ALAC) -> platform 2
-        # 3 (FLAC) -> platform 3
         platform_map = {
             "AAC": "4",
             "ALAC": "2",
             "FLAC": "3"
         }
-        platform_id = platform_map.get(quality_code, "4") # Default AAC
+        platform_id = platform_map.get(quality_code, "4")
 
         sig, timestamp = self._generate_sig()
         
@@ -127,9 +124,15 @@ class LivePhishApi:
             "lxp": timestamp
         }
         
-        # Header khusus untuk streaming (dari Go code)
         headers = {"User-Agent": "LivePhishAndroid"}
         
         async with self.session.get(self.api_base + "bigriver/subPlayer.aspx", params=params, headers=headers) as resp:
-            js = await resp.json()
+            # PERBAIKAN 2: Tambahkan content_type=None untuk menghindari error ContentTypeError
+            try:
+                js = await resp.json(content_type=None)
+            except Exception as e:
+                # Jika masih gagal decode JSON, baca teksnya untuk debug
+                text = await resp.text()
+                raise Exception(f"Gagal decode JSON dari API Stream: {text[:100]}... Error: {e}")
+            
             return js.get("streamLink")
