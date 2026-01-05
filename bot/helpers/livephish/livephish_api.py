@@ -10,10 +10,13 @@ LOGGER = logging.getLogger(__name__)
 
 class LivePhishApi:
     def __init__(self):
+        # Kunci API 
         self.client_id = "Fujeij8d764ydxcnh4676scsr7f4"
         self.developer_key = "njeurd876frhdjxy6sxxe721"
         self.sig_key = "jdfirj8475jf_"
-        self.user_agent = "LivePhish/3.4.5.357 (Android; 7.1.2; Asus; ASUS_Z01QD)"
+        
+        # User Agent Browser Biasa (Bukan Android App) agar lebih stabil
+        self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         self.api_base = "https://www.livephish.com/"
         self.api_base_id = "https://id.livephish.com/connect/"
@@ -28,21 +31,20 @@ class LivePhishApi:
         await self.session.close()
 
     def _generate_sig(self, offset=0):
-        # Generate signature dengan kompensasi waktu (offset)
+        # Epoch dalam milidetik atau detik? Kode Go pakai detik.
+        # Kita coba pakai detik.
         timestamp = str(int(time.time()) + offset)
         raw = self.sig_key + timestamp
         sig = hashlib.md5(raw.encode('utf-8')).hexdigest()
         return sig, timestamp
 
     async def _request(self, method, url, **kwargs):
-        """Wrapper request yang memaksa parsing JSON untuk response text/html"""
         async with self.session.request(method, url, **kwargs) as resp:
             try:
-                # Content-Type=None agar aiohttp tidak protes jika header text/html
                 return await resp.json(content_type=None)
             except Exception:
                 text = await resp.text()
-                LOGGER.error(f"LivePhish API Non-JSON Response: {text[:200]}")
+                LOGGER.error(f"LivePhish API Non-JSON: {text[:200]}")
                 return {"error": True, "raw": text}
 
     async def login(self, email, password):
@@ -91,13 +93,8 @@ class LivePhishApi:
         js = await self._request("GET", self.api_base + "secureApi.aspx", params=params, headers=headers_auth)
         sub_info = js.get("Response", {}).get("subscriptionInfo", {})
         
-        # Debugging Info
         can_stream = sub_info.get("canStreamSubContent")
         LOGGER.info(f"LivePhish Login OK. UserID: {sub_info.get('userID')}, CanStream: {can_stream}")
-
-        if not can_stream:
-            # Kita hanya warn, siapa tahu user membeli album (stash content)
-            LOGGER.warning("Akun ini mungkin tidak memiliki langganan streaming aktif.")
 
         self.stream_params = {
             "subscriptionID": str(sub_info.get("subscriptionID")),
@@ -118,33 +115,45 @@ class LivePhishApi:
         return await self._request("GET", self.api_base + "api.aspx", params=params, headers={"User-Agent": self.user_agent})
 
     async def get_stream_url(self, track_id, quality_code):
-        # 1. Coba request kualitas utama
+        # Coba kualitas utama
         url = await self._fetch_stream_with_retries(track_id, quality_code)
         
-        # 2. Fallback ke AAC jika FLAC gagal
+        # Fallback
         if not url and quality_code in ["FLAC", "ALAC"]:
-            LOGGER.warning(f"LivePhish: Gagal {quality_code}, mencoba fallback ke AAC...")
+            LOGGER.warning(f"LivePhish: Gagal {quality_code}, fallback AAC...")
             url = await self._fetch_stream_with_retries(track_id, "AAC")
             
         return url
 
     async def _fetch_stream_with_retries(self, track_id, quality_code):
-        platform_map = {"AAC": "4", "ALAC": "2", "FLAC": "3"}
-        platform_id = platform_map.get(quality_code, "4")
-        headers = {"User-Agent": "LivePhishAndroid"}
+        # --- PERUBAHAN PENTING: MAPPING PLATFORM ---
+        # Platform ID 0 sering digunakan untuk Web Player (lebih kompatibel)
+        # 3 = FLAC (Web/App), 4 = AAC
+        
+        platform_id = "0" # Default Web
+        if quality_code == "FLAC":
+            platform_id = "3" 
+        elif quality_code == "ALAC":
+            platform_id = "2"
+        else: # AAC
+            platform_id = "4" # Atau coba 0 jika 4 gagal
 
-        # --- PERBAIKAN UTAMA: Perluas Jangkauan Offset Waktu ---
-        # Mencoba dari 0, lalu mundur/maju hingga +/- 30 detik
-        offsets = [0, -1, 1, -2, 2, -3, 3, -5, 5, -10, 10, -15, 15, -20, 20, -30, 30]
+        # Gunakan User-Agent Browser
+        headers = {"User-Agent": self.user_agent}
+
+        # Offset waktu yang dicoba
+        offsets = [0, -1, 1, -2, 2, -5, 5]
         
         last_js_response = None
 
         for offset in offsets:
             sig, timestamp = self._generate_sig(offset)
             
+            # --- PERUBAHAN PENTING: PARAMETER APP ---
+            # app=3 sering digunakan untuk Web Player
             params = {
                 "trackID": str(track_id),
-                "app": "1",
+                "app": "3", # Ganti dari 1 ke 3
                 "platformID": platform_id,
                 "subscriptionID": self.stream_params["subscriptionID"],
                 "subCostplanIDAccessList": self.stream_params["subCostplanIDAccessList"],
@@ -159,12 +168,9 @@ class LivePhishApi:
             link = js.get("streamLink")
             
             if link:
-                if offset != 0:
-                    LOGGER.info(f"LivePhish: Berhasil stream dengan Time Offset {offset} detik.")
                 return link
             
             last_js_response = js
         
-        # Jika semua offset gagal
-        LOGGER.error(f"LivePhish Stream Fail (ID: {track_id}, Q: {quality_code}). All offsets failed. Last Response: {last_js_response}")
+        LOGGER.error(f"LivePhish Stream Fail (ID: {track_id}, Q: {quality_code}). Last Resp: {last_js_response}")
         return None
