@@ -3,11 +3,15 @@
 import re
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
-from bot.helpers.utils import download_file, track_upload, album_upload
+
+# PERBAIKAN IMPORT DI SINI:
+from bot.helpers.utils import download_file
+from bot.helpers.uploder import track_upload, album_upload # Diambil dari uploder.py
+
 from bot.helpers.message import edit_message
 from bot.logger import LOGGER
 
-# REGEX BARU: Mendukung format URL lama dan format URL 'show.aspx?show=123'
+# REGEX BARU
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
 async def start_livephish(link: str, user: dict):
@@ -28,22 +32,19 @@ async def start_livephish(link: str, user: dict):
     resp = meta_json.get("Response", {})
     
     if not resp:
-        # Coba periksa apakah error dari API
-        err_msg = meta_json.get("ResponseStatus", {}).get("message", "Response kosong")
+        err_msg = meta_json.get("ResponseStatus", {}).get("message", "Response kosong/tidak ditemukan.")
         raise Exception(f"Gagal mengambil metadata (ID: {album_id}): {err_msg}")
 
     album_name = resp.get("containerInfo", "Unknown Album")
     artist_name = resp.get("artistName", "Phish")
     year = resp.get("performanceDateYear", "")
     if not year:
-        # Fallback date parsing
         p_date = resp.get("performanceDate") # e.g. 1/3/2003
         if p_date:
             year = p_date.split("/")[-1]
 
     # Cover Art
     cover_url = ""
-    # Cari gambar resolusi tinggi dari array pics
     pics = resp.get("pics", [])
     if pics:
         # Sort by width desc
@@ -68,7 +69,7 @@ async def start_livephish(link: str, user: dict):
         'cover': cover_path,
         'totaltracks': str(total_tracks),
         'provider': 'LivePhish',
-        'quality': livephish_manager.quality, # FLAC/ALAC/AAC
+        'quality': livephish_manager.quality,
         'tempfolder': user['r_id'] + "/",
         'type': 'album'
     }
@@ -76,7 +77,7 @@ async def start_livephish(link: str, user: dict):
     completed_tracks = []
 
     for i, t in enumerate(tracks):
-        track_id = t.get("songID") # atau trackID
+        track_id = t.get("songID") 
         if not track_id:
             track_id = t.get("trackID")
 
@@ -88,7 +89,6 @@ async def start_livephish(link: str, user: dict):
         await edit_message(user['bot_msg'], msg_text)
 
         # Get Stream
-        # Gunakan kualitas global dari manager
         stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
         
         if not stream_url:
@@ -100,7 +100,7 @@ async def start_livephish(link: str, user: dict):
         if livephish_manager.quality == "FLAC":
             ext = ".flac"
         elif livephish_manager.quality == "ALAC":
-            ext = ".m4a" # ALAC juga m4a
+            ext = ".m4a"
 
         fname = f"{track_num}. {title}{ext}".replace("/", "_")
         fpath = base_meta['tempfolder'] + fname
