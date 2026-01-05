@@ -2,6 +2,7 @@ import re
 import os
 import aiohttp
 import asyncio
+from datetime import datetime
 from config import Config
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
@@ -37,6 +38,38 @@ def get_progress_bar_text(current, total, title, type_str):
         f"╰─ ᴛʏᴘᴇ : {type_str}"
     )
     return text
+
+def format_date_standard(date_str):
+    """
+    Mengubah format tanggal LivePhish (MM/DD/YYYY) menjadi standar ISO (YYYY-MM-DD).
+    Contoh: '12/30/2025' -> '2025-12-30'
+    """
+    if not date_str:
+        return ""
+    
+    # [span_0](start_span)Coba format MM/DD/YYYY (Format LivePhish Umum)[span_0](end_span)
+    try:
+        dt = datetime.strptime(date_str, "%m/%d/%Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+        
+    # Coba format lain jika ada (misal YYYY-MM-DD sudah benar)
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+
+    # Jika format teks (Dec 30, 2025)
+    try:
+        dt = datetime.strptime(date_str, "%b %d, %Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+
+    # Jika gagal parsing, kembalikan apa adanya
+    return date_str
 
 async def extract_cover_from_audio(audio_path, output_path):
     """
@@ -83,26 +116,28 @@ async def start_livephish(link: str, user: dict):
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    # --- PERBAIKAN DATE/TAHUN (ROBUST) ---
-    # Cek berbagai field tanggal, ambil yang pertama kali ada isinya
-    # or "" digunakan untuk mengubah None menjadi string kosong
-    possible_dates = [
-        str(resp.get("performanceDate") or ""),           # "12/30/2025"
-        str(resp.get("performanceDateFormatted") or ""),  # "Dec 30, 2025"
-        str(resp.get("releaseDateFormatted") or ""),      # Format lain
-        str(resp.get("performanceDateYear") or "")        # "2025"
-    ]
+    # --- PERBAIKAN LOGIKA TANGGAL ---
+    # [span_1](start_span)LivePhish JSON struct keys: performanceDate, performanceDateFormatted, releaseDateFormatted[span_1](end_span)
+    raw_date = ""
     
-    # Ambil tanggal valid pertama
-    release_date = next((d for d in possible_dates if d), "Unknown Date")
+    # Prioritas 1: performanceDate (Biasanya MM/DD/YYYY)
+    if resp.get("performanceDate"):
+        raw_date = resp.get("performanceDate")
+    # Prioritas 2: releaseDateFormatted (Format teks)
+    elif resp.get("releaseDateFormatted"):
+        raw_date = resp.get("releaseDateFormatted")
+    # Prioritas 3: performanceDateFormatted
+    elif resp.get("performanceDateFormatted"):
+        raw_date = resp.get("performanceDateFormatted")
+    # Prioritas 4: performanceDateYear
+    elif resp.get("performanceDateYear"):
+        raw_date = str(resp.get("performanceDateYear"))
+
+    # Format menjadi YYYY-MM-DD
+    release_date = format_date_standard(raw_date)
     
-    # Ambil Tahun
-    year = str(resp.get("performanceDateYear") or "")
-    # Jika tahun kosong tapi kita punya tanggal, ekstrak tahun dari tanggal
-    if not year and release_date != "Unknown Date":
-        match_year = re.search(r'(\d{4})', release_date)
-        if match_year:
-            year = match_year.group(1)
+    # Ambil Tahun dari hasil format (4 karakter pertama YYYY)
+    year = release_date[:4] if len(release_date) >= 4 else ""
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -126,7 +161,7 @@ async def start_livephish(link: str, user: dict):
         'albumartist': artist_name,
         'artist': artist_name,
         'year': year,
-        'date': release_date, # SEKARANG SUDAH ADA CADANGANNYA
+        'date': release_date, # SEKARANG FORMATNYA 'YYYY-MM-DD'
         'cover': "", 
         'totaltracks': str(total_tracks),
         'totalvolume': str(max_disc),
@@ -182,7 +217,6 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
-        # Format Nama File: "01 - Judul.m4a"
         fname = f"{track_num_padded} - {clean_title}{ext}"
         
         full_file_path = os.path.join(base_meta['tempfolder'], fname)
