@@ -110,7 +110,7 @@ async def start_livephish(link: str, user: dict):
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    # LOGIKA TANGGAL (YYYY-MM-DD)
+    # LOGIKA TANGGAL
     raw_date = ""
     possible_keys = ["performanceDate", "releaseDateFormatted", "performanceDateFormatted", "performanceDateYear"]
     for k in possible_keys:
@@ -144,7 +144,7 @@ async def start_livephish(link: str, user: dict):
         'albumartist': artist_name,
         'artist': artist_name,
         'year': year,
-        'date': release_date, # YYYY-MM-DD
+        'date': release_date,
         'cover': "", 
         'totaltracks': str(total_tracks),
         'totalvolume': str(max_disc),
@@ -219,7 +219,9 @@ async def start_livephish(link: str, user: dict):
         # 3. SET METADATA
         track_meta = base_meta.copy()
         
-        # Metadata Dasar
+        # Ambil ISRC jika ada, default kosong (FIX KEYERROR ISRC)
+        isrc_val = t.get("isrc", "")
+        
         track_meta.update({
             'title': title,
             'tracknumber': str(raw_track_num),
@@ -227,45 +229,41 @@ async def start_livephish(link: str, user: dict):
             'filepath': full_file_path,
             'itemid': str(track_id),
             'duration': duration,
+            'isrc': isrc_val, # PENTING: Mencegah KeyError
             'extension': ext.replace(".", "")
         })
 
-        # --- FIX METADATA AGAR SESUAI MEDIAINFO ---
-        
+        # --- TAG KHUSUS FLAC/ALAC ---
         if ext == ".flac":
-            # FLAC membutuhkan tag 'TOTALTRACKS' dan 'TOTALDISCS' secara eksplisit
-            # Kita masukkan semua variasi case (besar/kecil) untuk memastikan tagger menangkapnya
-            
-            # 1. Total Tracks (Untuk 'Track name/Total')
+            # 1. Total Tracks
             track_meta['totaltracks'] = str(total_tracks)
             track_meta['TOTALTRACKS'] = str(total_tracks)
             track_meta['tracktotal'] = str(total_tracks)
             track_meta['TRACKTOTAL'] = str(total_tracks)
             
-            # 2. Disc Total (Untuk 'Part/Total')
+            # 2. Disc Total
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['TOTALDISCS'] = str(max_disc)
             track_meta['disctotal'] = str(max_disc)
             track_meta['DISCTOTAL'] = str(max_disc)
             
-            # 3. Disc Number (Untuk 'Part/Position')
+            # 3. Disc Number
             track_meta['discnumber'] = str(disc_num)
             track_meta['DISCNUMBER'] = str(disc_num)
             
-            # 4. Copyright (Untuk 'cpr')
+            # 4. Copyright
             track_meta['copyright'] = base_meta['copyright']
             track_meta['COPYRIGHT'] = base_meta['copyright']
-            track_meta['cpr'] = base_meta['copyright'] # Memaksa key 'cpr'
+            track_meta['cpr'] = base_meta['copyright'] 
             
-            # 5. Date (Untuk 'Tagged date')
+            # 5. Date
             track_meta['date'] = release_date
             track_meta['DATE'] = release_date
-            track_meta['year'] = release_date # Beberapa player membaca year sebagai date lengkap
+            track_meta['year'] = release_date 
             
         elif ext == ".m4a":
-            # M4A/ALAC Cleaning
-            track_meta['comment'] = ""      # Hapus Comment
-            track_meta['description'] = ""  # Hapus Description (kadang comment lari kesini)
+            track_meta['comment'] = ""      
+            track_meta['description'] = ""  
             track_meta['copyright'] = base_meta['copyright']
             track_meta['date'] = release_date
 
@@ -279,10 +277,12 @@ async def start_livephish(link: str, user: dict):
         
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
 
+        # ZIP
         if album_zip:
             await edit_message(user['bot_msg'], f"Membuat file ZIP...\n{album_name}")
             base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
+        # ART POSTER
         if art_poster:
             if cover_found and os.path.exists(base_meta['cover']):
                 try:
