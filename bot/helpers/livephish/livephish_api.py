@@ -3,7 +3,6 @@
 import aiohttp
 import hashlib
 import time
-import json
 import logging
 from urllib.parse import urlencode
 
@@ -29,23 +28,25 @@ class LivePhishApi:
         await self.session.close()
 
     def _generate_sig(self, offset=0):
-        # Tambahkan offset untuk kompensasi waktu
+        # Generate signature dengan kompensasi waktu (offset)
         timestamp = str(int(time.time()) + offset)
         raw = self.sig_key + timestamp
         sig = hashlib.md5(raw.encode('utf-8')).hexdigest()
         return sig, timestamp
 
     async def _request(self, method, url, **kwargs):
+        """Wrapper request yang memaksa parsing JSON untuk response text/html"""
         async with self.session.request(method, url, **kwargs) as resp:
             try:
-                # Paksa baca sebagai JSON
+                # Content-Type=None agar aiohttp tidak protes jika header text/html
                 return await resp.json(content_type=None)
             except Exception:
                 text = await resp.text()
-                LOGGER.error(f"LivePhish API Non-JSON: {text[:200]}")
+                LOGGER.error(f"LivePhish API Non-JSON Response: {text[:200]}")
                 return {"error": True, "raw": text}
 
     async def login(self, email, password):
+        # 1. OAuth Token
         headers = {
             "User-Agent": self.user_agent,
             "Content-Type": "application/x-www-form-urlencoded"
@@ -65,7 +66,7 @@ class LivePhishApi:
             js = await resp.json()
             self.access_token = js.get("access_token")
 
-        # Get User Token
+        # 2. Get User Token
         params = {
             "method": "session.getUserToken",
             "clientID": self.client_id,
@@ -76,7 +77,7 @@ class LivePhishApi:
         js = await self._request("GET", self.api_base + "secureApi.aspx", params=params, headers={"User-Agent": self.user_agent})
         self.user_token = js.get("Response", {}).get("tokenValue")
 
-        # Get Subscriber Info
+        # 3. Get Subscriber Info
         params = {
             "method": "user.getSubscriberInfo",
             "developerKey": self.developer_key,
@@ -90,9 +91,13 @@ class LivePhishApi:
         js = await self._request("GET", self.api_base + "secureApi.aspx", params=params, headers=headers_auth)
         sub_info = js.get("Response", {}).get("subscriptionInfo", {})
         
-        if not sub_info.get("canStreamSubContent"):
-            # Kadang canStreamSubContent false tapi masih bisa akses jika purchased, tapi untuk bot ini kita warning saja
-            LOGGER.warning("LivePhish: canStreamSubContent is False. Mungkin gagal stream.")
+        # Debugging Info
+        can_stream = sub_info.get("canStreamSubContent")
+        LOGGER.info(f"LivePhish Login OK. UserID: {sub_info.get('userID')}, CanStream: {can_stream}")
+
+        if not can_stream:
+            # Kita hanya warn, siapa tahu user membeli album (stash content)
+            LOGGER.warning("Akun ini mungkin tidak memiliki langganan streaming aktif.")
 
         self.stream_params = {
             "subscriptionID": str(sub_info.get("subscriptionID")),
@@ -113,28 +118,27 @@ class LivePhishApi:
         return await self._request("GET", self.api_base + "api.aspx", params=params, headers={"User-Agent": self.user_agent})
 
     async def get_stream_url(self, track_id, quality_code):
-        # Coba kualitas utama
-        url = await self._fetch_stream_with_retry(track_id, quality_code)
+        # 1. Coba request kualitas utama
+        url = await self._fetch_stream_with_retries(track_id, quality_code)
         
-        # Fallback ke AAC jika FLAC gagal
+        # 2. Fallback ke AAC jika FLAC gagal
         if not url and quality_code in ["FLAC", "ALAC"]:
-            LOGGER.warning(f"LivePhish: Gagal {quality_code}, fallback AAC...")
-            url = await self._fetch_stream_with_retry(track_id, "AAC")
+            LOGGER.warning(f"LivePhish: Gagal {quality_code}, mencoba fallback ke AAC...")
+            url = await self._fetch_stream_with_retries(track_id, "AAC")
             
         return url
 
-    async def _fetch_stream_with_retry(self, track_id, quality_code):
-        # Mapping Platform
+    async def _fetch_stream_with_retries(self, track_id, quality_code):
         platform_map = {"AAC": "4", "ALAC": "2", "FLAC": "3"}
         platform_id = platform_map.get(quality_code, "4")
-        
-        # Header harus konsisten
         headers = {"User-Agent": "LivePhishAndroid"}
 
-        # LOGIKA KOMPENSASI WAKTU (Epoch Compensation)
-        # Coba offset dari -2 detik sampai +2 detik
-        offsets = [0, -1, 1, -2, 2]
+        # --- PERBAIKAN UTAMA: Perluas Jangkauan Offset Waktu ---
+        # Mencoba dari 0, lalu mundur/maju hingga +/- 30 detik
+        offsets = [0, -1, 1, -2, 2, -3, 3, -5, 5, -10, 10, -15, 15, -20, 20, -30, 30]
         
+        last_js_response = None
+
         for offset in offsets:
             sig, timestamp = self._generate_sig(offset)
             
@@ -156,9 +160,11 @@ class LivePhishApi:
             
             if link:
                 if offset != 0:
-                    LOGGER.info(f"LivePhish: Berhasil dengan Time Offset {offset} detik.")
+                    LOGGER.info(f"LivePhish: Berhasil stream dengan Time Offset {offset} detik.")
                 return link
+            
+            last_js_response = js
         
         # Jika semua offset gagal
-        LOGGER.error(f"LivePhish: Gagal mendapatkan link (semua offset waktu gagal). Response terakhir: {js}")
+        LOGGER.error(f"LivePhish Stream Fail (ID: {track_id}, Q: {quality_code}). All offsets failed. Last Response: {last_js_response}")
         return None
