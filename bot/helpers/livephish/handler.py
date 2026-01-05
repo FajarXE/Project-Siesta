@@ -41,35 +41,32 @@ def get_progress_bar_text(current, total, title, type_str):
 
 def format_date_standard(date_str):
     """
-    Mengubah format tanggal LivePhish (MM/DD/YYYY) menjadi standar ISO (YYYY-MM-DD).
-    Contoh: '12/30/2025' -> '2025-12-30'
+    Mengubah format tanggal LivePhish menjadi standar ISO (YYYY-MM-DD).
+    Menangani: MM/DD/YYYY, YYYY/MM/DD, dll.
     """
     if not date_str:
         return ""
     
-    # [span_0](start_span)Coba format MM/DD/YYYY (Format LivePhish Umum)[span_0](end_span)
-    try:
-        dt = datetime.strptime(date_str, "%m/%d/%Y")
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        pass
-        
-    # Coba format lain jika ada (misal YYYY-MM-DD sudah benar)
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        pass
-
-    # Jika format teks (Dec 30, 2025)
-    try:
-        dt = datetime.strptime(date_str, "%b %d, %Y")
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        pass
-
-    # Jika gagal parsing, kembalikan apa adanya
-    return date_str
+    date_str = date_str.strip()
+    
+    # Daftar format yang mungkin masuk
+    formats = [
+        "%m/%d/%Y", # 12/30/2025 (Format US Umum)
+        "%Y/%m/%d", # 2025/12/30 (Format yang Anda hindari)
+        "%Y-%m-%d", # 2025-12-30 (Sudah benar)
+        "%b %d, %Y", # Dec 30, 2025
+        "%d/%m/%Y", # 30/12/2025
+    ]
+    
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return dt.strftime("%Y-%m-%d") # Output wajib YYYY-MM-DD
+        except ValueError:
+            continue
+            
+    # Jika gagal parsing, kembalikan string asli tapi ganti slash jadi dash sebagai fallback
+    return date_str.replace("/", "-")
 
 async def extract_cover_from_audio(audio_path, output_path):
     """
@@ -116,27 +113,20 @@ async def start_livephish(link: str, user: dict):
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    # --- PERBAIKAN LOGIKA TANGGAL ---
-    # [span_1](start_span)LivePhish JSON struct keys: performanceDate, performanceDateFormatted, releaseDateFormatted[span_1](end_span)
+    # --- LOGIKA TANGGAL (FIX: YYYY-MM-DD) ---
     raw_date = ""
-    
-    # Prioritas 1: performanceDate (Biasanya MM/DD/YYYY)
-    if resp.get("performanceDate"):
-        raw_date = resp.get("performanceDate")
-    # Prioritas 2: releaseDateFormatted (Format teks)
-    elif resp.get("releaseDateFormatted"):
-        raw_date = resp.get("releaseDateFormatted")
-    # Prioritas 3: performanceDateFormatted
-    elif resp.get("performanceDateFormatted"):
-        raw_date = resp.get("performanceDateFormatted")
-    # Prioritas 4: performanceDateYear
-    elif resp.get("performanceDateYear"):
-        raw_date = str(resp.get("performanceDateYear"))
+    # Cek berbagai field tanggal
+    possible_keys = ["performanceDate", "releaseDateFormatted", "performanceDateFormatted", "performanceDateYear"]
+    for k in possible_keys:
+        val = str(resp.get(k) or "")
+        if val:
+            raw_date = val
+            break
 
     # Format menjadi YYYY-MM-DD
     release_date = format_date_standard(raw_date)
     
-    # Ambil Tahun dari hasil format (4 karakter pertama YYYY)
+    # Ambil Tahun (4 digit pertama)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
     tracks = resp.get("tracks", [])
@@ -161,7 +151,7 @@ async def start_livephish(link: str, user: dict):
         'albumartist': artist_name,
         'artist': artist_name,
         'year': year,
-        'date': release_date, # SEKARANG FORMATNYA 'YYYY-MM-DD'
+        'date': release_date, # Format: YYYY-MM-DD
         'cover': "", 
         'totaltracks': str(total_tracks),
         'totalvolume': str(max_disc),
@@ -186,7 +176,6 @@ async def start_livephish(link: str, user: dict):
         track_id = t.get("trackID") or t.get("songID")
         title = t.get("songTitle", f"Track {i+1}")
         
-        # Track Number 2 Digit (01, 02)
         raw_track_num = t.get("trackNum", i+1)
         track_num_padded = f"{int(raw_track_num):02d}"
         
@@ -216,7 +205,6 @@ async def start_livephish(link: str, user: dict):
             ext = ".flac"
 
         clean_title = sanitize_name(title)
-        
         fname = f"{track_num_padded} - {clean_title}{ext}"
         
         full_file_path = os.path.join(base_meta['tempfolder'], fname)
@@ -246,7 +234,21 @@ async def start_livephish(link: str, user: dict):
             'duration': duration,
             'extension': ext.replace(".", "")
         })
-        
+
+        # --- FIX 1: METADATA KHUSUS FLAC ---
+        # Memastikan field Part/Total dkk terbaca oleh tagger FLAC
+        if ext == ".flac":
+            track_meta['discnumber'] = str(disc_num)       # Part/Position
+            track_meta['totaldiscs'] = str(max_disc)       # Part/Total (Discs)
+            track_meta['tracktotal'] = str(total_tracks)   # Track Total
+            # Pastikan copyright masuk
+            track_meta['copyright'] = base_meta['copyright']
+            
+        # --- FIX 2: HAPUS COMMENT DI ALAC ---
+        # ALAC biasanya menggunakan ekstensi .m4a
+        if ext == ".m4a" or livephish_manager.quality != "FLAC":
+            track_meta['comment'] = "" # Kosongkan tag Comment
+
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
 
