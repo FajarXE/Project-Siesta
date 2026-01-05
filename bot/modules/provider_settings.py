@@ -63,13 +63,18 @@ try:
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor bugs_manager.")
     bugs_manager = None
-
-# --- TAMBAHAN BARU: Moov Manager ---
 try:
     from ..helpers.moov.manager import moov_manager
 except ImportError:
     LOGGER.warning("ProviderSettings: Gagal mengimpor moov_manager.")
     moov_manager = None
+
+# --- TAMBAHAN BARU: LivePhish Manager ---
+try:
+    from ..helpers.livephish.manager import livephish_manager
+except ImportError:
+    LOGGER.warning("ProviderSettings: Gagal mengimpor livephish_manager.")
+    livephish_manager = None
 # --- BATAS TAMBAHAN ---
 
 
@@ -83,7 +88,7 @@ async def provider_cb(c, cb:CallbackQuery):
         )
 
 #----------------
-# QOBUZ (DIPERBAIKI)
+# QOBUZ
 #----------------
 @Client.on_callback_query(filters.regex(pattern=r"^qbP"))
 async def qobuz_cb(c, cb:CallbackQuery):
@@ -542,7 +547,6 @@ async def idagio_quality_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^bgP")) 
 async def bugs_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        # PERBAIKAN: Sesuaikan label dengan tombol (AAC 320k)
         quality = {
             "flac": "FLAC 16-bit",
             "aac256": "AAC 320k",
@@ -568,7 +572,7 @@ async def bugs_quality_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         qual_map_display = {
             "FLAC 16-bit": "flac",
-            "AAC 320k": "aac256", # FIX
+            "AAC 320k": "aac256", 
             "MP3 320k": "320k",
             "AAC 128k": "aac"
         }
@@ -625,3 +629,32 @@ async def moov_quality_cb(c, cb:CallbackQuery):
         await database.set_variable('MOOV_QUALITY', to_set)
         
         await moov_cb(c, cb)
+
+
+#----------------
+# LIVEPHISH (TAMBAHAN BARU)
+#----------------
+@Client.on_callback_query(filters.regex(pattern=r"^lpP")) 
+async def livephish_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        quality = {
+            "FLAC": "FLAC (16-bit)",
+            "ALAC": "ALAC (16-bit)",
+            "AAC": "AAC"
+        }
+        if not livephish_manager or not livephish_manager.clients:
+            return await edit_message(cb.message, "Layanan LivePhish tidak aktif.")
+            
+        current = livephish_manager.quality
+        if current in quality:
+            quality[current] += '✅'
+            
+        await edit_message(cb.message, "**LIVEPHISH PANEL**\nPilih kualitas LivePhish:", markup=lp_button(quality))
+
+@Client.on_callback_query(filters.regex(pattern=r"^lpQ")) 
+async def livephish_qual_cb(c, cb:CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        to_set = cb.data.split('_')[1]
+        livephish_manager.quality = to_set
+        await database.set_variable("LIVEPHISH_QUALITY", to_set)
+        await livephish_cb(c, cb)
