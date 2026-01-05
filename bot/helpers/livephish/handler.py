@@ -1,7 +1,10 @@
+# [GANTI FILE: bot/helpers/livephish/handler.py]
+
 import re
 import os
 import aiohttp
 import asyncio
+import urllib.parse
 from config import Config
 from bot.helpers.livephish.manager import livephish_manager
 from bot.helpers.metadata import set_metadata, create_cover_file
@@ -83,16 +86,23 @@ async def start_livephish(link: str, user: dict):
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    year = str(resp.get("performanceDateYear", ""))
-    if not year:
-        p_date = resp.get("performanceDate") 
-        if p_date:
-            year = p_date.split("/")[-1]
+    # --- PERBAIKAN DATE (Agar Release Date muncul) ---
+    # Prioritaskan Tanggal Lengkap (performanceDate) -> Tahun (performanceDateYear)
+    full_date = resp.get("performanceDate", "")      # Contoh: "12/30/2025"
+    year_only = str(resp.get("performanceDateYear", "")) # Contoh: "2025"
+    
+    if full_date:
+        release_date = full_date
+        # Jika tahun kosong tapi full date ada, ambil tahun dari full date
+        if not year_only:
+            year_only = full_date.split("/")[-1]
+    else:
+        release_date = year_only
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
 
-    # Hitung Total Volume (Disc Count)
+    # Hitung Total Volume
     max_disc = 1
     for t in tracks:
         d = t.get("discNum", 1)
@@ -103,23 +113,22 @@ async def start_livephish(link: str, user: dict):
     folder_name = f"{artist_name} - {album_name}"
     if len(folder_name) > 150: folder_name = folder_name[:150]
     
-    # Path folder bersih tanpa slash di akhir
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
     base_meta = {
-        'title': album_name, # JUDUL
+        'title': album_name,
         'album': album_name,
         'albumartist': artist_name,
         'artist': artist_name,
-        'year': year,
-        'date': year,
-        'cover': "", # Diisi nanti dari hasil ekstrak
+        'year': year_only,
+        'date': release_date, # INI YANG DIBACA ART POSTER
+        'cover': "", 
         'totaltracks': str(total_tracks),
-        'totalvolume': str(max_disc), # ADDED: Total Volume
+        'totalvolume': str(max_disc),
         'provider': 'LivePhish',
         'quality': livephish_manager.quality,
         'tempfolder': base_folder_path, 
-        'type': 'album', # FIX: Lowercase agar caption Art Poster lengkap
+        'type': 'album', 
         'genre': 'Rock',
         'copyright': 'LivePhish',
         'explicit': False
@@ -127,7 +136,6 @@ async def start_livephish(link: str, user: dict):
     
     completed_tracks = []
     
-    # Init Progress (Tampilkan "Album" huruf besar untuk user)
     init_txt = get_progress_bar_text(0, total_tracks, album_name, "Album")
     await edit_message(user['bot_msg'], init_txt)
 
@@ -137,7 +145,12 @@ async def start_livephish(link: str, user: dict):
     for i, t in enumerate(tracks):
         track_id = t.get("trackID") or t.get("songID")
         title = t.get("songTitle", f"Track {i+1}")
-        track_num = t.get("trackNum", str(i+1))
+        
+        # --- PERBAIKAN TRACK NUMBER (01 - ) ---
+        raw_track_num = t.get("trackNum", i+1)
+        # Format menjadi 2 digit (01, 02, dst)
+        track_num_padded = f"{int(raw_track_num):02d}"
+        
         disc_num = t.get("discNum", 1)
         
         try:
@@ -164,7 +177,9 @@ async def start_livephish(link: str, user: dict):
             ext = ".flac"
 
         clean_title = sanitize_name(title)
-        fname = f"{track_num}. {clean_title}{ext}"
+        
+        # FORMAT NAMA FILE BARU: "01 - Judul.m4a"
+        fname = f"{track_num_padded} - {clean_title}{ext}"
         
         full_file_path = os.path.join(base_meta['tempfolder'], fname)
         base_meta['folderpath'] = base_meta['tempfolder']
@@ -175,9 +190,7 @@ async def start_livephish(link: str, user: dict):
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # 2. EKSTRAK COVER DARI FILE
-        # Kita lakukan ini karena API LivePhish memberikan link mati.
-        # Track yang didownload memiliki cover tertanam yang benar.
+        # 2. EKSTRAK COVER
         if not cover_found and os.path.exists(full_file_path):
             if await extract_cover_from_audio(full_file_path, extracted_cover_path):
                 base_meta['cover'] = extracted_cover_path
@@ -188,7 +201,7 @@ async def start_livephish(link: str, user: dict):
         track_meta = base_meta.copy()
         track_meta.update({
             'title': title,
-            'tracknumber': str(track_num),
+            'tracknumber': str(raw_track_num), # Metadata internal tetap angka asli
             'volume': str(disc_num),
             'filepath': full_file_path,
             'itemid': str(track_id),
@@ -206,12 +219,10 @@ async def start_livephish(link: str, user: dict):
         
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
 
-        # ZIP
         if album_zip:
             await edit_message(user['bot_msg'], f"Membuat file ZIP...\n{album_name}")
             base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
-        # ART POSTER (Menggunakan cover hasil ekstrak)
         if art_poster:
             if cover_found and os.path.exists(base_meta['cover']):
                 try:
