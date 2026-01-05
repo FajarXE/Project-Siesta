@@ -47,42 +47,36 @@ async def start_livephish(link: str, user: dict):
         if p_date:
             year = p_date.split("/")[-1]
 
-    # Cover Art Logic (Updated Priority)
+    # --- PERBAIKAN COVER ART ---
     cover_url = ""
     pics = resp.get("pics", [])
     if pics:
+        # Urutkan dari yang terbesar
         pics.sort(key=lambda x: x.get("width", 0), reverse=True)
-        raw_url = pics[0].get("url", "")
         
-        if raw_url:
-            # Prioritaskan www.livephish.com karena static. sering down
-            domains = [
-                "https://www.livephish.com",
-                "https://plus.livephish.com",
-                "https://static.livephish.com"
-            ]
+        # Cari URL yang valid
+        for p in pics:
+            raw_url = p.get("url", "")
+            if not raw_url: continue
             
-            # Jika raw_url sudah absolute, pakai langsung, tapi jika domainnya static, coba replace
-            if raw_url.startswith("http"):
-                if "static.livephish.com" in raw_url:
-                     raw_url = raw_url.replace("static.livephish.com", "www.livephish.com")
-                cover_url = raw_url
+            # Jika relatif, tambahkan domain www (bukan static)
+            if raw_url.startswith("/"):
+                cover_url = "https://www.livephish.com" + raw_url
             else:
-                # Cek satu per satu
-                for d in domains:
-                    candidate = d + raw_url
-                    if await check_url_exists(candidate):
-                        cover_url = candidate
-                        break
-                
-                if not cover_url:
-                    cover_url = "https://www.livephish.com" + raw_url
+                cover_url = raw_url
+            
+            # (Opsional) replace static dengan www jika sering error 410
+            cover_url = cover_url.replace("static.livephish.com", "www.livephish.com")
+            break
 
+    # Download Cover (Safe Mode)
     try:
         cover_path = await create_cover_file(
             cover_url, 
             {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
         )
+        # Cek jika file cover sebenarnya gagal (misal isinya text error)
+        # Tapi create_cover_file biasanya sudah handle
     except Exception as e:
         LOGGER.warning(f"Gagal download cover: {e}. Melanjutkan tanpa cover.")
         cover_path = ""
@@ -109,7 +103,13 @@ async def start_livephish(link: str, user: dict):
     completed_tracks = []
 
     for i, t in enumerate(tracks):
-        track_id = t.get("songID") or t.get("trackID")
+        # --- PERBAIKAN ID TRACK ---
+        # Prioritaskan 'trackID' karena itu yang dipakai di kode Go.
+        # 'songID' mungkin internal database ID yang berbeda.
+        track_id = t.get("trackID") 
+        if not track_id:
+            track_id = t.get("songID")
+
         title = t.get("songTitle")
         track_num = t.get("trackNum")
         disc_num = t.get("discNum", 1)
@@ -120,19 +120,15 @@ async def start_livephish(link: str, user: dict):
         stream_url = await client.get_stream_url(track_id, livephish_manager.quality)
 
         if not stream_url:
-            LOGGER.error(f"Stream URL kosong untuk: {title}")
+            LOGGER.error(f"Stream URL kosong untuk ID: {track_id} | Title: {title}")
             continue
 
         ext = ".m4a"
         if livephish_manager.quality == "FLAC" and "flac" in str(stream_url).lower():
             ext = ".flac"
         elif livephish_manager.quality == "FLAC": 
-            # Jika minta FLAC tapi dapat URL non-flac (fallback), tetap .flac atau .m4a?
-            # Sebaiknya cek URL atau set default .m4a jika fallback terjadi
-            if ".flac" in str(stream_url).lower():
-                 ext = ".flac"
-            else:
-                 ext = ".m4a"
+            # Fallback terjadi
+            ext = ".m4a" if "m4a" in str(stream_url).lower() else ".mp3"
 
         fname = f"{track_num}. {title}{ext}".replace("/", "_")
         fpath = base_meta['tempfolder'] + fname
@@ -159,4 +155,4 @@ async def start_livephish(link: str, user: dict):
         base_meta['folderpath'] = base_meta['tempfolder']
         await album_upload(base_meta, user)
     else:
-        raise Exception("Tidak ada track yang berhasil diunduh. Periksa log.")
+        raise Exception("Tidak ada track yang berhasil diunduh. Kemungkinan langganan habis atau IP diblokir.")
