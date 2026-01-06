@@ -57,36 +57,70 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
-# --- WEB SCRAPER COVER HD ---
+# --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
-    """Scrape gambar dari website LivePhish."""
+    """
+    Mencari cover art resolusi MAKSIMAL dengan mencoba variasi URL.
+    """
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    matches = re.findall(r'(https?://static\.livephish\.com/[^"\']+\.jpg)', html)
+                    
+                    # 1. Kumpulkan kandidat gambar
+                    # Kita cari yang mengandung 'shows', 'release', atau 'static.livephish'
+                    matches = re.findall(r'(https?://static\.livephish\.com/images/[^"\']+\.jpg)', html)
+                    
                     candidate = None
+                    # Prioritaskan gambar yang namanya terlihat seperti cover album utama
                     for m in matches:
-                        if "show" in m or "release" in m or "pix" in m:
+                        if "_200" in m or "_400" in m or "shows" in m:
                             candidate = m
-                            break
+                            break # Ambil satu sampel untuk di-upscale
+                    
+                    # Fallback ke OG Image jika tidak ada match
                     if not candidate:
                         match_og = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html)
                         if match_og: candidate = match_og.group(1)
 
                     if candidate:
-                        # Hapus suffix ukuran untuk dapat HD
-                        hd_url = re.sub(r'(_\d+|_\w+)(\.jpg)$', r'\2', candidate)
-                        try:
-                            async with session.head(hd_url) as hd_resp:
-                                if hd_resp.status == 200: return hd_url
-                        except: pass
+                        # Normalize URL
                         if candidate.startswith("//"): candidate = "https:" + candidate
+                        
+                        # --- ALGORITMA BRUTE FORCE RESOLUSI ---
+                        
+                        # 1. Buat versi "Clean" (Master File)
+                        # Hapus _200, _400, _v1, _mini, dll sebelum .jpg
+                        # Contoh: ph160102_200.jpg -> ph160102.jpg
+                        clean_url = re.sub(r'(_\d+|_v\d+|_mini|_med|_small|_large)(\.jpg)$', r'\2', candidate)
+                        
+                        LOGGER.info(f"Mencoba URL Master: {clean_url}")
+                        try:
+                            async with session.head(clean_url) as hd_resp:
+                                if hd_resp.status == 200:
+                                    # Jika master file ada, ini pasti resolusi tertinggi
+                                    return clean_url
+                        except: pass
+                        
+                        # 2. Jika Master gagal, coba suffix '_large' atau '_high' (kadang dipakai)
+                        suffixes = ["_large", "_high"]
+                        base_clean = clean_url.replace(".jpg", "")
+                        for s in suffixes:
+                            try_url = f"{base_clean}{s}.jpg"
+                            try:
+                                async with session.head(try_url) as s_resp:
+                                    if s_resp.status == 200:
+                                        return try_url
+                            except: pass
+
+                        # 3. Jika semua gagal, kembalikan kandidat awal (minimal ada gambar)
+                        LOGGER.warning("Gagal mendapatkan Master URL, menggunakan fallback.")
                         return candidate
+
     except Exception as e:
         LOGGER.warning(f"Gagal scrape Cover Website: {e}")
     return None
@@ -156,7 +190,6 @@ async def start_livephish(link: str, user: dict):
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
 
-    # Hitung Max Disc untuk menentukan perlu subfolder atau tidak
     max_disc = 1
     for t in tracks:
         d = t.get("discNum", 1)
@@ -166,12 +199,15 @@ async def start_livephish(link: str, user: dict):
     if len(folder_name) > 150: folder_name = folder_name[:150]
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
-    # --- DOWNLOAD COVER HD ---
+    # --- DOWNLOAD COVER (DENGAN BRUTE FORCE HD) ---
     cover_url = None
     LOGGER.info("Mencari cover art HD via Web Scraper...")
+    
+    # 1. Coba Scraper Website (Prioritas Resolusi Tinggi)
     cover_url = await fetch_website_cover_hd(link)
         
     if not cover_url:
+        # 2. Fallback ke API Pics (biasanya kualitas medium/low)
         pics = resp.get("pics", [])
         if pics:
             pics.sort(key=lambda x: x.get("width", 0), reverse=True)
@@ -249,8 +285,7 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
-        # --- LOGIKA FOLDER DISC ---
-        # Jika album lebih dari 1 Disc, buat subfolder "Disc X"
+        # --- LOGIKA FOLDER DISC (Agar ZIP tidak rusak) ---
         if int(base_meta['totalvolume']) > 1:
             disc_folder = os.path.join(base_meta['tempfolder'], f"Disc {disc_num}")
             if not os.path.exists(disc_folder):
@@ -259,8 +294,7 @@ async def start_livephish(link: str, user: dict):
         else:
             current_save_path = base_meta['tempfolder']
 
-        # --- NAMA FILE MURNI (SESUAI PERMINTAAN) ---
-        # 01 - Judul Lagu.m4a (Tanpa nomor disc di depan)
+        # Nama File Murni
         fname = f"{track_num_padded} - {clean_title}{ext}"
         
         full_file_path = os.path.join(current_save_path, fname)
@@ -329,8 +363,6 @@ async def start_livephish(link: str, user: dict):
     # --- UPLOAD ---
     if completed_tracks:
         base_meta['tracks'] = completed_tracks
-        # Untuk ZIP handler, kita tetap gunakan folder utama (tempfolder)
-        # Zip handler akan otomatis men-zip folder tersebut beserta subfolder Disc-nya
         base_meta['folderpath'] = base_meta['tempfolder']
         
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
