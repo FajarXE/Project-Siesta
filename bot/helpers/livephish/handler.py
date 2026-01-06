@@ -60,18 +60,13 @@ def format_date_standard(date_str):
 
 # --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
-    """
-    Mencari cover art resolusi MAKSIMAL.
-    """
+    """Mencari cover art resolusi MAKSIMAL."""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    
                     pattern = r'(https?://(?:static\.livephish\.com|s3\.amazonaws\.com|static\.nugs\.net)/[^"\']+\.jpg)'
                     matches = re.findall(pattern, html)
                     
@@ -87,17 +82,14 @@ async def fetch_website_cover_hd(url):
 
                     if candidate:
                         if candidate.startswith("//"): candidate = "https:" + candidate
-                        
                         clean_url = re.sub(r'(_\d+|_v\d+|_mini|_med|_small|_large)(\.jpg)$', r'\2', candidate)
                         
                         if clean_url != candidate:
                             LOGGER.info(f"Mencoba URL Master: {clean_url}")
                             try:
                                 async with session.head(clean_url) as hd_resp:
-                                    if hd_resp.status == 200:
-                                        return clean_url
+                                    if hd_resp.status == 200: return clean_url
                             except: pass
-
                         return candidate
     except Exception as e:
         LOGGER.warning(f"Gagal scrape Cover Website: {e}")
@@ -153,7 +145,7 @@ async def start_livephish(link: str, user: dict):
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
-    # --- GENRE (NO FALLBACK) ---
+    # Genre (No Fallback)
     genre = "" 
     if resp.get("styles") and isinstance(resp["styles"], list) and len(resp["styles"]) > 0:
         genre = str(resp["styles"][0])
@@ -163,16 +155,38 @@ async def start_livephish(link: str, user: dict):
     elif resp.get("genre"):
         genre = str(resp.get("genre"))
 
-    # --- COPYRIGHT & LABEL (MURNI TANPA REKAYASA) ---
-    # Label: Ambil dari recordLabel atau label. Jangan default "LivePhish" jika kosong.
+    # Label
     label = resp.get("recordLabel") or resp.get("label") or ""
-    
-    # Copyright: Ambil MURNI dari field copyright. 
-    # HAPUS logika "OR © {year} {label}" yang menyebabkan data tidak sesuai.
-    album_copyright = resp.get("copyright") or resp.get("copyRight") or ""
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
+
+    # --- LOGIKA PENCARIAN COPYRIGHT ASLI (DEEP SEARCH) ---
+    album_copyright = ""
+    
+    # 1. Cek langsung di root response (berbagai variasi key)
+    candidates = [
+        resp.get("copyright"),
+        resp.get("copyRight"),
+        resp.get("copyright_text"),
+        resp.get("license")
+    ]
+    for c in candidates:
+        if c:
+            album_copyright = str(c)
+            break
+            
+    # 2. Jika masih kosong, Cek di Track Pertama (Seringkali metadata track lebih lengkap)
+    if not album_copyright and len(tracks) > 0:
+        t0 = tracks[0]
+        track_c = t0.get("copyright") or t0.get("copyRight")
+        if track_c:
+            album_copyright = str(track_c)
+            
+    # 3. Jika masih kosong, Gunakan Label (Data Asli)
+    # Label adalah pemegang hak cipta, jadi ini data yang valid/asli
+    if not album_copyright and label:
+        album_copyright = label
 
     max_disc = 1
     for t in tracks:
@@ -181,7 +195,6 @@ async def start_livephish(link: str, user: dict):
 
     folder_name = f"{artist_name} - {album_name}"
     if len(folder_name) > 150: folder_name = folder_name[:150]
-    
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
     # --- DOWNLOAD COVER ---
@@ -231,7 +244,7 @@ async def start_livephish(link: str, user: dict):
         'tempfolder': base_folder_path, 
         'type': 'album', 
         'genre': genre,
-        'copyright': album_copyright, # Copyright Murni
+        'copyright': album_copyright, # Hasil Deep Search
         'label': label,
         'explicit': False
     }
@@ -255,10 +268,8 @@ async def start_livephish(link: str, user: dict):
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
 
-        # --- COPYRIGHT PER TRACK ---
-        # Kadang track punya copyright sendiri yang beda dari album
-        # Jika kosong, baru gunakan copyright album
-        track_copyright = t.get("copyright") or album_copyright
+        # Copyright per track (prioritas jika beda dengan album)
+        track_c = t.get("copyright") or t.get("copyRight") or album_copyright
 
         prog_txt = get_progress_bar_text(i+1, total_tracks, title, "Album")
         try: await edit_message(user['bot_msg'], prog_txt)
@@ -330,9 +341,9 @@ async def start_livephish(link: str, user: dict):
             track_meta['ISRC'] = isrc_val
             track_meta['GENRE'] = genre
             
-            # Gunakan Copyright Spesifik
-            track_meta['COPYRIGHT'] = track_copyright
-            track_meta['cpr'] = track_copyright 
+            # Multi Key untuk Copyright
+            track_meta['COPYRIGHT'] = track_c
+            track_meta['cpr'] = track_c
             
             track_meta['DATE'] = release_date
             track_meta['totaldiscs'] = str(max_disc)
@@ -344,8 +355,7 @@ async def start_livephish(link: str, user: dict):
             track_meta['tracknumber'] = str(raw_track_num)
             track_meta['totaltracks'] = str(total_tracks)
             
-            # Gunakan Copyright Spesifik
-            track_meta['copyright'] = track_copyright
+            track_meta['copyright'] = track_c
             
             track_meta['label'] = label
             track_meta['composer'] = composer
