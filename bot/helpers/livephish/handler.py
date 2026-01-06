@@ -98,14 +98,10 @@ def find_deep_genre(data):
 
 # --- FUNGSI HITUNG DURASI ASLI (FFPROBE) ---
 async def get_audio_duration(file_path):
-    """
-    Menggunakan FFprobe untuk membaca durasi file ASLI di disk.
-    Ini mengatasi masalah durasi -:-- di Telegram.
-    """
+    """Menggunakan FFprobe untuk membaca durasi file ASLI."""
     try:
         cmd = [
-            "ffprobe", 
-            "-v", "error", 
+            "ffprobe", "-v", "error", 
             "-show_entries", "format=duration", 
             "-of", "default=noprint_wrappers=1:nokey=1", 
             file_path
@@ -114,13 +110,9 @@ async def get_audio_duration(file_path):
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await process.communicate()
-        
-        if stdout:
-            # Output ffprobe biasanya float (e.g. 245.432000)
-            return int(float(stdout.decode().strip()))
+        if stdout: return int(float(stdout.decode().strip()))
     except Exception as e:
         LOGGER.warning(f"Gagal get duration ffprobe: {e}")
-    
     return 0
 
 # --- TEKNIK BRUTE FORCE COVER HD ---
@@ -158,16 +150,33 @@ async def fetch_website_cover_hd(url):
     return None
 
 async def clean_audio_metadata(input_path):
-    """OPSI NUKLIR: Menghapus total metadata bawaan."""
+    """
+    OPSI NUKLIR + FASTSTART: 
+    Menghapus metadata bawaan tapi menyusun ulang header (moov atom) 
+    agar 'Maximum Bitrate' dan statistik lainnya tertulis kembali.
+    """
     temp_output = input_path + ".clean.m4a"
     if input_path.endswith(".flac"):
         temp_output = input_path + ".clean.flac"
+    
     try:
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
             "-map_metadata", "-1", "-map_metadata:g", "-1",
-            "-c", "copy", temp_output
+            "-c", "copy",
+            "-movflags", "+faststart", # <--- FIX: Memaksa update header stats (Bitrate)
+            temp_output
         ]
+        
+        # Untuk FLAC tidak pakai movflags
+        if input_path.endswith(".flac"):
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-map_metadata", "-1", "-map_metadata:g", "-1",
+                "-c", "copy",
+                temp_output
+            ]
+
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
@@ -297,8 +306,6 @@ async def start_livephish(link: str, user: dict):
         track_num_padded = f"{int(raw_track_num):02d}"
         disc_num = t.get("discNum", 1)
         
-        # --- FIX DURASI API ---
-        # Kita ambil dari API dulu sebagai cadangan
         try: api_duration = int(float(t.get("length", 0)))
         except: api_duration = 0
             
@@ -339,14 +346,11 @@ async def start_livephish(link: str, user: dict):
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # Nuklir Metadata (Cleaning)
+        # Nuklir Metadata + Faststart (Fix Max Bitrate)
         await clean_audio_metadata(full_file_path)
 
-        # --- FIX DURASI REAL (FFPROBE) ---
-        # Baca durasi file yang sudah didownload
+        # Hitung Durasi Real
         real_duration = await get_audio_duration(full_file_path)
-        
-        # Gunakan durasi asli jika ada, jika tidak fallback ke API
         final_duration = real_duration if real_duration > 0 else api_duration
 
         # Set Metadata
@@ -357,7 +361,7 @@ async def start_livephish(link: str, user: dict):
             'volume': str(disc_num),
             'filepath': full_file_path,
             'itemid': str(track_id),
-            'duration': final_duration, # DURATION VALID
+            'duration': final_duration,
             'extension': ext.replace(".", ""),
             'isrc': isrc_val,
             'composer': composer,
