@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/livephish/handler.py]
+
 import re
 import os
 import aiohttp
@@ -16,7 +18,7 @@ from bot.logger import LOGGER
 # Regex ID LivePhish
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
-# Branding Tag
+# Tag Branding (Untuk menimpa nugs.net)
 BRANDING_TAG = "powered by livephish.com"
 
 def sanitize_name(name):
@@ -54,49 +56,60 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
-async def extract_cover_from_audio(audio_path, output_path):
+# --- PENGGANTI ITUNES: WEB SCRAPER ---
+async def fetch_og_image(url):
     """
-    Mengekstrak cover art dari file audio dengan metode bertingkat.
-    Mendukung FLAC dan M4A.
+    Scrape gambar OG (OpenGraph) langsung dari website LivePhish.
+    Ini solusi paling ampuh jika API mati dan iTunes dilarang.
     """
     try:
-        # METODE 1: Coba Salin Stream (Cepat, Kualitas Asli)
-        # -map 0:v memilih stream video (gambar) pertama
-        cmd_copy = [
-            "ffmpeg", "-y", "-i", audio_path, 
-            "-map", "0:v", "-map", "-0:V", # Ambil video, buang audio
-            "-c", "copy", 
-            output_path
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd_copy, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
-        
-        # Cek hasil Metode 1
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return True
-
-        # METODE 2: Jika gagal (misal gambar PNG di container m4a tapi output .jpg),
-        # Lakukan Konversi / Re-encode ke JPG
-        LOGGER.info(f"Metode copy cover gagal untuk {os.path.basename(audio_path)}, mencoba konversi...")
-        cmd_convert = [
-            "ffmpeg", "-y", "-i", audio_path,
-            "-map", "0:v",
-            "-q:v", "2", # Kualitas tinggi JPG
-            output_path
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd_convert, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
-
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return True
-
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Cari tag <meta property="og:image" content="...">
+                    match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html)
+                    if match:
+                        img_url = match.group(1)
+                        # Fix URL jika relatif
+                        if img_url.startswith("//"): img_url = "https:" + img_url
+                        elif img_url.startswith("/"): img_url = "https://www.livephish.com" + img_url
+                        return img_url
     except Exception as e:
-        LOGGER.error(f"Gagal total ekstrak cover: {e}")
+        LOGGER.warning(f"Gagal scrape OG Image: {e}")
+    return None
+
+async def clean_audio_metadata(input_path):
+    """
+    OPSI NUKLIR: Menghapus total metadata bawaan (powered by nugs.net).
+    Wajib dilakukan sebelum set_metadata.
+    """
+    temp_output = input_path + ".clean.m4a"
+    if input_path.endswith(".flac"):
+        temp_output = input_path + ".clean.flac"
         
+    try:
+        # -map_metadata -1 : Hapus semua metadata
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-map_metadata", "-1", "-map_metadata:g", "-1",
+            "-c", "copy",
+            temp_output
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+        
+        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
+            os.replace(temp_output, input_path)
+            return True
+    except Exception as e:
+        LOGGER.error(f"Gagal cleaning metadata: {e}")
+        if os.path.exists(temp_output): os.remove(temp_output)
     return False
 
 async def start_livephish(link: str, user: dict):
@@ -154,6 +167,41 @@ async def start_livephish(link: str, user: dict):
     if len(folder_name) > 150: folder_name = folder_name[:150]
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
+    # --- STRATEGI DOWNLOAD COVER ART (TANPA ITUNES) ---
+    cover_url = None
+    
+    # 1. Scrape Website LivePhish (OG Image) - Prioritas Utama
+    LOGGER.info("Mencari cover art via Web Scraper (LivePhish)...")
+    cover_url = await fetch_og_image(link)
+        
+    if not cover_url:
+        # 2. Coba API LivePhish (Fallback jika Scrape gagal)
+        pics = resp.get("pics", [])
+        if pics:
+            pics.sort(key=lambda x: x.get("width", 0), reverse=True)
+            for p in pics:
+                if p.get("url"): 
+                    raw_url = p.get("url")
+                    if raw_url.startswith("/"):
+                        cover_url = "https://static.livephish.com" + raw_url
+                    else:
+                        cover_url = raw_url
+                    break
+
+    # Download Cover
+    final_cover_path = ""
+    if cover_url:
+        try:
+            temp_path = await create_cover_file(
+                cover_url, {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
+            )
+            if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                 if "project-siesta" not in temp_path:
+                    final_cover_path = temp_path
+        except Exception as e:
+            LOGGER.error(f"Gagal download cover: {e}")
+
+    # Metadata Base
     base_meta = {
         'title': album_name,
         'album': album_name,
@@ -161,7 +209,7 @@ async def start_livephish(link: str, user: dict):
         'artist': artist_name,
         'year': year,
         'date': release_date,
-        'cover': "", 
+        'cover': final_cover_path, # Hasil scrape/API
         'totaltracks': str(total_tracks),
         'totalvolume': str(max_disc),
         'provider': 'LivePhish',
@@ -179,9 +227,6 @@ async def start_livephish(link: str, user: dict):
     init_txt = get_progress_bar_text(0, total_tracks, album_name, "Album")
     await edit_message(user['bot_msg'], init_txt)
 
-    extracted_cover_path = os.path.join(base_folder_path, "cover.jpg")
-    cover_found = False
-
     for i, t in enumerate(tracks):
         track_id = t.get("trackID") or t.get("songID")
         title = t.get("songTitle", f"Track {i+1}")
@@ -193,6 +238,7 @@ async def start_livephish(link: str, user: dict):
         try: duration = int(float(t.get("length", 0)))
         except: duration = 0
             
+        # Metadata Track
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
 
@@ -221,15 +267,9 @@ async def start_livephish(link: str, user: dict):
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # 2. EKSTRAK COVER (DENGAN METODE BARU)
-        # Kita cek setiap track sampai cover ditemukan
-        if not cover_found and os.path.exists(full_file_path):
-            if await extract_cover_from_audio(full_file_path, extracted_cover_path):
-                base_meta['cover'] = extracted_cover_path
-                cover_found = True
-                LOGGER.info(f"LivePhish: Cover extracted from {fname}")
-            else:
-                LOGGER.warning(f"LivePhish: Gagal ekstrak cover dari {fname}")
+        # 2. BERSIHKAN METADATA NUGS.NET (Opsi Nuklir)
+        # Wajib dilakukan untuk menghilangkan tag bawaan
+        await clean_audio_metadata(full_file_path)
 
         # 3. SET METADATA
         track_meta = base_meta.copy()
@@ -247,10 +287,11 @@ async def start_livephish(link: str, user: dict):
             'genre': genre
         })
 
-        # Branding
+        # Branding (Timpa semua kemungkinan key)
         branding_dict = {
             'comment': BRANDING_TAG, 'COMMENT': BRANDING_TAG,
             'description': BRANDING_TAG, 'DESCRIPTION': BRANDING_TAG,
+            'long_description': BRANDING_TAG, 'LONG_DESCRIPTION': BRANDING_TAG,
             'encoded_by': BRANDING_TAG, 'ENCODED_BY': BRANDING_TAG
         }
         track_meta.update(branding_dict)
@@ -272,6 +313,7 @@ async def start_livephish(link: str, user: dict):
             # Fallback
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['totaltracks'] = str(total_tracks)
+            track_meta['disctotal'] = str(max_disc)
             
         elif ext == ".m4a":
             track_meta['discnumber'] = str(disc_num)
@@ -300,13 +342,13 @@ async def start_livephish(link: str, user: dict):
             base_meta['zip_path'] = await zip_handler(base_meta['folderpath'])
 
         if art_poster:
-            if cover_found and os.path.exists(base_meta['cover']):
+            if base_meta.get('cover') and os.path.exists(base_meta['cover']):
                 try:
                     base_meta['poster_msg'] = await post_art_poster(user, base_meta)
                 except Exception as e:
                     LOGGER.error(f"Gagal poster: {e}")
             else:
-                 LOGGER.warning("Art Poster dilewati karena cover tidak dapat diekstrak.")
+                 LOGGER.warning("Art Poster dilewati: Cover tidak ditemukan (Web Scraper & API gagal).")
 
         await edit_message(user['bot_msg'], f"Mengunggah...\n{album_name}")
         await album_upload(base_meta, user)
