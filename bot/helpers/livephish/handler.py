@@ -96,12 +96,16 @@ def find_deep_genre(data):
             if found: return found
     return ""
 
-# --- FUNGSI AUDIO TEKNIS ---
+# --- FUNGSI HITUNG DURASI ASLI (FFPROBE) ---
 async def get_audio_duration(file_path):
-    """Menggunakan FFprobe untuk membaca durasi file ASLI."""
+    """
+    Menggunakan FFprobe untuk membaca durasi file ASLI di disk.
+    Ini mengatasi masalah durasi -:-- di Telegram.
+    """
     try:
         cmd = [
-            "ffprobe", "-v", "error", 
+            "ffprobe", 
+            "-v", "error", 
             "-show_entries", "format=duration", 
             "-of", "default=noprint_wrappers=1:nokey=1", 
             file_path
@@ -110,66 +114,14 @@ async def get_audio_duration(file_path):
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await process.communicate()
-        if stdout: return int(float(stdout.decode().strip()))
+        
+        if stdout:
+            # Output ffprobe biasanya float (e.g. 245.432000)
+            return int(float(stdout.decode().strip()))
     except Exception as e:
         LOGGER.warning(f"Gagal get duration ffprobe: {e}")
+    
     return 0
-
-async def clean_audio_metadata(input_path):
-    """OPSI NUKLIR: Menghapus total metadata bawaan (sebelum tagging)."""
-    temp_output = input_path + ".clean.m4a"
-    if input_path.endswith(".flac"):
-        temp_output = input_path + ".clean.flac"
-    try:
-        cmd = [
-            "ffmpeg", "-y", "-i", input_path,
-            "-map_metadata", "-1", "-map_metadata:g", "-1",
-            "-c", "copy", temp_output
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
-        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
-            os.replace(temp_output, input_path)
-            return True
-    except:
-        if os.path.exists(temp_output): os.remove(temp_output)
-    return False
-
-async def fix_m4a_stats(input_path):
-    """
-    LANGKAH TERAKHIR (KHUSUS AAC/M4A):
-    Jalankan ini SETELAH tagging selesai.
-    Fungsi ini membangun ulang struktur atom MP4 (btrt/bitrate box) 
-    yang sering hilang saat proses tagging oleh Mutagen.
-    Ini memunculkan kembali 'Maximum Bitrate' di MediaInfo.
-    """
-    if not input_path.endswith(".m4a"):
-        return
-
-    temp_output = input_path + ".stats.m4a"
-    try:
-        # -movflags +faststart memaksa FFmpeg menghitung ulang stats dan menaruhnya di header
-        # Kita TIDAK pakai -map_metadata -1 disini agar tag yang barusan ditulis tidak hilang
-        cmd = [
-            "ffmpeg", "-y", "-i", input_path,
-            "-c", "copy",
-            "-movflags", "+faststart",
-            temp_output
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
-        
-        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
-            os.replace(temp_output, input_path)
-            return True
-    except Exception as e:
-        LOGGER.error(f"Gagal fix m4a stats: {e}")
-        if os.path.exists(temp_output): os.remove(temp_output)
-    return False
 
 # --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
@@ -204,6 +156,28 @@ async def fetch_website_cover_hd(url):
     except Exception as e:
         LOGGER.warning(f"Gagal scrape Cover Website: {e}")
     return None
+
+async def clean_audio_metadata(input_path):
+    """OPSI NUKLIR: Menghapus total metadata bawaan."""
+    temp_output = input_path + ".clean.m4a"
+    if input_path.endswith(".flac"):
+        temp_output = input_path + ".clean.flac"
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-map_metadata", "-1", "-map_metadata:g", "-1",
+            "-c", "copy", temp_output
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
+            os.replace(temp_output, input_path)
+            return True
+    except:
+        if os.path.exists(temp_output): os.remove(temp_output)
+    return False
 
 async def start_livephish(link: str, user: dict):
     client = user.get('livephish_api')
@@ -323,6 +297,8 @@ async def start_livephish(link: str, user: dict):
         track_num_padded = f"{int(raw_track_num):02d}"
         disc_num = t.get("discNum", 1)
         
+        # --- FIX DURASI API ---
+        # Kita ambil dari API dulu sebagai cadangan
         try: api_duration = int(float(t.get("length", 0)))
         except: api_duration = 0
             
@@ -357,20 +333,23 @@ async def start_livephish(link: str, user: dict):
         fname = f"{track_num_padded} - {clean_title}{ext}"
         full_file_path = os.path.join(current_save_path, fname)
         
-        # 1. Download
+        # Download
         err = await download_file(stream_url, full_file_path)
         if err:
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # 2. Nuklir Metadata (Cleaning Nugs.net)
+        # Nuklir Metadata (Cleaning)
         await clean_audio_metadata(full_file_path)
 
-        # 3. Hitung Durasi Real
+        # --- FIX DURASI REAL (FFPROBE) ---
+        # Baca durasi file yang sudah didownload
         real_duration = await get_audio_duration(full_file_path)
+        
+        # Gunakan durasi asli jika ada, jika tidak fallback ke API
         final_duration = real_duration if real_duration > 0 else api_duration
 
-        # 4. Set Metadata (Tagging via Mutagen)
+        # Set Metadata
         track_meta = base_meta.copy()
         track_meta.update({
             'title': title,
@@ -378,7 +357,7 @@ async def start_livephish(link: str, user: dict):
             'volume': str(disc_num),
             'filepath': full_file_path,
             'itemid': str(track_id),
-            'duration': final_duration,
+            'duration': final_duration, # DURATION VALID
             'extension': ext.replace(".", ""),
             'isrc': isrc_val,
             'composer': composer,
@@ -393,7 +372,6 @@ async def start_livephish(link: str, user: dict):
         }
         track_meta.update(branding_dict)
 
-        # Logika Metadata spesifik Format
         if ext == ".flac":
             track_meta['discnumber'] = f"{disc_num}/{max_disc}"
             track_meta['DISCNUMBER'] = f"{disc_num}/{max_disc}"
@@ -422,12 +400,6 @@ async def start_livephish(link: str, user: dict):
             track_meta['date'] = release_date
 
         await set_metadata(track_meta, user['user_id'])
-        
-        # 5. FIX STATS M4A (Langkah Terakhir Penting!)
-        # Jalankan FFmpeg sekali lagi untuk menulis ulang atom Bitrate yang mungkin hilang saat set_metadata
-        if ext == ".m4a":
-            await fix_m4a_stats(full_file_path)
-
         completed_tracks.append(track_meta)
 
     # --- UPLOAD ---
