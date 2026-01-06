@@ -16,6 +16,9 @@ from bot.logger import LOGGER
 # Regex ID LivePhish
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
+# Tag Branding
+BRANDING_TAG = "powered by livephish.com"
+
 def sanitize_name(name):
     """Membersihkan nama file/folder."""
     return re.sub(r'[\\/*?:"<>|]', "", str(name)).strip()
@@ -219,7 +222,6 @@ async def start_livephish(link: str, user: dict):
         # 3. SET METADATA
         track_meta = base_meta.copy()
         
-        # Ambil ISRC
         isrc_val = t.get("isrc", "")
         
         track_meta.update({
@@ -233,20 +235,19 @@ async def start_livephish(link: str, user: dict):
             'extension': ext.replace(".", "")
         })
 
-        # --- TAG CLEANUP & FIX ---
+        # --- TAG CLEANUP & BRANDING ---
         
-        # HAPUS COMMENT & DESCRIPTION UNTUK SEMUA FORMAT
-        # Kita gunakan karakter kosong untuk menimpa tag yang ada
-        track_meta['comment'] = ""
-        track_meta['description'] = ""
-        track_meta['DESCRIPTION'] = ""
-        track_meta['COMMENT'] = ""
+        # TIMPA Comment & Description dengan "powered by livephish.com"
+        # Ini berlaku untuk SEMUA format (ALAC & FLAC)
+        track_meta['comment'] = BRANDING_TAG
+        track_meta['COMMENT'] = BRANDING_TAG
+        track_meta['description'] = BRANDING_TAG
+        track_meta['DESCRIPTION'] = BRANDING_TAG
 
         if ext == ".flac":
             # --- FIX FLAC METADATA ---
             
-            # 1. Part/Position (Agar muncul X/Y di MediaInfo)
-            # Kita gabungkan Disc Number dan Total Discs
+            # 1. Part/Position (MediaInfo membaca DISCNUMBER jika formatnya X/Y)
             track_meta['discnumber'] = f"{disc_num}/{max_disc}"
             track_meta['DISCNUMBER'] = f"{disc_num}/{max_disc}"
             
@@ -254,16 +255,17 @@ async def start_livephish(link: str, user: dict):
             track_meta['tracknumber'] = f"{raw_track_num}/{total_tracks}"
             track_meta['TRACKNUMBER'] = f"{raw_track_num}/{total_tracks}"
             
-            # Cadangan untuk tagger yang baca field terpisah
+            # Fallback keys
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['totaltracks'] = str(total_tracks)
+            track_meta['tracktotal'] = str(total_tracks)
+            track_meta['disctotal'] = str(max_disc)
 
             # 3. Copyright (cpr)
             track_meta['copyright'] = base_meta['copyright']
             track_meta['COPYRIGHT'] = base_meta['copyright']
             
-            # 4. Tagged Date
-            # FLAC menggunakan tag 'DATE'
+            # 4. Tagged Date (DATE)
             track_meta['date'] = release_date
             track_meta['DATE'] = release_date
             
@@ -272,7 +274,6 @@ async def start_livephish(link: str, user: dict):
             track_meta['copyright'] = base_meta['copyright']
             track_meta['date'] = release_date
             
-            # Memastikan Disc number format standar iTunes atom (disk)
             track_meta['discnumber'] = str(disc_num)
             track_meta['totaldiscs'] = str(max_disc)
 
