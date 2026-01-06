@@ -1,5 +1,3 @@
-# [FILE STABIL: bot/helpers/livephish/handler.py]
-
 import re
 import os
 import aiohttp
@@ -18,7 +16,7 @@ from bot.logger import LOGGER
 # Regex ID LivePhish
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
-# Tag Branding (Opsional, untuk menimpa jika bisa)
+# Branding Tag
 BRANDING_TAG = "powered by livephish.com"
 
 def sanitize_name(name):
@@ -57,16 +55,48 @@ def format_date_standard(date_str):
     return date_str.replace("/", "-")
 
 async def extract_cover_from_audio(audio_path, output_path):
-    """Ekstrak cover embedded dari file audio."""
+    """
+    Mengekstrak cover art dari file audio dengan metode bertingkat.
+    Mendukung FLAC dan M4A.
+    """
     try:
-        cmd = ["ffmpeg", "-y", "-i", audio_path, "-an", "-vcodec", "copy", output_path]
+        # METODE 1: Coba Salin Stream (Cepat, Kualitas Asli)
+        # -map 0:v memilih stream video (gambar) pertama
+        cmd_copy = [
+            "ffmpeg", "-y", "-i", audio_path, 
+            "-map", "0:v", "-map", "-0:V", # Ambil video, buang audio
+            "-c", "copy", 
+            output_path
+        ]
         process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd_copy, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         await process.communicate()
+        
+        # Cek hasil Metode 1
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return True
-    except: pass
+
+        # METODE 2: Jika gagal (misal gambar PNG di container m4a tapi output .jpg),
+        # Lakukan Konversi / Re-encode ke JPG
+        LOGGER.info(f"Metode copy cover gagal untuk {os.path.basename(audio_path)}, mencoba konversi...")
+        cmd_convert = [
+            "ffmpeg", "-y", "-i", audio_path,
+            "-map", "0:v",
+            "-q:v", "2", # Kualitas tinggi JPG
+            output_path
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd_convert, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return True
+
+    except Exception as e:
+        LOGGER.error(f"Gagal total ekstrak cover: {e}")
+        
     return False
 
 async def start_livephish(link: str, user: dict):
@@ -191,12 +221,15 @@ async def start_livephish(link: str, user: dict):
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # 2. EKSTRAK COVER
+        # 2. EKSTRAK COVER (DENGAN METODE BARU)
+        # Kita cek setiap track sampai cover ditemukan
         if not cover_found and os.path.exists(full_file_path):
             if await extract_cover_from_audio(full_file_path, extracted_cover_path):
                 base_meta['cover'] = extracted_cover_path
                 cover_found = True
-                LOGGER.info(f"LivePhish: Cover extracted.")
+                LOGGER.info(f"LivePhish: Cover extracted from {fname}")
+            else:
+                LOGGER.warning(f"LivePhish: Gagal ekstrak cover dari {fname}")
 
         # 3. SET METADATA
         track_meta = base_meta.copy()
@@ -214,7 +247,7 @@ async def start_livephish(link: str, user: dict):
             'genre': genre
         })
 
-        # Branding (Usaha overwrite standar)
+        # Branding
         branding_dict = {
             'comment': BRANDING_TAG, 'COMMENT': BRANDING_TAG,
             'description': BRANDING_TAG, 'DESCRIPTION': BRANDING_TAG,
@@ -272,6 +305,8 @@ async def start_livephish(link: str, user: dict):
                     base_meta['poster_msg'] = await post_art_poster(user, base_meta)
                 except Exception as e:
                     LOGGER.error(f"Gagal poster: {e}")
+            else:
+                 LOGGER.warning("Art Poster dilewati karena cover tidak dapat diekstrak.")
 
         await edit_message(user['bot_msg'], f"Mengunggah...\n{album_name}")
         await album_upload(base_meta, user)
