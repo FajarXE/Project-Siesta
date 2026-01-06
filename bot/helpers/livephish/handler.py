@@ -219,7 +219,7 @@ async def start_livephish(link: str, user: dict):
         # 3. SET METADATA
         track_meta = base_meta.copy()
         
-        # Ambil ISRC jika ada, default kosong (FIX KEYERROR ISRC)
+        # Ambil ISRC
         isrc_val = t.get("isrc", "")
         
         track_meta.update({
@@ -229,43 +229,52 @@ async def start_livephish(link: str, user: dict):
             'filepath': full_file_path,
             'itemid': str(track_id),
             'duration': duration,
-            'isrc': isrc_val, # PENTING: Mencegah KeyError
+            'isrc': isrc_val,
             'extension': ext.replace(".", "")
         })
 
-        # --- TAG KHUSUS FLAC/ALAC ---
+        # --- TAG CLEANUP & FIX ---
+        
+        # HAPUS COMMENT & DESCRIPTION UNTUK SEMUA FORMAT
+        # Kita gunakan karakter kosong untuk menimpa tag yang ada
+        track_meta['comment'] = ""
+        track_meta['description'] = ""
+        track_meta['DESCRIPTION'] = ""
+        track_meta['COMMENT'] = ""
+
         if ext == ".flac":
-            # 1. Total Tracks
-            track_meta['totaltracks'] = str(total_tracks)
-            track_meta['TOTALTRACKS'] = str(total_tracks)
-            track_meta['tracktotal'] = str(total_tracks)
-            track_meta['TRACKTOTAL'] = str(total_tracks)
+            # --- FIX FLAC METADATA ---
             
-            # 2. Disc Total
+            # 1. Part/Position (Agar muncul X/Y di MediaInfo)
+            # Kita gabungkan Disc Number dan Total Discs
+            track_meta['discnumber'] = f"{disc_num}/{max_disc}"
+            track_meta['DISCNUMBER'] = f"{disc_num}/{max_disc}"
+            
+            # 2. Track/Total
+            track_meta['tracknumber'] = f"{raw_track_num}/{total_tracks}"
+            track_meta['TRACKNUMBER'] = f"{raw_track_num}/{total_tracks}"
+            
+            # Cadangan untuk tagger yang baca field terpisah
             track_meta['totaldiscs'] = str(max_disc)
-            track_meta['TOTALDISCS'] = str(max_disc)
-            track_meta['disctotal'] = str(max_disc)
-            track_meta['DISCTOTAL'] = str(max_disc)
-            
-            # 3. Disc Number
-            track_meta['discnumber'] = str(disc_num)
-            track_meta['DISCNUMBER'] = str(disc_num)
-            
-            # 4. Copyright
+            track_meta['totaltracks'] = str(total_tracks)
+
+            # 3. Copyright (cpr)
             track_meta['copyright'] = base_meta['copyright']
             track_meta['COPYRIGHT'] = base_meta['copyright']
-            track_meta['cpr'] = base_meta['copyright'] 
             
-            # 5. Date
+            # 4. Tagged Date
+            # FLAC menggunakan tag 'DATE'
             track_meta['date'] = release_date
             track_meta['DATE'] = release_date
-            track_meta['year'] = release_date 
             
         elif ext == ".m4a":
-            track_meta['comment'] = ""      
-            track_meta['description'] = ""  
+            # --- FIX ALAC/M4A METADATA ---
             track_meta['copyright'] = base_meta['copyright']
             track_meta['date'] = release_date
+            
+            # Memastikan Disc number format standar iTunes atom (disk)
+            track_meta['discnumber'] = str(disc_num)
+            track_meta['totaldiscs'] = str(max_disc)
 
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
