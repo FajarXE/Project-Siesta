@@ -58,6 +58,7 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
+# --- FUNGSI DEEP SEARCH ---
 def find_deep_value(data, target_keys):
     """Mencari nilai secara rekursif dalam JSON."""
     if isinstance(target_keys, str): target_keys = [target_keys]
@@ -72,6 +73,55 @@ def find_deep_value(data, target_keys):
             found = find_deep_value(item, target_keys)
             if found: return found
     return ""
+
+def find_deep_genre(data):
+    """Deep search khusus Genre (menangani List/Dict)."""
+    target_keys = ["styles", "genres", "genre", "style", "tags", "subGenre"]
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if k.lower() in target_keys and v:
+                if isinstance(v, list) and len(v) > 0:
+                    first = v[0]
+                    if isinstance(first, dict):
+                        name = first.get("name") or first.get("description")
+                        if name: return str(name)
+                    else: return str(first)
+                elif isinstance(v, str): return v
+            if isinstance(v, (dict, list)):
+                found = find_deep_genre(v)
+                if found: return found
+    elif isinstance(data, list):
+        for item in data:
+            found = find_deep_genre(item)
+            if found: return found
+    return ""
+
+# --- FUNGSI HITUNG DURASI ASLI (FFPROBE) ---
+async def get_audio_duration(file_path):
+    """
+    Menggunakan FFprobe untuk membaca durasi file ASLI di disk.
+    Ini mengatasi masalah durasi -:-- di Telegram.
+    """
+    try:
+        cmd = [
+            "ffprobe", 
+            "-v", "error", 
+            "-show_entries", "format=duration", 
+            "-of", "default=noprint_wrappers=1:nokey=1", 
+            file_path
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        
+        if stdout:
+            # Output ffprobe biasanya float (e.g. 245.432000)
+            return int(float(stdout.decode().strip()))
+    except Exception as e:
+        LOGGER.warning(f"Gagal get duration ffprobe: {e}")
+    
+    return 0
 
 # --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
@@ -157,36 +207,19 @@ async def start_livephish(link: str, user: dict):
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
-    # Genre
-    genre = "" 
-    if resp.get("styles") and isinstance(resp["styles"], list) and len(resp["styles"]) > 0:
-        genre = str(resp["styles"][0])
-    elif resp.get("genres") and isinstance(resp["genres"], list) and len(resp["genres"]) > 0:
-        g = resp["genres"][0]
-        genre = g.get("name", "") if isinstance(g, dict) else str(g)
-    elif resp.get("genre"):
-        genre = str(resp.get("genre"))
+    # Genre (Deep Search)
+    genre = find_deep_genre(resp)
 
-    # --- LOGIKA FINAL COPYRIGHT (ANTI-HILANG) ---
-    # 1. Cari Data Asli
-    real_copyright = find_deep_value(resp, ["copyright", "copyRight", "rights", "license"])
-    # 2. Cari Label
-    real_label = find_deep_value(resp, ["recordLabel", "label"])
-    
-    final_copyright = ""
-    
-    if real_copyright:
-        # Jika data asli ketemu, pakai itu.
-        final_copyright = real_copyright
-    elif real_label:
-        # Jika data asli kosong, tapi ada Label -> Gunakan Label dengan format standar
-        final_copyright = f"© {year} {real_label}"
-    else:
-        # Jika SEMUA kosong (Permintaan Anda) -> Gunakan NAMA ARTIS
-        final_copyright = f"© {year} {artist_name}"
+    # Copyright & Label (Deep Search)
+    album_copyright = find_deep_value(resp, ["copyright", "copyRight", "rights", "license"])
+    label = find_deep_value(resp, ["recordLabel", "label"])
 
-    # Gunakan label yang ditemukan atau fallback ke Artist jika label pun kosong
-    final_label = real_label if real_label else artist_name
+    if not album_copyright and label:
+        album_copyright = f"© {year} {label}"
+    elif not album_copyright:
+        album_copyright = f"© {year} {artist_name}"
+
+    final_label = label if label else artist_name
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -246,7 +279,7 @@ async def start_livephish(link: str, user: dict):
         'tempfolder': base_folder_path, 
         'type': 'album', 
         'genre': genre,
-        'copyright': final_copyright, # PASTI TERISI
+        'copyright': album_copyright,
         'label': final_label,
         'explicit': False
     }
@@ -264,18 +297,14 @@ async def start_livephish(link: str, user: dict):
         track_num_padded = f"{int(raw_track_num):02d}"
         disc_num = t.get("discNum", 1)
         
-        try: duration = int(float(t.get("length", 0)))
-        except: duration = 0
+        # --- FIX DURASI API ---
+        # Kita ambil dari API dulu sebagai cadangan
+        try: api_duration = int(float(t.get("length", 0)))
+        except: api_duration = 0
             
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
-
-        # Cek Copyright Track Spesifik (Deep Search lagi)
-        track_c_raw = find_deep_value(t, ["copyright", "copyRight", "rights", "license"])
-        if track_c_raw:
-            track_copyright = track_c_raw
-        else:
-            track_copyright = final_copyright # Fallback ke Album Copyright (Artist/Label)
+        track_c = find_deep_value(t, ["copyright", "copyRight", "rights", "license"]) or album_copyright
 
         prog_txt = get_progress_bar_text(i+1, total_tracks, title, "Album")
         try: await edit_message(user['bot_msg'], prog_txt)
@@ -293,7 +322,6 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
-        # Logika Folder Disc
         if int(base_meta['totalvolume']) > 1:
             disc_folder = os.path.join(base_meta['tempfolder'], f"Disc {disc_num}")
             if not os.path.exists(disc_folder):
@@ -311,8 +339,15 @@ async def start_livephish(link: str, user: dict):
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # Nuklir Metadata
+        # Nuklir Metadata (Cleaning)
         await clean_audio_metadata(full_file_path)
+
+        # --- FIX DURASI REAL (FFPROBE) ---
+        # Baca durasi file yang sudah didownload
+        real_duration = await get_audio_duration(full_file_path)
+        
+        # Gunakan durasi asli jika ada, jika tidak fallback ke API
+        final_duration = real_duration if real_duration > 0 else api_duration
 
         # Set Metadata
         track_meta = base_meta.copy()
@@ -322,7 +357,7 @@ async def start_livephish(link: str, user: dict):
             'volume': str(disc_num),
             'filepath': full_file_path,
             'itemid': str(track_id),
-            'duration': duration,
+            'duration': final_duration, # DURATION VALID
             'extension': ext.replace(".", ""),
             'isrc': isrc_val,
             'composer': composer,
@@ -347,11 +382,8 @@ async def start_livephish(link: str, user: dict):
             track_meta['COMPOSER'] = composer
             track_meta['ISRC'] = isrc_val
             track_meta['GENRE'] = genre
-            
-            # --- COPYRIGHT SETTING ---
-            track_meta['COPYRIGHT'] = track_copyright
-            track_meta['cpr'] = track_copyright
-            
+            track_meta['COPYRIGHT'] = track_c
+            track_meta['cpr'] = track_c
             track_meta['DATE'] = release_date
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['totaltracks'] = str(total_tracks)
@@ -361,10 +393,7 @@ async def start_livephish(link: str, user: dict):
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['tracknumber'] = str(raw_track_num)
             track_meta['totaltracks'] = str(total_tracks)
-            
-            # --- COPYRIGHT SETTING ---
-            track_meta['copyright'] = track_copyright
-            
+            track_meta['copyright'] = track_c
             track_meta['label'] = final_label
             track_meta['composer'] = composer
             track_meta['genre'] = genre
