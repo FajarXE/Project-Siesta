@@ -58,6 +58,32 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
+# --- FUNGSI DEEP SEARCH (PENCARI KUNCI TERSEMBUNYI) ---
+def find_deep_value(data, target_keys):
+    """
+    Mencari nilai secara rekursif dalam dictionary/list JSON yang kompleks.
+    Berguna jika Copyright tersembunyi di dalam sub-object.
+    """
+    if isinstance(target_keys, str):
+        target_keys = [target_keys]
+        
+    # Cek level saat ini
+    if isinstance(data, dict):
+        for k, v in data.items():
+            # Jika key cocok dengan salah satu target (case insensitive)
+            if k.lower() in [tk.lower() for tk in target_keys] and v:
+                return str(v)
+            # Jika belum ketemu, cari di anak-anaknya (recursive)
+            found = find_deep_value(v, target_keys)
+            if found: return found
+            
+    elif isinstance(data, list):
+        for item in data:
+            found = find_deep_value(item, target_keys)
+            if found: return found
+            
+    return ""
+
 # --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
     """Mencari cover art resolusi MAKSIMAL."""
@@ -155,36 +181,21 @@ async def start_livephish(link: str, user: dict):
     elif resp.get("genre"):
         genre = str(resp.get("genre"))
 
-    # Label
-    label = resp.get("recordLabel") or resp.get("label") or ""
-
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
 
-    # --- LOGIKA PENCARIAN COPYRIGHT ASLI (DEEP SEARCH) ---
-    album_copyright = ""
+    # --- DEEP SEARCH COPYRIGHT & LABEL ---
+    # Kita cari 'copyright' di SELURUH struktur JSON response
+    # Prioritas keys: copyright, copyRight, rights, license
+    album_copyright = find_deep_value(resp, ["copyright", "copyRight", "rights", "license"])
     
-    # 1. Cek langsung di root response (berbagai variasi key)
-    candidates = [
-        resp.get("copyright"),
-        resp.get("copyRight"),
-        resp.get("copyright_text"),
-        resp.get("license")
-    ]
-    for c in candidates:
-        if c:
-            album_copyright = str(c)
-            break
-            
-    # 2. Jika masih kosong, Cek di Track Pertama (Seringkali metadata track lebih lengkap)
-    if not album_copyright and len(tracks) > 0:
-        t0 = tracks[0]
-        track_c = t0.get("copyright") or t0.get("copyRight")
-        if track_c:
-            album_copyright = str(track_c)
-            
-    # 3. Jika masih kosong, Gunakan Label (Data Asli)
-    # Label adalah pemegang hak cipta, jadi ini data yang valid/asli
+    # Kita cari 'label' di SELURUH struktur JSON response
+    # Prioritas keys: recordLabel, label
+    label = find_deep_value(resp, ["recordLabel", "label"])
+
+    # Logika Terakhir: Jika Copyright masih kosong, TAPI Label ada
+    # Maka Label adalah Copyright Holder (Standard Industri)
+    # Tapi kita biarkan kosong jika user memang tidak mau hasil 'tebakan'
     if not album_copyright and label:
         album_copyright = label
 
@@ -244,7 +255,7 @@ async def start_livephish(link: str, user: dict):
         'tempfolder': base_folder_path, 
         'type': 'album', 
         'genre': genre,
-        'copyright': album_copyright, # Hasil Deep Search
+        'copyright': album_copyright,
         'label': label,
         'explicit': False
     }
@@ -268,8 +279,10 @@ async def start_livephish(link: str, user: dict):
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
 
-        # Copyright per track (prioritas jika beda dengan album)
-        track_c = t.get("copyright") or t.get("copyRight") or album_copyright
+        # Copyright per track (Cek Deep Search di object track)
+        track_c = find_deep_value(t, ["copyright", "copyRight", "license"])
+        if not track_c:
+            track_c = album_copyright # Fallback ke album
 
         prog_txt = get_progress_bar_text(i+1, total_tracks, title, "Album")
         try: await edit_message(user['bot_msg'], prog_txt)
@@ -287,6 +300,7 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
+        # Logika Folder Disc (Pemisahan)
         if int(base_meta['totalvolume']) > 1:
             disc_folder = os.path.join(base_meta['tempfolder'], f"Disc {disc_num}")
             if not os.path.exists(disc_folder):
@@ -341,7 +355,6 @@ async def start_livephish(link: str, user: dict):
             track_meta['ISRC'] = isrc_val
             track_meta['GENRE'] = genre
             
-            # Multi Key untuk Copyright
             track_meta['COPYRIGHT'] = track_c
             track_meta['cpr'] = track_c
             
