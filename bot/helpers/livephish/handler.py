@@ -1,3 +1,5 @@
+# [GANTI FILE: bot/helpers/livephish/handler.py]
+
 import re
 import os
 import aiohttp
@@ -107,13 +109,13 @@ async def start_livephish(link: str, user: dict):
     if not resp:
         raise Exception(f"Gagal metadata ID {album_id}: Response kosong.")
 
-    # Metadata Album
+    # Metadata Album Dasar
     raw_album = resp.get("containerInfo", "Unknown Album")
     raw_artist = resp.get("artistName", "Phish")
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    # LOGIKA TANGGAL
+    # --- 1. LOGIKA TANGGAL ---
     raw_date = ""
     possible_keys = ["performanceDate", "releaseDateFormatted", "performanceDateFormatted", "performanceDateYear"]
     for k in possible_keys:
@@ -121,9 +123,21 @@ async def start_livephish(link: str, user: dict):
         if val:
             raw_date = val
             break
-
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
+
+    # --- 2. LOGIKA GENRE (DINAMIS) ---
+    genre = "Rock" # Default
+    if resp.get("genre"):
+        genre = resp.get("genre")
+    elif resp.get("styles"): # Kadang ada di styles
+        genre = resp.get("styles")[0]
+    elif resp.get("genres"): # Kadang list
+        genre = resp.get("genres")[0]
+
+    # --- 3. LOGIKA LABEL ---
+    # LivePhish sering menaruh label di field 'copyright' atau 'label'
+    label = resp.get("label") or resp.get("recordLabel") or resp.get("copyright") or "LivePhish"
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -155,8 +169,9 @@ async def start_livephish(link: str, user: dict):
         'quality': livephish_manager.quality,
         'tempfolder': base_folder_path, 
         'type': 'album', 
-        'genre': 'Rock',
-        'copyright': 'LivePhish',
+        'genre': genre, # FIX: Genre Dinamis
+        'copyright': label, # Gunakan label sebagai copyright
+        'label': label,     # Field Label
         'explicit': False
     }
     
@@ -182,6 +197,10 @@ async def start_livephish(link: str, user: dict):
         except:
             duration = 0
         
+        # --- 4. LOGIKA COMPOSER & ISRC ---
+        composer = t.get("composer") or t.get("author") or ""
+        isrc_val = t.get("isrc") or t.get("ISRC") or ""
+
         # Update Progress Bar
         prog_txt = get_progress_bar_text(i+1, total_tracks, title, "Album")
         try: await edit_message(user['bot_msg'], prog_txt)
@@ -222,8 +241,6 @@ async def start_livephish(link: str, user: dict):
         # 3. SET METADATA
         track_meta = base_meta.copy()
         
-        isrc_val = t.get("isrc", "")
-        
         track_meta.update({
             'title': title,
             'tracknumber': str(raw_track_num),
@@ -231,51 +248,51 @@ async def start_livephish(link: str, user: dict):
             'filepath': full_file_path,
             'itemid': str(track_id),
             'duration': duration,
+            'extension': ext.replace(".", ""),
+            # Masukkan Metadata Baru
             'isrc': isrc_val,
-            'extension': ext.replace(".", "")
+            'composer': composer,
+            'label': label,
+            'genre': genre
         })
 
-        # --- TAG CLEANUP & BRANDING ---
-        
-        # TIMPA Comment & Description dengan "powered by livephish.com"
-        # Ini berlaku untuk SEMUA format (ALAC & FLAC)
-        track_meta['comment'] = BRANDING_TAG
-        track_meta['COMMENT'] = BRANDING_TAG
-        track_meta['description'] = BRANDING_TAG
-        track_meta['DESCRIPTION'] = BRANDING_TAG
+        # --- TAG CLEANUP & BRANDING (AGRESIF) ---
+        # Menimpa semua kemungkinan field comment agar "nugs.net" hilang
+        branding_keys = ['comment', 'COMMENT', 'description', 'DESCRIPTION', 'longdescription', 'LONGDESCRIPTION', 'encoded_by', 'ENCODED_BY', 'purchased_by']
+        for bk in branding_keys:
+            track_meta[bk] = BRANDING_TAG
 
+        # --- TAG MAPPING SPESIFIK FORMAT ---
         if ext == ".flac":
-            # --- FIX FLAC METADATA ---
-            
-            # 1. Part/Position (MediaInfo membaca DISCNUMBER jika formatnya X/Y)
+            # FLAC
             track_meta['discnumber'] = f"{disc_num}/{max_disc}"
-            track_meta['DISCNUMBER'] = f"{disc_num}/{max_disc}"
-            
-            # 2. Track/Total
             track_meta['tracknumber'] = f"{raw_track_num}/{total_tracks}"
-            track_meta['TRACKNUMBER'] = f"{raw_track_num}/{total_tracks}"
             
-            # Fallback keys
+            # Mapping agar terbaca sebagai LABEL/COMPOSER
+            track_meta['ORGANIZATION'] = label
+            track_meta['LABEL'] = label
+            track_meta['COMPOSER'] = composer
+            track_meta['ISRC'] = isrc_val
+            track_meta['GENRE'] = genre
+            track_meta['COPYRIGHT'] = label
+            track_meta['DATE'] = release_date
+
+            # Fallback extra keys
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['totaltracks'] = str(total_tracks)
             track_meta['tracktotal'] = str(total_tracks)
             track_meta['disctotal'] = str(max_disc)
-
-            # 3. Copyright (cpr)
-            track_meta['copyright'] = base_meta['copyright']
-            track_meta['COPYRIGHT'] = base_meta['copyright']
-            
-            # 4. Tagged Date (DATE)
-            track_meta['date'] = release_date
-            track_meta['DATE'] = release_date
             
         elif ext == ".m4a":
-            # --- FIX ALAC/M4A METADATA ---
-            track_meta['copyright'] = base_meta['copyright']
-            track_meta['date'] = release_date
-            
+            # ALAC/M4A
             track_meta['discnumber'] = str(disc_num)
             track_meta['totaldiscs'] = str(max_disc)
+            
+            track_meta['copyright'] = label
+            track_meta['label'] = label # Beberapa tagger m4a membaca 'label'
+            track_meta['composer'] = composer
+            track_meta['genre'] = genre
+            track_meta['date'] = release_date
 
         await set_metadata(track_meta, user['user_id'])
         completed_tracks.append(track_meta)
