@@ -58,7 +58,7 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
-# --- TEKNIK BRUTE FORCE COVER HD (SUPPORTS NUGS.NET) ---
+# --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
     """
     Mencari cover art resolusi MAKSIMAL dengan mencoba variasi URL.
@@ -72,19 +72,16 @@ async def fetch_website_cover_hd(url):
                 if resp.status == 200:
                     html = await resp.text()
                     
-                    # 1. Regex Luas: Tangkap static.livephish, static.nugs.net, amazonaws
-                    # Ini memperbaiki masalah gambar tidak terdeteksi
+                    # Regex luas untuk menangkap gambar dari berbagai CDN (LivePhish, Nugs, AWS)
                     pattern = r'(https?://(?:static\.livephish\.com|s3\.amazonaws\.com|static\.nugs\.net)/[^"\']+\.jpg)'
                     matches = re.findall(pattern, html)
                     
                     candidate = None
-                    # Prioritas: gambar yang mengandung 'shows', 'pix', 'assets'
                     for m in matches:
                         if "shows" in m or "pix" in m or "assets" in m:
                             candidate = m
                             break 
                     
-                    # Fallback ke OG Image
                     if not candidate:
                         match_og = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html)
                         if match_og: candidate = match_og.group(1)
@@ -92,8 +89,7 @@ async def fetch_website_cover_hd(url):
                     if candidate:
                         if candidate.startswith("//"): candidate = "https:" + candidate
                         
-                        # --- ALGORITMA BRUTE FORCE RESOLUSI ---
-                        # Hapus suffix ukuran: _200, _v1, _mini, _med, dll
+                        # Coba hapus suffix ukuran
                         clean_url = re.sub(r'(_\d+|_v\d+|_mini|_med|_small|_large)(\.jpg)$', r'\2', candidate)
                         
                         if clean_url != candidate:
@@ -104,7 +100,6 @@ async def fetch_website_cover_hd(url):
                                         return clean_url
                             except: pass
 
-                        # Jika master gagal, KEMBALIKAN CANDIDATE AWAL (agar tidak kosong)
                         LOGGER.warning("Gagal mendapatkan Master URL, menggunakan fallback original.")
                         return candidate
 
@@ -162,14 +157,19 @@ async def start_livephish(link: str, user: dict):
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
-    genre = "Rock"
+    # --- GENRE LOGIC (NO FALLBACK TO ROCK) ---
+    genre = "" # Default KOSONG
+    
     if resp.get("styles") and isinstance(resp["styles"], list) and len(resp["styles"]) > 0:
         genre = str(resp["styles"][0])
     elif resp.get("genres") and isinstance(resp["genres"], list) and len(resp["genres"]) > 0:
         g = resp["genres"][0]
-        genre = g.get("name", "Rock") if isinstance(g, dict) else str(g)
+        # Jika nama genre ada, pakai. Jika tidak, tetap kosong.
+        genre = g.get("name", "") if isinstance(g, dict) else str(g)
     elif resp.get("genre"):
         genre = str(resp.get("genre"))
+        
+    # Hapus fallback paksa ke "Rock". Biarkan kosong jika source kosong.
 
     label = resp.get("recordLabel") or resp.get("label") or resp.get("copyright") or "LivePhish"
     copyright_txt = resp.get("copyright") or f"© {year} {label}"
@@ -188,15 +188,12 @@ async def start_livephish(link: str, user: dict):
     # Folder Album Utama
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
-    # --- DOWNLOAD COVER (LOGIKA BARU ZIP) ---
+    # --- DOWNLOAD COVER ---
     cover_url = None
     LOGGER.info("Mencari cover art HD via Web Scraper...")
-    
-    # 1. Scrape Website (Prioritas)
     cover_url = await fetch_website_cover_hd(link)
         
     if not cover_url:
-        # 2. Fallback API
         pics = resp.get("pics", [])
         if pics:
             pics.sort(key=lambda x: x.get("width", 0), reverse=True)
@@ -210,16 +207,13 @@ async def start_livephish(link: str, user: dict):
     final_cover_path = ""
     if cover_url:
         try:
-            # Download ke folder temp user dulu
             temp_path = await create_cover_file(
                 cover_url, {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
             )
             
             if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
                  if "project-siesta" not in temp_path:
-                    # --- FIX ZIP COVER MISSING ---
-                    # Pindahkan file cover ke dalam folder album (base_folder_path)
-                    # agar ZIP handler memasukkannya ke dalam arsip.
+                    # Pindahkan file cover ke folder album agar masuk ZIP
                     if not os.path.exists(base_folder_path):
                         os.makedirs(base_folder_path, exist_ok=True)
                     
@@ -227,7 +221,6 @@ async def start_livephish(link: str, user: dict):
                     shutil.move(temp_path, new_cover_path)
                     
                     final_cover_path = new_cover_path
-                    LOGGER.info(f"Cover dipindahkan ke: {final_cover_path}")
         except Exception as e:
             LOGGER.error(f"Gagal download cover: {e}")
 
@@ -245,7 +238,7 @@ async def start_livephish(link: str, user: dict):
         'quality': livephish_manager.quality,
         'tempfolder': base_folder_path, 
         'type': 'album', 
-        'genre': genre,
+        'genre': genre, # Genre sekarang "" jika tidak ditemukan
         'copyright': copyright_txt,
         'label': label,
         'explicit': False
@@ -286,7 +279,7 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
-        # --- LOGIKA FOLDER DISC ---
+        # LOGIKA FOLDER DISC
         if int(base_meta['totalvolume']) > 1:
             disc_folder = os.path.join(base_meta['tempfolder'], f"Disc {disc_num}")
             if not os.path.exists(disc_folder):
