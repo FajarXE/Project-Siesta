@@ -18,7 +18,7 @@ from bot.logger import LOGGER
 # Regex ID LivePhish
 ID_REGEX = re.compile(r'(?:catalog/recording/|browse/music/0,|release/|show=)(\d+)')
 
-# Tag Branding (Untuk menimpa nugs.net)
+# Tag Branding
 BRANDING_TAG = "powered by livephish.com"
 
 def sanitize_name(name):
@@ -56,11 +56,10 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
-# --- PENGGANTI ITUNES: WEB SCRAPER ---
-async def fetch_og_image(url):
+# --- FUNGSI PENCARI COVER HD (WEB SCRAPER PINTAR) ---
+async def fetch_website_cover_hd(url):
     """
-    Scrape gambar OG (OpenGraph) langsung dari website LivePhish.
-    Ini solusi paling ampuh jika API mati dan iTunes dilarang.
+    Scrape gambar dari website LivePhish DAN mencoba mendapatkan resolusi asli.
     """
     try:
         headers = {
@@ -70,29 +69,62 @@ async def fetch_og_image(url):
             async with session.get(url) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    # Cari tag <meta property="og:image" content="...">
-                    match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html)
-                    if match:
-                        img_url = match.group(1)
-                        # Fix URL jika relatif
-                        if img_url.startswith("//"): img_url = "https:" + img_url
-                        elif img_url.startswith("/"): img_url = "https://www.livephish.com" + img_url
-                        return img_url
+                    
+                    # 1. Cari semua link gambar static.livephish.com
+                    # Pattern: https://static.livephish.com/... .jpg
+                    matches = re.findall(r'(https?://static\.livephish\.com/[^"\']+\.jpg)', html)
+                    
+                    candidate = None
+                    
+                    # Prioritaskan gambar yang namanya mirip 'show' atau 'release'
+                    for m in matches:
+                        if "show" in m or "release" in m or "pix" in m:
+                            candidate = m
+                            break
+                    
+                    # Jika tidak ada yang spesifik, ambil yang pertama ditemukan (biasanya OG Image)
+                    if not candidate:
+                        # Fallback ke OG Image
+                        match_og = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html)
+                        if match_og:
+                            candidate = match_og.group(1)
+
+                    if candidate:
+                        # --- TEKNIK UPSCALING URL ---
+                        # URL seringkali berbentuk: .../nama_200.jpg (Kecil/Buram)
+                        # Kita coba hapus _200, _400, _v, dll untuk dapat yang asli.
+                        
+                        # 1. Coba versi bersih (hapus semua antara nama dan .jpg)
+                        # Contoh: file_200.jpg -> file.jpg
+                        hd_url = re.sub(r'(_\d+|_\w+)(\.jpg)$', r'\2', candidate)
+                        
+                        # Cek apakah URL HD ini hidup?
+                        try:
+                            async with session.head(hd_url) as hd_resp:
+                                if hd_resp.status == 200:
+                                    LOGGER.info(f"Cover HD Ditemukan: {hd_url}")
+                                    return hd_url
+                        except:
+                            pass
+                        
+                        # Jika versi HD mati, gunakan candidate awal (mungkin sudah HD atau terbaik yg ada)
+                        if candidate.startswith("//"): candidate = "https:" + candidate
+                        LOGGER.info(f"Cover Website Ditemukan: {candidate}")
+                        return candidate
+
     except Exception as e:
-        LOGGER.warning(f"Gagal scrape OG Image: {e}")
+        LOGGER.warning(f"Gagal scrape Cover Website: {e}")
     return None
 
 async def clean_audio_metadata(input_path):
     """
     OPSI NUKLIR: Menghapus total metadata bawaan (powered by nugs.net).
-    Wajib dilakukan sebelum set_metadata.
     """
     temp_output = input_path + ".clean.m4a"
     if input_path.endswith(".flac"):
         temp_output = input_path + ".clean.flac"
         
     try:
-        # -map_metadata -1 : Hapus semua metadata
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
             "-map_metadata", "-1", "-map_metadata:g", "-1",
@@ -167,15 +199,15 @@ async def start_livephish(link: str, user: dict):
     if len(folder_name) > 150: folder_name = folder_name[:150]
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
-    # --- STRATEGI DOWNLOAD COVER ART (TANPA ITUNES) ---
+    # --- STRATEGI DOWNLOAD COVER HD ---
+    # Scrape Website LivePhish -> Upscale URL -> API -> Kosong
     cover_url = None
     
-    # 1. Scrape Website LivePhish (OG Image) - Prioritas Utama
-    LOGGER.info("Mencari cover art via Web Scraper (LivePhish)...")
-    cover_url = await fetch_og_image(link)
+    LOGGER.info("Mencari cover art HD via Web Scraper...")
+    cover_url = await fetch_website_cover_hd(link)
         
     if not cover_url:
-        # 2. Coba API LivePhish (Fallback jika Scrape gagal)
+        # Fallback API LivePhish
         pics = resp.get("pics", [])
         if pics:
             pics.sort(key=lambda x: x.get("width", 0), reverse=True)
@@ -209,7 +241,7 @@ async def start_livephish(link: str, user: dict):
         'artist': artist_name,
         'year': year,
         'date': release_date,
-        'cover': final_cover_path, # Hasil scrape/API
+        'cover': final_cover_path,
         'totaltracks': str(total_tracks),
         'totalvolume': str(max_disc),
         'provider': 'LivePhish',
@@ -238,7 +270,6 @@ async def start_livephish(link: str, user: dict):
         try: duration = int(float(t.get("length", 0)))
         except: duration = 0
             
-        # Metadata Track
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
 
@@ -268,7 +299,6 @@ async def start_livephish(link: str, user: dict):
             continue
 
         # 2. BERSIHKAN METADATA NUGS.NET (Opsi Nuklir)
-        # Wajib dilakukan untuk menghilangkan tag bawaan
         await clean_audio_metadata(full_file_path)
 
         # 3. SET METADATA
@@ -287,11 +317,10 @@ async def start_livephish(link: str, user: dict):
             'genre': genre
         })
 
-        # Branding (Timpa semua kemungkinan key)
+        # Branding
         branding_dict = {
             'comment': BRANDING_TAG, 'COMMENT': BRANDING_TAG,
             'description': BRANDING_TAG, 'DESCRIPTION': BRANDING_TAG,
-            'long_description': BRANDING_TAG, 'LONG_DESCRIPTION': BRANDING_TAG,
             'encoded_by': BRANDING_TAG, 'ENCODED_BY': BRANDING_TAG
         }
         track_meta.update(branding_dict)
@@ -310,10 +339,8 @@ async def start_livephish(link: str, user: dict):
             track_meta['COPYRIGHT'] = copyright_txt
             track_meta['DATE'] = release_date
             
-            # Fallback
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['totaltracks'] = str(total_tracks)
-            track_meta['disctotal'] = str(max_disc)
             
         elif ext == ".m4a":
             track_meta['discnumber'] = str(disc_num)
@@ -348,7 +375,7 @@ async def start_livephish(link: str, user: dict):
                 except Exception as e:
                     LOGGER.error(f"Gagal poster: {e}")
             else:
-                 LOGGER.warning("Art Poster dilewati: Cover tidak ditemukan (Web Scraper & API gagal).")
+                 LOGGER.warning("Art Poster dilewati: Cover tidak ditemukan.")
 
         await edit_message(user['bot_msg'], f"Mengunggah...\n{album_name}")
         await album_upload(base_meta, user)
