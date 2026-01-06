@@ -96,7 +96,7 @@ def find_deep_genre(data):
             if found: return found
     return ""
 
-# --- FUNGSI HITUNG DURASI ASLI (FFPROBE) ---
+# --- FUNGSI AUDIO TEKNIS ---
 async def get_audio_duration(file_path):
     """Menggunakan FFprobe untuk membaca durasi file ASLI."""
     try:
@@ -114,6 +114,62 @@ async def get_audio_duration(file_path):
     except Exception as e:
         LOGGER.warning(f"Gagal get duration ffprobe: {e}")
     return 0
+
+async def clean_audio_metadata(input_path):
+    """OPSI NUKLIR: Menghapus total metadata bawaan (sebelum tagging)."""
+    temp_output = input_path + ".clean.m4a"
+    if input_path.endswith(".flac"):
+        temp_output = input_path + ".clean.flac"
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-map_metadata", "-1", "-map_metadata:g", "-1",
+            "-c", "copy", temp_output
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
+            os.replace(temp_output, input_path)
+            return True
+    except:
+        if os.path.exists(temp_output): os.remove(temp_output)
+    return False
+
+async def fix_m4a_stats(input_path):
+    """
+    LANGKAH TERAKHIR (KHUSUS AAC/M4A):
+    Jalankan ini SETELAH tagging selesai.
+    Fungsi ini membangun ulang struktur atom MP4 (btrt/bitrate box) 
+    yang sering hilang saat proses tagging oleh Mutagen.
+    Ini memunculkan kembali 'Maximum Bitrate' di MediaInfo.
+    """
+    if not input_path.endswith(".m4a"):
+        return
+
+    temp_output = input_path + ".stats.m4a"
+    try:
+        # -movflags +faststart memaksa FFmpeg menghitung ulang stats dan menaruhnya di header
+        # Kita TIDAK pakai -map_metadata -1 disini agar tag yang barusan ditulis tidak hilang
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            temp_output
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+        
+        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
+            os.replace(temp_output, input_path)
+            return True
+    except Exception as e:
+        LOGGER.error(f"Gagal fix m4a stats: {e}")
+        if os.path.exists(temp_output): os.remove(temp_output)
+    return False
 
 # --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
@@ -148,45 +204,6 @@ async def fetch_website_cover_hd(url):
     except Exception as e:
         LOGGER.warning(f"Gagal scrape Cover Website: {e}")
     return None
-
-async def clean_audio_metadata(input_path):
-    """
-    OPSI NUKLIR + FASTSTART: 
-    Menghapus metadata bawaan tapi menyusun ulang header (moov atom) 
-    agar 'Maximum Bitrate' dan statistik lainnya tertulis kembali.
-    """
-    temp_output = input_path + ".clean.m4a"
-    if input_path.endswith(".flac"):
-        temp_output = input_path + ".clean.flac"
-    
-    try:
-        cmd = [
-            "ffmpeg", "-y", "-i", input_path,
-            "-map_metadata", "-1", "-map_metadata:g", "-1",
-            "-c", "copy",
-            "-movflags", "+faststart", # <--- FIX: Memaksa update header stats (Bitrate)
-            temp_output
-        ]
-        
-        # Untuk FLAC tidak pakai movflags
-        if input_path.endswith(".flac"):
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-map_metadata", "-1", "-map_metadata:g", "-1",
-                "-c", "copy",
-                temp_output
-            ]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
-        if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
-            os.replace(temp_output, input_path)
-            return True
-    except:
-        if os.path.exists(temp_output): os.remove(temp_output)
-    return False
 
 async def start_livephish(link: str, user: dict):
     client = user.get('livephish_api')
@@ -340,20 +357,20 @@ async def start_livephish(link: str, user: dict):
         fname = f"{track_num_padded} - {clean_title}{ext}"
         full_file_path = os.path.join(current_save_path, fname)
         
-        # Download
+        # 1. Download
         err = await download_file(stream_url, full_file_path)
         if err:
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # Nuklir Metadata + Faststart (Fix Max Bitrate)
+        # 2. Nuklir Metadata (Cleaning Nugs.net)
         await clean_audio_metadata(full_file_path)
 
-        # Hitung Durasi Real
+        # 3. Hitung Durasi Real
         real_duration = await get_audio_duration(full_file_path)
         final_duration = real_duration if real_duration > 0 else api_duration
 
-        # Set Metadata
+        # 4. Set Metadata (Tagging via Mutagen)
         track_meta = base_meta.copy()
         track_meta.update({
             'title': title,
@@ -376,6 +393,7 @@ async def start_livephish(link: str, user: dict):
         }
         track_meta.update(branding_dict)
 
+        # Logika Metadata spesifik Format
         if ext == ".flac":
             track_meta['discnumber'] = f"{disc_num}/{max_disc}"
             track_meta['DISCNUMBER'] = f"{disc_num}/{max_disc}"
@@ -404,6 +422,12 @@ async def start_livephish(link: str, user: dict):
             track_meta['date'] = release_date
 
         await set_metadata(track_meta, user['user_id'])
+        
+        # 5. FIX STATS M4A (Langkah Terakhir Penting!)
+        # Jalankan FFmpeg sekali lagi untuk menulis ulang atom Bitrate yang mungkin hilang saat set_metadata
+        if ext == ".m4a":
+            await fix_m4a_stats(full_file_path)
+
         completed_tracks.append(track_meta)
 
     # --- UPLOAD ---
