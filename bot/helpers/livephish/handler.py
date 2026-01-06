@@ -58,9 +58,8 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
-# --- FUNGSI DEEP SEARCH (GENERIC) ---
 def find_deep_value(data, target_keys):
-    """Mencari nilai string secara rekursif."""
+    """Mencari nilai secara rekursif dalam JSON."""
     if isinstance(target_keys, str): target_keys = [target_keys]
     if isinstance(data, dict):
         for k, v in data.items():
@@ -72,46 +71,6 @@ def find_deep_value(data, target_keys):
         for item in data:
             found = find_deep_value(item, target_keys)
             if found: return found
-    return ""
-
-# --- FUNGSI DEEP SEARCH KHUSUS GENRE ---
-def find_deep_genre(data):
-    """
-    Mencari Genre secara rekursif dengan penanganan List/Dict yang pintar.
-    Prioritas: styles -> genres -> genre -> tags
-    """
-    target_keys = ["styles", "genres", "genre", "style", "tags", "subGenre"]
-    
-    if isinstance(data, dict):
-        # Cek setiap key di level ini
-        for k, v in data.items():
-            if k.lower() in target_keys and v:
-                # KASUS 1: List (Paling umum untuk genre)
-                if isinstance(v, list) and len(v) > 0:
-                    first_item = v[0]
-                    # Jika list berisi Dict (cth: [{'id':1, 'name':'Rock'}])
-                    if isinstance(first_item, dict):
-                        g_name = first_item.get("name") or first_item.get("description")
-                        if g_name: return str(g_name)
-                    # Jika list berisi String (cth: ['Rock', 'Pop'])
-                    else:
-                        return str(first_item)
-                
-                # KASUS 2: String Langsung
-                elif isinstance(v, str):
-                    return v
-                    
-            # Jika tidak ketemu di level ini, cari di anak-anaknya (Recurse)
-            # Hindari recurse ke string/int
-            if isinstance(v, (dict, list)):
-                found = find_deep_genre(v)
-                if found: return found
-
-    elif isinstance(data, list):
-        for item in data:
-            found = find_deep_genre(item)
-            if found: return found
-            
     return ""
 
 # --- TEKNIK BRUTE FORCE COVER HD ---
@@ -198,22 +157,36 @@ async def start_livephish(link: str, user: dict):
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
-    # --- DEEP SEARCH: GENRE ---
-    # Mencari genre sampai ketemu di seluruh struktur JSON
-    genre = find_deep_genre(resp)
+    # Genre
+    genre = "" 
+    if resp.get("styles") and isinstance(resp["styles"], list) and len(resp["styles"]) > 0:
+        genre = str(resp["styles"][0])
+    elif resp.get("genres") and isinstance(resp["genres"], list) and len(resp["genres"]) > 0:
+        g = resp["genres"][0]
+        genre = g.get("name", "") if isinstance(g, dict) else str(g)
+    elif resp.get("genre"):
+        genre = str(resp.get("genre"))
+
+    # --- LOGIKA FINAL COPYRIGHT (ANTI-HILANG) ---
+    # 1. Cari Data Asli
+    real_copyright = find_deep_value(resp, ["copyright", "copyRight", "rights", "license"])
+    # 2. Cari Label
+    real_label = find_deep_value(resp, ["recordLabel", "label"])
     
-    # --- DEEP SEARCH: COPYRIGHT & LABEL ---
-    album_copyright = find_deep_value(resp, ["copyright", "copyRight", "rights", "license"])
-    label = find_deep_value(resp, ["recordLabel", "label"])
+    final_copyright = ""
+    
+    if real_copyright:
+        # Jika data asli ketemu, pakai itu.
+        final_copyright = real_copyright
+    elif real_label:
+        # Jika data asli kosong, tapi ada Label -> Gunakan Label dengan format standar
+        final_copyright = f"© {year} {real_label}"
+    else:
+        # Jika SEMUA kosong (Permintaan Anda) -> Gunakan NAMA ARTIS
+        final_copyright = f"© {year} {artist_name}"
 
-    # Fallback Logic untuk Copyright
-    if not album_copyright and label:
-        album_copyright = f"© {year} {label}"
-    elif not album_copyright:
-        # Pilihan terakhir: Artist
-        album_copyright = f"© {year} {artist_name}"
-
-    final_label = label if label else artist_name
+    # Gunakan label yang ditemukan atau fallback ke Artist jika label pun kosong
+    final_label = real_label if real_label else artist_name
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -272,8 +245,8 @@ async def start_livephish(link: str, user: dict):
         'quality': livephish_manager.quality,
         'tempfolder': base_folder_path, 
         'type': 'album', 
-        'genre': genre, # Hasil Deep Search
-        'copyright': album_copyright,
+        'genre': genre,
+        'copyright': final_copyright, # PASTI TERISI
         'label': final_label,
         'explicit': False
     }
@@ -297,10 +270,12 @@ async def start_livephish(link: str, user: dict):
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
 
-        # Copyright per track
-        track_c = find_deep_value(t, ["copyright", "copyRight", "rights", "license"])
-        if not track_c:
-            track_c = album_copyright
+        # Cek Copyright Track Spesifik (Deep Search lagi)
+        track_c_raw = find_deep_value(t, ["copyright", "copyRight", "rights", "license"])
+        if track_c_raw:
+            track_copyright = track_c_raw
+        else:
+            track_copyright = final_copyright # Fallback ke Album Copyright (Artist/Label)
 
         prog_txt = get_progress_bar_text(i+1, total_tracks, title, "Album")
         try: await edit_message(user['bot_msg'], prog_txt)
@@ -373,8 +348,9 @@ async def start_livephish(link: str, user: dict):
             track_meta['ISRC'] = isrc_val
             track_meta['GENRE'] = genre
             
-            track_meta['COPYRIGHT'] = track_c
-            track_meta['cpr'] = track_c
+            # --- COPYRIGHT SETTING ---
+            track_meta['COPYRIGHT'] = track_copyright
+            track_meta['cpr'] = track_copyright
             
             track_meta['DATE'] = release_date
             track_meta['totaldiscs'] = str(max_disc)
@@ -386,7 +362,8 @@ async def start_livephish(link: str, user: dict):
             track_meta['tracknumber'] = str(raw_track_num)
             track_meta['totaltracks'] = str(total_tracks)
             
-            track_meta['copyright'] = track_c
+            # --- COPYRIGHT SETTING ---
+            track_meta['copyright'] = track_copyright
             
             track_meta['label'] = final_label
             track_meta['composer'] = composer
