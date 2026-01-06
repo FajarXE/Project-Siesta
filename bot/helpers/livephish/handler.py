@@ -4,6 +4,7 @@ import re
 import os
 import aiohttp
 import asyncio
+import urllib.parse
 from datetime import datetime
 from config import Config
 from bot.helpers.livephish.manager import livephish_manager
@@ -56,91 +57,59 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
-# --- FUNGSI PENCARI COVER HD (WEB SCRAPER PINTAR) ---
+# --- WEB SCRAPER COVER HD ---
 async def fetch_website_cover_hd(url):
-    """
-    Scrape gambar dari website LivePhish DAN mencoba mendapatkan resolusi asli.
-    """
+    """Scrape gambar dari website LivePhish."""
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
         }
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    
-                    # 1. Cari semua link gambar static.livephish.com
-                    # Pattern: https://static.livephish.com/... .jpg
                     matches = re.findall(r'(https?://static\.livephish\.com/[^"\']+\.jpg)', html)
-                    
                     candidate = None
-                    
-                    # Prioritaskan gambar yang namanya mirip 'show' atau 'release'
                     for m in matches:
                         if "show" in m or "release" in m or "pix" in m:
                             candidate = m
                             break
-                    
-                    # Jika tidak ada yang spesifik, ambil yang pertama ditemukan (biasanya OG Image)
                     if not candidate:
-                        # Fallback ke OG Image
                         match_og = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html)
-                        if match_og:
-                            candidate = match_og.group(1)
+                        if match_og: candidate = match_og.group(1)
 
                     if candidate:
-                        # --- TEKNIK UPSCALING URL ---
-                        # URL seringkali berbentuk: .../nama_200.jpg (Kecil/Buram)
-                        # Kita coba hapus _200, _400, _v, dll untuk dapat yang asli.
-                        
-                        # 1. Coba versi bersih (hapus semua antara nama dan .jpg)
-                        # Contoh: file_200.jpg -> file.jpg
+                        # Hapus suffix ukuran untuk dapat HD
                         hd_url = re.sub(r'(_\d+|_\w+)(\.jpg)$', r'\2', candidate)
-                        
-                        # Cek apakah URL HD ini hidup?
                         try:
                             async with session.head(hd_url) as hd_resp:
-                                if hd_resp.status == 200:
-                                    LOGGER.info(f"Cover HD Ditemukan: {hd_url}")
-                                    return hd_url
-                        except:
-                            pass
-                        
-                        # Jika versi HD mati, gunakan candidate awal (mungkin sudah HD atau terbaik yg ada)
+                                if hd_resp.status == 200: return hd_url
+                        except: pass
                         if candidate.startswith("//"): candidate = "https:" + candidate
-                        LOGGER.info(f"Cover Website Ditemukan: {candidate}")
                         return candidate
-
     except Exception as e:
         LOGGER.warning(f"Gagal scrape Cover Website: {e}")
     return None
 
 async def clean_audio_metadata(input_path):
-    """
-    OPSI NUKLIR: Menghapus total metadata bawaan (powered by nugs.net).
-    """
+    """OPSI NUKLIR: Menghapus total metadata bawaan."""
     temp_output = input_path + ".clean.m4a"
     if input_path.endswith(".flac"):
         temp_output = input_path + ".clean.flac"
-        
     try:
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
             "-map_metadata", "-1", "-map_metadata:g", "-1",
-            "-c", "copy",
-            temp_output
+            "-c", "copy", temp_output
         ]
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         await process.communicate()
-        
         if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
             os.replace(temp_output, input_path)
             return True
-    except Exception as e:
-        LOGGER.error(f"Gagal cleaning metadata: {e}")
+    except:
         if os.path.exists(temp_output): os.remove(temp_output)
     return False
 
@@ -164,7 +133,6 @@ async def start_livephish(link: str, user: dict):
     album_name = sanitize_name(raw_album)
     artist_name = sanitize_name(raw_artist)
     
-    # Tanggal
     raw_date = ""
     for k in ["performanceDate", "releaseDateFormatted", "performanceDateFormatted", "performanceDateYear"]:
         if resp.get(k):
@@ -173,7 +141,6 @@ async def start_livephish(link: str, user: dict):
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
-    # Genre Dinamis
     genre = "Rock"
     if resp.get("styles") and isinstance(resp["styles"], list) and len(resp["styles"]) > 0:
         genre = str(resp["styles"][0])
@@ -183,13 +150,13 @@ async def start_livephish(link: str, user: dict):
     elif resp.get("genre"):
         genre = str(resp.get("genre"))
 
-    # Label
     label = resp.get("recordLabel") or resp.get("label") or resp.get("copyright") or "LivePhish"
     copyright_txt = resp.get("copyright") or f"© {year} {label}"
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
 
+    # Hitung Max Disc untuk menentukan perlu subfolder atau tidak
     max_disc = 1
     for t in tracks:
         d = t.get("discNum", 1)
@@ -199,28 +166,22 @@ async def start_livephish(link: str, user: dict):
     if len(folder_name) > 150: folder_name = folder_name[:150]
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
-    # --- STRATEGI DOWNLOAD COVER HD ---
-    # Scrape Website LivePhish -> Upscale URL -> API -> Kosong
+    # --- DOWNLOAD COVER HD ---
     cover_url = None
-    
     LOGGER.info("Mencari cover art HD via Web Scraper...")
     cover_url = await fetch_website_cover_hd(link)
         
     if not cover_url:
-        # Fallback API LivePhish
         pics = resp.get("pics", [])
         if pics:
             pics.sort(key=lambda x: x.get("width", 0), reverse=True)
             for p in pics:
                 if p.get("url"): 
                     raw_url = p.get("url")
-                    if raw_url.startswith("/"):
-                        cover_url = "https://static.livephish.com" + raw_url
-                    else:
-                        cover_url = raw_url
+                    if raw_url.startswith("/"): cover_url = "https://static.livephish.com" + raw_url
+                    else: cover_url = raw_url
                     break
 
-    # Download Cover
     final_cover_path = ""
     if cover_url:
         try:
@@ -233,7 +194,6 @@ async def start_livephish(link: str, user: dict):
         except Exception as e:
             LOGGER.error(f"Gagal download cover: {e}")
 
-    # Metadata Base
     base_meta = {
         'title': album_name,
         'album': album_name,
@@ -288,20 +248,33 @@ async def start_livephish(link: str, user: dict):
         if livephish_manager.quality == "FLAC": ext = ".flac"
 
         clean_title = sanitize_name(title)
-        fname = f"{track_num_padded} - {clean_title}{ext}"
-        full_file_path = os.path.join(base_meta['tempfolder'], fname)
-        base_meta['folderpath'] = base_meta['tempfolder']
+        
+        # --- LOGIKA FOLDER DISC ---
+        # Jika album lebih dari 1 Disc, buat subfolder "Disc X"
+        if int(base_meta['totalvolume']) > 1:
+            disc_folder = os.path.join(base_meta['tempfolder'], f"Disc {disc_num}")
+            if not os.path.exists(disc_folder):
+                os.makedirs(disc_folder, exist_ok=True)
+            current_save_path = disc_folder
+        else:
+            current_save_path = base_meta['tempfolder']
 
-        # 1. DOWNLOAD
+        # --- NAMA FILE MURNI (SESUAI PERMINTAAN) ---
+        # 01 - Judul Lagu.m4a (Tanpa nomor disc di depan)
+        fname = f"{track_num_padded} - {clean_title}{ext}"
+        
+        full_file_path = os.path.join(current_save_path, fname)
+        
+        # Download
         err = await download_file(stream_url, full_file_path)
         if err:
             LOGGER.error(f"Download error {title}: {err}")
             continue
 
-        # 2. BERSIHKAN METADATA NUGS.NET (Opsi Nuklir)
+        # Nuklir Metadata
         await clean_audio_metadata(full_file_path)
 
-        # 3. SET METADATA
+        # Set Metadata
         track_meta = base_meta.copy()
         track_meta.update({
             'title': title,
@@ -317,7 +290,6 @@ async def start_livephish(link: str, user: dict):
             'genre': genre
         })
 
-        # Branding
         branding_dict = {
             'comment': BRANDING_TAG, 'COMMENT': BRANDING_TAG,
             'description': BRANDING_TAG, 'DESCRIPTION': BRANDING_TAG,
@@ -330,7 +302,6 @@ async def start_livephish(link: str, user: dict):
             track_meta['DISCNUMBER'] = f"{disc_num}/{max_disc}"
             track_meta['tracknumber'] = f"{raw_track_num}/{total_tracks}"
             track_meta['TRACKNUMBER'] = f"{raw_track_num}/{total_tracks}"
-            
             track_meta['ORGANIZATION'] = label
             track_meta['LABEL'] = label
             track_meta['COMPOSER'] = composer
@@ -338,7 +309,6 @@ async def start_livephish(link: str, user: dict):
             track_meta['GENRE'] = genre
             track_meta['COPYRIGHT'] = copyright_txt
             track_meta['DATE'] = release_date
-            
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['totaltracks'] = str(total_tracks)
             
@@ -347,7 +317,6 @@ async def start_livephish(link: str, user: dict):
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['tracknumber'] = str(raw_track_num)
             track_meta['totaltracks'] = str(total_tracks)
-            
             track_meta['copyright'] = copyright_txt
             track_meta['label'] = label
             track_meta['composer'] = composer
@@ -360,6 +329,8 @@ async def start_livephish(link: str, user: dict):
     # --- UPLOAD ---
     if completed_tracks:
         base_meta['tracks'] = completed_tracks
+        # Untuk ZIP handler, kita tetap gunakan folder utama (tempfolder)
+        # Zip handler akan otomatis men-zip folder tersebut beserta subfolder Disc-nya
         base_meta['folderpath'] = base_meta['tempfolder']
         
         playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
@@ -374,8 +345,6 @@ async def start_livephish(link: str, user: dict):
                     base_meta['poster_msg'] = await post_art_poster(user, base_meta)
                 except Exception as e:
                     LOGGER.error(f"Gagal poster: {e}")
-            else:
-                 LOGGER.warning("Art Poster dilewati: Cover tidak ditemukan.")
 
         await edit_message(user['bot_msg'], f"Mengunggah...\n{album_name}")
         await album_upload(base_meta, user)
