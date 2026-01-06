@@ -58,30 +58,19 @@ def format_date_standard(date_str):
         except ValueError: continue
     return date_str.replace("/", "-")
 
-# --- FUNGSI DEEP SEARCH (PENCARI KUNCI TERSEMBUNYI) ---
 def find_deep_value(data, target_keys):
-    """
-    Mencari nilai secara rekursif dalam dictionary/list JSON yang kompleks.
-    Berguna jika Copyright tersembunyi di dalam sub-object.
-    """
-    if isinstance(target_keys, str):
-        target_keys = [target_keys]
-        
-    # Cek level saat ini
+    """Mencari nilai secara rekursif dalam JSON."""
+    if isinstance(target_keys, str): target_keys = [target_keys]
     if isinstance(data, dict):
         for k, v in data.items():
-            # Jika key cocok dengan salah satu target (case insensitive)
             if k.lower() in [tk.lower() for tk in target_keys] and v:
                 return str(v)
-            # Jika belum ketemu, cari di anak-anaknya (recursive)
             found = find_deep_value(v, target_keys)
             if found: return found
-            
     elif isinstance(data, list):
         for item in data:
             found = find_deep_value(item, target_keys)
             if found: return found
-            
     return ""
 
 # --- TEKNIK BRUTE FORCE COVER HD ---
@@ -95,13 +84,11 @@ async def fetch_website_cover_hd(url):
                     html = await resp.text()
                     pattern = r'(https?://(?:static\.livephish\.com|s3\.amazonaws\.com|static\.nugs\.net)/[^"\']+\.jpg)'
                     matches = re.findall(pattern, html)
-                    
                     candidate = None
                     for m in matches:
                         if "shows" in m or "pix" in m or "assets" in m:
                             candidate = m
                             break 
-                    
                     if not candidate:
                         match_og = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html)
                         if match_og: candidate = match_og.group(1)
@@ -109,7 +96,6 @@ async def fetch_website_cover_hd(url):
                     if candidate:
                         if candidate.startswith("//"): candidate = "https:" + candidate
                         clean_url = re.sub(r'(_\d+|_v\d+|_mini|_med|_small|_large)(\.jpg)$', r'\2', candidate)
-                        
                         if clean_url != candidate:
                             LOGGER.info(f"Mencoba URL Master: {clean_url}")
                             try:
@@ -171,7 +157,7 @@ async def start_livephish(link: str, user: dict):
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
-    # Genre (No Fallback)
+    # Genre
     genre = "" 
     if resp.get("styles") and isinstance(resp["styles"], list) and len(resp["styles"]) > 0:
         genre = str(resp["styles"][0])
@@ -181,24 +167,29 @@ async def start_livephish(link: str, user: dict):
     elif resp.get("genre"):
         genre = str(resp.get("genre"))
 
+    # --- LOGIKA FINAL COPYRIGHT (ANTI-HILANG) ---
+    # 1. Cari Data Asli
+    real_copyright = find_deep_value(resp, ["copyright", "copyRight", "rights", "license"])
+    # 2. Cari Label
+    real_label = find_deep_value(resp, ["recordLabel", "label"])
+    
+    final_copyright = ""
+    
+    if real_copyright:
+        # Jika data asli ketemu, pakai itu.
+        final_copyright = real_copyright
+    elif real_label:
+        # Jika data asli kosong, tapi ada Label -> Gunakan Label dengan format standar
+        final_copyright = f"© {year} {real_label}"
+    else:
+        # Jika SEMUA kosong (Permintaan Anda) -> Gunakan NAMA ARTIS
+        final_copyright = f"© {year} {artist_name}"
+
+    # Gunakan label yang ditemukan atau fallback ke Artist jika label pun kosong
+    final_label = real_label if real_label else artist_name
+
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
-
-    # --- DEEP SEARCH COPYRIGHT & LABEL ---
-    # Kita cari 'copyright' di SELURUH struktur JSON response
-    # Prioritas keys: copyright, copyRight, rights, license
-    album_copyright = find_deep_value(resp, ["copyright", "copyRight", "rights", "license"])
-    
-    # Kita cari 'label' di SELURUH struktur JSON response
-    # Prioritas keys: recordLabel, label
-    label = find_deep_value(resp, ["recordLabel", "label"])
-
-    # Logika Terakhir: Jika Copyright masih kosong, TAPI Label ada
-    # Maka Label adalah Copyright Holder (Standard Industri)
-    # Tapi kita biarkan kosong jika user memang tidak mau hasil 'tebakan'
-    if not album_copyright and label:
-        album_copyright = label
-
     max_disc = 1
     for t in tracks:
         d = t.get("discNum", 1)
@@ -255,8 +246,8 @@ async def start_livephish(link: str, user: dict):
         'tempfolder': base_folder_path, 
         'type': 'album', 
         'genre': genre,
-        'copyright': album_copyright,
-        'label': label,
+        'copyright': final_copyright, # PASTI TERISI
+        'label': final_label,
         'explicit': False
     }
     
@@ -279,10 +270,12 @@ async def start_livephish(link: str, user: dict):
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
 
-        # Copyright per track (Cek Deep Search di object track)
-        track_c = find_deep_value(t, ["copyright", "copyRight", "license"])
-        if not track_c:
-            track_c = album_copyright # Fallback ke album
+        # Cek Copyright Track Spesifik (Deep Search lagi)
+        track_c_raw = find_deep_value(t, ["copyright", "copyRight", "rights", "license"])
+        if track_c_raw:
+            track_copyright = track_c_raw
+        else:
+            track_copyright = final_copyright # Fallback ke Album Copyright (Artist/Label)
 
         prog_txt = get_progress_bar_text(i+1, total_tracks, title, "Album")
         try: await edit_message(user['bot_msg'], prog_txt)
@@ -300,7 +293,7 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
-        # Logika Folder Disc (Pemisahan)
+        # Logika Folder Disc
         if int(base_meta['totalvolume']) > 1:
             disc_folder = os.path.join(base_meta['tempfolder'], f"Disc {disc_num}")
             if not os.path.exists(disc_folder):
@@ -333,7 +326,7 @@ async def start_livephish(link: str, user: dict):
             'extension': ext.replace(".", ""),
             'isrc': isrc_val,
             'composer': composer,
-            'label': label,
+            'label': final_label,
             'genre': genre
         })
 
@@ -349,14 +342,15 @@ async def start_livephish(link: str, user: dict):
             track_meta['DISCNUMBER'] = f"{disc_num}/{max_disc}"
             track_meta['tracknumber'] = f"{raw_track_num}/{total_tracks}"
             track_meta['TRACKNUMBER'] = f"{raw_track_num}/{total_tracks}"
-            track_meta['ORGANIZATION'] = label
-            track_meta['LABEL'] = label
+            track_meta['ORGANIZATION'] = final_label
+            track_meta['LABEL'] = final_label
             track_meta['COMPOSER'] = composer
             track_meta['ISRC'] = isrc_val
             track_meta['GENRE'] = genre
             
-            track_meta['COPYRIGHT'] = track_c
-            track_meta['cpr'] = track_c
+            # --- COPYRIGHT SETTING ---
+            track_meta['COPYRIGHT'] = track_copyright
+            track_meta['cpr'] = track_copyright
             
             track_meta['DATE'] = release_date
             track_meta['totaldiscs'] = str(max_disc)
@@ -368,9 +362,10 @@ async def start_livephish(link: str, user: dict):
             track_meta['tracknumber'] = str(raw_track_num)
             track_meta['totaltracks'] = str(total_tracks)
             
-            track_meta['copyright'] = track_c
+            # --- COPYRIGHT SETTING ---
+            track_meta['copyright'] = track_copyright
             
-            track_meta['label'] = label
+            track_meta['label'] = final_label
             track_meta['composer'] = composer
             track_meta['genre'] = genre
             track_meta['date'] = release_date
