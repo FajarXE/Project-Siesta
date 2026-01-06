@@ -61,7 +61,7 @@ def format_date_standard(date_str):
 # --- TEKNIK BRUTE FORCE COVER HD ---
 async def fetch_website_cover_hd(url):
     """
-    Mencari cover art resolusi MAKSIMAL dengan mencoba variasi URL.
+    Mencari cover art resolusi MAKSIMAL.
     """
     try:
         headers = {
@@ -72,7 +72,6 @@ async def fetch_website_cover_hd(url):
                 if resp.status == 200:
                     html = await resp.text()
                     
-                    # Regex luas untuk menangkap gambar dari berbagai CDN (LivePhish, Nugs, AWS)
                     pattern = r'(https?://(?:static\.livephish\.com|s3\.amazonaws\.com|static\.nugs\.net)/[^"\']+\.jpg)'
                     matches = re.findall(pattern, html)
                     
@@ -89,7 +88,6 @@ async def fetch_website_cover_hd(url):
                     if candidate:
                         if candidate.startswith("//"): candidate = "https:" + candidate
                         
-                        # Coba hapus suffix ukuran
                         clean_url = re.sub(r'(_\d+|_v\d+|_mini|_med|_small|_large)(\.jpg)$', r'\2', candidate)
                         
                         if clean_url != candidate:
@@ -100,9 +98,7 @@ async def fetch_website_cover_hd(url):
                                         return clean_url
                             except: pass
 
-                        LOGGER.warning("Gagal mendapatkan Master URL, menggunakan fallback original.")
                         return candidate
-
     except Exception as e:
         LOGGER.warning(f"Gagal scrape Cover Website: {e}")
     return None
@@ -157,22 +153,23 @@ async def start_livephish(link: str, user: dict):
     release_date = format_date_standard(raw_date)
     year = release_date[:4] if len(release_date) >= 4 else ""
 
-    # --- GENRE LOGIC (NO FALLBACK TO ROCK) ---
-    genre = "" # Default KOSONG
-    
+    # --- GENRE (NO FALLBACK) ---
+    genre = "" 
     if resp.get("styles") and isinstance(resp["styles"], list) and len(resp["styles"]) > 0:
         genre = str(resp["styles"][0])
     elif resp.get("genres") and isinstance(resp["genres"], list) and len(resp["genres"]) > 0:
         g = resp["genres"][0]
-        # Jika nama genre ada, pakai. Jika tidak, tetap kosong.
         genre = g.get("name", "") if isinstance(g, dict) else str(g)
     elif resp.get("genre"):
         genre = str(resp.get("genre"))
-        
-    # Hapus fallback paksa ke "Rock". Biarkan kosong jika source kosong.
 
-    label = resp.get("recordLabel") or resp.get("label") or resp.get("copyright") or "LivePhish"
-    copyright_txt = resp.get("copyright") or f"© {year} {label}"
+    # --- COPYRIGHT & LABEL (MURNI TANPA REKAYASA) ---
+    # Label: Ambil dari recordLabel atau label. Jangan default "LivePhish" jika kosong.
+    label = resp.get("recordLabel") or resp.get("label") or ""
+    
+    # Copyright: Ambil MURNI dari field copyright. 
+    # HAPUS logika "OR © {year} {label}" yang menyebabkan data tidak sesuai.
+    album_copyright = resp.get("copyright") or resp.get("copyRight") or ""
 
     tracks = resp.get("tracks", [])
     total_tracks = len(tracks)
@@ -185,7 +182,6 @@ async def start_livephish(link: str, user: dict):
     folder_name = f"{artist_name} - {album_name}"
     if len(folder_name) > 150: folder_name = folder_name[:150]
     
-    # Folder Album Utama
     base_folder_path = os.path.join(Config.DOWNLOAD_BASE_DIR, str(user['r_id']), folder_name)
 
     # --- DOWNLOAD COVER ---
@@ -210,16 +206,12 @@ async def start_livephish(link: str, user: dict):
             temp_path = await create_cover_file(
                 cover_url, {"itemid": album_id, "tempfolder": str(user['r_id']) + "/"}
             )
-            
             if temp_path and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
                  if "project-siesta" not in temp_path:
-                    # Pindahkan file cover ke folder album agar masuk ZIP
                     if not os.path.exists(base_folder_path):
                         os.makedirs(base_folder_path, exist_ok=True)
-                    
                     new_cover_path = os.path.join(base_folder_path, "cover.jpg")
                     shutil.move(temp_path, new_cover_path)
-                    
                     final_cover_path = new_cover_path
         except Exception as e:
             LOGGER.error(f"Gagal download cover: {e}")
@@ -238,8 +230,8 @@ async def start_livephish(link: str, user: dict):
         'quality': livephish_manager.quality,
         'tempfolder': base_folder_path, 
         'type': 'album', 
-        'genre': genre, # Genre sekarang "" jika tidak ditemukan
-        'copyright': copyright_txt,
+        'genre': genre,
+        'copyright': album_copyright, # Copyright Murni
         'label': label,
         'explicit': False
     }
@@ -263,6 +255,11 @@ async def start_livephish(link: str, user: dict):
         composer = t.get("author") or t.get("composer") or t.get("writer") or ""
         isrc_val = t.get("isrc") or t.get("ISRC") or ""
 
+        # --- COPYRIGHT PER TRACK ---
+        # Kadang track punya copyright sendiri yang beda dari album
+        # Jika kosong, baru gunakan copyright album
+        track_copyright = t.get("copyright") or album_copyright
+
         prog_txt = get_progress_bar_text(i+1, total_tracks, title, "Album")
         try: await edit_message(user['bot_msg'], prog_txt)
         except: pass
@@ -279,7 +276,6 @@ async def start_livephish(link: str, user: dict):
 
         clean_title = sanitize_name(title)
         
-        # LOGIKA FOLDER DISC
         if int(base_meta['totalvolume']) > 1:
             disc_folder = os.path.join(base_meta['tempfolder'], f"Disc {disc_num}")
             if not os.path.exists(disc_folder):
@@ -288,7 +284,6 @@ async def start_livephish(link: str, user: dict):
         else:
             current_save_path = base_meta['tempfolder']
 
-        # Nama File Murni
         fname = f"{track_num_padded} - {clean_title}{ext}"
         full_file_path = os.path.join(current_save_path, fname)
         
@@ -334,7 +329,11 @@ async def start_livephish(link: str, user: dict):
             track_meta['COMPOSER'] = composer
             track_meta['ISRC'] = isrc_val
             track_meta['GENRE'] = genre
-            track_meta['COPYRIGHT'] = copyright_txt
+            
+            # Gunakan Copyright Spesifik
+            track_meta['COPYRIGHT'] = track_copyright
+            track_meta['cpr'] = track_copyright 
+            
             track_meta['DATE'] = release_date
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['totaltracks'] = str(total_tracks)
@@ -344,7 +343,10 @@ async def start_livephish(link: str, user: dict):
             track_meta['totaldiscs'] = str(max_disc)
             track_meta['tracknumber'] = str(raw_track_num)
             track_meta['totaltracks'] = str(total_tracks)
-            track_meta['copyright'] = copyright_txt
+            
+            # Gunakan Copyright Spesifik
+            track_meta['copyright'] = track_copyright
+            
             track_meta['label'] = label
             track_meta['composer'] = composer
             track_meta['genre'] = genre
