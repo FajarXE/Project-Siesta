@@ -4,13 +4,14 @@ import os
 import re
 import aiohttp
 import asyncio
+from datetime import datetime # <-- Penting untuk konversi tanggal
 from urllib.parse import urlparse
 from bot.logger import LOGGER
 from bot.helpers.uploder import track_upload, artist_upload, album_upload
 from bot.helpers.metadata import set_metadata
 from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
-# Headers lengkap untuk menghindari 403 Forbidden
+# Headers lengkap
 ALGOLIA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0",
     "Accept": "*/*",
@@ -29,6 +30,8 @@ ALGOLIA_HEADERS = {
     "Cache-Control": "no-cache"
 }
 
+# --- HELPER FORMATTING ---
+
 def parse_genres(data_list):
     if not data_list:
         return None
@@ -42,8 +45,34 @@ def parse_genres(data_list):
                 extracted.append(str(name))
     return ", ".join(extracted) if extracted else None
 
+def format_date(timestamp):
+    """Mengubah Unix Timestamp (1767795770) menjadi YYYY-MM-DD"""
+    try:
+        if not timestamp:
+            return ""
+        # Timestamp BeatStars dalam detik
+        dt_object = datetime.fromtimestamp(int(timestamp))
+        return dt_object.strftime("%Y-%m-%d")
+    except Exception:
+        return str(timestamp) # Fallback jika gagal
+
+def clean_cover_url(url):
+    """Memperbaiki URL cover yang memiliki double slash //"""
+    if not url:
+        return "https://www.beatstars.com/assets/img/placeholder-track.png"
+    
+    # Ganti // menjadi / tapi jangan ganti https://
+    # Pisahkan protokol dulu
+    if "://" in url:
+        protocol, path = url.split("://", 1)
+        cleaned_path = path.replace("//", "/")
+        return f"{protocol}://{cleaned_path}"
+    else:
+        return url.replace("//", "/")
+
+# --- DOWNLOADER ---
+
 async def download_beatstars_file(url, path):
-    """Downloader khusus dengan headers."""
     try:
         folder = os.path.dirname(path)
         if folder:
@@ -72,7 +101,7 @@ async def start_beatstars(link: str, user: dict):
     path = parsed.path.strip("/")
     path_parts = path.split("/")
 
-    # Deteksi Mode Track vs Artist
+    # Mode Deteksi
     if path.startswith("beat/") or "/beat/" in link:
         track_regex = r'(\d+)$'
         track_match = re.search(track_regex, path)
@@ -92,7 +121,7 @@ async def start_beatstars(link: str, user: dict):
         LOGGER.info(f"BeatStars Artist Mode: {permalink}")
         await process_artist(user, permalink)
 
-# --- PROCESS SINGLE TRACK (SIMPLE MODE) ---
+# --- PROCESS SINGLE TRACK ---
 async def process_single_track(user, track_id):
     url = f"https://main.v2.beatstars.com/beat?id={track_id}&fields=details"
     
@@ -107,9 +136,12 @@ async def process_single_track(user, track_id):
 
     details = data['response']['data']['details']
     
-    cover_url = details.get('artwork', {}).get('original')
-    if not cover_url:
-        cover_url = "https://www.beatstars.com/assets/img/placeholder-track.png"
+    # FIX COVER URL
+    raw_cover = details.get('artwork', {}).get('original')
+    cover_url = clean_cover_url(raw_cover)
+
+    # FIX TANGGAL
+    release_date_fmt = format_date(details.get('release_date_time', 0))
 
     artist_name = details.get('musician', {}).get('display_name')
     track_title = details.get('title')
@@ -119,7 +151,6 @@ async def process_single_track(user, track_id):
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
     filepath = f"{folderpath}/{filename}"
 
-    # Metadata Lengkap (Termasuk field kosong agar tidak KeyError)
     meta = {
         'title': track_title,
         'artist': artist_name,
@@ -127,12 +158,13 @@ async def process_single_track(user, track_id):
         'album': 'BeatStars Single',
         'tracknumber': 1,
         'totaltracks': 1,
-        'volume': 1,        # <-- FIX Metadata
-        'totalvolume': 1,   # <-- FIX Metadata
-        'copyright': '',    # <-- FIX KeyError: 'copyright'
-        'isrc': '',         # <-- FIX KeyError: 'isrc'
-        'release_date': str(details.get('release_date_time', ''))[:10],
-        'cover': cover_url,
+        'volume': 1,
+        'totalvolume': 1,
+        'copyright': '',
+        'isrc': '',
+        'release_date': release_date_fmt, # <-- Tanggal yang sudah diformat
+        'date': release_date_fmt[:4] if release_date_fmt else '', # Tahun saja
+        'cover': cover_url, # <-- URL Cover yang sudah dibersihkan
         'provider': 'BeatStars',
         'type': 'track', 
         'itemid': str(details.get('track_id')),
@@ -147,20 +179,16 @@ async def process_single_track(user, track_id):
     if not stream_url:
         stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
 
-    LOGGER.info(f"Downloading Single Track: {track_title}")
+    LOGGER.info(f"Downloading Single Track: {track_title} | Date: {release_date_fmt}")
     
-    # Download
     err = await download_beatstars_file(stream_url, filepath)
     if err:
         raise Exception(f"Gagal download file: {err}")
 
-    # Tagging
     await set_metadata(meta, user['user_id'])
-    
-    # Upload (Simple Track Upload)
     await track_upload(meta, user)
 
-# --- PROCESS ARTIST (COLLECTION MODE) ---
+# --- PROCESS ARTIST ---
 async def process_artist(user, permalink):
     async with aiohttp.ClientSession(headers=ALGOLIA_HEADERS) as session:
         artist_url = f"https://main.v2.beatstars.com/musician?permalink={permalink}"
@@ -198,7 +226,14 @@ async def process_artist(user, permalink):
             for hit in hits:
                 track_id = hit.get('v2Id')
                 stream_url = f"https://main.v2.beatstars.com/stream?id={track_id}&return=audio"
-                cover_hit = hit.get('artwork', {}).get('sizes', {}).get('original') or "https://www.beatstars.com/assets/img/placeholder-track.png"
+                
+                # FIX COVER & DATE
+                raw_cover = hit.get('artwork', {}).get('sizes', {}).get('original')
+                cover_hit = clean_cover_url(raw_cover)
+                
+                # Timestamp di hits mungkin bernama releaseTimestamp
+                ts = hit.get('releaseTimestamp') or hit.get('releaseDate') or 0
+                date_fmt = format_date(ts)
 
                 all_tracks.append({
                     'title': hit.get('title'),
@@ -209,12 +244,14 @@ async def process_artist(user, permalink):
                     'itemid': str(track_id),
                     'url': stream_url,
                     'genre': parse_genres(hit.get('metadata', {}).get('genres', [])),
-                    'copyright': '', # <-- FIX KeyError
-                    'isrc': '',      # <-- FIX KeyError
+                    'copyright': '', 
+                    'isrc': '',
                     'volume': 1,
                     'totalvolume': 1,
                     'duration': '',
-                    'explicit': False
+                    'explicit': False,
+                    'release_date': date_fmt,
+                    'date': date_fmt[:4] if date_fmt else ''
                 })
 
             page += 1
@@ -223,7 +260,6 @@ async def process_artist(user, permalink):
     if not all_tracks:
         raise Exception("Tidak ada track ditemukan.")
 
-    # Setup Album Meta (Untuk Artist/Collection)
     folderpath = f"{user['bot_msg'].chat.id}-beatstars-artist-{permalink}"
     
     album_meta = {
