@@ -32,14 +32,17 @@ PLACEHOLDER_COVER = "https://www.beatstars.com/assets/img/placeholder-track.png"
 
 def parse_metadata_rich(data_list, tags_list=None, bpm=None):
     """
-    Menggabungkan Genre, Tags, dan BPM menjadi satu string Genre yang kaya info.
-    Contoh: "Hip Hop, Trap, Dark, Aggressive, 140 BPM"
+    Menggabungkan Genre, Tags, dan BPM secara aman.
+    Menangani input List maupun Dictionary untuk menghindari KeyError/TypeError.
     """
     extracted = []
     
     # 1. Masukkan Genre Utama
     if data_list:
-        for item in data_list:
+        # Jika data_list adalah dict, ambil values-nya
+        iterable = data_list.values() if isinstance(data_list, dict) else data_list
+        
+        for item in iterable:
             if isinstance(item, str):
                 extracted.append(item)
             elif isinstance(item, dict):
@@ -49,10 +52,25 @@ def parse_metadata_rich(data_list, tags_list=None, bpm=None):
     
     # 2. Masukkan Tags (Mood/Style)
     if tags_list:
-        # Ambil maksimal 5 tag agar tidak terlalu panjang
-        for tag in tags_list[:5]: 
-            if isinstance(tag, str) and tag not in extracted:
-                extracted.append(tag)
+        # FIX: Pastikan tags_list adalah LIST sebelum di-slice
+        if isinstance(tags_list, list):
+            # Ambil max 5 tag
+            for tag in tags_list[:5]: 
+                tag_name = ""
+                if isinstance(tag, str):
+                    tag_name = tag
+                elif isinstance(tag, dict):
+                    tag_name = tag.get('name', '')
+                
+                if tag_name and tag_name not in extracted:
+                    extracted.append(tag_name)
+        
+        # Jika ternyata dict, kita coba ambil values-nya tanpa slice dulu
+        elif isinstance(tags_list, dict):
+            for key, val in tags_list.items():
+                if len(extracted) >= 10: break # Limit total
+                if isinstance(val, str) and val not in extracted:
+                    extracted.append(val)
 
     # 3. Masukkan BPM
     if bpm:
@@ -87,6 +105,7 @@ async def download_local_cover(session, url, folderpath):
         async with session.get(url, allow_redirects=True, timeout=15) as resp:
             if resp.status == 200:
                 content = await resp.read()
+                if not content: return PLACEHOLDER_COVER
                 with open(filepath, 'wb') as f:
                     f.write(content)
                 return filepath
@@ -174,16 +193,15 @@ async def process_single_track(user, track_id):
         artist_name = details.get('musician', {}).get('display_name')
         track_title = details.get('title')
         bpm = details.get('bpm', 0)
-        tags = details.get('tags', [])
+        tags = details.get('tags', []) # Bisa list atau dict
         duration_ms = details.get('duration', 0)
         
-        # Copyright & Composer Fallback
         copyright_txt = details.get('copyright', '') 
         if not copyright_txt:
             year = release_date_fmt[:4] if release_date_fmt else "2024"
             copyright_txt = f"© {year} {artist_name}"
 
-        # Gabungkan Genre + Tags + BPM
+        # Parse Genre/Tags dengan aman
         rich_genre = parse_metadata_rich(details.get('genre', []), tags, bpm)
 
         filename = f"{artist_name} - {track_title}.mp3"
@@ -194,13 +212,13 @@ async def process_single_track(user, track_id):
             'title': track_title,
             'artist': artist_name,
             'albumartist': artist_name,
-            'composer': artist_name, # <-- Tambahan
-            'album': f"{artist_name} - Singles", # Lebih rapi daripada 'BeatStars Single'
+            'composer': artist_name,
+            'album': f"{artist_name} - Singles",
             'tracknumber': 1,
             'totaltracks': 1,
             'volume': 1,
             'totalvolume': 1,
-            'copyright': copyright_txt, # <-- Tambahan
+            'copyright': copyright_txt,
             'isrc': '',
             'release_date': release_date_fmt,
             'date': release_date_fmt[:4] if release_date_fmt else '',
@@ -208,10 +226,10 @@ async def process_single_track(user, track_id):
             'provider': 'BeatStars',
             'type': 'track', 
             'itemid': str(details.get('track_id')),
-            'genre': rich_genre, # <-- Genre sudah termasuk BPM & Tags
+            'genre': rich_genre,
             'duration': str(duration_ms), 
             'explicit': False,
-            'description': f"BPM: {bpm} | Downloaded from BeatStars | {track_id}", # <-- Info tambahan
+            'description': f"BPM: {bpm} | Downloaded from BeatStars | {track_id}",
             'filepath': filepath,
             'folderpath': folderpath
         }
@@ -278,10 +296,9 @@ async def process_artist(user, permalink):
                 ts = hit.get('releaseTimestamp') or hit.get('releaseDate') or 0
                 date_fmt = format_date(ts)
                 
-                # Metadata extraction
                 artist_name = hit.get('metadata', {}).get('artistName')
                 bpm = hit.get('metadata', {}).get('bpm', 0)
-                tags = hit.get('metadata', {}).get('tags', []) # Kadang tag ada di sini
+                tags = hit.get('metadata', {}).get('tags', []) 
                 rich_genre = parse_metadata_rich(hit.get('metadata', {}).get('genres', []), tags, bpm)
                 
                 copyright_txt = f"© {date_fmt[:4] if date_fmt else '2024'} {artist_name}"
