@@ -11,17 +11,19 @@ from bot.helpers.uploder import track_upload, artist_upload, album_upload
 from bot.helpers.metadata import set_metadata
 from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
-# Headers lengkap
+# Headers lengkap (Sangat penting untuk CDN Beatstars)
 ALGOLIA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "*/*",
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "x-algolia-api-key": "b3513eb709fe8f444b4d5c191b63ea47", 
     "x-algolia-application-id": "NMMGZJQ6QI",
-    "content-type": "application/x-www-form-urlencoded",
     "Origin": "https://www.beatstars.com",
     "Referer": "https://www.beatstars.com/",
-    "Connection": "keep-alive"
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "image",
+    "Sec-Fetch-Mode": "no-cors",
+    "Sec-Fetch-Site": "same-site"
 }
 
 PLACEHOLDER_COVER = "https://www.beatstars.com/assets/img/placeholder-track.png"
@@ -51,54 +53,61 @@ def format_date(timestamp):
         return str(timestamp)
 
 def clean_cover_url(url):
-    """Membersihkan sintaks URL dasar."""
+    """
+    Membersihkan URL. Untuk cdn5, kita biarkan apa adanya karena itu URL ter-sign.
+    Kita hanya hapus escape characters jika ada.
+    """
     if not url:
-        return PLACEHOLDER_COVER
+        return None
     
-    # Hapus double slash //
-    if "://" in url:
-        protocol, path = url.split("://", 1)
-        url = f"{protocol}://{path.replace('//', '/')}"
-    else:
+    # Hapus backslashes yang kadang muncul dari JSON response raw
+    url = url.replace(r'\/', '/')
+    
+    # Hapus double slash protokol jika rusak
+    if "://" not in url and "//" in url:
         url = url.replace("//", "/")
-
-    # Fix typo format
-    url = url.replace("format(.jpeg)", "format(jpeg)")
+    
     return url
 
-async def verify_cover_url(session, url):
+# --- LOCAL COVER DOWNLOADER (DEBUG & FIX) ---
+async def download_local_cover(session, url, folderpath):
     """
-    Memverifikasi dan MENYELESAIKAN REDIRECT URL gambar.
-    Mengembalikan URL Final yang langsung mengarah ke gambar (status 200),
-    agar metadata.py tidak bingung dengan redirect 302.
+    Mengunduh cover secara lokal agar metadata.py tidak perlu download ulang.
+    Ini mengatasi masalah 403/404 pada metadata.py.
     """
-    if not url or url == PLACEHOLDER_COVER:
+    if not url:
+        LOGGER.info("[DEBUG] URL Cover kosong.")
         return PLACEHOLDER_COVER
-        
+    
+    LOGGER.info(f"[DEBUG] Mencoba download cover lokal: {url}")
+    
+    filename = "cover.jpg"
+    filepath = os.path.join(folderpath, filename)
+    
     try:
-        # Gunakan method GET (bukan HEAD) agar redirect lebih akurat ditangani aiohttp
-        # allow_redirects=True adalah default, tapi kita pertegas.
-        async with session.get(url, allow_redirects=True, timeout=10) as resp:
+        async with session.get(url, allow_redirects=True, timeout=15) as resp:
+            LOGGER.info(f"[DEBUG] Status HTTP Cover: {resp.status}")
+            
             if resp.status == 200:
-                # Kembalikan URL akhir setelah redirect (resp.url)
-                # resp.url adalah object YARL, harus di-cast ke str
-                final_url = str(resp.url)
-                
-                # Cek content-type untuk memastikan itu gambar
-                ctype = resp.headers.get('Content-Type', '').lower()
-                if 'image' in ctype:
-                    return final_url
-                else:
-                    LOGGER.warning(f"URL valid tapi bukan gambar ({ctype}): {final_url}")
+                content = await resp.read()
+                if not content:
+                    LOGGER.warning("[DEBUG] Konten cover kosong.")
                     return PLACEHOLDER_COVER
+                
+                with open(filepath, 'wb') as f:
+                    f.write(content)
+                
+                LOGGER.info(f"[DEBUG] Cover berhasil disimpan di: {filepath}")
+                return filepath # Mengembalikan PATH LOKAL
             else:
-                LOGGER.warning(f"Cover art mati (HTTP {resp.status}): {url}")
+                LOGGER.warning(f"[DEBUG] Gagal download cover. Status: {resp.status}")
                 return PLACEHOLDER_COVER
+                
     except Exception as e:
-        LOGGER.warning(f"Gagal verifikasi cover: {e}")
+        LOGGER.error(f"[DEBUG] Exception saat download cover: {e}")
         return PLACEHOLDER_COVER
 
-# --- DOWNLOADER ---
+# --- AUDIO DOWNLOADER ---
 
 async def download_beatstars_file(url, path):
     try:
@@ -164,18 +173,25 @@ async def process_single_track(user, track_id):
 
         details = data['response']['data']['details']
         
-        # 1. Cover Handling dengan Redirect Resolution
+        folderpath = f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
+        if not os.path.exists(folderpath):
+            os.makedirs(folderpath, exist_ok=True)
+
+        # --- LOGIKA DEBUG COVER ---
         raw_cover = details.get('artwork', {}).get('original')
+        LOGGER.info(f"[DEBUG] Raw Cover URL from API: {raw_cover}")
+        
         clean_url = clean_cover_url(raw_cover)
-        final_cover = await verify_cover_url(session, clean_url)
+        LOGGER.info(f"[DEBUG] Cleaned URL: {clean_url}")
+        
+        # Download cover secara lokal disini!
+        local_cover_path = await download_local_cover(session, clean_url, folderpath)
+        # --------------------------
 
-        # 2. Format Tanggal
         release_date_fmt = format_date(details.get('release_date_time', 0))
-
         artist_name = details.get('musician', {}).get('display_name')
         track_title = details.get('title')
         
-        folderpath = f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
         filename = f"{artist_name} - {track_title}.mp3"
         filename = re.sub(r'[\\/*?:"<>|]', "", filename)
         filepath = f"{folderpath}/{filename}"
@@ -193,7 +209,7 @@ async def process_single_track(user, track_id):
             'isrc': '',
             'release_date': release_date_fmt,
             'date': release_date_fmt[:4] if release_date_fmt else '',
-            'cover': final_cover, # URL ini sekarang pasti status 200
+            'cover': local_cover_path, # Kita kirim PATH FILE LOKAL, bukan URL
             'provider': 'BeatStars',
             'type': 'track', 
             'itemid': str(details.get('track_id')),
@@ -239,6 +255,10 @@ async def process_artist(user, permalink):
         
         await user['bot_msg'].edit(f"Mengambil daftar lagu: {permalink}...")
         
+        folderpath = f"{user['bot_msg'].chat.id}-beatstars-artist-{permalink}"
+        if not os.path.exists(folderpath):
+            os.makedirs(folderpath, exist_ok=True)
+        
         while True:
             payload = {
                 "query": "", "page": page, "hitsPerPage": 1000, "facets": ["*"],
@@ -256,8 +276,14 @@ async def process_artist(user, permalink):
                 track_id = hit.get('v2Id')
                 stream_url = f"https://main.v2.beatstars.com/stream?id={track_id}&return=audio"
                 
+                # Cover Processing
                 raw_cover = hit.get('artwork', {}).get('sizes', {}).get('original')
                 clean_url = clean_cover_url(raw_cover)
+                
+                # Download local cover untuk artist mode juga (opsional, bisa berat jika banyak)
+                # Untuk efisiensi, kita bisa download sekali saja jika cover sama, tapi ini implementasi per-track
+                # local_cover = await download_local_cover(session, clean_url, folderpath) 
+                # (Disabling local download for artist loop for speed, unless single track logic needed)
                 
                 ts = hit.get('releaseTimestamp') or hit.get('releaseDate') or 0
                 date_fmt = format_date(ts)
@@ -267,7 +293,7 @@ async def process_artist(user, permalink):
                     'artist': hit.get('metadata', {}).get('artistName'),
                     'albumartist': hit.get('metadata', {}).get('artistName'), 
                     'album': f"{hit.get('metadata', {}).get('artistName')} - BeatStars",
-                    'cover': clean_url,
+                    'cover': clean_url, # Di artist mode kita pakai URL dulu biar cepat
                     'itemid': str(track_id),
                     'url': stream_url,
                     'genre': parse_genres(hit.get('metadata', {}).get('genres', [])),
@@ -287,8 +313,6 @@ async def process_artist(user, permalink):
     if not all_tracks:
         raise Exception("Tidak ada track ditemukan.")
 
-    folderpath = f"{user['bot_msg'].chat.id}-beatstars-artist-{permalink}"
-    
     album_meta = {
         'type': 'album', 
         'title': f"Tracks by {permalink}",
@@ -332,8 +356,11 @@ async def process_artist(user, permalink):
                 LOGGER.error(f"Gagal: {t['title']} ({err})")
                 continue
             
-            # Verifikasi cover artist
-            t['cover'] = await verify_cover_url(session, t['cover'])
+            # Khusus Artist Mode: Download cover per track jika mau strict, 
+            # atau biarkan metadata.py handle (mungkin fail 403).
+            # Untuk amannya kita download local juga disini.
+            local_cov = await download_local_cover(session, t['cover'], folderpath)
+            t['cover'] = local_cov
 
             await set_metadata(t, user['user_id'])
             album_meta['tracks'].append(t)
