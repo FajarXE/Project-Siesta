@@ -119,21 +119,26 @@ async def process_single_track(user, track_id):
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
     filepath = f"{folderpath}/{filename}"
 
-    # Metadata untuk Track Single
+    # Metadata Lengkap (Termasuk field kosong agar tidak KeyError)
     meta = {
         'title': track_title,
         'artist': artist_name,
-        'albumartist': artist_name, # Mencegah KeyError
+        'albumartist': artist_name,
         'album': 'BeatStars Single',
         'tracknumber': 1,
         'totaltracks': 1,
+        'volume': 1,        # <-- FIX Metadata
+        'totalvolume': 1,   # <-- FIX Metadata
+        'copyright': '',    # <-- FIX KeyError: 'copyright'
+        'isrc': '',         # <-- FIX KeyError: 'isrc'
         'release_date': str(details.get('release_date_time', ''))[:10],
         'cover': cover_url,
         'provider': 'BeatStars',
-        'type': 'track', # Tipe Track = No Zip/Poster
+        'type': 'track', 
         'itemid': str(details.get('track_id')),
         'genre': parse_genres(details.get('genre', [])),
-        'duration': '', # Mencegah KeyError
+        'duration': '', 
+        'explicit': False,
         'filepath': filepath,
         'folderpath': folderpath
     }
@@ -204,6 +209,10 @@ async def process_artist(user, permalink):
                     'itemid': str(track_id),
                     'url': stream_url,
                     'genre': parse_genres(hit.get('metadata', {}).get('genres', [])),
+                    'copyright': '', # <-- FIX KeyError
+                    'isrc': '',      # <-- FIX KeyError
+                    'volume': 1,
+                    'totalvolume': 1,
                     'duration': ''
                 })
 
@@ -217,7 +226,7 @@ async def process_artist(user, permalink):
     folderpath = f"{user['bot_msg'].chat.id}-beatstars-artist-{permalink}"
     
     album_meta = {
-        'type': 'album', # Gunakan tipe album untuk fitur lengkap pada koleksi artis
+        'type': 'album', 
         'title': f"Tracks by {permalink}",
         'artist': all_tracks[0]['artist'],
         'albumartist': all_tracks[0]['artist'],
@@ -268,7 +277,6 @@ async def process_artist(user, permalink):
     if not album_meta['tracks']:
         raise Exception("Gagal mengunduh semua track.")
 
-    # Zip jika diperlukan (hanya untuk mode artis/koleksi)
     if artist_zip or album_zip or playlist_zip:
         await user['bot_msg'].edit("Sedang membuat file Zip...")
         album_meta['zip_path'] = await zip_handler(folderpath)
