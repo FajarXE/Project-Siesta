@@ -1,5 +1,6 @@
 # [GANTI FILE: bot/helpers/beatstars/handler.py]
 
+import os  # <-- PENTING: Import OS untuk membuat folder
 import re
 import aiohttp
 import asyncio
@@ -8,7 +9,7 @@ from bot.logger import LOGGER
 from bot.helpers.uploder import track_upload, artist_upload
 from bot.helpers.metadata import set_metadata
 
-# Headers lengkap sesuai utils.go (Go) untuk menghindari 403 Forbidden
+# Headers lengkap untuk menghindari 403 Forbidden
 ALGOLIA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0",
     "Accept": "*/*",
@@ -29,10 +30,6 @@ ALGOLIA_HEADERS = {
 
 # --- FUNGSI HELPER PARSING GENRE ---
 def parse_genres(data_list):
-    """
-    Mengekstrak genre dengan aman baik inputnya berupa 
-    list of strings ['Trap'] atau list of dicts [{'name': 'Trap'}]
-    """
     if not data_list:
         return None
     
@@ -50,24 +47,34 @@ def parse_genres(data_list):
         
     return ", ".join(extracted)
 
-# --- FUNGSI DOWNLOADER KHUSUS (MENGHINDARI 403) ---
+# --- FUNGSI DOWNLOADER KHUSUS (MENGHINDARI 403 & MEMBUAT FOLDER) ---
 async def download_beatstars_file(url, path):
     """
     Downloader lokal yang menyertakan headers ALGOLIA_HEADERS.
-    Ini menggantikan utils.download_file yang polosan.
+    Otomatis membuat folder tujuan jika belum ada.
     """
     try:
+        # 1. Pastikan folder tujuan ada
+        folder = os.path.dirname(path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+
+        # 2. Lakukan request download
         async with aiohttp.ClientSession(headers=ALGOLIA_HEADERS) as session:
             async with session.get(url) as response:
                 if response.status == 200:
-                    # Menggunakan cara open file yang sama dengan utils.py
                     with open(path, 'wb') as f:
                         while True:
                             chunk = await response.content.read(1024 * 4)
                             if not chunk:
                                 break
                             f.write(chunk)
-                    return None
+                    
+                    # Verifikasi file ada dan tidak kosong
+                    if os.path.exists(path) and os.path.getsize(path) > 0:
+                        return None
+                    else:
+                        return "File kosong atau gagal ditulis."
                 else:
                     return f"HTTP Status: {response.status} (URL: {url})"
     except Exception as e:
@@ -151,7 +158,6 @@ async def process_single_track(user, track_id):
 
     LOGGER.info(f"Downloading BeatStars Track: {meta['title']}")
     
-    # Gunakan downloader khusus yang memakai headers
     err = await download_beatstars_file(stream_url, filepath)
     if err:
         raise Exception(f"Gagal download file: {err}")
@@ -265,7 +271,6 @@ async def process_artist(user, permalink):
                     await user['bot_msg'].edit(f"Mengunduh {i+1}/{total_items}: {t['title']}")
                 except: pass
 
-            # Gunakan downloader khusus
             err = await download_beatstars_file(t['url'], filepath)
             if err:
                 LOGGER.error(f"Gagal download {t['title']}: {err}")
