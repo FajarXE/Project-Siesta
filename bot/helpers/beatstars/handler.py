@@ -13,7 +13,7 @@ from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
 # Headers lengkap
 ALGOLIA_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.9",
     "x-algolia-api-key": "b3513eb709fe8f444b4d5c191b63ea47", 
@@ -24,6 +24,7 @@ ALGOLIA_HEADERS = {
     "Connection": "keep-alive"
 }
 
+# Gunakan placeholder yang lebih umum/publik jika BeatStars memblokir
 PLACEHOLDER_COVER = "https://www.beatstars.com/assets/img/placeholder-track.png"
 
 # --- HELPER FORMATTING ---
@@ -52,35 +53,37 @@ def format_date(timestamp):
 
 def clean_cover_url(url):
     """
-    Membersihkan URL Cover dari kesalahan sintaks umum BeatStars.
+    Membersihkan URL Cover.
+    Kita tidak lagi memaksa ganti domain karena terbukti 404.
+    Kita hanya memperbaiki sintaks URL.
     """
     if not url:
         return PLACEHOLDER_COVER
     
-    # 1. Hapus double slash //
+    # 1. Hapus double slash // (kecuali https://)
     if "://" in url:
         protocol, path = url.split("://", 1)
         url = f"{protocol}://{path.replace('//', '/')}"
     else:
         url = url.replace("//", "/")
 
-    # 2. Fix typo ekstensi di URL filter (misal: format(.jpeg) -> format(jpeg))
+    # 2. Fix typo ekstensi di URL filter
     url = url.replace("format(.jpeg)", "format(jpeg)")
     
     return url
 
 async def verify_cover_url(session, url):
     """
-    Mengecek apakah URL gambar bisa diakses (Status 200).
-    Jika gagal, kembalikan Placeholder.
+    Mengecek apakah URL gambar bisa diakses.
+    UPDATE: Menerima 200 (OK), 301 (Moved), 302 (Found/Redirect).
     """
     if not url or url == PLACEHOLDER_COVER:
         return PLACEHOLDER_COVER
         
     try:
-        # Lakukan HEAD request ringan untuk cek status
-        async with session.head(url, timeout=5) as resp:
-            if resp.status == 200:
+        # Gunakan allow_redirects=True
+        async with session.head(url, allow_redirects=True, timeout=5) as resp:
+            if resp.status in [200, 301, 302]:
                 return url
             else:
                 LOGGER.warning(f"Cover art mati (HTTP {resp.status}): {url}")
@@ -155,14 +158,12 @@ async def process_single_track(user, track_id):
 
         details = data['response']['data']['details']
         
-        # 1. Ambil & Bersihkan URL
+        # 1. Cover Handling
         raw_cover = details.get('artwork', {}).get('original')
         clean_url = clean_cover_url(raw_cover)
-        
-        # 2. Verifikasi Keberadaan Gambar (Cek 404)
         final_cover = await verify_cover_url(session, clean_url)
 
-        # 3. Format Tanggal
+        # 2. Format Tanggal
         release_date_fmt = format_date(details.get('release_date_time', 0))
 
         artist_name = details.get('musician', {}).get('display_name')
@@ -186,7 +187,7 @@ async def process_single_track(user, track_id):
             'isrc': '',
             'release_date': release_date_fmt,
             'date': release_date_fmt[:4] if release_date_fmt else '',
-            'cover': final_cover, # Gunakan URL yang sudah diverifikasi
+            'cover': final_cover,
             'provider': 'BeatStars',
             'type': 'track', 
             'itemid': str(details.get('track_id')),
@@ -203,12 +204,10 @@ async def process_single_track(user, track_id):
 
         LOGGER.info(f"Downloading Single Track: {track_title}")
         
-        # Download Audio
         err = await download_beatstars_file(stream_url, filepath)
         if err:
             raise Exception(f"Gagal download file: {err}")
 
-    # Tagging & Upload
     await set_metadata(meta, user['user_id'])
     await track_upload(meta, user)
 
@@ -254,8 +253,7 @@ async def process_artist(user, permalink):
                 # Cover Processing
                 raw_cover = hit.get('artwork', {}).get('sizes', {}).get('original')
                 clean_url = clean_cover_url(raw_cover)
-                # Di loop artist, kita tidak verifikasi satu per satu agar cepat, 
-                # kecuali jika sering gagal. Kita pakai clean_url saja.
+                # Untuk artis, kita asumsi URL bersih sudah benar tanpa cek satu2 agar cepat
                 
                 ts = hit.get('releaseTimestamp') or hit.get('releaseDate') or 0
                 date_fmt = format_date(ts)
@@ -330,9 +328,7 @@ async def process_artist(user, permalink):
                 LOGGER.error(f"Gagal: {t['title']} ({err})")
                 continue
             
-            # Khusus artist mode, kita verifikasi cover sebelum tagging jika perlu, 
-            # atau biarkan metadata.py handle (dia akan skip jika 404)
-            # Agar konsisten, kita validasi juga di sini
+            # Verifikasi cover artist (dengan allow redirects)
             t['cover'] = await verify_cover_url(session, t['cover'])
 
             await set_metadata(t, user['user_id'])
