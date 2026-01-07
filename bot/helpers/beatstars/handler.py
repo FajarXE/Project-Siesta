@@ -46,7 +46,6 @@ def parse_genres(data_list):
     return ", ".join(extracted) if extracted else None
 
 def format_date(timestamp):
-    """Mengubah Unix Timestamp menjadi YYYY-MM-DD"""
     try:
         if not timestamp:
             return ""
@@ -57,21 +56,16 @@ def format_date(timestamp):
 
 def clean_cover_url(url):
     """
-    Membersihkan URL Cover:
-    1. Menghapus double slash //
-    2. Menghapus filter resizing (fit-in/filters) yang sering error 404
+    Membersihkan URL Cover hanya dengan menghapus double slash (//).
+    Kita TETAP mempertahankan bagian /fit-in/... karena itu adalah endpoint publik.
     """
     if not url:
         return "https://www.beatstars.com/assets/img/placeholder-track.png"
     
-    # 1. Hapus Filter Resizing (Agar ambil file asli)
-    # Ubah: .../fit-in/tracks/1000x1000/filters:format(.jpeg):quality(80):fill(000000)/prod/...
-    # Menjadi: .../prod/...
-    url = re.sub(r'/fit-in/.*?/filters:.*?/prod/', '/prod/', url)
-    
-    # 2. Hapus double slash (kecuali di protokol http://)
+    # Pisahkan protokol (https://) agar tidak ikut terganti
     if "://" in url:
         protocol, path = url.split("://", 1)
+        # Ganti semua // menjadi / di dalam path
         cleaned_path = path.replace("//", "/")
         return f"{protocol}://{cleaned_path}"
     else:
@@ -143,7 +137,7 @@ async def process_single_track(user, track_id):
 
     details = data['response']['data']['details']
     
-    # FIX COVER URL (Menggunakan Regex baru)
+    # FIX COVER URL (Hanya fix //, tetap pakai fit-in)
     raw_cover = details.get('artwork', {}).get('original')
     cover_url = clean_cover_url(raw_cover)
 
@@ -234,7 +228,6 @@ async def process_artist(user, permalink):
                 track_id = hit.get('v2Id')
                 stream_url = f"https://main.v2.beatstars.com/stream?id={track_id}&return=audio"
                 
-                # FIX COVER & DATE
                 raw_cover = hit.get('artwork', {}).get('sizes', {}).get('original')
                 cover_hit = clean_cover_url(raw_cover)
                 
