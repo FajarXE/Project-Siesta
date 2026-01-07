@@ -213,7 +213,8 @@ async def process_artist(user, permalink):
                     'isrc': '',      # <-- FIX KeyError
                     'volume': 1,
                     'totalvolume': 1,
-                    'duration': ''
+                    'duration': '',
+                    'explicit': False
                 })
 
             page += 1
