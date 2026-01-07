@@ -5,26 +5,33 @@ import aiohttp
 import asyncio
 from urllib.parse import urlparse
 from bot.logger import LOGGER
-from bot.helpers.utils import download_file
 from bot.helpers.uploder import track_upload, artist_upload
 from bot.helpers.metadata import set_metadata
 
+# Headers lengkap sesuai utils.go (Go) untuk menghindari 403 Forbidden
 ALGOLIA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0",
     "Accept": "*/*",
+    "Accept-Language": "en-CA,en-US;q=0.7,en;q=0.3",
     "x-algolia-api-key": "b3513eb709fe8f444b4d5c191b63ea47", 
     "x-algolia-application-id": "NMMGZJQ6QI",
     "content-type": "application/x-www-form-urlencoded",
     "Origin": "https://www.beatstars.com",
-    "Referer": "https://www.beatstars.com/"
+    "Connection": "keep-alive",
+    "Referer": "https://www.beatstars.com/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "cross-site",
+    "Sec-GPC": "1",
+    "Pragma": "no-cache",
+    "Cache-Control": "no-cache"
 }
 
-# --- FUNGSI HELPER BARU ---
+# --- FUNGSI HELPER PARSING GENRE ---
 def parse_genres(data_list):
     """
     Mengekstrak genre dengan aman baik inputnya berupa 
-    list of strings ['Trap', 'Hip Hop'] 
-    atau list of dicts [{'name': 'Trap'}, ...]
+    list of strings ['Trap'] atau list of dicts [{'name': 'Trap'}]
     """
     if not data_list:
         return None
@@ -34,7 +41,6 @@ def parse_genres(data_list):
         if isinstance(item, str):
             extracted.append(item)
         elif isinstance(item, dict):
-            # Coba ambil kunci umum untuk nama
             name = item.get('name') or item.get('slug') or item.get('title')
             if name:
                 extracted.append(str(name))
@@ -43,7 +49,30 @@ def parse_genres(data_list):
         return None
         
     return ", ".join(extracted)
-# ---------------------------
+
+# --- FUNGSI DOWNLOADER KHUSUS (MENGHINDARI 403) ---
+async def download_beatstars_file(url, path):
+    """
+    Downloader lokal yang menyertakan headers ALGOLIA_HEADERS.
+    Ini menggantikan utils.download_file yang polosan.
+    """
+    try:
+        async with aiohttp.ClientSession(headers=ALGOLIA_HEADERS) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    # Menggunakan cara open file yang sama dengan utils.py
+                    with open(path, 'wb') as f:
+                        while True:
+                            chunk = await response.content.read(1024 * 4)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    return None
+                else:
+                    return f"HTTP Status: {response.status} (URL: {url})"
+    except Exception as e:
+        return str(e)
+
 
 async def start_beatstars(link: str, user: dict):
     parsed = urlparse(link)
@@ -87,7 +116,7 @@ async def process_single_track(user, track_id):
             data = await resp.json()
     
     if not data.get('response', {}).get('data'):
-        raise Exception("Track tidak ditemukan atau data kosong (Mungkin ID salah atau Private).")
+        raise Exception("Track tidak ditemukan atau data kosong.")
 
     details = data['response']['data']['details']
     
@@ -106,7 +135,6 @@ async def process_single_track(user, track_id):
         'provider': 'BeatStars',
         'type': 'track',
         'itemid': str(details.get('track_id')),
-        # GUNAKAN HELPER BARU DI SINI
         'genre': parse_genres(details.get('genre', [])),
         'folderpath': f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
     }
@@ -123,7 +151,8 @@ async def process_single_track(user, track_id):
 
     LOGGER.info(f"Downloading BeatStars Track: {meta['title']}")
     
-    err = await download_file(stream_url, filepath)
+    # Gunakan downloader khusus yang memakai headers
+    err = await download_beatstars_file(stream_url, filepath)
     if err:
         raise Exception(f"Gagal download file: {err}")
 
@@ -190,7 +219,6 @@ async def process_artist(user, permalink):
                 if not cover_hit:
                     cover_hit = "https://www.beatstars.com/assets/img/placeholder-track.png"
 
-                # Ambil genre dari hits (biasanya di sini sudah list of strings, tapi kita pakai helper agar aman)
                 raw_genres = hit.get('metadata', {}).get('genres', [])
 
                 meta_track = {
@@ -200,7 +228,6 @@ async def process_artist(user, permalink):
                     'cover': cover_hit,
                     'itemid': str(track_id),
                     'url': stream_url,
-                    # GUNAKAN HELPER BARU DI SINI JUGA
                     'genre': parse_genres(raw_genres)
                 }
                 all_tracks.append(meta_track)
@@ -238,7 +265,8 @@ async def process_artist(user, permalink):
                     await user['bot_msg'].edit(f"Mengunduh {i+1}/{total_items}: {t['title']}")
                 except: pass
 
-            err = await download_file(t['url'], filepath)
+            # Gunakan downloader khusus
+            err = await download_beatstars_file(t['url'], filepath)
             if err:
                 LOGGER.error(f"Gagal download {t['title']}: {err}")
                 continue
