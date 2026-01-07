@@ -11,7 +11,7 @@ from bot.helpers.uploder import track_upload, artist_upload, album_upload
 from bot.helpers.metadata import set_metadata
 from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
-# Headers lengkap (Sangat penting untuk CDN Beatstars)
+# Headers lengkap
 ALGOLIA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
@@ -30,18 +30,35 @@ PLACEHOLDER_COVER = "https://www.beatstars.com/assets/img/placeholder-track.png"
 
 # --- HELPER FORMATTING ---
 
-def parse_genres(data_list):
-    if not data_list:
-        return None
+def parse_metadata_rich(data_list, tags_list=None, bpm=None):
+    """
+    Menggabungkan Genre, Tags, dan BPM menjadi satu string Genre yang kaya info.
+    Contoh: "Hip Hop, Trap, Dark, Aggressive, 140 BPM"
+    """
     extracted = []
-    for item in data_list:
-        if isinstance(item, str):
-            extracted.append(item)
-        elif isinstance(item, dict):
-            name = item.get('name') or item.get('slug') or item.get('title')
-            if name:
-                extracted.append(str(name))
-    return ", ".join(extracted) if extracted else None
+    
+    # 1. Masukkan Genre Utama
+    if data_list:
+        for item in data_list:
+            if isinstance(item, str):
+                extracted.append(item)
+            elif isinstance(item, dict):
+                name = item.get('name') or item.get('slug') or item.get('title')
+                if name:
+                    extracted.append(str(name))
+    
+    # 2. Masukkan Tags (Mood/Style)
+    if tags_list:
+        # Ambil maksimal 5 tag agar tidak terlalu panjang
+        for tag in tags_list[:5]: 
+            if isinstance(tag, str) and tag not in extracted:
+                extracted.append(tag)
+
+    # 3. Masukkan BPM
+    if bpm:
+        extracted.append(f"{bpm} BPM")
+
+    return ", ".join(extracted) if extracted else "BeatStars"
 
 def format_date(timestamp):
     try:
@@ -53,58 +70,29 @@ def format_date(timestamp):
         return str(timestamp)
 
 def clean_cover_url(url):
-    """
-    Membersihkan URL. Untuk cdn5, kita biarkan apa adanya karena itu URL ter-sign.
-    Kita hanya hapus escape characters jika ada.
-    """
-    if not url:
-        return None
-    
-    # Hapus backslashes yang kadang muncul dari JSON response raw
+    if not url: return None
     url = url.replace(r'\/', '/')
-    
-    # Hapus double slash protokol jika rusak
     if "://" not in url and "//" in url:
         url = url.replace("//", "/")
-    
     return url
 
-# --- LOCAL COVER DOWNLOADER (DEBUG & FIX) ---
+# --- LOCAL COVER DOWNLOADER ---
 async def download_local_cover(session, url, folderpath):
-    """
-    Mengunduh cover secara lokal agar metadata.py tidak perlu download ulang.
-    Ini mengatasi masalah 403/404 pada metadata.py.
-    """
-    if not url:
-        LOGGER.info("[DEBUG] URL Cover kosong.")
-        return PLACEHOLDER_COVER
-    
-    LOGGER.info(f"[DEBUG] Mencoba download cover lokal: {url}")
+    if not url: return PLACEHOLDER_COVER
     
     filename = "cover.jpg"
     filepath = os.path.join(folderpath, filename)
     
     try:
         async with session.get(url, allow_redirects=True, timeout=15) as resp:
-            LOGGER.info(f"[DEBUG] Status HTTP Cover: {resp.status}")
-            
             if resp.status == 200:
                 content = await resp.read()
-                if not content:
-                    LOGGER.warning("[DEBUG] Konten cover kosong.")
-                    return PLACEHOLDER_COVER
-                
                 with open(filepath, 'wb') as f:
                     f.write(content)
-                
-                LOGGER.info(f"[DEBUG] Cover berhasil disimpan di: {filepath}")
-                return filepath # Mengembalikan PATH LOKAL
+                return filepath
             else:
-                LOGGER.warning(f"[DEBUG] Gagal download cover. Status: {resp.status}")
                 return PLACEHOLDER_COVER
-                
-    except Exception as e:
-        LOGGER.error(f"[DEBUG] Exception saat download cover: {e}")
+    except Exception:
         return PLACEHOLDER_COVER
 
 # --- AUDIO DOWNLOADER ---
@@ -138,7 +126,6 @@ async def start_beatstars(link: str, user: dict):
     path = parsed.path.strip("/")
     path_parts = path.split("/")
 
-    # Mode Deteksi
     if path.startswith("beat/") or "/beat/" in link:
         track_regex = r'(\d+)$'
         track_match = re.search(track_regex, path)
@@ -177,21 +164,28 @@ async def process_single_track(user, track_id):
         if not os.path.exists(folderpath):
             os.makedirs(folderpath, exist_ok=True)
 
-        # --- LOGIKA DEBUG COVER ---
+        # Cover Logic
         raw_cover = details.get('artwork', {}).get('original')
-        LOGGER.info(f"[DEBUG] Raw Cover URL from API: {raw_cover}")
-        
         clean_url = clean_cover_url(raw_cover)
-        LOGGER.info(f"[DEBUG] Cleaned URL: {clean_url}")
-        
-        # Download cover secara lokal disini!
         local_cover_path = await download_local_cover(session, clean_url, folderpath)
-        # --------------------------
 
+        # Metadata Logic
         release_date_fmt = format_date(details.get('release_date_time', 0))
         artist_name = details.get('musician', {}).get('display_name')
         track_title = details.get('title')
+        bpm = details.get('bpm', 0)
+        tags = details.get('tags', [])
+        duration_ms = details.get('duration', 0)
         
+        # Copyright & Composer Fallback
+        copyright_txt = details.get('copyright', '') 
+        if not copyright_txt:
+            year = release_date_fmt[:4] if release_date_fmt else "2024"
+            copyright_txt = f"© {year} {artist_name}"
+
+        # Gabungkan Genre + Tags + BPM
+        rich_genre = parse_metadata_rich(details.get('genre', []), tags, bpm)
+
         filename = f"{artist_name} - {track_title}.mp3"
         filename = re.sub(r'[\\/*?:"<>|]', "", filename)
         filepath = f"{folderpath}/{filename}"
@@ -200,22 +194,24 @@ async def process_single_track(user, track_id):
             'title': track_title,
             'artist': artist_name,
             'albumartist': artist_name,
-            'album': 'BeatStars Single',
+            'composer': artist_name, # <-- Tambahan
+            'album': f"{artist_name} - Singles", # Lebih rapi daripada 'BeatStars Single'
             'tracknumber': 1,
             'totaltracks': 1,
             'volume': 1,
             'totalvolume': 1,
-            'copyright': '',
+            'copyright': copyright_txt, # <-- Tambahan
             'isrc': '',
             'release_date': release_date_fmt,
             'date': release_date_fmt[:4] if release_date_fmt else '',
-            'cover': local_cover_path, # Kita kirim PATH FILE LOKAL, bukan URL
+            'cover': local_cover_path,
             'provider': 'BeatStars',
             'type': 'track', 
             'itemid': str(details.get('track_id')),
-            'genre': parse_genres(details.get('genre', [])),
-            'duration': '', 
+            'genre': rich_genre, # <-- Genre sudah termasuk BPM & Tags
+            'duration': str(duration_ms), 
             'explicit': False,
+            'description': f"BPM: {bpm} | Downloaded from BeatStars | {track_id}", # <-- Info tambahan
             'filepath': filepath,
             'folderpath': folderpath
         }
@@ -224,7 +220,7 @@ async def process_single_track(user, track_id):
         if not stream_url:
             stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
 
-        LOGGER.info(f"Downloading Single Track: {track_title}")
+        LOGGER.info(f"Downloading Single Track: {track_title} (BPM: {bpm})")
         
         err = await download_beatstars_file(stream_url, filepath)
         if err:
@@ -276,35 +272,39 @@ async def process_artist(user, permalink):
                 track_id = hit.get('v2Id')
                 stream_url = f"https://main.v2.beatstars.com/stream?id={track_id}&return=audio"
                 
-                # Cover Processing
                 raw_cover = hit.get('artwork', {}).get('sizes', {}).get('original')
                 clean_url = clean_cover_url(raw_cover)
                 
-                # Download local cover untuk artist mode juga (opsional, bisa berat jika banyak)
-                # Untuk efisiensi, kita bisa download sekali saja jika cover sama, tapi ini implementasi per-track
-                # local_cover = await download_local_cover(session, clean_url, folderpath) 
-                # (Disabling local download for artist loop for speed, unless single track logic needed)
-                
                 ts = hit.get('releaseTimestamp') or hit.get('releaseDate') or 0
                 date_fmt = format_date(ts)
+                
+                # Metadata extraction
+                artist_name = hit.get('metadata', {}).get('artistName')
+                bpm = hit.get('metadata', {}).get('bpm', 0)
+                tags = hit.get('metadata', {}).get('tags', []) # Kadang tag ada di sini
+                rich_genre = parse_metadata_rich(hit.get('metadata', {}).get('genres', []), tags, bpm)
+                
+                copyright_txt = f"© {date_fmt[:4] if date_fmt else '2024'} {artist_name}"
 
                 all_tracks.append({
                     'title': hit.get('title'),
-                    'artist': hit.get('metadata', {}).get('artistName'),
-                    'albumartist': hit.get('metadata', {}).get('artistName'), 
-                    'album': f"{hit.get('metadata', {}).get('artistName')} - BeatStars",
-                    'cover': clean_url, # Di artist mode kita pakai URL dulu biar cepat
+                    'artist': artist_name,
+                    'albumartist': artist_name,
+                    'composer': artist_name,
+                    'album': f"{artist_name} - BeatStars Collection",
+                    'cover': clean_url,
                     'itemid': str(track_id),
                     'url': stream_url,
-                    'genre': parse_genres(hit.get('metadata', {}).get('genres', [])),
-                    'copyright': '', 
+                    'genre': rich_genre,
+                    'copyright': copyright_txt, 
                     'isrc': '',
                     'volume': 1,
                     'totalvolume': 1,
-                    'duration': '',
+                    'duration': str(hit.get('duration', '')),
                     'explicit': False,
                     'release_date': date_fmt,
-                    'date': date_fmt[:4] if date_fmt else ''
+                    'date': date_fmt[:4] if date_fmt else '',
+                    'description': f"BPM: {bpm} | BeatStars"
                 })
 
             page += 1
@@ -356,9 +356,6 @@ async def process_artist(user, permalink):
                 LOGGER.error(f"Gagal: {t['title']} ({err})")
                 continue
             
-            # Khusus Artist Mode: Download cover per track jika mau strict, 
-            # atau biarkan metadata.py handle (mungkin fail 403).
-            # Untuk amannya kita download local juga disini.
             local_cov = await download_local_cover(session, t['cover'], folderpath)
             t['cover'] = local_cov
 
