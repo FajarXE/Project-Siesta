@@ -113,11 +113,17 @@ try:
 except ImportError:
     bandcamp_manager = None
 
-# 16. LivePhish (BARU)
+# 16. LivePhish
 try:
     from bot.helpers.livephish.manager import livephish_manager
 except ImportError:
     livephish_manager = None
+
+# 17. BeatStars (BARU)
+try:
+    from bot.helpers.beatstars.manager import beatstars_manager
+except ImportError:
+    beatstars_manager = None
 
 
 # --- IMPOR HANDLER LAYANAN ---
@@ -216,13 +222,20 @@ except ImportError as e:
 try:
     from ..helpers.livephish.handler import start_livephish
 except Exception as e:
-    # --- BARIS INI AKAN MENAMPILKAN PENYEBAB ASLINYA DI LOG ---
     LOGGER.error(f"GAGAL IMPORT LIVEPHISH: {e}") 
     import traceback
     LOGGER.error(traceback.format_exc())
-    # ----------------------------------------------------------
     async def start_livephish(*args, **kwargs):
         raise NotImplementedError("Modul LivePhish belum diimplementasikan.")
+
+# BeatStars (BARU)
+try:
+    from ..helpers.beatstars.handler import start_beatstars
+except ImportError as e:
+    err_bs = str(e)
+    LOGGER.error(f"Gagal Import BeatStars Handler: {err_bs}")
+    async def start_beatstars(*args, **kwargs):
+        raise NotImplementedError(f"Modul BeatStars Rusak: {err_bs}")
 
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
@@ -410,6 +423,9 @@ async def start_link(link: str, user: dict) -> None:
 
     # LivePhish Domains
     livephish = ["https://plus.livephish.com", "https://www.livephish.com", "https://streamapi.livephish.com"]
+    
+    # BeatStars Domains (BARU)
+    beatstars = ["https://www.beatstars.com", "beatstars.com", "https://main.v2.beatstars.com"]
     
     # Blok TIDAL
     if link.startswith(tuple(tidal)):
@@ -791,7 +807,7 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.error(f"Bandcamp Gagal: {e}")
             raise e
 
-    # Blok LIVEPHISH (BARU)
+    # Blok LIVEPHISH
     elif link.startswith(tuple(livephish)):
         user['provider'] = 'LivePhish'
         
@@ -808,6 +824,20 @@ async def start_link(link: str, user: dict) -> None:
             return
         except Exception as e:
             LOGGER.error(f"LivePhish Gagal: {e}")
+            raise e
+
+    # Blok BEATSTARS (BARU)
+    elif link.startswith(tuple(beatstars)):
+        user['provider'] = 'BeatStars'
+        if not beatstars_manager:
+             raise Exception("Modul BeatStars tidak dimuat (Folder/file helper hilang).")
+        
+        try:
+            await start_beatstars(link, user)
+            LOGGER.info("BeatStars: Unduhan berhasil.")
+            return
+        except Exception as e:
+            LOGGER.error(f"BeatStars Gagal: {e}")
             raise e
 
     else:
