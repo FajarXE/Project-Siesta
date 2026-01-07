@@ -19,16 +19,39 @@ ALGOLIA_HEADERS = {
     "Referer": "https://www.beatstars.com/"
 }
 
+# --- FUNGSI HELPER BARU ---
+def parse_genres(data_list):
+    """
+    Mengekstrak genre dengan aman baik inputnya berupa 
+    list of strings ['Trap', 'Hip Hop'] 
+    atau list of dicts [{'name': 'Trap'}, ...]
+    """
+    if not data_list:
+        return None
+    
+    extracted = []
+    for item in data_list:
+        if isinstance(item, str):
+            extracted.append(item)
+        elif isinstance(item, dict):
+            # Coba ambil kunci umum untuk nama
+            name = item.get('name') or item.get('slug') or item.get('title')
+            if name:
+                extracted.append(str(name))
+                
+    if not extracted:
+        return None
+        
+    return ", ".join(extracted)
+# ---------------------------
+
 async def start_beatstars(link: str, user: dict):
-    # Parsing URL untuk menentukan jenis konten secara akurat
     parsed = urlparse(link)
     path = parsed.path.strip("/")
     path_parts = path.split("/")
 
     # KASUS 1: TRACK (Link mengandung /beat/)
     if path.startswith("beat/") or "/beat/" in link:
-        # Coba ambil ID (angka di akhir URL)
-        # Regex diperluas: menangkap angka di akhir string, baik didahului '-' atau '/'
         track_regex = r'(\d+)$'
         track_match = re.search(track_regex, path)
         
@@ -41,14 +64,11 @@ async def start_beatstars(link: str, user: dict):
 
     # KASUS 2: ARTIST (Link profil biasa)
     else:
-        # Mengambil username dari segmen pertama path
-        # Contoh: beatstars.com/username -> username
         if not path_parts or not path_parts[0]:
              raise Exception("Link tidak valid: Tidak dapat menemukan username artis.")
         
         permalink = path_parts[0]
         
-        # Cegah kata kunci sistem dianggap sebagai artis
         reserved_words = ['beat', 'tracks', 'feed', 'services', 'publishing', 'dashboard']
         if permalink.lower() in reserved_words:
              raise Exception(f"Link tidak valid: '{permalink}' bukan nama artis.")
@@ -71,10 +91,8 @@ async def process_single_track(user, track_id):
 
     details = data['response']['data']['details']
     
-    # Ambil cover
     cover_url = details.get('artwork', {}).get('original')
     if not cover_url:
-        # Fallback cover default jika null
         cover_url = "https://www.beatstars.com/assets/img/placeholder-track.png"
 
     meta = {
@@ -88,17 +106,16 @@ async def process_single_track(user, track_id):
         'provider': 'BeatStars',
         'type': 'track',
         'itemid': str(details.get('track_id')),
-        'genre': ", ".join(details.get('genre', [])) if details.get('genre') else None,
+        # GUNAKAN HELPER BARU DI SINI
+        'genre': parse_genres(details.get('genre', [])),
         'folderpath': f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
     }
 
     stream_url = details.get('stream_url')
-    # Jika stream_url kosong, coba construct manual
     if not stream_url:
         stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
 
     filename = f"{meta['artist']} - {meta['title']}.mp3"
-    # Sanitasi nama file
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
     
     filepath = f"{meta['folderpath']}/{filename}"
@@ -169,10 +186,12 @@ async def process_artist(user, permalink):
                 track_id = hit.get('v2Id')
                 stream_url = f"https://main.v2.beatstars.com/stream?id={track_id}&return=audio"
                 
-                # Cover handling
                 cover_hit = hit.get('artwork', {}).get('sizes', {}).get('original')
                 if not cover_hit:
                     cover_hit = "https://www.beatstars.com/assets/img/placeholder-track.png"
+
+                # Ambil genre dari hits (biasanya di sini sudah list of strings, tapi kita pakai helper agar aman)
+                raw_genres = hit.get('metadata', {}).get('genres', [])
 
                 meta_track = {
                     'title': hit.get('title'),
@@ -181,7 +200,8 @@ async def process_artist(user, permalink):
                     'cover': cover_hit,
                     'itemid': str(track_id),
                     'url': stream_url,
-                    'genre': ", ".join(hit.get('metadata', {}).get('genres', [])) if hit.get('metadata', {}).get('genres') else None
+                    # GUNAKAN HELPER BARU DI SINI JUGA
+                    'genre': parse_genres(raw_genres)
                 }
                 all_tracks.append(meta_track)
 
