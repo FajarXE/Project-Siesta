@@ -4,7 +4,7 @@ import os
 import re
 import aiohttp
 import asyncio
-from datetime import datetime # <-- Penting untuk konversi tanggal
+from datetime import datetime
 from urllib.parse import urlparse
 from bot.logger import LOGGER
 from bot.helpers.uploder import track_upload, artist_upload, album_upload
@@ -46,23 +46,30 @@ def parse_genres(data_list):
     return ", ".join(extracted) if extracted else None
 
 def format_date(timestamp):
-    """Mengubah Unix Timestamp (1767795770) menjadi YYYY-MM-DD"""
+    """Mengubah Unix Timestamp menjadi YYYY-MM-DD"""
     try:
         if not timestamp:
             return ""
-        # Timestamp BeatStars dalam detik
         dt_object = datetime.fromtimestamp(int(timestamp))
         return dt_object.strftime("%Y-%m-%d")
     except Exception:
-        return str(timestamp) # Fallback jika gagal
+        return str(timestamp)
 
 def clean_cover_url(url):
-    """Memperbaiki URL cover yang memiliki double slash //"""
+    """
+    Membersihkan URL Cover:
+    1. Menghapus double slash //
+    2. Menghapus filter resizing (fit-in/filters) yang sering error 404
+    """
     if not url:
         return "https://www.beatstars.com/assets/img/placeholder-track.png"
     
-    # Ganti // menjadi / tapi jangan ganti https://
-    # Pisahkan protokol dulu
+    # 1. Hapus Filter Resizing (Agar ambil file asli)
+    # Ubah: .../fit-in/tracks/1000x1000/filters:format(.jpeg):quality(80):fill(000000)/prod/...
+    # Menjadi: .../prod/...
+    url = re.sub(r'/fit-in/.*?/filters:.*?/prod/', '/prod/', url)
+    
+    # 2. Hapus double slash (kecuali di protokol http://)
     if "://" in url:
         protocol, path = url.split("://", 1)
         cleaned_path = path.replace("//", "/")
@@ -136,7 +143,7 @@ async def process_single_track(user, track_id):
 
     details = data['response']['data']['details']
     
-    # FIX COVER URL
+    # FIX COVER URL (Menggunakan Regex baru)
     raw_cover = details.get('artwork', {}).get('original')
     cover_url = clean_cover_url(raw_cover)
 
@@ -162,9 +169,9 @@ async def process_single_track(user, track_id):
         'totalvolume': 1,
         'copyright': '',
         'isrc': '',
-        'release_date': release_date_fmt, # <-- Tanggal yang sudah diformat
-        'date': release_date_fmt[:4] if release_date_fmt else '', # Tahun saja
-        'cover': cover_url, # <-- URL Cover yang sudah dibersihkan
+        'release_date': release_date_fmt,
+        'date': release_date_fmt[:4] if release_date_fmt else '',
+        'cover': cover_url, 
         'provider': 'BeatStars',
         'type': 'track', 
         'itemid': str(details.get('track_id')),
@@ -179,7 +186,7 @@ async def process_single_track(user, track_id):
     if not stream_url:
         stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
 
-    LOGGER.info(f"Downloading Single Track: {track_title} | Date: {release_date_fmt}")
+    LOGGER.info(f"Downloading Single Track: {track_title}")
     
     err = await download_beatstars_file(stream_url, filepath)
     if err:
@@ -231,7 +238,6 @@ async def process_artist(user, permalink):
                 raw_cover = hit.get('artwork', {}).get('sizes', {}).get('original')
                 cover_hit = clean_cover_url(raw_cover)
                 
-                # Timestamp di hits mungkin bernama releaseTimestamp
                 ts = hit.get('releaseTimestamp') or hit.get('releaseDate') or 0
                 date_fmt = format_date(ts)
 
