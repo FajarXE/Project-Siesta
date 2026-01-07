@@ -200,7 +200,8 @@ async def process_single_track(user, track_id):
         meta = {
             'title': track_title,
             'artist': artist_name,
-            'albumartist': artist_name, # <-- FIX: Wajib diisi agar PowerAmp mendeteksi Artist Album
+            'albumartist': artist_name, # Critical for PowerAmp Album Artist
+            'performer': artist_name,   # Fallback for some players
             'composer': artist_name,
             'album': f"{artist_name} - Singles",
             'tracknumber': 1,
@@ -218,7 +219,8 @@ async def process_single_track(user, track_id):
             'genre': rich_genre,
             'duration': str(duration_ms), 
             'explicit': False,
-            'description': '', # <-- FIX: Dikosongkan agar Comment & ID3v1 Comment hilang
+            'description': None, # <-- FIX: Kosongkan Comment/Description sepenuhnya
+            'comment': None,     # <-- FIX: Explicit None
             'filepath': filepath,
             'folderpath': folderpath
         }
@@ -295,7 +297,8 @@ async def process_artist(user, permalink):
                 all_tracks.append({
                     'title': hit.get('title'),
                     'artist': artist_name,
-                    'albumartist': artist_name, # <-- FIX: Album Artist
+                    'albumartist': artist_name, # <-- FIX
+                    'performer': artist_name,   # <-- FIX
                     'composer': artist_name,
                     'album': f"{artist_name} - BeatStars Collection",
                     'cover': clean_url,
@@ -310,7 +313,8 @@ async def process_artist(user, permalink):
                     'explicit': False,
                     'release_date': date_fmt,
                     'date': date_fmt[:4] if date_fmt else '',
-                    'description': '' # <-- FIX: Hapus Comment
+                    'description': None, # <-- FIX: Kosongkan Comment
+                    'comment': None
                 })
 
             page += 1
