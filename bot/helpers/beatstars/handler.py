@@ -56,20 +56,26 @@ def format_date(timestamp):
 
 def clean_cover_url(url):
     """
-    Membersihkan URL Cover hanya dengan menghapus double slash (//).
-    Kita TETAP mempertahankan bagian /fit-in/... karena itu adalah endpoint publik.
+    Membersihkan URL Cover:
+    Mengambil path file asli (/prod/...) dan mengarahkannya ke server konten 
+    (content.beatstars.com) untuk menghindari error 404 pada main.v2.
     """
     if not url:
         return "https://www.beatstars.com/assets/img/placeholder-track.png"
     
-    # Pisahkan protokol (https://) agar tidak ikut terganti
-    if "://" in url:
-        protocol, path = url.split("://", 1)
-        # Ganti semua // menjadi / di dalam path
-        cleaned_path = path.replace("//", "/")
-        return f"{protocol}://{cleaned_path}"
-    else:
-        return url.replace("//", "/")
+    # Deteksi path file asli
+    # Contoh Input: https://main.v2.beatstars.com/fit-in/.../prod/track/artwork/TK123/art.jpg
+    # Target: https://content.beatstars.com/prod/track/artwork/TK123/art.jpg
+    
+    match = re.search(r'/prod/(.*)', url)
+    if match:
+        path = match.group(1)
+        # Bersihkan double slash jika ada di dalam path
+        path = path.replace("//", "/")
+        return f"https://content.beatstars.com/prod/{path}"
+    
+    # Fallback standar
+    return url.replace("//", "/")
 
 # --- DOWNLOADER ---
 
@@ -137,7 +143,7 @@ async def process_single_track(user, track_id):
 
     details = data['response']['data']['details']
     
-    # FIX COVER URL (Hanya fix //, tetap pakai fit-in)
+    # FIX COVER URL (Menggunakan Domain Content CDN)
     raw_cover = details.get('artwork', {}).get('original')
     cover_url = clean_cover_url(raw_cover)
 
