@@ -31,17 +31,11 @@ PLACEHOLDER_COVER = "https://www.beatstars.com/assets/img/placeholder-track.png"
 # --- HELPER FORMATTING ---
 
 def parse_metadata_rich(data_list, tags_list=None, bpm=None):
-    """
-    Menggabungkan Genre, Tags, dan BPM secara aman.
-    Menangani input List maupun Dictionary untuk menghindari KeyError/TypeError.
-    """
     extracted = []
     
     # 1. Masukkan Genre Utama
     if data_list:
-        # Jika data_list adalah dict, ambil values-nya
         iterable = data_list.values() if isinstance(data_list, dict) else data_list
-        
         for item in iterable:
             if isinstance(item, str):
                 extracted.append(item)
@@ -50,11 +44,9 @@ def parse_metadata_rich(data_list, tags_list=None, bpm=None):
                 if name:
                     extracted.append(str(name))
     
-    # 2. Masukkan Tags (Mood/Style)
+    # 2. Masukkan Tags
     if tags_list:
-        # FIX: Pastikan tags_list adalah LIST sebelum di-slice
         if isinstance(tags_list, list):
-            # Ambil max 5 tag
             for tag in tags_list[:5]: 
                 tag_name = ""
                 if isinstance(tag, str):
@@ -64,11 +56,9 @@ def parse_metadata_rich(data_list, tags_list=None, bpm=None):
                 
                 if tag_name and tag_name not in extracted:
                     extracted.append(tag_name)
-        
-        # Jika ternyata dict, kita coba ambil values-nya tanpa slice dulu
         elif isinstance(tags_list, dict):
             for key, val in tags_list.items():
-                if len(extracted) >= 10: break # Limit total
+                if len(extracted) >= 10: break 
                 if isinstance(val, str) and val not in extracted:
                     extracted.append(val)
 
@@ -193,7 +183,7 @@ async def process_single_track(user, track_id):
         artist_name = details.get('musician', {}).get('display_name')
         track_title = details.get('title')
         bpm = details.get('bpm', 0)
-        tags = details.get('tags', []) # Bisa list atau dict
+        tags = details.get('tags', []) 
         duration_ms = details.get('duration', 0)
         
         copyright_txt = details.get('copyright', '') 
@@ -201,7 +191,6 @@ async def process_single_track(user, track_id):
             year = release_date_fmt[:4] if release_date_fmt else "2024"
             copyright_txt = f"© {year} {artist_name}"
 
-        # Parse Genre/Tags dengan aman
         rich_genre = parse_metadata_rich(details.get('genre', []), tags, bpm)
 
         filename = f"{artist_name} - {track_title}.mp3"
@@ -211,7 +200,7 @@ async def process_single_track(user, track_id):
         meta = {
             'title': track_title,
             'artist': artist_name,
-            'albumartist': artist_name,
+            'albumartist': artist_name, # <-- FIX: Wajib diisi agar PowerAmp mendeteksi Artist Album
             'composer': artist_name,
             'album': f"{artist_name} - Singles",
             'tracknumber': 1,
@@ -229,7 +218,7 @@ async def process_single_track(user, track_id):
             'genre': rich_genre,
             'duration': str(duration_ms), 
             'explicit': False,
-            'description': f"BPM: {bpm} | Downloaded from BeatStars | {track_id}",
+            'description': '', # <-- FIX: Dikosongkan agar Comment & ID3v1 Comment hilang
             'filepath': filepath,
             'folderpath': folderpath
         }
@@ -238,7 +227,7 @@ async def process_single_track(user, track_id):
         if not stream_url:
             stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
 
-        LOGGER.info(f"Downloading Single Track: {track_title} (BPM: {bpm})")
+        LOGGER.info(f"Downloading Single Track: {track_title}")
         
         err = await download_beatstars_file(stream_url, filepath)
         if err:
@@ -298,7 +287,7 @@ async def process_artist(user, permalink):
                 
                 artist_name = hit.get('metadata', {}).get('artistName')
                 bpm = hit.get('metadata', {}).get('bpm', 0)
-                tags = hit.get('metadata', {}).get('tags', []) 
+                tags = hit.get('metadata', {}).get('tags', [])
                 rich_genre = parse_metadata_rich(hit.get('metadata', {}).get('genres', []), tags, bpm)
                 
                 copyright_txt = f"© {date_fmt[:4] if date_fmt else '2024'} {artist_name}"
@@ -306,7 +295,7 @@ async def process_artist(user, permalink):
                 all_tracks.append({
                     'title': hit.get('title'),
                     'artist': artist_name,
-                    'albumartist': artist_name,
+                    'albumartist': artist_name, # <-- FIX: Album Artist
                     'composer': artist_name,
                     'album': f"{artist_name} - BeatStars Collection",
                     'cover': clean_url,
@@ -321,7 +310,7 @@ async def process_artist(user, permalink):
                     'explicit': False,
                     'release_date': date_fmt,
                     'date': date_fmt[:4] if date_fmt else '',
-                    'description': f"BPM: {bpm} | BeatStars"
+                    'description': '' # <-- FIX: Hapus Comment
                 })
 
             page += 1
