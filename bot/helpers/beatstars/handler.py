@@ -13,22 +13,18 @@ from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
 # Headers lengkap
 ALGOLIA_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Accept": "*/*",
-    "Accept-Language": "en-CA,en-US;q=0.7,en;q=0.3",
+    "Accept-Language": "en-US,en;q=0.9",
     "x-algolia-api-key": "b3513eb709fe8f444b4d5c191b63ea47", 
     "x-algolia-application-id": "NMMGZJQ6QI",
     "content-type": "application/x-www-form-urlencoded",
     "Origin": "https://www.beatstars.com",
-    "Connection": "keep-alive",
     "Referer": "https://www.beatstars.com/",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "cross-site",
-    "Sec-GPC": "1",
-    "Pragma": "no-cache",
-    "Cache-Control": "no-cache"
+    "Connection": "keep-alive"
 }
+
+PLACEHOLDER_COVER = "https://www.beatstars.com/assets/img/placeholder-track.png"
 
 # --- HELPER FORMATTING ---
 
@@ -56,26 +52,42 @@ def format_date(timestamp):
 
 def clean_cover_url(url):
     """
-    Membersihkan URL Cover:
-    Mengambil path file asli (/prod/...) dan mengarahkannya ke server konten 
-    (content.beatstars.com) untuk menghindari error 404 pada main.v2.
+    Membersihkan URL Cover dari kesalahan sintaks umum BeatStars.
     """
     if not url:
-        return "https://www.beatstars.com/assets/img/placeholder-track.png"
+        return PLACEHOLDER_COVER
     
-    # Deteksi path file asli
-    # Contoh Input: https://main.v2.beatstars.com/fit-in/.../prod/track/artwork/TK123/art.jpg
-    # Target: https://content.beatstars.com/prod/track/artwork/TK123/art.jpg
+    # 1. Hapus double slash //
+    if "://" in url:
+        protocol, path = url.split("://", 1)
+        url = f"{protocol}://{path.replace('//', '/')}"
+    else:
+        url = url.replace("//", "/")
+
+    # 2. Fix typo ekstensi di URL filter (misal: format(.jpeg) -> format(jpeg))
+    url = url.replace("format(.jpeg)", "format(jpeg)")
     
-    match = re.search(r'/prod/(.*)', url)
-    if match:
-        path = match.group(1)
-        # Bersihkan double slash jika ada di dalam path
-        path = path.replace("//", "/")
-        return f"https://content.beatstars.com/prod/{path}"
-    
-    # Fallback standar
-    return url.replace("//", "/")
+    return url
+
+async def verify_cover_url(session, url):
+    """
+    Mengecek apakah URL gambar bisa diakses (Status 200).
+    Jika gagal, kembalikan Placeholder.
+    """
+    if not url or url == PLACEHOLDER_COVER:
+        return PLACEHOLDER_COVER
+        
+    try:
+        # Lakukan HEAD request ringan untuk cek status
+        async with session.head(url, timeout=5) as resp:
+            if resp.status == 200:
+                return url
+            else:
+                LOGGER.warning(f"Cover art mati (HTTP {resp.status}): {url}")
+                return PLACEHOLDER_COVER
+    except Exception as e:
+        LOGGER.warning(f"Gagal verifikasi cover: {e}")
+        return PLACEHOLDER_COVER
 
 # --- DOWNLOADER ---
 
@@ -138,60 +150,65 @@ async def process_single_track(user, track_id):
                 raise Exception(f"BeatStars API Error: {resp.status}")
             data = await resp.json()
     
-    if not data.get('response', {}).get('data'):
-        raise Exception("Track tidak ditemukan.")
+        if not data.get('response', {}).get('data'):
+            raise Exception("Track tidak ditemukan.")
 
-    details = data['response']['data']['details']
-    
-    # FIX COVER URL (Menggunakan Domain Content CDN)
-    raw_cover = details.get('artwork', {}).get('original')
-    cover_url = clean_cover_url(raw_cover)
+        details = data['response']['data']['details']
+        
+        # 1. Ambil & Bersihkan URL
+        raw_cover = details.get('artwork', {}).get('original')
+        clean_url = clean_cover_url(raw_cover)
+        
+        # 2. Verifikasi Keberadaan Gambar (Cek 404)
+        final_cover = await verify_cover_url(session, clean_url)
 
-    # FIX TANGGAL
-    release_date_fmt = format_date(details.get('release_date_time', 0))
+        # 3. Format Tanggal
+        release_date_fmt = format_date(details.get('release_date_time', 0))
 
-    artist_name = details.get('musician', {}).get('display_name')
-    track_title = details.get('title')
-    
-    folderpath = f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
-    filename = f"{artist_name} - {track_title}.mp3"
-    filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-    filepath = f"{folderpath}/{filename}"
+        artist_name = details.get('musician', {}).get('display_name')
+        track_title = details.get('title')
+        
+        folderpath = f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
+        filename = f"{artist_name} - {track_title}.mp3"
+        filename = re.sub(r'[\\/*?:"<>|]', "", filename)
+        filepath = f"{folderpath}/{filename}"
 
-    meta = {
-        'title': track_title,
-        'artist': artist_name,
-        'albumartist': artist_name,
-        'album': 'BeatStars Single',
-        'tracknumber': 1,
-        'totaltracks': 1,
-        'volume': 1,
-        'totalvolume': 1,
-        'copyright': '',
-        'isrc': '',
-        'release_date': release_date_fmt,
-        'date': release_date_fmt[:4] if release_date_fmt else '',
-        'cover': cover_url, 
-        'provider': 'BeatStars',
-        'type': 'track', 
-        'itemid': str(details.get('track_id')),
-        'genre': parse_genres(details.get('genre', [])),
-        'duration': '', 
-        'explicit': False,
-        'filepath': filepath,
-        'folderpath': folderpath
-    }
+        meta = {
+            'title': track_title,
+            'artist': artist_name,
+            'albumartist': artist_name,
+            'album': 'BeatStars Single',
+            'tracknumber': 1,
+            'totaltracks': 1,
+            'volume': 1,
+            'totalvolume': 1,
+            'copyright': '',
+            'isrc': '',
+            'release_date': release_date_fmt,
+            'date': release_date_fmt[:4] if release_date_fmt else '',
+            'cover': final_cover, # Gunakan URL yang sudah diverifikasi
+            'provider': 'BeatStars',
+            'type': 'track', 
+            'itemid': str(details.get('track_id')),
+            'genre': parse_genres(details.get('genre', [])),
+            'duration': '', 
+            'explicit': False,
+            'filepath': filepath,
+            'folderpath': folderpath
+        }
 
-    stream_url = details.get('stream_url')
-    if not stream_url:
-        stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
+        stream_url = details.get('stream_url')
+        if not stream_url:
+            stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
 
-    LOGGER.info(f"Downloading Single Track: {track_title}")
-    
-    err = await download_beatstars_file(stream_url, filepath)
-    if err:
-        raise Exception(f"Gagal download file: {err}")
+        LOGGER.info(f"Downloading Single Track: {track_title}")
+        
+        # Download Audio
+        err = await download_beatstars_file(stream_url, filepath)
+        if err:
+            raise Exception(f"Gagal download file: {err}")
 
+    # Tagging & Upload
     await set_metadata(meta, user['user_id'])
     await track_upload(meta, user)
 
@@ -234,8 +251,11 @@ async def process_artist(user, permalink):
                 track_id = hit.get('v2Id')
                 stream_url = f"https://main.v2.beatstars.com/stream?id={track_id}&return=audio"
                 
+                # Cover Processing
                 raw_cover = hit.get('artwork', {}).get('sizes', {}).get('original')
-                cover_hit = clean_cover_url(raw_cover)
+                clean_url = clean_cover_url(raw_cover)
+                # Di loop artist, kita tidak verifikasi satu per satu agar cepat, 
+                # kecuali jika sering gagal. Kita pakai clean_url saja.
                 
                 ts = hit.get('releaseTimestamp') or hit.get('releaseDate') or 0
                 date_fmt = format_date(ts)
@@ -245,7 +265,7 @@ async def process_artist(user, permalink):
                     'artist': hit.get('metadata', {}).get('artistName'),
                     'albumartist': hit.get('metadata', {}).get('artistName'), 
                     'album': f"{hit.get('metadata', {}).get('artistName')} - BeatStars",
-                    'cover': cover_hit,
+                    'cover': clean_url,
                     'itemid': str(track_id),
                     'url': stream_url,
                     'genre': parse_genres(hit.get('metadata', {}).get('genres', [])),
@@ -309,7 +329,12 @@ async def process_artist(user, permalink):
             if err:
                 LOGGER.error(f"Gagal: {t['title']} ({err})")
                 continue
-                
+            
+            # Khusus artist mode, kita verifikasi cover sebelum tagging jika perlu, 
+            # atau biarkan metadata.py handle (dia akan skip jika 404)
+            # Agar konsisten, kita validasi juga di sini
+            t['cover'] = await verify_cover_url(session, t['cover'])
+
             await set_metadata(t, user['user_id'])
             album_meta['tracks'].append(t)
             
