@@ -1,6 +1,6 @@
 # [GANTI FILE: bot/helpers/beatstars/handler.py]
 
-import os  # <-- PENTING: Import OS untuk membuat folder
+import os
 import re
 import aiohttp
 import asyncio
@@ -143,6 +143,7 @@ async def process_single_track(user, track_id):
         'type': 'track',
         'itemid': str(details.get('track_id')),
         'genre': parse_genres(details.get('genre', [])),
+        'duration': '', # <-- DITAMBAHKAN: Agar set_metadata auto-calc
         'folderpath': f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
     }
 
@@ -234,7 +235,8 @@ async def process_artist(user, permalink):
                     'cover': cover_hit,
                     'itemid': str(track_id),
                     'url': stream_url,
-                    'genre': parse_genres(raw_genres)
+                    'genre': parse_genres(raw_genres),
+                    'duration': '' # <-- DITAMBAHKAN
                 }
                 all_tracks.append(meta_track)
 
