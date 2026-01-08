@@ -21,11 +21,10 @@ try:
 except ImportError:
     lyrics_manager = None
 
-# --- FUNGSI HELPER BARU: PARSE DURASI ---
+# --- FUNGSI HELPER: PARSE DURASI ---
 def parse_duration_to_ms(raw):
     """
-    Mengubah berbagai format durasi menjadi integer milidetik.
-    Mendukung: "02:51", "1:30:05", 175.5 (detik), 175500 (ms)
+    Mengubah berbagai format ("02:51", "171.5", 171500) menjadi integer Milidetik.
     """
     if not raw:
         return 0
@@ -39,9 +38,11 @@ def parse_duration_to_ms(raw):
                 seconds = seconds * 60 + float(part)
             return int(seconds * 1000)
         
-        # 2. Cek format angka (Detik atau MS)
+        # 2. Cek format angka
         val = float(s)
-        if val < 30000: # Asumsi detik jika nilainya kecil (kurang dari 8 jam dlm ms)
+        # Jika kurang dari 30000, asumsi itu Detik -> ubah ke MS
+        # (Lagu jarang ada yang 30.000 detik / 8 jam)
+        if val < 30000: 
             return int(val * 1000)
         else:
             return int(val)
@@ -89,11 +90,32 @@ async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
     handle = File(audio_path)
     
-    if metadata['duration'] == '' or metadata['duration'] == 0:
+    # 1. LOGIKA UTAMA PERBAIKAN DURASI
+    # Kita hitung durasi yang benar di sini agar semua fungsi (tagging & upload) 
+    # mendapatkan data yang konsisten.
+    
+    current_dur = metadata.get('duration', 0)
+    
+    # Jika durasi kosong/0, coba ambil dari file asli
+    if not current_dur:
         try:
-            metadata['duration'] = handle.info.length
+            if hasattr(handle, 'info') and hasattr(handle.info, 'length'):
+                current_dur = handle.info.length # Ini biasanya detik (float)
         except:
             pass
+
+    # Konversi ke Milidetik (Integer) untuk Tagging
+    dur_ms = parse_duration_to_ms(current_dur)
+    
+    if dur_ms > 0:
+        # PENTING: Update metadata['duration'] ke DETIK (Integer).
+        # Ini yang akan dibaca oleh Uploader Telegram agar tidak -:--
+        metadata['duration'] = int(dur_ms / 1000)
+    else:
+        # Fallback aman
+        metadata['duration'] = 0
+
+    # ----------------------------------------
 
     if lyrics_manager and user_id:
         try:
@@ -119,14 +141,15 @@ async def set_metadata(metadata:dict, user_id: int = None):
                 for k in keywords:
                     if k in m: return True
             return False
-
+            
+        # Kita oper dur_ms ke fungsi spesifik agar tidak perlu hitung ulang
         if check_mime(['flac']):
             LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
-            await set_flac(metadata, handle)
+            await set_flac(metadata, handle, dur_ms)
             
         elif check_mime(['mpeg', 'mp3']):
             LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}")
-            await set_mp3(metadata, handle)
+            await set_mp3(metadata, handle, dur_ms)
             
         elif check_mime(['mp4', 'm4a']): 
             LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}")
@@ -134,17 +157,17 @@ async def set_metadata(metadata:dict, user_id: int = None):
             
         elif check_mime(['wav']):
             LOGGER.info(f"Memanggil set_wav untuk: {audio_path}")
-            await set_wav(metadata, handle)
+            await set_wav(metadata, handle, dur_ms)
         
         else:
             LOGGER.warning(f"Format tidak dikenali, mencoba MP3 fallback: {mimes}")
-            await set_mp3(metadata, handle) 
+            await set_mp3(metadata, handle, dur_ms) 
             
     except Exception as e:
         LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
 
 
-async def set_flac(data, handle):
+async def set_flac(data, handle, dur_ms=0):
     if handle.tags is None:
             handle.add_tags()
     
@@ -199,7 +222,7 @@ async def set_flac(data, handle):
     handle.save()
     return True
 
-async def set_mp3(data, handle):
+async def set_mp3(data, handle, dur_ms=0):
     if handle.tags is None:
             handle.add_tags()
     track_num = str(data.get('tracknumber', ''))
@@ -249,11 +272,9 @@ async def set_mp3(data, handle):
     if composer_text: 
         handle.tags.add(TCOM(encoding=3, text=composer_text)) 
     
-    # --- UPDATE: GUNAKAN HELPER PARSER ---
-    dur_ms = parse_duration_to_ms(data.get('duration'))
+    # Gunakan dur_ms yang sudah dihitung di awal
     if dur_ms > 0:
          handle.tags.add(TLEN(encoding=3, text=str(dur_ms)))
-    # -------------------------------------
 
     if data.get('bit_depth'):
         handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
@@ -264,7 +285,7 @@ async def set_mp3(data, handle):
     handle.save()
     return True
 
-async def set_wav(data, handle):
+async def set_wav(data, handle, dur_ms=0):
     try:
         audio = WAVE(data['filepath'])
     except Exception as e:
@@ -323,11 +344,9 @@ async def set_wav(data, handle):
     if composer_text: 
         tags.add(TCOM(encoding=3, text=composer_text)) 
 
-    # --- UPDATE: GUNAKAN HELPER PARSER ---
-    dur_ms = parse_duration_to_ms(data.get('duration'))
+    # Gunakan dur_ms yang sudah dihitung di awal
     if dur_ms > 0:
          tags.add(TLEN(encoding=3, text=str(dur_ms)))
-    # -------------------------------------
 
     await savePic(audio, data)
     audio.save()
