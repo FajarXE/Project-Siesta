@@ -13,10 +13,10 @@ from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
 # Import Mutagen
 try:
-    from mutagen.id3 import ID3, TPE2, COMM, TSSE, TENC
+    from mutagen.id3 import ID3, TPE2, COMM, TSSE, TENC, ID3NoHeaderError
 except ImportError:
     LOGGER.error("Mutagen belum terinstall. Fitur patching metadata tidak akan berjalan.")
-    ID3, TPE2, COMM, TSSE, TENC = None, None, None, None, None
+    ID3, TPE2, COMM, TSSE, TENC, ID3NoHeaderError = None, None, None, None, None, None
 
 # HEADER 1: Untuk API V2 & Download (Browser-like)
 BASE_HEADERS = {
@@ -90,10 +90,6 @@ def clean_cover_url(url):
     return url
 
 async def resolve_beatstars_redirect(url):
-    """
-    Mengikuti redirect (Shortlink/Internal) untuk mendapatkan URL Final.
-    Contoh: beatstars.com/7BFWiJ -> beatstars.com/username
-    """
     try:
         async with aiohttp.ClientSession(headers=BASE_HEADERS) as session:
             async with session.head(url, allow_redirects=True, timeout=10) as resp:
@@ -108,7 +104,6 @@ async def download_local_cover(session, url, folderpath):
     filename = "cover.jpg"
     filepath = os.path.join(folderpath, filename)
     try:
-        # Gunakan BASE_HEADERS untuk download gambar
         async with session.get(url, headers=BASE_HEADERS, allow_redirects=True, timeout=15) as resp:
             if resp.status == 200:
                 content = await resp.read()
@@ -122,28 +117,49 @@ async def download_local_cover(session, url, folderpath):
 
 # --- PATCHER METADATA MANUAL ---
 def patch_metadata_manual(filepath, album_artist):
+    """
+    Membersihkan tag dan memperbaiki Album Artist.
+    Menangani kasus file belum punya tag ID3.
+    """
     if not ID3: return
+
     try:
-        audio = ID3(filepath)
+        # Coba buka tag yang ada, atau buat baru jika kosong
+        try:
+            audio = ID3(filepath)
+        except ID3NoHeaderError:
+            audio = ID3()
+        except Exception as e:
+            LOGGER.warning(f"Warning saat buka ID3: {e}. Membuat header baru.")
+            audio = ID3()
+
+        # Hapus kunci yang tidak diinginkan
         keys_to_delete = []
         for key in audio.keys():
             if key.startswith("COMM") or key.startswith("TENC") or key.startswith("TSSE") or key.startswith("TXXX"):
                 keys_to_delete.append(key)
                 continue
+            
+            # Cek isi teks frame
             frame = audio[key]
             if hasattr(frame, 'text'):
                 for text_val in frame.text:
-                    if "processed by" in str(text_val).lower() or "sox" in str(text_val).lower():
+                    text_lower = str(text_val).lower()
+                    if "processed by" in text_lower or "sox" in text_lower:
                         keys_to_delete.append(key)
                         break
+        
         for key in list(set(keys_to_delete)):
             if key in audio: del audio[key]
 
+        # Tambahkan Album Artist
         if album_artist:
             audio.add(TPE2(encoding=3, text=str(album_artist)))
 
-        audio.save(v2_version=3, v1=2) # Hapus ID3v1
+        # Simpan (Pastikan filepath disertakan untuk kasus ID3 baru)
+        audio.save(filepath, v2_version=3, v1=2)
         LOGGER.info("[Patch] Metadata cleaned & fixed.")
+        
     except Exception as e:
         LOGGER.error(f"Gagal patching: {e}")
 
@@ -169,7 +185,7 @@ async def download_beatstars_file(url, path):
 
 # --- MAIN HANDLER ---
 async def start_beatstars(link: str, user: dict):
-    # 1. RESOLVE REDIRECT TERLEBIH DAHULU
+    # 1. Resolve Redirect
     final_link = await resolve_beatstars_redirect(link)
     if final_link != link:
         LOGGER.info(f"BeatStars Redirect: {link} -> {final_link}")
@@ -179,7 +195,7 @@ async def start_beatstars(link: str, user: dict):
     path = parsed.path.strip("/")
     path_parts = path.split("/")
 
-    # 2. DETEKSI MODE (TRACK / ARTIST)
+    # 2. Deteksi Mode
     if path.startswith("beat/") or "/beat/" in link:
         track_regex = r'(\d+)$'
         track_match = re.search(track_regex, path)
@@ -196,12 +212,10 @@ async def start_beatstars(link: str, user: dict):
         permalink = path_parts[0]
         reserved_words = ['beat', 'tracks', 'feed', 'services', 'publishing', 'dashboard', 'u']
         
-        # Handle format /u/username
         if permalink == 'u' and len(path_parts) > 1:
             permalink = path_parts[1]
         
         if permalink.lower() in reserved_words:
-             # Jika URL-nya beatstars.com/tracks/..., mungkin tidak valid untuk artis
              raise Exception(f"Link tidak valid: '{permalink}' bukan nama artis.")
              
         LOGGER.info(f"BeatStars Artist Mode: {permalink}")
@@ -289,10 +303,9 @@ async def process_single_track(user, track_id):
 
 # --- ARTIST BATCH ---
 async def process_artist(user, permalink):
-    # Pastikan permalink lowercase agar API tidak 404 jika user typo kapital
     permalink = permalink.lower()
     
-    async with aiohttp.ClientSession(headers=BASE_HEADERS) as session: # Gunakan BASE_HEADERS untuk profile
+    async with aiohttp.ClientSession(headers=BASE_HEADERS) as session:
         artist_url = f"https://main.v2.beatstars.com/musician?permalink={permalink}"
         async with session.get(artist_url) as resp:
             if resp.status == 404:
@@ -307,8 +320,6 @@ async def process_artist(user, permalink):
             raise Exception("Data profil artis tidak valid.")
             
         member_id = f"MR{user_id_num}"
-        
-        # Gunakan ALGOLIA_HEADERS khusus untuk Algolia
         query_url = "https://nmmgzjq6qi-dsn.algolia.net/1/indexes/public_prod_inventory_track_index_bycustom/query?x-algolia-agent=Algolia%20for%20JavaScript%20(4.12.0)%3B%20Browser"
         
         all_tracks = []
@@ -324,7 +335,6 @@ async def process_artist(user, permalink):
                 "facetFilters": [[f"profile.memberId:{member_id}"]],
                 "maxValuesPerFacet": 1000
             }
-            # Session khusus Algolia atau update header sementara
             async with aiohttp.ClientSession(headers=ALGOLIA_HEADERS) as algolia_session:
                 async with algolia_session.post(query_url, json=payload) as resp:
                     if resp.status != 200: break
