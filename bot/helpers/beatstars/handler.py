@@ -11,9 +11,8 @@ from bot.helpers.uploder import track_upload, artist_upload, album_upload
 from bot.helpers.metadata import set_metadata
 from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
-# Import Mutagen untuk Patching Manual
+# Import Mutagen
 try:
-    # Tambahkan TSSE dan TENC untuk menghapus 'Encoded by'
     from mutagen.id3 import ID3, TPE2, COMM, TSSE, TENC
 except ImportError:
     LOGGER.error("Mutagen belum terinstall. Fitur patching metadata tidak akan berjalan.")
@@ -92,10 +91,10 @@ def clean_cover_url(url):
         url = url.replace("//", "/")
     return url
 
-# --- MANUAL METADATA PATCHER (CLEANER) ---
+# --- MANUAL METADATA PATCHER (AGRESSIVE CLEANER) ---
 def patch_metadata_manual(filepath, album_artist):
     """
-    Membersihkan tag yang tidak diinginkan dan memperbaiki Album Artist.
+    Membersihkan tag COMMENT (termasuk Processed by SoX) secara agresif.
     """
     if not ID3:
         return
@@ -103,31 +102,40 @@ def patch_metadata_manual(filepath, album_artist):
     try:
         audio = ID3(filepath)
         
-        # 1. Fix Album Artist (TPE2)
+        # LIST KUNCI YANG AKAN DIHAPUS
+        keys_to_delete = []
+
+        # 1. SCANNING SEMUA FRAME
+        for key in audio.keys():
+            # A. Hapus berdasarkan ID Frame (Comment, Encoder, UserText)
+            if key.startswith("COMM") or key.startswith("TENC") or key.startswith("TSSE") or key.startswith("TXXX"):
+                keys_to_delete.append(key)
+                continue
+            
+            # B. Hapus berdasarkan ISI TEKS (Cari "SoX" atau "Processed" dimanapun)
+            frame = audio[key]
+            if hasattr(frame, 'text'): # Hampir semua frame teks punya atribut ini
+                for text_val in frame.text:
+                    text_str = str(text_val).lower()
+                    if "processed by" in text_str or "sox" in text_str:
+                        keys_to_delete.append(key)
+                        break
+        
+        # 2. EKSEKUSI PENGHAPUSAN
+        for key in list(set(keys_to_delete)): # Pakai set biar unik
+            if key in audio:
+                del audio[key]
+
+        # 3. FIX ALBUM ARTIST
         if album_artist:
             audio.add(TPE2(encoding=3, text=str(album_artist)))
 
-        # 2. Hapus Comment (COMM) secara Agresif
-        audio.delall("COMM") # Hapus frame standar
-        audio.delall("TXXX:Description") 
+        # 4. SIMPAN & HAPUS ID3v1 (KUNCI UTAMA)
+        # v1=2 artinya: Hapus tag ID3v1 jika ada. 
+        # "Processed by SoX" sering bersembunyi di ID3v1.
+        audio.save(v2_version=3, v1=2)
         
-        # Iterasi manual untuk menghapus frame yang mungkin lolos (seperti COMM:ID3v1 Comment:eng)
-        frames_to_delete = []
-        for key in audio.keys():
-            if key.startswith("COMM") or "Comment" in key:
-                frames_to_delete.append(key)
-        
-        for key in frames_to_delete:
-            del audio[key]
-
-        # 3. Hapus Encoded By (TSSE & TENC)
-        audio.delall("TSSE") # Encoding settings / Software
-        audio.delall("TENC") # Encoded by
-        
-        LOGGER.info("[Patch] Metadata dibersihkan: AlbumArtist OK, Comment & EncodedBy Dihapus.")
-        
-        # Simpan dengan standar ID3v2.3 (paling kompatibel)
-        audio.save(v2_version=3)
+        LOGGER.info("[Patch] Metadata bersih total (No SoX, No ID3v1, No EncodedBy).")
         
     except Exception as e:
         LOGGER.error(f"Gagal patching metadata manual: {e}")
@@ -249,8 +257,8 @@ async def process_single_track(user, track_id):
         meta = {
             'title': track_title,
             'artist': artist_name,
-            'albumartist': artist_name, 
-            'performer': artist_name,   
+            'albumartist': artist_name,
+            'performer': artist_name,
             'composer': artist_name,
             'album': f"{artist_name} - Singles",
             'tracknumber': 1,
@@ -268,8 +276,8 @@ async def process_single_track(user, track_id):
             'genre': rich_genre,
             'duration': str(duration_ms), 
             'explicit': False,
-            'description': None, # Set None
-            'comment': None,     # Set None
+            'description': None,
+            'comment': None,
             'filepath': filepath,
             'folderpath': folderpath
         }
@@ -287,7 +295,7 @@ async def process_single_track(user, track_id):
     # 1. Set Metadata Standar
     await set_metadata(meta, user['user_id'])
     
-    # 2. PATCHING MANUAL (Hapus Comment, Hapus EncodedBy, Fix AlbumArtist)
+    # 2. PATCHING MANUAL AGRESITF
     patch_metadata_manual(filepath, artist_name)
 
     await track_upload(meta, user)
