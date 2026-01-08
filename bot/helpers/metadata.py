@@ -64,17 +64,21 @@ metadata = {
 async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
     
-    # 1. Deteksi Handle File
+    # 1. Deteksi Handle File (Normal)
     try:
         handle = File(audio_path)
     except Exception as e:
         LOGGER.error(f"Mutagen gagal membaca file awal {audio_path}: {e}")
         handle = None
 
-    # Fallback khusus untuk WAV jika deteksi otomatis gagal
-    if not handle and audio_path.lower().endswith('.wav'):
+    # 2. Safety Net: Cek Magic Bytes jika deteksi otomatis gagal
+    # Ini menangani kasus jika file .mp3 tapi isinya WAV (RIFF)
+    if not handle:
         try:
-            handle = WAVE(audio_path)
+            with open(audio_path, 'rb') as f:
+                head = f.read(4)
+                if head == b'RIFF':
+                    handle = WAVE(audio_path)
         except Exception:
             pass
 
@@ -88,7 +92,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
         except:
             pass
 
-    # 2. Ambil Lirik (Jika ada manager)
+    # 3. Ambil Lirik (Jika ada manager)
     if lyrics_manager and user_id:
         try:
             lyrics_text = await lyrics_manager.fetch_lyrics(metadata, user_id)
@@ -100,24 +104,21 @@ async def set_metadata(metadata:dict, user_id: int = None):
         except Exception as e:
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
 
-    # 3. Routing ke Fungsi Tagging yang Sesuai
+    # 4. Routing ke Fungsi Tagging yang Sesuai
     try:
         # Ambil mime type (aman)
         mime = getattr(handle, 'mime', [])
         
         if 'audio/x-flac' in mime:
-            LOGGER.info(f"Writing Metadata: FLAC -> {audio_path}")
             await set_flac(metadata, handle)
             
         elif 'audio/mpeg' in mime:
-            LOGGER.info(f"Writing Metadata: MP3 -> {audio_path}")
             await set_mp3(metadata, handle)
             
         elif 'audio/x-m4a' in mime: 
-            LOGGER.info(f"Writing Metadata: M4A -> {audio_path}")
             await set_m4a(metadata, handle)
             
-        # --- LOGIKA BARU UNTUK WAV ---
+        # --- LOGIKA WAV ---
         elif 'audio/x-wav' in mime or 'audio/wav' in mime or isinstance(handle, WAVE) or audio_path.lower().endswith('.wav'):
             LOGGER.info(f"Writing Metadata: WAV -> {audio_path}")
             # Pastikan handle adalah object WAVE agar support ID3
@@ -248,24 +249,17 @@ async def set_mp3(data, handle):
     return True
 
 
-# --- FUNGSI BARU UNTUK WAV ---
 async def set_wav(data, handle):
     """
     Menangani Metadata untuk file WAV menggunakan chunk ID3.
-    Mutagen WAVE membungkus ID3 Tags, jadi kita bisa menggunakan logika mirip MP3.
     """
     try:
-        # Pastikan tags diinisialisasi
         if handle.tags is None:
             handle.add_tags()
-        
-        # Panggil fungsi MP3 karena strukturnya sama (ID3v2)
-        # Mutagen WAVE menangani penulisan ke chunk 'id3 ' secara otomatis
         return await set_mp3(data, handle)
     except Exception as e:
         LOGGER.error(f"Gagal set WAV tags: {e}")
         return False
-# -----------------------------
 
 
 async def set_m4a(data, handle):
@@ -321,7 +315,6 @@ async def set_m4a(data, handle):
 async def savePic(handle, metadata):
     album_art = metadata['cover']
     if album_art == './project-siesta.png' or not os.path.exists(album_art):
-        LOGGER.warning(f"Cover art tidak valid atau default: {album_art}")
         return
     try:
         with open(album_art, "rb") as f:
@@ -341,7 +334,6 @@ async def savePic(handle, metadata):
         
         # MP3 dan WAV (WAV menggunakan ID3 APIC juga)
         elif (hasattr(handle, 'mime') and ('audio/mpeg' in handle.mime or 'audio/x-wav' in handle.mime)) or isinstance(handle, WAVE):
-            # Pastikan handle memiliki 'tags', jika tidak tambahkan
             if handle.tags is None:
                 handle.add_tags()
             
@@ -373,19 +365,17 @@ async def get_audio_extension(path):
             return 'm4a'
         elif 'audio/x-flac' in handle.mime:
             return 'flac'
-        elif 'audio/x-wav' in handle.mime: # Tambahan WAV
+        elif 'audio/x-wav' in handle.mime: 
             return 'wav'
         else:
             return 'mp3'
     except:
-        # Fallback manual check
         if path.lower().endswith('.wav'): return 'wav'
         if path.lower().endswith('.flac'): return 'flac'
         if path.lower().endswith('.m4a'): return 'm4a'
         return 'mp3'
 
 async def _download_cover_with_headers(url: str, destination: str):
-    """Downloader kustom untuk cover art dengan User-Agent."""
     if not url:
         return "No URL provided"
     
