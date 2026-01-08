@@ -6,6 +6,9 @@ import aiofiles
 from datetime import datetime
 
 from mutagen import File
+# --- TAMBAHAN BARU: Import WAVE ---
+from mutagen.wave import WAVE 
+# ----------------------------------
 from config import Config
 from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
@@ -15,12 +18,10 @@ from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
 
 from bot.logger import LOGGER
 
-# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
 try:
     from bot.helpers.lyrics.manager import lyrics_manager
 except ImportError:
     lyrics_manager = None
-# --- BATAS TAMBAHAN ---
 
 metadata = {
         'itemid': '',
@@ -58,15 +59,17 @@ metadata = {
     }
 
 
-async def set_metadata(metadata:dict, user_id: int = None): # <-- MODIFIKASI: Tambah parameter user_id
+async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
     handle = File(audio_path)
     
     if metadata['duration'] == '':
-        metadata['duration'] = handle.info.length
+        try:
+            metadata['duration'] = handle.info.length
+        except:
+            pass
 
-    # --- TAMBAHAN BARU: AMBIL LIRIK ---
-    # Kita cek apakah lyrics_manager tersedia dan user_id diberikan
+    # Ambil Lirik
     if lyrics_manager and user_id:
         try:
             lyrics_text = await lyrics_manager.fetch_lyrics(metadata, user_id)
@@ -77,20 +80,34 @@ async def set_metadata(metadata:dict, user_id: int = None): # <-- MODIFIKASI: Ta
                 LOGGER.info(f"Tidak ada lirik ditemukan untuk: {metadata['title']}")
         except Exception as e:
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
-    # --- BATAS TAMBAHAN ---
 
     try:
-        if 'audio/x-flac' in handle.mime:
-            # --- TAMBAHAN LOG DIAGNOSTIK ---
+        # Cek tipe MIME
+        mime_str = ""
+        if hasattr(handle, 'mime'):
+            if isinstance(handle.mime, list):
+                mime_str = handle.mime[0]
+            else:
+                mime_str = handle.mime
+        
+        if 'audio/x-flac' in mime_str or 'audio/flac' in mime_str:
             LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
-            # --- AKHIR TAMBAHAN ---
             await set_flac(metadata, handle)
-        elif 'audio/mpeg' in handle.mime:
+            
+        elif 'audio/mpeg' in mime_str:
             LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}")
             await set_mp3(metadata, handle)
-        elif 'audio/x-m4a' in handle.mime: 
+            
+        elif 'audio/x-m4a' in mime_str or 'audio/mp4' in mime_str: 
             LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}")
             await set_m4a(metadata, handle)
+            
+        # --- TAMBAHAN BARU: Handler WAV ---
+        elif 'audio/wav' in mime_str or 'audio/x-wav' in mime_str:
+            LOGGER.info(f"Memanggil set_wav untuk: {audio_path}")
+            await set_wav(metadata, handle)
+        # ----------------------------------
+            
     except Exception as e:
         LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
 
@@ -99,7 +116,6 @@ async def set_flac(data, handle):
     if handle.tags is None:
             handle.add_tags()
     
-    # --- PERBAIKAN: Gunakan Kunci VORBIS COMMENT (UPPERCASE) ---
     handle.tags['TITLE'] = data['title']
     handle.tags['ALBUM'] = data['album']
     handle.tags['ALBUMARTIST'] = data['albumartist']
@@ -122,13 +138,13 @@ async def set_flac(data, handle):
         handle.tags['DISCTOTAL'] = disc_total
     
     if data.get('date'): 
-        handle.tags['DATE'] = data['date'] # 'DATE' adalah standar
+        handle.tags['DATE'] = data['date']
     
     if data.get('release_date'): 
-        handle.tags['RELEASETIME'] = data['release_date'] # Tag kustom
+        handle.tags['RELEASETIME'] = data['release_date']
 
     if data.get('subgenre'): 
-        handle.tags['SUBGENRE'] = data['subgenre'] # Tag kustom
+        handle.tags['SUBGENRE'] = data['subgenre']
     
     handle.tags['ISRC'] = data['isrc']
     if data.get('lyrics'):
@@ -146,7 +162,6 @@ async def set_flac(data, handle):
         handle.tags['ENCODER'] = mqa_encoder_str
         handle.tags['MQAENCODER'] = mqa_encoder_str
         handle.tags['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
-    # --- AKHIR PERBAIKAN ---
     
     await savePic(handle, data)
     handle.save()
@@ -208,6 +223,73 @@ async def set_mp3(data, handle):
     handle.save()
     return True
 
+# --- FUNGSI BARU UNTUK WAV ---
+async def set_wav(data, handle):
+    # Kita init ulang sebagai WAVE object untuk memastikan dukungan ID3
+    try:
+        audio = WAVE(data['filepath'])
+    except Exception as e:
+        LOGGER.error(f"Gagal init WAVE obj: {e}")
+        return
+
+    if audio.tags is None:
+        audio.add_tags()
+    
+    # WAV via Mutagen mendukung ID3 tags, jadi logikanya mirip MP3
+    tags = audio.tags
+
+    track_num = str(data.get('tracknumber', ''))
+    track_total = str(data.get('totaltracks', ''))
+    if track_total and track_total != '0':
+        track_pos = f"{track_num}/{track_total}"
+    else:
+        track_pos = track_num
+        
+    disc_num = str(data.get('volume') or '')
+    disc_total = str(data.get('totalvolume') or '')
+    if disc_total and disc_total != '0':
+        disc_pos = f"{disc_num}/{disc_total}"
+    else:
+        disc_pos = disc_num
+        
+    genre_text = data.get('genre') or ''
+    composer_text = data.get('composer') or ''
+
+    # Menulis Frame ID3 ke WAV
+    tags.add(TIT2(encoding=3, text=data['title']))
+    tags.add(TALB(encoding=3, text=data['album']))
+    tags.add(TOPE(encoding=3, text=data['albumartist']))
+    tags.add(TPE1(encoding=3, text=data['artist']))
+    tags.add(TCOP(encoding=3, text=data['copyright']))
+    tags.add(TRCK(encoding=3, text=track_pos)) 
+    
+    if disc_pos: 
+        tags.add(TPOS(encoding=3, text=disc_pos)) 
+    if genre_text: 
+        tags.add(TCON(encoding=3, text=genre_text)) 
+    
+    if data.get('date'): 
+        tags.add(TDRC(encoding=3, text=data['date']))
+        
+    if data.get('release_date'): 
+        tags.add(TDRL(encoding=3, text=data['release_date']))
+
+    if data.get('subgenre'): 
+        tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
+    
+    tags.add(TSRC(encoding=3, text=data['isrc']))
+    if data.get('lyrics'):
+        tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
+    if composer_text: 
+        tags.add(TCOM(encoding=3, text=composer_text)) 
+
+    # Simpan Cover Art (WAV ID3 support APIC)
+    await savePic(audio, data)
+    
+    audio.save()
+    return True
+# -----------------------------
+
 async def set_m4a(data, handle):
     if handle.tags is None:
         handle.add_tags()
@@ -227,7 +309,7 @@ async def set_m4a(data, handle):
     totalvolume_str = str(data.get('totalvolume') or '') 
     
     if data.get('date'): 
-        handle.tags['\u00a9day'] = data['date'] # Tag 'Year'
+        handle.tags['\u00a9day'] = data['date']
     
     handle.tags['\u00a9cpr'] = data['copyright']
 
@@ -245,10 +327,8 @@ async def set_m4a(data, handle):
     handle.tags['trkn'] = [(track_number, totaltracks)]
     handle.tags['disk'] = [(volume, totalvolume)]
     
-    # --- TAMBAHAN BARU: Lirik untuk M4A ---
     if data.get('lyrics'):
         handle.tags['\u00a9lyr'] = data['lyrics']
-    # --------------------------------------
 
     if data.get('bit_depth'):
         handle.tags['----:com.apple.iTunes:BITS PER SAMPLE'] = str(data['bit_depth']).encode('utf-8')
@@ -263,7 +343,6 @@ async def set_m4a(data, handle):
 async def savePic(handle, metadata):
     album_art = metadata['cover']
     if album_art == './project-siesta.png' or not os.path.exists(album_art):
-        LOGGER.warning(f"Cover art tidak ditemukan di {album_art}, tidak menambahkan gambar.")
         return
     try:
         with open(album_art, "rb") as f:
@@ -271,32 +350,48 @@ async def savePic(handle, metadata):
     except Exception as e:
         LOGGER.error(e)
         return
-    if 'audio/x-flac' in handle.mime:
+    
+    # Helper untuk cek mime type dengan aman
+    mime_check = ""
+    if hasattr(handle, 'mime'):
+        mime_check = handle.mime if isinstance(handle.mime, str) else handle.mime[0]
+
+    if 'audio/x-flac' in mime_check or 'audio/flac' in mime_check:
         pic = flac.Picture()
         pic.data = data
         pic.mime = u"image/jpeg"
         handle.clear_pictures()
         handle.add_picture(pic)
-    if 'audio/mpeg' in handle.mime:
-        handle.tags.add(APIC(encoding=3, data=data))
-    if 'audio/x-m4a' in handle.mime:
+        
+    # --- UPDATE: Tambahkan WAV ke sini karena menggunakan APIC/ID3 juga ---
+    if 'audio/mpeg' in mime_check or 'audio/wav' in mime_check or 'audio/x-wav' in mime_check:
+        # Hapus gambar lama jika ada (agar tidak menumpuk)
+        handle.tags.delall("APIC")
+        handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
+    # ---------------------------------------------------------------------
+
+    if 'audio/x-m4a' in mime_check or 'audio/mp4' in mime_check:
         pic = mp4.MP4Cover(data)
         handle.tags['covr'] = [pic]
-    if 'audio/ogg' in handle.mime:
+        
+    if 'audio/ogg' in mime_check:
         handle['artwork'] = data
 
 
 async def get_audio_extension(path):
     handle = File(path)
-    if 'audio/x-m4a' in handle.mime:
+    mime_str = handle.mime[0] if isinstance(handle.mime, list) else handle.mime
+    
+    if 'audio/x-m4a' in mime_str or 'audio/mp4' in mime_str:
         return 'm4a'
-    elif 'audio/x-flac' in handle.mime:
+    elif 'audio/x-flac' in mime_str or 'audio/flac' in mime_str:
         return 'flac'
+    elif 'audio/wav' in mime_str or 'audio/x-wav' in mime_str:
+        return 'wav'
     else:
         return 'mp3'
 
 async def _download_cover_with_headers(url: str, destination: str):
-    """Downloader kustom untuk cover art dengan User-Agent."""
     if not url:
         return "No URL provided"
     
