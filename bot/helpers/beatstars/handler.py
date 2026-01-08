@@ -205,9 +205,17 @@ async def start_beatstars(link: str, user: dict):
         if not path_parts or not path_parts[0]:
              raise Exception("Link tidak valid: Tidak dapat menemukan username artis.")
         permalink = path_parts[0]
-        reserved_words = ['beat', 'tracks', 'feed', 'services', 'publishing', 'dashboard']
+        
+        # --- UPDATE: MENAMBAHKAN KATA KUNCI SISTEM YANG HARUS DIABAIKAN ---
+        reserved_words = [
+            'beat', 'tracks', 'feed', 'services', 'publishing', 'dashboard', 
+            'playlists', 'collection', 'musician'
+        ]
+        # ------------------------------------------------------------------
+        
         if permalink.lower() in reserved_words:
-             raise Exception(f"Link tidak valid: '{permalink}' bukan nama artis.")
+             raise Exception(f"Link tidak valid: '{permalink}' adalah halaman sistem, bukan nama artis.")
+             
         LOGGER.info(f"BeatStars Artist Mode: {permalink}")
         await process_artist(user, permalink)
 
