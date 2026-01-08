@@ -6,14 +6,15 @@ import aiofiles
 from datetime import datetime
 
 from mutagen import File
-# Import WAVE
 from mutagen.wave import WAVE 
 from config import Config
 from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
+# --- UPDATE: Tambahkan TLEN (Length) dan TPE2 (Album Artist) ---
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
-    TCOM, TDRL 
+    TCOM, TDRL, TLEN, TPE2
+# ---------------------------------------------------------------
 
 from bot.logger import LOGGER
 
@@ -62,7 +63,8 @@ async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
     handle = File(audio_path)
     
-    if metadata['duration'] == '':
+    # Pastikan durasi ada
+    if metadata['duration'] == '' or metadata['duration'] == 0:
         try:
             metadata['duration'] = handle.info.length
         except:
@@ -81,8 +83,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
 
     try:
-        # --- PERBAIKAN LOGIKA DETEKSI MIME ---
-        # Kita pastikan mimes adalah list agar pencarian lebih akurat
+        # Cek tipe MIME
         mimes = []
         if hasattr(handle, 'mime'):
             if isinstance(handle.mime, list):
@@ -90,7 +91,6 @@ async def set_metadata(metadata:dict, user_id: int = None):
             else:
                 mimes = [handle.mime]
         
-        # Helper sederhana untuk cek keberadaan string dalam list mime
         def check_mime(keywords):
             for m in mimes:
                 for k in keywords:
@@ -101,7 +101,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
             LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
             await set_flac(metadata, handle)
             
-        elif check_mime(['mpeg', 'mp3']): # Cek mpeg ATAU mp3
+        elif check_mime(['mpeg', 'mp3']):
             LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}")
             await set_mp3(metadata, handle)
             
@@ -114,9 +114,8 @@ async def set_metadata(metadata:dict, user_id: int = None):
             await set_wav(metadata, handle)
         
         else:
-            LOGGER.warning(f"Format tidak dikenali untuk set_metadata: {mimes}")
-            # Fallback ke MP3 jika terpaksa
-            # await set_mp3(metadata, handle) 
+            LOGGER.warning(f"Format tidak dikenali, mencoba MP3 fallback: {mimes}")
+            await set_mp3(metadata, handle) 
             
     except Exception as e:
         LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
@@ -200,7 +199,13 @@ async def set_mp3(data, handle):
 
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
-    handle.tags.add(TOPE(encoding=3, text=data['albumartist']))
+    
+    # --- UPDATE: Gunakan TPE2 untuk Album Artist (Standar MediaInfo/iTunes) ---
+    handle.tags.add(TPE2(encoding=3, text=data['albumartist']))
+    # TOPE (Original Artist) tetap disimpan sebagai cadangan/info tambahan
+    handle.tags.add(TOPE(encoding=3, text=data['albumartist'])) 
+    # --------------------------------------------------------------------------
+
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
     handle.tags.add(TRCK(encoding=3, text=track_pos)) 
@@ -224,6 +229,27 @@ async def set_mp3(data, handle):
     if composer_text: 
         handle.tags.add(TCOM(encoding=3, text=composer_text)) 
     
+    # --- UPDATE: Tambahkan TLEN (Duration dalam ms) ---
+    try:
+        dur_val = float(data.get('duration', 0))
+        if dur_val > 0:
+            # Jika durasi < 1000, asumsikan detik -> ubah ke ms
+            # Jika durasi > 1000, asumsikan sudah ms (waspada double conversion)
+            # Standar mutagen/handler biasanya detik (float) atau ms (int).
+            # Kita pastikan jadi ms (integer)
+            
+            # Asumsi data['duration'] dari handler adalah ms (string/int) atau detik (float)
+            # Mari kita parsing aman:
+            if dur_val < 30000: # Kalau kurang dari 30000 kemungkinan detik (track 8 jam jarang)
+                 dur_ms = int(dur_val * 1000)
+            else:
+                 dur_ms = int(dur_val)
+                 
+            handle.tags.add(TLEN(encoding=3, text=str(dur_ms)))
+    except Exception as e:
+        LOGGER.warning(f"Gagal set TLEN MP3: {e}")
+    # --------------------------------------------------
+
     if data.get('bit_depth'):
         handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
     if data.get('sample_rate'):
@@ -265,7 +291,12 @@ async def set_wav(data, handle):
 
     tags.add(TIT2(encoding=3, text=data['title']))
     tags.add(TALB(encoding=3, text=data['album']))
+    
+    # --- UPDATE: Gunakan TPE2 untuk Album Artist di WAV ---
+    tags.add(TPE2(encoding=3, text=data['albumartist']))
     tags.add(TOPE(encoding=3, text=data['albumartist']))
+    # ----------------------------------------------------
+
     tags.add(TPE1(encoding=3, text=data['artist']))
     tags.add(TCOP(encoding=3, text=data['copyright']))
     tags.add(TRCK(encoding=3, text=track_pos)) 
@@ -289,6 +320,19 @@ async def set_wav(data, handle):
         tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
     if composer_text: 
         tags.add(TCOM(encoding=3, text=composer_text)) 
+
+    # --- UPDATE: Tambahkan TLEN (Duration) di WAV ---
+    try:
+        dur_val = float(data.get('duration', 0))
+        if dur_val > 0:
+            if dur_val < 30000: # Detik -> Millisecond
+                 dur_ms = int(dur_val * 1000)
+            else:
+                 dur_ms = int(dur_val)
+            tags.add(TLEN(encoding=3, text=str(dur_ms)))
+    except Exception as e:
+        LOGGER.warning(f"Gagal set TLEN WAV: {e}")
+    # ------------------------------------------------
 
     await savePic(audio, data)
     audio.save()
@@ -355,7 +399,6 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    # Helper untuk cek mime type (list/string)
     mimes = []
     if hasattr(handle, 'mime'):
         if isinstance(handle.mime, list):
@@ -377,7 +420,6 @@ async def savePic(handle, metadata):
         handle.add_picture(pic)
         
     if check_mime(['mpeg', 'mp3', 'wav']):
-        # MP3 dan WAV (ID3) pakai APIC
         handle.tags.delall("APIC")
         handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
 
@@ -412,7 +454,6 @@ async def get_audio_extension(path):
     elif check_mime(['wav']):
         return 'wav'
     else:
-        # Fallback ke MP3 karena MP3 mimenya banyak varian
         return 'mp3'
 
 async def _download_cover_with_headers(url: str, destination: str):
