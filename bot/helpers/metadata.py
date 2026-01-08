@@ -10,11 +10,9 @@ from mutagen.wave import WAVE
 from config import Config
 from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
-# --- UPDATE: Tambahkan TLEN (Length) dan TPE2 (Album Artist) ---
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
     TCOM, TDRL, TLEN, TPE2
-# ---------------------------------------------------------------
 
 from bot.logger import LOGGER
 
@@ -22,6 +20,34 @@ try:
     from bot.helpers.lyrics.manager import lyrics_manager
 except ImportError:
     lyrics_manager = None
+
+# --- FUNGSI HELPER BARU: PARSE DURASI ---
+def parse_duration_to_ms(raw):
+    """
+    Mengubah berbagai format durasi menjadi integer milidetik.
+    Mendukung: "02:51", "1:30:05", 175.5 (detik), 175500 (ms)
+    """
+    if not raw:
+        return 0
+    try:
+        s = str(raw).strip()
+        # 1. Cek format MM:SS atau HH:MM:SS
+        if ':' in s:
+            parts = s.split(':')
+            seconds = 0
+            for part in parts:
+                seconds = seconds * 60 + float(part)
+            return int(seconds * 1000)
+        
+        # 2. Cek format angka (Detik atau MS)
+        val = float(s)
+        if val < 30000: # Asumsi detik jika nilainya kecil (kurang dari 8 jam dlm ms)
+            return int(val * 1000)
+        else:
+            return int(val)
+    except Exception:
+        return 0
+# ----------------------------------------
 
 metadata = {
         'itemid': '',
@@ -63,14 +89,12 @@ async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
     handle = File(audio_path)
     
-    # Pastikan durasi ada
     if metadata['duration'] == '' or metadata['duration'] == 0:
         try:
             metadata['duration'] = handle.info.length
         except:
             pass
 
-    # Ambil Lirik
     if lyrics_manager and user_id:
         try:
             lyrics_text = await lyrics_manager.fetch_lyrics(metadata, user_id)
@@ -83,7 +107,6 @@ async def set_metadata(metadata:dict, user_id: int = None):
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
 
     try:
-        # Cek tipe MIME
         mimes = []
         if hasattr(handle, 'mime'):
             if isinstance(handle.mime, list):
@@ -200,11 +223,8 @@ async def set_mp3(data, handle):
     handle.tags.add(TIT2(encoding=3, text=data['title']))
     handle.tags.add(TALB(encoding=3, text=data['album']))
     
-    # --- UPDATE: Gunakan TPE2 untuk Album Artist (Standar MediaInfo/iTunes) ---
     handle.tags.add(TPE2(encoding=3, text=data['albumartist']))
-    # TOPE (Original Artist) tetap disimpan sebagai cadangan/info tambahan
     handle.tags.add(TOPE(encoding=3, text=data['albumartist'])) 
-    # --------------------------------------------------------------------------
 
     handle.tags.add(TPE1(encoding=3, text=data['artist']))
     handle.tags.add(TCOP(encoding=3, text=data['copyright']))
@@ -229,26 +249,11 @@ async def set_mp3(data, handle):
     if composer_text: 
         handle.tags.add(TCOM(encoding=3, text=composer_text)) 
     
-    # --- UPDATE: Tambahkan TLEN (Duration dalam ms) ---
-    try:
-        dur_val = float(data.get('duration', 0))
-        if dur_val > 0:
-            # Jika durasi < 1000, asumsikan detik -> ubah ke ms
-            # Jika durasi > 1000, asumsikan sudah ms (waspada double conversion)
-            # Standar mutagen/handler biasanya detik (float) atau ms (int).
-            # Kita pastikan jadi ms (integer)
-            
-            # Asumsi data['duration'] dari handler adalah ms (string/int) atau detik (float)
-            # Mari kita parsing aman:
-            if dur_val < 30000: # Kalau kurang dari 30000 kemungkinan detik (track 8 jam jarang)
-                 dur_ms = int(dur_val * 1000)
-            else:
-                 dur_ms = int(dur_val)
-                 
-            handle.tags.add(TLEN(encoding=3, text=str(dur_ms)))
-    except Exception as e:
-        LOGGER.warning(f"Gagal set TLEN MP3: {e}")
-    # --------------------------------------------------
+    # --- UPDATE: GUNAKAN HELPER PARSER ---
+    dur_ms = parse_duration_to_ms(data.get('duration'))
+    if dur_ms > 0:
+         handle.tags.add(TLEN(encoding=3, text=str(dur_ms)))
+    # -------------------------------------
 
     if data.get('bit_depth'):
         handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
@@ -260,7 +265,6 @@ async def set_mp3(data, handle):
     return True
 
 async def set_wav(data, handle):
-    # Init ulang sebagai WAVE object untuk memastikan dukungan ID3
     try:
         audio = WAVE(data['filepath'])
     except Exception as e:
@@ -292,10 +296,8 @@ async def set_wav(data, handle):
     tags.add(TIT2(encoding=3, text=data['title']))
     tags.add(TALB(encoding=3, text=data['album']))
     
-    # --- UPDATE: Gunakan TPE2 untuk Album Artist di WAV ---
     tags.add(TPE2(encoding=3, text=data['albumartist']))
     tags.add(TOPE(encoding=3, text=data['albumartist']))
-    # ----------------------------------------------------
 
     tags.add(TPE1(encoding=3, text=data['artist']))
     tags.add(TCOP(encoding=3, text=data['copyright']))
@@ -321,18 +323,11 @@ async def set_wav(data, handle):
     if composer_text: 
         tags.add(TCOM(encoding=3, text=composer_text)) 
 
-    # --- UPDATE: Tambahkan TLEN (Duration) di WAV ---
-    try:
-        dur_val = float(data.get('duration', 0))
-        if dur_val > 0:
-            if dur_val < 30000: # Detik -> Millisecond
-                 dur_ms = int(dur_val * 1000)
-            else:
-                 dur_ms = int(dur_val)
-            tags.add(TLEN(encoding=3, text=str(dur_ms)))
-    except Exception as e:
-        LOGGER.warning(f"Gagal set TLEN WAV: {e}")
-    # ------------------------------------------------
+    # --- UPDATE: GUNAKAN HELPER PARSER ---
+    dur_ms = parse_duration_to_ms(data.get('duration'))
+    if dur_ms > 0:
+         tags.add(TLEN(encoding=3, text=str(dur_ms)))
+    # -------------------------------------
 
     await savePic(audio, data)
     audio.save()
