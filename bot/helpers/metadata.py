@@ -6,9 +6,7 @@ import aiofiles
 from datetime import datetime
 
 from mutagen import File
-# --- TAMBAHAN PENTING: Import WAVE explisit ---
-from mutagen.wave import WAVE 
-# ----------------------------------------------
+from mutagen.wave import WAVE, HeaderNotFoundError # Import spesifik error
 from config import Config
 from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
@@ -64,78 +62,73 @@ metadata = {
 async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
     
-    # 1. Coba deteksi otomatis
+    handle = None
+    
+    # 1. Coba deteksi otomatis (Standar)
     try:
         handle = File(audio_path)
     except Exception:
         handle = None
     
-    # 2. PERBAIKAN: Fallback untuk WAV mentah (tanpa tag awal)
-    # Jika File() return None tapi ekstensinya .wav, paksa pakai WAVE()
+    # 2. Fallback Khusus WAV (BeatStars sering memberikan WAV Header 'Junk')
     if not handle and audio_path.lower().endswith('.wav'):
         try:
-            LOGGER.info(f"Deteksi otomatis gagal. Memaksa mode WAVE untuk: {audio_path}")
+            LOGGER.info(f"Mencoba memaksa mode WAVE untuk: {os.path.basename(audio_path)}")
             handle = WAVE(audio_path)
-            # WAVE perlu save() kosong dulu kadang untuk inisialisasi header jika benar-benar raw
+            # Inisialisasi tags jika kosong
             if handle.tags is None:
-                handle.add_tags()
+                try: handle.add_tags()
+                except: pass
+        except HeaderNotFoundError:
+            LOGGER.warning(f"[SKIP TAG] Header WAV tidak valid/standar: {os.path.basename(audio_path)}")
+            return # Keluar dengan aman, file tetap tersimpan tapi tanpa tag
         except Exception as e:
-            LOGGER.error(f"Gagal memaksa baca WAV: {e}")
-            handle = None
+            LOGGER.warning(f"[SKIP TAG] Gagal parsing WAV ({e}): {os.path.basename(audio_path)}")
+            return # Keluar dengan aman
 
-    # 3. Final Check
+    # 3. Final Check (Jika masih None, berarti format lain yang rusak)
     if not handle:
-        LOGGER.error(f"Mutagen gagal membaca file (format tidak dikenal/rusak): {audio_path}")
+        LOGGER.error(f"Mutagen gagal mengenali format file: {audio_path}")
         return
 
+    # Durasi Fallback
     if metadata['duration'] == '':
         try:
             metadata['duration'] = handle.info.length
         except:
             pass
 
-    # --- TAMBAHAN BARU: AMBIL LIRIK ---
+    # --- AMBIL LIRIK ---
     if lyrics_manager and user_id:
         try:
             lyrics_text = await lyrics_manager.fetch_lyrics(metadata, user_id)
             if lyrics_text:
                 metadata['lyrics'] = lyrics_text
-                LOGGER.info(f"Lirik ditemukan dan ditambahkan untuk: {metadata['title']}")
-            else:
-                LOGGER.info(f"Tidak ada lirik ditemukan untuk: {metadata['title']}")
-        except Exception as e:
-            LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
-    # --- BATAS TAMBAHAN ---
+        except Exception:
+            pass
+    # -------------------
 
     try:
-        # Cek MIME Type untuk menentukan format
-        # Perhatikan: handle.mime biasanya list, jadi gunakan 'in'
-        
+        # Cek MIME Type / Instance
         if hasattr(handle, 'mime') and 'audio/x-flac' in handle.mime:
-            LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
             await set_flac(metadata, handle)
             
         elif hasattr(handle, 'mime') and 'audio/mpeg' in handle.mime:
-            LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}")
             await set_mp3(metadata, handle)
             
         elif hasattr(handle, 'mime') and 'audio/x-m4a' in handle.mime: 
-            LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}")
             await set_m4a(metadata, handle)
             
-        # --- DUKUNGAN WAV (BeatStars) ---
-        # Handle WAV bisa punya mime ['audio/x-wav', 'audio/wav']
-        elif (hasattr(handle, 'mime') and ('audio/x-wav' in handle.mime or 'audio/wav' in handle.mime)) \
-             or isinstance(handle, WAVE): # Cek instance jika mime gagal
-            
-            LOGGER.info(f"Memanggil set_wav untuk: {audio_path}")
+        # --- DUKUNGAN WAV ---
+        elif isinstance(handle, WAVE) or (hasattr(handle, 'mime') and ('audio/x-wav' in handle.mime or 'audio/wav' in handle.mime)):
             await set_wav(metadata, handle)
-        # -------------------------------------------
+        # --------------------
+        
         else:
-            LOGGER.warning(f"Format MIME tidak didukung untuk tagging: {getattr(handle, 'mime', 'Unknown')}")
+            LOGGER.info(f"Format MIME {getattr(handle, 'mime', 'Unknown')} dilewati untuk tagging.")
 
     except Exception as e:
-        LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
+        LOGGER.error(f"Error saat menulis tag: {e}")
 
 
 async def set_flac(data, handle):
@@ -318,7 +311,6 @@ async def set_m4a(data, handle):
 async def savePic(handle, metadata):
     album_art = metadata['cover']
     if album_art == './project-siesta.png' or not os.path.exists(album_art):
-        LOGGER.warning(f"Cover art tidak ditemukan di {album_art}, tidak menambahkan gambar.")
         return
     try:
         with open(album_art, "rb") as f:
@@ -336,14 +328,16 @@ async def savePic(handle, metadata):
         handle.add_picture(pic)
         
     # 2. MP3 & WAV (ID3)
-    # Gunakan pemeriksaan yang lebih toleran
     is_mp3 = hasattr(handle, 'mime') and 'audio/mpeg' in handle.mime
     is_wav = isinstance(handle, WAVE) or (hasattr(handle, 'mime') and ('audio/x-wav' in handle.mime or 'audio/wav' in handle.mime))
     
     if is_mp3 or is_wav:
         # Hapus semua cover sebelumnya
-        handle.tags.delall("APIC") 
-        handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
+        try:
+            handle.tags.delall("APIC") 
+            handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
+        except Exception as e:
+            LOGGER.warning(f"Gagal set cover art: {e}")
         
     # 3. M4A
     if hasattr(handle, 'mime') and 'audio/x-m4a' in handle.mime:
@@ -356,10 +350,8 @@ async def savePic(handle, metadata):
 
 
 async def get_audio_extension(path):
-    # Helper sederhana
     handle = File(path)
     if not handle:
-        # Fallback manual berdasarkan ekstensi
         if path.lower().endswith('.wav'):
             return 'wav'
         return 'mp3' 
