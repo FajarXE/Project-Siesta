@@ -82,34 +82,38 @@ metadata = {
 
 
 async def set_metadata(metadata:dict, user_id: int = None):
-    audio_path = metadata['filepath']
+    audio_path = str(metadata['filepath'])
     
-    # --- 1. INISIALISASI MUTAGEN DENGAN FALLBACK ---
+    # --- 1. INISIALISASI MUTAGEN DENGAN FALLBACK YANG AMAN ---
     handle = None
     try:
         # Coba deteksi otomatis
         handle = File(audio_path)
         
         # Jika gagal (None), paksa baca berdasarkan ekstensi file
-        if not handle:
-            ext = os.path.splitext(audio_path)[1].lower()
+        if handle is None:
+            ext = os.path.splitext(audio_path)[1].lower().strip()
             LOGGER.warning(f"Mutagen auto-detect gagal (None). Mencoba fallback manual untuk: {ext}")
             
-            if ext == '.wav':
-                handle = WAVE(audio_path)
-            elif ext == '.mp3':
-                handle = MP3(audio_path)
-            elif ext == '.flac':
-                handle = FLAC(audio_path)
-            elif ext in ['.m4a', '.mp4', '.m4b']:
-                handle = MP4(audio_path)
+            # Fallback Manual
+            try:
+                if '.wav' in ext:
+                    handle = WAVE(audio_path)
+                elif '.mp3' in ext:
+                    handle = MP3(audio_path)
+                elif '.flac' in ext:
+                    handle = FLAC(audio_path)
+                elif ext in ['.m4a', '.mp4', '.m4b']:
+                    handle = MP4(audio_path)
+            except Exception as e_fallback:
+                LOGGER.error(f"Fallback manual error: {e_fallback}")
                 
     except Exception as e:
         LOGGER.error(f"Gagal membuka file {audio_path}: {e}")
         return
 
-    # Jika masih None setelah usaha fallback
-    if not handle:
+    # [PERBAIKAN UTAMA] Gunakan 'is None' karena objek Mutagen kosong bisa bernilai False
+    if handle is None:
          LOGGER.error(f"File tidak dikenali formatnya: {audio_path}")
          return
     # -----------------------------------------------
@@ -162,7 +166,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
             await set_mp3(metadata, handle, dur_ms)
         
         else:
-            # Fallback terakhir jika tipe objek generik tapi tidak matched
+            # Fallback terakhir jika tipe objek generik
             ext = os.path.splitext(audio_path)[1].lower()
             if ext in ['.m4a', '.mp4']:
                  await set_m4a(metadata, handle)
@@ -294,19 +298,18 @@ async def set_mp3(data, handle, dur_ms=0):
     return True
 
 async def set_wav(data, handle, dur_ms=0):
-    # Jika handle bukan instance WAVE (misal hasil fallback manual yang mungkin generic), coba re-cast
+    # Re-cast aman untuk memastikan objek WAVE
     if not isinstance(handle, WAVE):
         try:
             handle = WAVE(data['filepath'])
         except Exception:
-            pass
+            pass # Jika gagal, gunakan handle yang ada (best effort)
 
     if handle.tags is None:
         try:
             handle.add_tags()
         except Exception as e:
             LOGGER.error(f"Gagal add_tags WAVE: {e}")
-            # Beberapa WAVE file mungkin bermasalah saat add_tags
             return
     
     tags = handle.tags
@@ -453,6 +456,11 @@ async def savePic(handle, metadata):
 async def get_audio_extension(path):
     try:
         handle = File(path)
+        # Handle if None (serupa logic di atas)
+        if handle is None:
+             ext = os.path.splitext(path)[1].lower()
+             return ext.replace('.', '')
+             
         if isinstance(handle, MP4): return 'm4a'
         if isinstance(handle, FLAC): return 'flac'
         if isinstance(handle, WAVE): return 'wav'
