@@ -11,6 +11,13 @@ from bot.helpers.uploder import track_upload, artist_upload, album_upload
 from bot.helpers.metadata import set_metadata
 from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
+# Import Mutagen untuk Patching Manual (Wajib)
+try:
+    from mutagen.id3 import ID3, TPE2, COMM
+except ImportError:
+    LOGGER.error("Mutagen belum terinstall. Fitur patching metadata tidak akan berjalan.")
+    ID3, TPE2, COMM = None, None, None
+
 # Headers lengkap
 ALGOLIA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -83,6 +90,33 @@ def clean_cover_url(url):
     if "://" not in url and "//" in url:
         url = url.replace("//", "/")
     return url
+
+# --- MANUAL METADATA PATCHER (SOLUSI POWERAMP & COMMENT) ---
+def patch_metadata_manual(filepath, album_artist):
+    """
+    Memaksa penulisan tag Album Artist (TPE2) dan menghapus Comment (COMM)
+    secara langsung ke file MP3, mem-bypass keterbatasan metadata.py.
+    """
+    if not ID3:
+        return
+
+    try:
+        audio = ID3(filepath)
+        
+        # 1. Fix Album Artist (TPE2) - Agar muncul di PowerAmp
+        if album_artist:
+            audio.add(TPE2(encoding=3, text=str(album_artist)))
+            LOGGER.info(f"[Patch] Album Artist (TPE2) diset ke: {album_artist}")
+
+        # 2. Hapus Comment (COMM) - Agar bersih dari ID3v1 Comment
+        audio.delall("COMM")
+        audio.delall("TXXX:Description") # Hapus deskripsi custom jika ada
+        LOGGER.info("[Patch] Semua komentar dihapus.")
+
+        audio.save(v2_version=3)
+    except Exception as e:
+        LOGGER.error(f"Gagal patching metadata manual: {e}")
+
 
 # --- LOCAL COVER DOWNLOADER ---
 async def download_local_cover(session, url, folderpath):
@@ -200,8 +234,7 @@ async def process_single_track(user, track_id):
         meta = {
             'title': track_title,
             'artist': artist_name,
-            'albumartist': artist_name, # Critical for PowerAmp Album Artist
-            'performer': artist_name,   # Fallback for some players
+            'albumartist': artist_name,
             'composer': artist_name,
             'album': f"{artist_name} - Singles",
             'tracknumber': 1,
@@ -219,8 +252,8 @@ async def process_single_track(user, track_id):
             'genre': rich_genre,
             'duration': str(duration_ms), 
             'explicit': False,
-            'description': None, # <-- FIX: Kosongkan Comment/Description sepenuhnya
-            'comment': None,     # <-- FIX: Explicit None
+            'description': '', # Dikosongkan
+            'comment': '',     # Dikosongkan
             'filepath': filepath,
             'folderpath': folderpath
         }
@@ -235,7 +268,12 @@ async def process_single_track(user, track_id):
         if err:
             raise Exception(f"Gagal download file: {err}")
 
+    # 1. Set Metadata Standar
     await set_metadata(meta, user['user_id'])
+    
+    # 2. PATCHING MANUAL (Wajib untuk PowerAmp & Hapus Comment)
+    patch_metadata_manual(filepath, artist_name)
+
     await track_upload(meta, user)
 
 # --- PROCESS ARTIST ---
@@ -297,8 +335,7 @@ async def process_artist(user, permalink):
                 all_tracks.append({
                     'title': hit.get('title'),
                     'artist': artist_name,
-                    'albumartist': artist_name, # <-- FIX
-                    'performer': artist_name,   # <-- FIX
+                    'albumartist': artist_name,
                     'composer': artist_name,
                     'album': f"{artist_name} - BeatStars Collection",
                     'cover': clean_url,
@@ -313,8 +350,8 @@ async def process_artist(user, permalink):
                     'explicit': False,
                     'release_date': date_fmt,
                     'date': date_fmt[:4] if date_fmt else '',
-                    'description': None, # <-- FIX: Kosongkan Comment
-                    'comment': None
+                    'description': '', # Kosongkan
+                    'comment': ''      # Kosongkan
                 })
 
             page += 1
@@ -369,7 +406,11 @@ async def process_artist(user, permalink):
             local_cov = await download_local_cover(session, t['cover'], folderpath)
             t['cover'] = local_cov
 
+            # 1. Standard Tagging
             await set_metadata(t, user['user_id'])
+            # 2. Manual Patching
+            patch_metadata_manual(filepath, t['albumartist'])
+
             album_meta['tracks'].append(t)
             
         except Exception as e:
