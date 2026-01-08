@@ -98,7 +98,14 @@ def patch_metadata_manual(filepath, album_artist):
     Membersihkan tag COMMENT (termasuk Processed by SoX) secara agresif.
     Hanya dijalankan jika file adalah MP3 untuk mencegah kerusakan file WAV/FLAC.
     """
-    if not filepath.lower().endswith('.mp3'):
+    # Safety Check: Pastikan file benar-benar MP3 sebelum mencoba membukanya sebagai ID3
+    try:
+        with open(filepath, 'rb') as f:
+            header = f.read(3)
+            # ID3 signature atau Sync bits MP3 (FF FB / FF F3 dll)
+            if header != b'ID3' and not (header[0] == 0xFF and (header[1] & 0xE0) == 0xE0):
+                return # Bukan MP3
+    except:
         return
 
     if not ID3:
@@ -107,39 +114,28 @@ def patch_metadata_manual(filepath, album_artist):
     try:
         audio = ID3(filepath)
         
-        # LIST KUNCI YANG AKAN DIHAPUS
         keys_to_delete = []
-
-        # 1. SCANNING SEMUA FRAME
         for key in audio.keys():
-            # A. Hapus berdasarkan ID Frame (Comment, Encoder, UserText)
             if key.startswith("COMM") or key.startswith("TENC") or key.startswith("TSSE") or key.startswith("TXXX"):
                 keys_to_delete.append(key)
                 continue
             
-            # B. Hapus berdasarkan ISI TEKS (Cari "SoX" atau "Processed" dimanapun)
             frame = audio[key]
-            if hasattr(frame, 'text'): # Hampir semua frame teks punya atribut ini
+            if hasattr(frame, 'text'): 
                 for text_val in frame.text:
                     text_str = str(text_val).lower()
                     if "processed by" in text_str or "sox" in text_str:
                         keys_to_delete.append(key)
                         break
         
-        # 2. EKSEKUSI PENGHAPUSAN
-        for key in list(set(keys_to_delete)): # Pakai set biar unik
+        for key in list(set(keys_to_delete)): 
             if key in audio:
                 del audio[key]
 
-        # 3. FIX ALBUM ARTIST
         if album_artist:
             audio.add(TPE2(encoding=3, text=str(album_artist)))
 
-        # 4. SIMPAN & HAPUS ID3v1 (KUNCI UTAMA)
-        # v1=2 artinya: Hapus tag ID3v1 jika ada. 
-        # "Processed by SoX" sering bersembunyi di ID3v1.
         audio.save(v2_version=3, v1=2)
-        
         LOGGER.info("[Patch] Metadata bersih total (MP3 Only).")
         
     except Exception as e:
@@ -166,15 +162,13 @@ async def download_local_cover(session, url, folderpath):
     except Exception:
         return PLACEHOLDER_COVER
 
-# --- AUDIO DOWNLOADER (DENGAN DETEKSI WAV) ---
-
+# --- AUDIO DOWNLOADER (DENGAN DETEKSI MAGIC BYTES) ---
 async def download_beatstars_file(url, path):
     """
-    Mengunduh file dari BeatStars.
+    Mengunduh file dari BeatStars dan mendeteksi ekstensi berdasarkan ISI FILE (Magic Bytes).
     Returns: 
         tuple(error_message, detected_extension)
     """
-    detected_ext = '.mp3' # Default
     try:
         folder = os.path.dirname(path)
         if folder:
@@ -183,27 +177,34 @@ async def download_beatstars_file(url, path):
         async with aiohttp.ClientSession(headers=ALGOLIA_HEADERS) as session:
             async with session.get(url) as response:
                 if response.status == 200:
-                    
-                    # Cek Content-Type untuk mendeteksi WAV
-                    content_type = response.headers.get('Content-Type', '').lower()
-                    if 'wav' in content_type:
-                        detected_ext = '.wav'
-                    
                     with open(path, 'wb') as f:
                         while True:
                             chunk = await response.content.read(1024 * 4)
                             if not chunk:
                                 break
                             f.write(chunk)
-                            
+                    
                     if os.path.exists(path) and os.path.getsize(path) > 0:
+                        # --- DETEKSI MAGIC BYTES (Lebih akurat dari Header) ---
+                        detected_ext = '.mp3' # Default
+                        try:
+                            with open(path, 'rb') as f:
+                                header = f.read(4)
+                                if header == b'RIFF':
+                                    detected_ext = '.wav'
+                                elif header.startswith(b'ID3') or (header[0] == 0xFF and (header[1] & 0xE0) == 0xE0):
+                                    detected_ext = '.mp3'
+                        except:
+                            pass
+                        # ------------------------------------------------------
+                        
                         return None, detected_ext
                     else:
-                        return "File kosong atau gagal ditulis.", detected_ext
+                        return "File kosong atau gagal ditulis.", '.mp3'
                 else:
-                    return f"HTTP Status: {response.status} (URL: {url})", detected_ext
+                    return f"HTTP Status: {response.status} (URL: {url})", '.mp3'
     except Exception as e:
-        return str(e), detected_ext
+        return str(e), '.mp3'
 
 async def start_beatstars(link: str, user: dict):
     parsed = urlparse(link)
@@ -224,7 +225,6 @@ async def start_beatstars(link: str, user: dict):
              raise Exception("Link tidak valid: Tidak dapat menemukan username artis.")
         permalink = path_parts[0]
         
-        # Filter Kata Kunci Sistem
         reserved_words = ['beat', 'tracks', 'feed', 'services', 'publishing', 'dashboard', 'playlists', 'collection', 'musician']
         
         if permalink.lower() in reserved_words:
@@ -252,12 +252,10 @@ async def process_single_track(user, track_id):
         if not os.path.exists(folderpath):
             os.makedirs(folderpath, exist_ok=True)
 
-        # Cover Logic
         raw_cover = details.get('artwork', {}).get('original')
         clean_url = clean_cover_url(raw_cover)
         local_cover_path = await download_local_cover(session, clean_url, folderpath)
 
-        # Metadata Logic
         release_date_fmt = format_date(details.get('release_date_time', 0))
         artist_name = details.get('musician', {}).get('display_name')
         track_title = details.get('title')
@@ -272,7 +270,7 @@ async def process_single_track(user, track_id):
 
         rich_genre = parse_metadata_rich(details.get('genre', []), tags, bpm)
 
-        # Nama file sementara (asumsi awal MP3)
+        # Nama file sementara
         filename_base = f"{artist_name} - {track_title}"
         filename_base = re.sub(r'[\\/*?:"<>|]', "", filename_base)
         temp_filepath = f"{folderpath}/{filename_base}.mp3"
@@ -283,7 +281,7 @@ async def process_single_track(user, track_id):
 
         LOGGER.info(f"Downloading Single Track: {track_title}")
         
-        # Download dan dapatkan ekstensi asli
+        # Download dan dapatkan ekstensi asli (Magic Bytes Check)
         err, real_ext = await download_beatstars_file(stream_url, temp_filepath)
         if err:
             raise Exception(f"Gagal download file: {err}")
@@ -323,15 +321,15 @@ async def process_single_track(user, track_id):
             'explicit': False,
             'description': None,
             'comment': None,
-            'filepath': final_filepath, # Gunakan path final
+            'filepath': final_filepath, 
             'folderpath': folderpath,
             'extension': real_ext.replace('.', '')
         }
 
-    # 1. Set Metadata (Metadata.py sekarang mendukung WAV)
+    # 1. Set Metadata
     await set_metadata(meta, user['user_id'])
     
-    # 2. Patching Manual (Akan otomatis skip jika bukan MP3)
+    # 2. Patching Manual (Hanya jalan jika file adalah MP3 yang valid)
     patch_metadata_manual(final_filepath, artist_name)
 
     await track_upload(meta, user)
@@ -478,9 +476,7 @@ async def process_artist(user, permalink):
             local_cov = await download_local_cover(session, t['cover'], folderpath)
             t['cover'] = local_cov
 
-            # 1. Standard Tagging
             await set_metadata(t, user['user_id'])
-            # 2. Manual Patching (Safe)
             patch_metadata_manual(final_filepath, t['albumartist'])
 
             album_meta['tracks'].append(t)
