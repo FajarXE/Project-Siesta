@@ -5,9 +5,9 @@ import aiohttp
 import aiofiles
 from datetime import datetime
 
+# Import spesifik class agar Fallback bekerja
 from mutagen import File
 from mutagen.wave import WAVE 
-from config import Config
 from mutagen.flac import FLAC, Picture
 from mutagen.mp4 import MP4, MP4Cover
 from mutagen.mp3 import MP3, EasyMP3
@@ -15,6 +15,7 @@ from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
     TCOM, TDRL, TLEN, TPE2
 
+from config import Config
 from bot.logger import LOGGER
 
 try:
@@ -24,14 +25,10 @@ except ImportError:
 
 # --- FUNGSI HELPER: PARSE DURASI ---
 def parse_duration_to_ms(raw):
-    """
-    Mengubah berbagai format ("02:51", "171.5", 171500) menjadi integer Milidetik.
-    """
     if not raw:
         return 0
     try:
         s = str(raw).strip()
-        # 1. Cek format MM:SS atau HH:MM:SS
         if ':' in s:
             parts = s.split(':')
             seconds = 0
@@ -39,9 +36,7 @@ def parse_duration_to_ms(raw):
                 seconds = seconds * 60 + float(part)
             return int(seconds * 1000)
         
-        # 2. Cek format angka
         val = float(s)
-        # Jika kurang dari 30000, asumsi itu Detik -> ubah ke MS
         if val < 30000: 
             return int(val * 1000)
         else:
@@ -89,20 +84,39 @@ metadata = {
 async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
     
-    # Init Mutagen File
+    # --- 1. INISIALISASI MUTAGEN DENGAN FALLBACK ---
+    handle = None
     try:
+        # Coba deteksi otomatis
         handle = File(audio_path)
+        
+        # Jika gagal (None), paksa baca berdasarkan ekstensi file
         if not handle:
-            LOGGER.error(f"Mutagen gagal membaca file (None): {audio_path}")
-            return
+            ext = os.path.splitext(audio_path)[1].lower()
+            LOGGER.warning(f"Mutagen auto-detect gagal (None). Mencoba fallback manual untuk: {ext}")
+            
+            if ext == '.wav':
+                handle = WAVE(audio_path)
+            elif ext == '.mp3':
+                handle = MP3(audio_path)
+            elif ext == '.flac':
+                handle = FLAC(audio_path)
+            elif ext in ['.m4a', '.mp4', '.m4b']:
+                handle = MP4(audio_path)
+                
     except Exception as e:
-        LOGGER.error(f"Gagal membuka file dengan Mutagen: {e}")
+        LOGGER.error(f"Gagal membuka file {audio_path}: {e}")
         return
+
+    # Jika masih None setelah usaha fallback
+    if not handle:
+         LOGGER.error(f"File tidak dikenali formatnya: {audio_path}")
+         return
+    # -----------------------------------------------
     
-    # 1. LOGIKA UTAMA PERBAIKAN DURASI
+    # 2. LOGIKA UTAMA PERBAIKAN DURASI
     current_dur = metadata.get('duration', 0)
     
-    # Jika durasi kosong/0, coba ambil dari file asli
     if not current_dur:
         try:
             if hasattr(handle, 'info') and hasattr(handle.info, 'length'):
@@ -110,18 +124,14 @@ async def set_metadata(metadata:dict, user_id: int = None):
         except:
             pass
 
-    # Konversi ke Milidetik (Integer) untuk Tagging
     dur_ms = parse_duration_to_ms(current_dur)
     
     if dur_ms > 0:
-        # PENTING: Update metadata['duration'] ke DETIK (Integer).
-        # Ini yang akan dibaca oleh Uploader Telegram agar tidak -:--
         metadata['duration'] = int(dur_ms / 1000)
     else:
         metadata['duration'] = 0
 
-    # ----------------------------------------
-
+    # 3. LYRICS HANDLING
     if lyrics_manager and user_id:
         try:
             lyrics_text = await lyrics_manager.fetch_lyrics(metadata, user_id)
@@ -133,14 +143,13 @@ async def set_metadata(metadata:dict, user_id: int = None):
         except Exception as e:
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
 
+    # 4. ROUTING KE FUNGSI SPESIFIK BERDASARKAN TIPE OBJEK
     try:
-        # PERBAIKAN: Gunakan isinstance bukan string matching mime yang ambigu
         if isinstance(handle, FLAC):
             LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
             await set_flac(metadata, handle, dur_ms)
             
         elif isinstance(handle, MP4): 
-            # Menangani .m4a, .mp4, .m4b
             LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}")
             await set_m4a(metadata, handle)
             
@@ -153,11 +162,9 @@ async def set_metadata(metadata:dict, user_id: int = None):
             await set_mp3(metadata, handle, dur_ms)
         
         else:
-            # Fallback terakhir jika tipe tidak terdeteksi spesifik
-            # Cek ekstensi file sebagai upaya terakhir
+            # Fallback terakhir jika tipe objek generik tapi tidak matched
             ext = os.path.splitext(audio_path)[1].lower()
             if ext in ['.m4a', '.mp4']:
-                 LOGGER.info(f"Fallback detection: Memanggil set_m4a untuk: {audio_path}")
                  await set_m4a(metadata, handle)
             else:
                 LOGGER.warning(f"Format object {type(handle)} tidak dikenali spesifik, mencoba MP3 fallback.")
@@ -287,16 +294,20 @@ async def set_mp3(data, handle, dur_ms=0):
     return True
 
 async def set_wav(data, handle, dur_ms=0):
-    # Pastikan handle adalah objek WAVE, jika belum (karena passing logic)
+    # Jika handle bukan instance WAVE (misal hasil fallback manual yang mungkin generic), coba re-cast
     if not isinstance(handle, WAVE):
         try:
             handle = WAVE(data['filepath'])
-        except Exception as e:
-            LOGGER.error(f"Gagal init WAVE obj: {e}")
-            return
+        except Exception:
+            pass
 
     if handle.tags is None:
-        handle.add_tags()
+        try:
+            handle.add_tags()
+        except Exception as e:
+            LOGGER.error(f"Gagal add_tags WAVE: {e}")
+            # Beberapa WAVE file mungkin bermasalah saat add_tags
+            return
     
     tags = handle.tags
 
@@ -358,7 +369,6 @@ async def set_m4a(data, handle):
     if handle.tags is None:
         handle.add_tags()
     
-    # M4A menggunakan Dictionary-style tags, bukan .add()
     handle.tags['\u00a9nam'] = data['title']
     handle.tags['\u00a9alb'] = data['album']
     handle.tags['\u00a9ART'] = data['artist']
@@ -385,7 +395,6 @@ async def set_m4a(data, handle):
     if data.get('release_date'): 
         handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
 
-    # Konversi ke Integer untuk M4A trkn/disk atoms
     def safe_int(x):
         try: return int(x)
         except: return 0
@@ -422,9 +431,6 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    # Deteksi Tipe Handler untuk Cover Art
-    
-    # 1. FLAC
     if isinstance(handle, FLAC):
         pic = Picture()
         pic.data = data
@@ -432,29 +438,19 @@ async def savePic(handle, metadata):
         handle.clear_pictures()
         handle.add_picture(pic)
     
-    # 2. MP4 / M4A
     elif isinstance(handle, MP4):
         pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
         handle.tags['covr'] = [pic]
 
-    # 3. MP3 / WAV (ID3 Tags)
     elif isinstance(handle, (MP3, EasyMP3, WAVE)) or hasattr(handle, 'tags'):
-        # Fallback umum untuk yang pakai ID3
         try:
             handle.tags.delall("APIC")
             handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
         except Exception:
-            # Jika handle tidak punya tags.add (misal OGG Vorbis raw), skip
             pass
-            
-    # 4. OGG khusus
-    # Ogg biasanya pakai base64 di metadata block, tapi mutagen handle beda-beda.
-    # Disederhanakan untuk scope MP3/FLAC/M4A/WAV.
 
 
 async def get_audio_extension(path):
-    # Fungsi ini hanya helper string, tidak berpengaruh ke tagging
-    # Tapi kita rapikan agar konsisten
     try:
         handle = File(path)
         if isinstance(handle, MP4): return 'm4a'
