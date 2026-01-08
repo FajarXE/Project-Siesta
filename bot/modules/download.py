@@ -425,7 +425,7 @@ async def start_link(link: str, user: dict) -> None:
     livephish = ["https://plus.livephish.com", "https://www.livephish.com", "https://streamapi.livephish.com"]
     
     # BeatStars Domains (BARU)
-    beatstars = ["https://www.beatstars.com", "beatstars.com", "https://main.v2.beatstars.com"]
+    beatstars = ["https://www.beatstars.com", "beatstars.com", "https://main.v2.beatstars.com", "https://bsta.rs", "bsta.rs"]
     
     # Blok TIDAL
     if link.startswith(tuple(tidal)):
