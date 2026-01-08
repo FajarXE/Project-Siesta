@@ -6,10 +6,13 @@ import aiofiles
 from datetime import datetime
 
 from mutagen import File
-from mutagen.wave import WAVE 
+from mutagen.wave import WAVE, Wave_write
+from mutagen.mp4 import MP4, MP4Cover, MP4Tags
+from mutagen.flac import FLAC, Picture
+from mutagen.mp3 import MP3, EasyMP3
 from config import Config
-from mutagen import flac, mp4
-from mutagen.mp3 import EasyMP3
+
+# Import ID3 frames untuk MP3 & WAV
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
     TCOM, TDRL, TLEN, TPE2
@@ -30,7 +33,6 @@ def parse_duration_to_ms(raw):
         return 0
     try:
         s = str(raw).strip()
-        # 1. Cek format MM:SS atau HH:MM:SS
         if ':' in s:
             parts = s.split(':')
             seconds = 0
@@ -38,10 +40,7 @@ def parse_duration_to_ms(raw):
                 seconds = seconds * 60 + float(part)
             return int(seconds * 1000)
         
-        # 2. Cek format angka
         val = float(s)
-        # Jika kurang dari 30000, asumsi itu Detik -> ubah ke MS
-        # (Lagu jarang ada yang 30.000 detik / 8 jam)
         if val < 30000: 
             return int(val * 1000)
         else:
@@ -88,35 +87,32 @@ metadata = {
 
 async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
-    handle = File(audio_path)
     
-    # 1. LOGIKA UTAMA PERBAIKAN DURASI
-    # Kita hitung durasi yang benar di sini agar semua fungsi (tagging & upload) 
-    # mendapatkan data yang konsisten.
+    try:
+        handle = File(audio_path)
+        if not handle:
+            LOGGER.error(f"Mutagen gagal membaca file: {audio_path}")
+            return
+    except Exception as e:
+        LOGGER.error(f"Error membuka file {audio_path}: {e}")
+        return
     
+    # 1. FIX DURASI (Global)
     current_dur = metadata.get('duration', 0)
-    
-    # Jika durasi kosong/0, coba ambil dari file asli
     if not current_dur:
         try:
             if hasattr(handle, 'info') and hasattr(handle.info, 'length'):
-                current_dur = handle.info.length # Ini biasanya detik (float)
+                current_dur = handle.info.length 
         except:
             pass
 
-    # Konversi ke Milidetik (Integer) untuk Tagging
     dur_ms = parse_duration_to_ms(current_dur)
-    
     if dur_ms > 0:
-        # PENTING: Update metadata['duration'] ke DETIK (Integer).
-        # Ini yang akan dibaca oleh Uploader Telegram agar tidak -:--
-        metadata['duration'] = int(dur_ms / 1000)
+        metadata['duration'] = int(dur_ms / 1000) # Update ke detik untuk Telegram
     else:
-        # Fallback aman
         metadata['duration'] = 0
 
-    # ----------------------------------------
-
+    # 2. AMBIL LIRIK
     if lyrics_manager and user_id:
         try:
             lyrics_text = await lyrics_manager.fetch_lyrics(metadata, user_id)
@@ -128,40 +124,40 @@ async def set_metadata(metadata:dict, user_id: int = None):
         except Exception as e:
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
 
+    # 3. ROUTING BERDASARKAN TIPE OBJEK (Lebih Akurat daripada MIME)
     try:
-        mimes = []
-        if hasattr(handle, 'mime'):
-            if isinstance(handle.mime, list):
-                mimes = handle.mime
-            else:
-                mimes = [handle.mime]
-        
-        def check_mime(keywords):
-            for m in mimes:
-                for k in keywords:
-                    if k in m: return True
-            return False
-            
-        # Kita oper dur_ms ke fungsi spesifik agar tidak perlu hitung ulang
-        if check_mime(['flac']):
-            LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
+        # Cek tipe class instance
+        if isinstance(handle, FLAC):
+            LOGGER.info(f"Format FLAC terdeteksi: {audio_path}")
             await set_flac(metadata, handle, dur_ms)
             
-        elif check_mime(['mpeg', 'mp3']):
-            LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}")
-            await set_mp3(metadata, handle, dur_ms)
-            
-        elif check_mime(['mp4', 'm4a']): 
-            LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}")
+        elif isinstance(handle, MP4): # Menangani M4A, MP4, M4B
+            LOGGER.info(f"Format MP4/M4A terdeteksi: {audio_path}")
             await set_m4a(metadata, handle)
             
-        elif check_mime(['wav']):
-            LOGGER.info(f"Memanggil set_wav untuk: {audio_path}")
+        elif isinstance(handle, WAVE) or isinstance(handle, Wave_write):
+            LOGGER.info(f"Format WAV terdeteksi: {audio_path}")
             await set_wav(metadata, handle, dur_ms)
-        
+            
+        elif isinstance(handle, MP3) or isinstance(handle, EasyMP3) or audio_path.lower().endswith('.mp3'):
+            LOGGER.info(f"Format MP3 terdeteksi: {audio_path}")
+            await set_mp3(metadata, handle, dur_ms)
+            
         else:
-            LOGGER.warning(f"Format tidak dikenali, mencoba MP3 fallback: {mimes}")
-            await set_mp3(metadata, handle, dur_ms) 
+            # Coba deteksi manual via ekstensi jika instance check gagal
+            ext = os.path.splitext(audio_path)[1].lower()
+            LOGGER.warning(f"Tipe Mutagen tidak spesifik ({type(handle)}). Mencoba via ekstensi: {ext}")
+            
+            if ext in ['.m4a', '.mp4']:
+                await set_m4a(metadata, handle)
+            elif ext in ['.wav']:
+                await set_wav(metadata, handle, dur_ms)
+            elif ext in ['.flac']:
+                await set_flac(metadata, handle, dur_ms)
+            elif ext in ['.mp3']:
+                await set_mp3(metadata, handle, dur_ms)
+            else:
+                LOGGER.error(f"Format file tidak didukung untuk tagging: {audio_path}")
             
     except Exception as e:
         LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
@@ -210,14 +206,7 @@ async def set_flac(data, handle, dur_ms=0):
     if data.get('sample_rate'):
         handle.tags['SAMPLERATE'] = str(int(data['sample_rate'] * 1000))
     
-    if data.get('mqa_details'):
-        mqa_file = data['mqa_details']
-        encoder_time = datetime.now().strftime("%b %d %Y %H:%M:%S")
-        mqa_encoder_str = f'MQAEncode v1.1, 2.4.0+0 (278f5dd), E24F1DE5-32F1-4930-8197-24954EB9D6F4, {encoder_time}'
-        handle.tags['ENCODER'] = mqa_encoder_str
-        handle.tags['MQAENCODER'] = mqa_encoder_str
-        handle.tags['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
-    
+    # Simpan Cover
     await savePic(handle, data)
     handle.save()
     return True
@@ -225,115 +214,91 @@ async def set_flac(data, handle, dur_ms=0):
 async def set_mp3(data, handle, dur_ms=0):
     if handle.tags is None:
             handle.add_tags()
+    
+    tags = handle.tags
+    
     track_num = str(data.get('tracknumber', ''))
     track_total = str(data.get('totaltracks', ''))
-    if track_total and track_total != '0':
-        track_pos = f"{track_num}/{track_total}"
-    else:
-        track_pos = track_num
+    track_pos = f"{track_num}/{track_total}" if track_total and track_total != '0' else track_num
         
     disc_num = str(data.get('volume') or '')
     disc_total = str(data.get('totalvolume') or '')
-    
-    if disc_total and disc_total != '0':
-        disc_pos = f"{disc_num}/{disc_total}"
-    else:
-        disc_pos = disc_num
-        
-    genre_text = data.get('genre') or ''
-    composer_text = data.get('composer') or ''
-
-    handle.tags.add(TIT2(encoding=3, text=data['title']))
-    handle.tags.add(TALB(encoding=3, text=data['album']))
-    
-    handle.tags.add(TPE2(encoding=3, text=data['albumartist']))
-    handle.tags.add(TOPE(encoding=3, text=data['albumartist'])) 
-
-    handle.tags.add(TPE1(encoding=3, text=data['artist']))
-    handle.tags.add(TCOP(encoding=3, text=data['copyright']))
-    handle.tags.add(TRCK(encoding=3, text=track_pos)) 
-    if disc_pos: 
-        handle.tags.add(TPOS(encoding=3, text=disc_pos)) 
-    if genre_text: 
-        handle.tags.add(TCON(encoding=3, text=genre_text)) 
-    
-    if data.get('date'): 
-        handle.tags.add(TDRC(encoding=3, text=data['date']))
-        
-    if data.get('release_date'): 
-        handle.tags.add(TDRL(encoding=3, text=data['release_date']))
-
-    if data.get('subgenre'): 
-        handle.tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
-    
-    handle.tags.add(TSRC(encoding=3, text=data['isrc']))
-    if data.get('lyrics'):
-        handle.tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
-    if composer_text: 
-        handle.tags.add(TCOM(encoding=3, text=composer_text)) 
-    
-    # Gunakan dur_ms yang sudah dihitung di awal
-    if dur_ms > 0:
-         handle.tags.add(TLEN(encoding=3, text=str(dur_ms)))
-
-    if data.get('bit_depth'):
-        handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
-    if data.get('sample_rate'):
-        handle.tags.add(TXXX(encoding=3, desc='SAMPLERATE', text=str(int(data['sample_rate'] * 1000))))
-    
-    await savePic(handle, data)
-    handle.save()
-    return True
-
-async def set_wav(data, handle, dur_ms=0):
-    try:
-        audio = WAVE(data['filepath'])
-    except Exception as e:
-        LOGGER.error(f"Gagal init WAVE obj: {e}")
-        return
-
-    if audio.tags is None:
-        audio.add_tags()
-    
-    tags = audio.tags
-
-    track_num = str(data.get('tracknumber', ''))
-    track_total = str(data.get('totaltracks', ''))
-    if track_total and track_total != '0':
-        track_pos = f"{track_num}/{track_total}"
-    else:
-        track_pos = track_num
-        
-    disc_num = str(data.get('volume') or '')
-    disc_total = str(data.get('totalvolume') or '')
-    if disc_total and disc_total != '0':
-        disc_pos = f"{disc_num}/{disc_total}"
-    else:
-        disc_pos = disc_num
+    disc_pos = f"{disc_num}/{disc_total}" if disc_total and disc_total != '0' else disc_num
         
     genre_text = data.get('genre') or ''
     composer_text = data.get('composer') or ''
 
     tags.add(TIT2(encoding=3, text=data['title']))
     tags.add(TALB(encoding=3, text=data['album']))
-    
     tags.add(TPE2(encoding=3, text=data['albumartist']))
-    tags.add(TOPE(encoding=3, text=data['albumartist']))
-
+    tags.add(TOPE(encoding=3, text=data['albumartist'])) 
     tags.add(TPE1(encoding=3, text=data['artist']))
     tags.add(TCOP(encoding=3, text=data['copyright']))
     tags.add(TRCK(encoding=3, text=track_pos)) 
     
-    if disc_pos: 
-        tags.add(TPOS(encoding=3, text=disc_pos)) 
-    if genre_text: 
-        tags.add(TCON(encoding=3, text=genre_text)) 
+    if disc_pos: tags.add(TPOS(encoding=3, text=disc_pos)) 
+    if genre_text: tags.add(TCON(encoding=3, text=genre_text)) 
     
-    if data.get('date'): 
-        tags.add(TDRC(encoding=3, text=data['date']))
+    if data.get('date'): tags.add(TDRC(encoding=3, text=data['date']))
+    if data.get('release_date'): tags.add(TDRL(encoding=3, text=data['release_date']))
+
+    if data.get('subgenre'): 
+        tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
+    
+    tags.add(TSRC(encoding=3, text=data['isrc']))
+    
+    if data.get('lyrics'):
+        tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
+    if composer_text: 
+        tags.add(TCOM(encoding=3, text=composer_text)) 
+    
+    if dur_ms > 0:
+         tags.add(TLEN(encoding=3, text=str(dur_ms)))
+
+    if data.get('bit_depth'):
+        tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
+    if data.get('sample_rate'):
+        tags.add(TXXX(encoding=3, desc='SAMPLERATE', text=str(int(data['sample_rate'] * 1000))))
+    
+    await savePic(handle, data)
+    handle.save()
+    return True
+
+async def set_wav(data, handle, dur_ms=0):
+    # Re-init sebagai WAVE agar properti tags ID3 muncul
+    try:
+        # Jika handle bukan instance WAVE yang benar, load ulang
+        if not isinstance(handle, WAVE) and not isinstance(handle, Wave_write):
+            handle = WAVE(data['filepath'])
+    except:
+        pass
+
+    if handle.tags is None:
+        handle.add_tags()
+    
+    tags = handle.tags
+
+    track_num = str(data.get('tracknumber', ''))
+    track_total = str(data.get('totaltracks', ''))
+    track_pos = f"{track_num}/{track_total}" if track_total and track_total != '0' else track_num
         
-    if data.get('release_date'): 
-        tags.add(TDRL(encoding=3, text=data['release_date']))
+    disc_num = str(data.get('volume') or '')
+    disc_total = str(data.get('totalvolume') or '')
+    disc_pos = f"{disc_num}/{disc_total}" if disc_total and disc_total != '0' else disc_num
+
+    tags.add(TIT2(encoding=3, text=data['title']))
+    tags.add(TALB(encoding=3, text=data['album']))
+    tags.add(TPE2(encoding=3, text=data['albumartist']))
+    tags.add(TOPE(encoding=3, text=data['albumartist']))
+    tags.add(TPE1(encoding=3, text=data['artist']))
+    tags.add(TCOP(encoding=3, text=data['copyright']))
+    tags.add(TRCK(encoding=3, text=track_pos)) 
+    
+    if disc_pos: tags.add(TPOS(encoding=3, text=disc_pos)) 
+    if data.get('genre'): tags.add(TCON(encoding=3, text=data.get('genre'))) 
+    
+    if data.get('date'): tags.add(TDRC(encoding=3, text=data['date']))
+    if data.get('release_date'): tags.add(TDRL(encoding=3, text=data['release_date']))
 
     if data.get('subgenre'): 
         tags.add(TXXX(encoding=3, desc='SUBGENRE', text=data.get('subgenre')))
@@ -341,61 +306,60 @@ async def set_wav(data, handle, dur_ms=0):
     tags.add(TSRC(encoding=3, text=data['isrc']))
     if data.get('lyrics'):
         tags.add(USLT(encoding=3, lang=u'eng', desc=u'desc', text=data['lyrics']))
-    if composer_text: 
-        tags.add(TCOM(encoding=3, text=composer_text)) 
+    if data.get('composer'): 
+        tags.add(TCOM(encoding=3, text=data['composer'])) 
 
-    # Gunakan dur_ms yang sudah dihitung di awal
     if dur_ms > 0:
          tags.add(TLEN(encoding=3, text=str(dur_ms)))
 
-    await savePic(audio, data)
-    audio.save()
+    await savePic(handle, data)
+    handle.save()
     return True
 
 async def set_m4a(data, handle):
+    # Pastikan tags ada
     if handle.tags is None:
         handle.add_tags()
-    handle.tags['\u00a9nam'] = data['title']
-    handle.tags['\u00a9alb'] = data['album']
-    handle.tags['\u00a9ART'] = data['artist']
-    handle.tags['aART'] = data['albumartist']
+    
+    # M4A menggunakan Dictionary, BUKAN .add()
+    tags = handle.tags
+    
+    tags['\u00a9nam'] = data['title']
+    tags['\u00a9alb'] = data['album']
+    tags['\u00a9ART'] = data['artist']
+    tags['aART'] = data['albumartist']
     
     if data.get('genre'):
-        handle.tags['\u00a9gen'] = data['genre']
+        tags['\u00a9gen'] = data['genre']
     if data.get('composer'):
-        handle.tags['\u00a9wrt'] = data['composer']
+        tags['\u00a9wrt'] = data['composer']
     
-    track_number_str = str(data.get('tracknumber') or '')
-    totaltracks_str = str(data.get('totaltracks') or '')
-    volume_str = str(data.get('volume') or '') 
-    totalvolume_str = str(data.get('totalvolume') or '') 
+    track_number = int(data.get('tracknumber') or 0)
+    totaltracks = int(data.get('totaltracks') or 0)
+    tags['trkn'] = [(track_number, totaltracks)]
+
+    volume = int(data.get('volume') or 0)
+    totalvolume = int(data.get('totalvolume') or 0)
+    tags['disk'] = [(volume, totalvolume)]
     
     if data.get('date'): 
-        handle.tags['\u00a9day'] = data['date']
+        tags['\u00a9day'] = data['date']
     
-    handle.tags['\u00a9cpr'] = data['copyright']
+    tags['\u00a9cpr'] = data['copyright']
 
     if data.get('subgenre'): 
-        handle.tags['----:com.apple.iTunes:SUBGENRE'] = data.get('subgenre').encode('utf-8')
+        tags['----:com.apple.iTunes:SUBGENRE'] = data.get('subgenre').encode('utf-8')
         
     if data.get('release_date'): 
-        handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
-
-    track_number = int(track_number_str) if track_number_str.isdigit() else 0
-    totaltracks = int(totaltracks_str) if totaltracks_str.isdigit() else 0
-    volume = int(volume_str) if volume_str.isdigit() else 0
-    totalvolume = int(totalvolume_str) if totalvolume_str.isdigit() else 0
-
-    handle.tags['trkn'] = [(track_number, totaltracks)]
-    handle.tags['disk'] = [(volume, totalvolume)]
+        tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
     
     if data.get('lyrics'):
-        handle.tags['\u00a9lyr'] = data['lyrics']
+        tags['\u00a9lyr'] = data['lyrics']
 
     if data.get('bit_depth'):
-        handle.tags['----:com.apple.iTunes:BITS PER SAMPLE'] = str(data['bit_depth']).encode('utf-8')
+        tags['----:com.apple.iTunes:BITS PER SAMPLE'] = str(data['bit_depth']).encode('utf-8')
     if data.get('sample_rate'):
-        handle.tags['----:com.apple.iTunes:SAMPLERATE'] = str(int(data['sample_rate'] * 1000)).encode('utf-8')
+        tags['----:com.apple.iTunes:SAMPLERATE'] = str(int(data['sample_rate'] * 1000)).encode('utf-8')
     
     await savePic(handle, data)
     handle.save()
@@ -413,78 +377,60 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    mimes = []
-    if hasattr(handle, 'mime'):
-        if isinstance(handle.mime, list):
-            mimes = handle.mime
-        else:
-            mimes = [handle.mime]
+    # Deteksi Tipe Handle untuk Cover Art
     
-    def check_mime(keywords):
-        for m in mimes:
-            for k in keywords:
-                if k in m: return True
-        return False
-
-    if check_mime(['flac']):
-        pic = flac.Picture()
+    # 1. FLAC
+    if isinstance(handle, FLAC):
+        pic = Picture()
         pic.data = data
         pic.mime = u"image/jpeg"
         handle.clear_pictures()
         handle.add_picture(pic)
         
-    if check_mime(['mpeg', 'mp3', 'wav']):
+    # 2. MP3 / WAV (ID3 Tags)
+    elif isinstance(handle, MP3) or isinstance(handle, WAVE) or isinstance(handle, EasyMP3):
+        # ID3 menggunakan 'APIC'
+        if handle.tags is None: handle.add_tags()
         handle.tags.delall("APIC")
         handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
-
-    if check_mime(['mp4', 'm4a']):
-        pic = mp4.MP4Cover(data)
+        
+    # 3. M4A / MP4
+    elif isinstance(handle, MP4):
+        # MP4 menggunakan 'covr' list
+        pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
         handle.tags['covr'] = [pic]
         
-    if check_mime(['ogg']):
-        handle['artwork'] = data
-
+    # 4. Fallback jika instance check gagal (sangat jarang)
+    else:
+        # Coba cara lama via mime check
+        mimes = str(handle.mime) if hasattr(handle, 'mime') else ""
+        if 'mp4' in mimes or 'm4a' in mimes:
+             pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
+             handle.tags['covr'] = [pic]
 
 async def get_audio_extension(path):
-    handle = File(path)
-    
-    mimes = []
-    if hasattr(handle, 'mime'):
-        if isinstance(handle.mime, list):
-            mimes = handle.mime
-        else:
-            mimes = [handle.mime]
-            
-    def check_mime(keywords):
-        for m in mimes:
-            for k in keywords:
-                if k in m: return True
-        return False
-    
-    if check_mime(['mp4', 'm4a']):
-        return 'm4a'
-    elif check_mime(['flac']):
-        return 'flac'
-    elif check_mime(['wav']):
-        return 'wav'
-    else:
-        return 'mp3'
+    # Menggunakan Mutagen untuk mendeteksi ekstensi asli
+    try:
+        handle = File(path)
+        if isinstance(handle, MP4): return 'm4a'
+        if isinstance(handle, FLAC): return 'flac'
+        if isinstance(handle, WAVE): return 'wav'
+        if isinstance(handle, MP3): return 'mp3'
+    except:
+        pass
+        
+    # Fallback sederhana jika Mutagen gagal
+    if path.lower().endswith('.m4a'): return 'm4a'
+    if path.lower().endswith('.flac'): return 'flac'
+    if path.lower().endswith('.wav'): return 'wav'
+    return 'mp3'
 
 async def _download_cover_with_headers(url: str, destination: str):
-    if not url:
-        return "No URL provided"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5.37.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/5.37.36'
-    }
-    
+    if not url: return "No URL provided"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     try:
         dir_path = os.path.dirname(destination)
         os.makedirs(dir_path, exist_ok=True)
-    except Exception as e:
-        return f"Gagal membuat direktori {dir_path}: {e}"
-
-    try:
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url, timeout=60) as response:
                 if response.status == 200:
@@ -492,10 +438,9 @@ async def _download_cover_with_headers(url: str, destination: str):
                         await f.write(await response.read())
                     return None 
                 else:
-                    return f"HTTP Status: {response.status} (URL: {url})"
+                    return f"HTTP Status: {response.status}"
     except Exception as e:
-        return f"Exception: {e} (URL: {url})"
-
+        return f"Exception: {e}"
 
 async def create_cover_file(url:str, meta:dict, thumbnail=False): 
     filename = f"{meta['itemid']}-thumb.jpg" if thumbnail else f"{meta['itemid']}.jpg"
@@ -505,7 +450,4 @@ async def create_cover_file(url:str, meta:dict, thumbnail=False):
         if err:
             LOGGER.error(f"Gagal mengunduh cover art: {err}")
             return './project-siesta.png'
-    if os.path.exists(cover) and os.path.getsize(cover) > 0:
-        return cover
-    else:
-        return './project-siesta.png'
+    return cover if os.path.exists(cover) and os.path.getsize(cover) > 0 else './project-siesta.png'
