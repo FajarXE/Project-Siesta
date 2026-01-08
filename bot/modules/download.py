@@ -246,7 +246,12 @@ async def resolve_shortlink(link: str) -> str:
     """
     Membuka shortlink dengan penanganan Manual Redirect untuk menangkap fragment (#) URL.
     """
-    target_domains = ["2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", "youtu.be", "bandcamp.com", "livephi.sh"]
+    # --- UPDATE: MENAMBAHKAN 'bsta.rs' KE DAFTAR DOMAIN TARGET ---
+    target_domains = [
+        "2nu.gs", "app.moov.hk", "moov.hk/r/", "bit.ly", "t.co", 
+        "youtu.be", "bandcamp.com", "livephi.sh", "bsta.rs"
+    ]
+    # -------------------------------------------------------------
     
     if any(d in link for d in target_domains) or "bandcamp.com" in link or "livephi.sh" in link:
         try:
@@ -308,7 +313,7 @@ async def run_download_task(link: str, user: dict):
         # Deteksi Error yang Dapat Dimaafkan (Tanpa Traceback)
         is_handled_error = False
         
-        # --- PERBAIKAN: MENAMBAHKAN 'Link tidak valid' dan 'halaman sistem' KE LIST ERROR YANG DITANGANI ---
+        # --- PERBAIKAN: Menambahkan error umum lainnya ---
         if "not available in any" in error_str or \
            "Maaf, tidak ada akun" in error_str or \
            "NotImplementedError" in error_str or \
@@ -320,6 +325,8 @@ async def run_download_task(link: str, user: dict):
            "Link Bandcamp tidak valid" in error_str or \
            "Link tidak valid" in error_str or \
            "halaman sistem" in error_str or \
+           "Gagal mengambil profil artis" in error_str or \
+           "404" in error_str or \
            isinstance(e, NapsterError) or \
            isinstance(e, BugsError) or \
            (highresaudio_manager and isinstance(e, HighResAudioError)) or \
@@ -329,7 +336,6 @@ async def run_download_task(link: str, user: dict):
         error_message = f"Tugas Gagal: {e}" if is_handled_error else f"Tugas Gagal: Terjadi error.\n`{e}`"
 
         if is_handled_error:
-             # Gunakan Warning, jangan Error agar log bersih
              LOGGER.warning(f"Download Task Ditolak (Handled): {e}")
         else:
              LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
