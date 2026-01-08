@@ -1,4 +1,4 @@
-# [FILE: bot/modules/download.py]
+# [GANTI FILE: bot/modules/download.py]
 
 from pyrogram.types import Message
 from pyrogram import Client, filters
@@ -307,6 +307,8 @@ async def run_download_task(link: str, user: dict):
         error_str = str(e)
         # Deteksi Error yang Dapat Dimaafkan (Tanpa Traceback)
         is_handled_error = False
+        
+        # --- PERBAIKAN: MENAMBAHKAN 'Link tidak valid' dan 'halaman sistem' KE LIST ERROR YANG DITANGANI ---
         if "not available in any" in error_str or \
            "Maaf, tidak ada akun" in error_str or \
            "NotImplementedError" in error_str or \
@@ -316,6 +318,8 @@ async def run_download_task(link: str, user: dict):
            "Stream key kosong" in error_str or \
            "Region Locked" in error_str or \
            "Link Bandcamp tidak valid" in error_str or \
+           "Link tidak valid" in error_str or \
+           "halaman sistem" in error_str or \
            isinstance(e, NapsterError) or \
            isinstance(e, BugsError) or \
            (highresaudio_manager and isinstance(e, HighResAudioError)) or \
@@ -325,7 +329,8 @@ async def run_download_task(link: str, user: dict):
         error_message = f"Tugas Gagal: {e}" if is_handled_error else f"Tugas Gagal: Terjadi error.\n`{e}`"
 
         if is_handled_error:
-             LOGGER.warning(f"Download Task Gagal (Handled): {e}")
+             # Gunakan Warning, jangan Error agar log bersih
+             LOGGER.warning(f"Download Task Ditolak (Handled): {e}")
         else:
              LOGGER.error(f"Error fatal di run_download_task: {e}\n{traceback.format_exc()}")
 
