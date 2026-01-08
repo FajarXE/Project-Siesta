@@ -8,7 +8,9 @@ from datetime import datetime
 from urllib.parse import urlparse
 from bot.logger import LOGGER
 from bot.helpers.uploder import track_upload, artist_upload, album_upload
-from bot.helpers.metadata import set_metadata
+# --- UPDATE IMPORT: Tambahkan get_audio_extension ---
+from bot.helpers.metadata import set_metadata, get_audio_extension
+# ----------------------------------------------------
 from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
 # Import Mutagen
@@ -91,17 +93,51 @@ def clean_cover_url(url):
         url = url.replace("//", "/")
     return url
 
+# --- HELPER BARU: FIX EXTENSION ---
+async def fix_extension(filepath):
+    """
+    Mengecek konten file dan mengubah ekstensi jika salah (misal .mp3 padahal isinya .wav)
+    """
+    try:
+        if not os.path.exists(filepath):
+            return filepath
+
+        real_ext = await get_audio_extension(filepath) # Mengembalikan 'mp3', 'wav', 'flac', dll
+        current_ext = filepath.split('.')[-1].lower()
+        
+        # Mapping nama ekstensi agar konsisten
+        if real_ext == 'm4a': real_ext = 'm4a' 
+        
+        if real_ext != current_ext:
+            new_filepath = os.path.splitext(filepath)[0] + "." + real_ext
+            os.rename(filepath, new_filepath)
+            LOGGER.info(f"File direname sesuai konten: {current_ext} -> {real_ext}")
+            return new_filepath
+    except Exception as e:
+        LOGGER.warning(f"Gagal cek ekstensi file: {e}")
+    
+    return filepath
+# ----------------------------------
+
 # --- MANUAL METADATA PATCHER (AGRESSIVE CLEANER) ---
 def patch_metadata_manual(filepath, album_artist):
     """
     Membersihkan tag COMMENT (termasuk Processed by SoX) secara agresif.
+    Hanya berjalan jika file adalah MP3 valid.
     """
     if not ID3:
         return
 
+    # --- UPDATE: Cek apakah file benar-benar MP3 ---
     try:
         audio = ID3(filepath)
-        
+    except Exception:
+        # Jika error (misal karena file WAV), kita skip saja.
+        # Log tidak perlu ditampilkan sebagai error agar tidak spamming.
+        return
+    # -----------------------------------------------
+
+    try:
         # LIST KUNCI YANG AKAN DIHAPUS
         keys_to_delete = []
 
@@ -114,7 +150,7 @@ def patch_metadata_manual(filepath, album_artist):
             
             # B. Hapus berdasarkan ISI TEKS (Cari "SoX" atau "Processed" dimanapun)
             frame = audio[key]
-            if hasattr(frame, 'text'): # Hampir semua frame teks punya atribut ini
+            if hasattr(frame, 'text'): 
                 for text_val in frame.text:
                     text_str = str(text_val).lower()
                     if "processed by" in text_str or "sox" in text_str:
@@ -122,7 +158,7 @@ def patch_metadata_manual(filepath, album_artist):
                         break
         
         # 2. EKSEKUSI PENGHAPUSAN
-        for key in list(set(keys_to_delete)): # Pakai set biar unik
+        for key in list(set(keys_to_delete)): 
             if key in audio:
                 del audio[key]
 
@@ -130,12 +166,10 @@ def patch_metadata_manual(filepath, album_artist):
         if album_artist:
             audio.add(TPE2(encoding=3, text=str(album_artist)))
 
-        # 4. SIMPAN & HAPUS ID3v1 (KUNCI UTAMA)
-        # v1=2 artinya: Hapus tag ID3v1 jika ada. 
-        # "Processed by SoX" sering bersembunyi di ID3v1.
+        # 4. SIMPAN & HAPUS ID3v1
         audio.save(v2_version=3, v1=2)
         
-        LOGGER.info("[Patch] Metadata bersih total (No SoX, No ID3v1, No EncodedBy).")
+        LOGGER.info("[Patch] Metadata MP3 bersih (No SoX, No ID3v1).")
         
     except Exception as e:
         LOGGER.error(f"Gagal patching metadata manual: {e}")
@@ -206,12 +240,10 @@ async def start_beatstars(link: str, user: dict):
              raise Exception("Link tidak valid: Tidak dapat menemukan username artis.")
         permalink = path_parts[0]
         
-        # --- UPDATE: MENAMBAHKAN KATA KUNCI SISTEM YANG HARUS DIABAIKAN ---
         reserved_words = [
             'beat', 'tracks', 'feed', 'services', 'publishing', 'dashboard', 
             'playlists', 'collection', 'musician'
         ]
-        # ------------------------------------------------------------------
         
         if permalink.lower() in reserved_words:
              raise Exception(f"Link tidak valid: '{permalink}' adalah halaman sistem, bukan nama artis.")
@@ -258,9 +290,25 @@ async def process_single_track(user, track_id):
 
         rich_genre = parse_metadata_rich(details.get('genre', []), tags, bpm)
 
+        # Default nama file .mp3 dulu, nanti dicek isinya
         filename = f"{artist_name} - {track_title}.mp3"
         filename = re.sub(r'[\\/*?:"<>|]', "", filename)
         filepath = f"{folderpath}/{filename}"
+
+        stream_url = details.get('stream_url')
+        if not stream_url:
+            stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
+
+        LOGGER.info(f"Downloading Single Track: {track_title}")
+        
+        err = await download_beatstars_file(stream_url, filepath)
+        if err:
+            raise Exception(f"Gagal download file: {err}")
+        
+        # --- UPDATE: FIX EXTENSION (Rename MP3 -> WAV jika perlu) ---
+        filepath = await fix_extension(filepath)
+        filename = os.path.basename(filepath) # Update filename variable
+        # -----------------------------------------------------------
 
         meta = {
             'title': track_title,
@@ -290,20 +338,10 @@ async def process_single_track(user, track_id):
             'folderpath': folderpath
         }
 
-        stream_url = details.get('stream_url')
-        if not stream_url:
-            stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
-
-        LOGGER.info(f"Downloading Single Track: {track_title}")
-        
-        err = await download_beatstars_file(stream_url, filepath)
-        if err:
-            raise Exception(f"Gagal download file: {err}")
-
     # 1. Set Metadata Standar
     await set_metadata(meta, user['user_id'])
     
-    # 2. PATCHING MANUAL AGRESITF
+    # 2. PATCHING MANUAL AGRESITF (Hanya jalan jika file MP3)
     patch_metadata_manual(filepath, artist_name)
 
     await track_upload(meta, user)
@@ -421,12 +459,11 @@ async def process_artist(user, permalink):
             filename = re.sub(r'[\\/*?:"<>|]', "", filename)
             filepath = f"{folderpath}/{filename}"
             
-            t['filepath'] = filepath
-            t['folderpath'] = folderpath
-            t['tracknumber'] = i + 1
-            t['totaltracks'] = total_items
-            t['type'] = 'track'
-
+            # --- UPDATE ---
+            # Kita set filepath sementara untuk download
+            # Nanti fix_extension akan mengupdate jika perlu
+            # --------------
+            
             if i % 5 == 0:
                 try: await user['bot_msg'].edit(f"Mengunduh {i+1}/{total_items}: {t['title']}")
                 except: pass
@@ -436,12 +473,22 @@ async def process_artist(user, permalink):
                 LOGGER.error(f"Gagal: {t['title']} ({err})")
                 continue
             
+            # --- UPDATE: FIX EXTENSION (Rename MP3 -> WAV jika perlu) ---
+            filepath = await fix_extension(filepath)
+            # -----------------------------------------------------------
+
+            t['filepath'] = filepath
+            t['folderpath'] = folderpath
+            t['tracknumber'] = i + 1
+            t['totaltracks'] = total_items
+            t['type'] = 'track'
+            
             local_cov = await download_local_cover(session, t['cover'], folderpath)
             t['cover'] = local_cov
 
             # 1. Standard Tagging
             await set_metadata(t, user['user_id'])
-            # 2. Manual Patching
+            # 2. Manual Patching (Safe)
             patch_metadata_manual(filepath, t['albumartist'])
 
             album_meta['tracks'].append(t)
