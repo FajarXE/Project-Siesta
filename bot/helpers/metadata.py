@@ -6,9 +6,8 @@ import aiofiles
 from datetime import datetime
 
 from mutagen import File
-# --- TAMBAHAN BARU: Import WAVE ---
+# Import WAVE
 from mutagen.wave import WAVE 
-# ----------------------------------
 from config import Config
 from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
@@ -82,31 +81,42 @@ async def set_metadata(metadata:dict, user_id: int = None):
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
 
     try:
-        # Cek tipe MIME
-        mime_str = ""
+        # --- PERBAIKAN LOGIKA DETEKSI MIME ---
+        # Kita pastikan mimes adalah list agar pencarian lebih akurat
+        mimes = []
         if hasattr(handle, 'mime'):
             if isinstance(handle.mime, list):
-                mime_str = handle.mime[0]
+                mimes = handle.mime
             else:
-                mime_str = handle.mime
+                mimes = [handle.mime]
         
-        if 'audio/x-flac' in mime_str or 'audio/flac' in mime_str:
+        # Helper sederhana untuk cek keberadaan string dalam list mime
+        def check_mime(keywords):
+            for m in mimes:
+                for k in keywords:
+                    if k in m: return True
+            return False
+
+        if check_mime(['flac']):
             LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
             await set_flac(metadata, handle)
             
-        elif 'audio/mpeg' in mime_str:
+        elif check_mime(['mpeg', 'mp3']): # Cek mpeg ATAU mp3
             LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}")
             await set_mp3(metadata, handle)
             
-        elif 'audio/x-m4a' in mime_str or 'audio/mp4' in mime_str: 
+        elif check_mime(['mp4', 'm4a']): 
             LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}")
             await set_m4a(metadata, handle)
             
-        # --- TAMBAHAN BARU: Handler WAV ---
-        elif 'audio/wav' in mime_str or 'audio/x-wav' in mime_str:
+        elif check_mime(['wav']):
             LOGGER.info(f"Memanggil set_wav untuk: {audio_path}")
             await set_wav(metadata, handle)
-        # ----------------------------------
+        
+        else:
+            LOGGER.warning(f"Format tidak dikenali untuk set_metadata: {mimes}")
+            # Fallback ke MP3 jika terpaksa
+            # await set_mp3(metadata, handle) 
             
     except Exception as e:
         LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
@@ -223,9 +233,8 @@ async def set_mp3(data, handle):
     handle.save()
     return True
 
-# --- FUNGSI BARU UNTUK WAV ---
 async def set_wav(data, handle):
-    # Kita init ulang sebagai WAVE object untuk memastikan dukungan ID3
+    # Init ulang sebagai WAVE object untuk memastikan dukungan ID3
     try:
         audio = WAVE(data['filepath'])
     except Exception as e:
@@ -235,7 +244,6 @@ async def set_wav(data, handle):
     if audio.tags is None:
         audio.add_tags()
     
-    # WAV via Mutagen mendukung ID3 tags, jadi logikanya mirip MP3
     tags = audio.tags
 
     track_num = str(data.get('tracknumber', ''))
@@ -255,7 +263,6 @@ async def set_wav(data, handle):
     genre_text = data.get('genre') or ''
     composer_text = data.get('composer') or ''
 
-    # Menulis Frame ID3 ke WAV
     tags.add(TIT2(encoding=3, text=data['title']))
     tags.add(TALB(encoding=3, text=data['album']))
     tags.add(TOPE(encoding=3, text=data['albumartist']))
@@ -283,12 +290,9 @@ async def set_wav(data, handle):
     if composer_text: 
         tags.add(TCOM(encoding=3, text=composer_text)) 
 
-    # Simpan Cover Art (WAV ID3 support APIC)
     await savePic(audio, data)
-    
     audio.save()
     return True
-# -----------------------------
 
 async def set_m4a(data, handle):
     if handle.tags is None:
@@ -351,44 +355,64 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    # Helper untuk cek mime type dengan aman
-    mime_check = ""
+    # Helper untuk cek mime type (list/string)
+    mimes = []
     if hasattr(handle, 'mime'):
-        mime_check = handle.mime if isinstance(handle.mime, str) else handle.mime[0]
+        if isinstance(handle.mime, list):
+            mimes = handle.mime
+        else:
+            mimes = [handle.mime]
+    
+    def check_mime(keywords):
+        for m in mimes:
+            for k in keywords:
+                if k in m: return True
+        return False
 
-    if 'audio/x-flac' in mime_check or 'audio/flac' in mime_check:
+    if check_mime(['flac']):
         pic = flac.Picture()
         pic.data = data
         pic.mime = u"image/jpeg"
         handle.clear_pictures()
         handle.add_picture(pic)
         
-    # --- UPDATE: Tambahkan WAV ke sini karena menggunakan APIC/ID3 juga ---
-    if 'audio/mpeg' in mime_check or 'audio/wav' in mime_check or 'audio/x-wav' in mime_check:
-        # Hapus gambar lama jika ada (agar tidak menumpuk)
+    if check_mime(['mpeg', 'mp3', 'wav']):
+        # MP3 dan WAV (ID3) pakai APIC
         handle.tags.delall("APIC")
         handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
-    # ---------------------------------------------------------------------
 
-    if 'audio/x-m4a' in mime_check or 'audio/mp4' in mime_check:
+    if check_mime(['mp4', 'm4a']):
         pic = mp4.MP4Cover(data)
         handle.tags['covr'] = [pic]
         
-    if 'audio/ogg' in mime_check:
+    if check_mime(['ogg']):
         handle['artwork'] = data
 
 
 async def get_audio_extension(path):
     handle = File(path)
-    mime_str = handle.mime[0] if isinstance(handle.mime, list) else handle.mime
     
-    if 'audio/x-m4a' in mime_str or 'audio/mp4' in mime_str:
+    mimes = []
+    if hasattr(handle, 'mime'):
+        if isinstance(handle.mime, list):
+            mimes = handle.mime
+        else:
+            mimes = [handle.mime]
+            
+    def check_mime(keywords):
+        for m in mimes:
+            for k in keywords:
+                if k in m: return True
+        return False
+    
+    if check_mime(['mp4', 'm4a']):
         return 'm4a'
-    elif 'audio/x-flac' in mime_str or 'audio/flac' in mime_str:
+    elif check_mime(['flac']):
         return 'flac'
-    elif 'audio/wav' in mime_str or 'audio/x-wav' in mime_str:
+    elif check_mime(['wav']):
         return 'wav'
     else:
+        # Fallback ke MP3 karena MP3 mimenya banyak varian
         return 'mp3'
 
 async def _download_cover_with_headers(url: str, destination: str):
