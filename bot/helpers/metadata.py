@@ -6,6 +6,9 @@ import aiofiles
 from datetime import datetime
 
 from mutagen import File
+# --- TAMBAHAN PENTING: Import WAVE explisit ---
+from mutagen.wave import WAVE 
+# ----------------------------------------------
 from config import Config
 from mutagen import flac, mp4
 from mutagen.mp3 import EasyMP3
@@ -60,11 +63,29 @@ metadata = {
 
 async def set_metadata(metadata:dict, user_id: int = None):
     audio_path = metadata['filepath']
-    handle = File(audio_path)
     
-    # Handle jika mutagen gagal mendeteksi file sama sekali
+    # 1. Coba deteksi otomatis
+    try:
+        handle = File(audio_path)
+    except Exception:
+        handle = None
+    
+    # 2. PERBAIKAN: Fallback untuk WAV mentah (tanpa tag awal)
+    # Jika File() return None tapi ekstensinya .wav, paksa pakai WAVE()
+    if not handle and audio_path.lower().endswith('.wav'):
+        try:
+            LOGGER.info(f"Deteksi otomatis gagal. Memaksa mode WAVE untuk: {audio_path}")
+            handle = WAVE(audio_path)
+            # WAVE perlu save() kosong dulu kadang untuk inisialisasi header jika benar-benar raw
+            if handle.tags is None:
+                handle.add_tags()
+        except Exception as e:
+            LOGGER.error(f"Gagal memaksa baca WAV: {e}")
+            handle = None
+
+    # 3. Final Check
     if not handle:
-        LOGGER.error(f"Mutagen gagal membaca file (format tidak dikenal): {audio_path}")
+        LOGGER.error(f"Mutagen gagal membaca file (format tidak dikenal/rusak): {audio_path}")
         return
 
     if metadata['duration'] == '':
@@ -88,25 +109,30 @@ async def set_metadata(metadata:dict, user_id: int = None):
 
     try:
         # Cek MIME Type untuk menentukan format
-        if 'audio/x-flac' in handle.mime:
+        # Perhatikan: handle.mime biasanya list, jadi gunakan 'in'
+        
+        if hasattr(handle, 'mime') and 'audio/x-flac' in handle.mime:
             LOGGER.info(f"Memanggil set_flac untuk: {audio_path}")
             await set_flac(metadata, handle)
             
-        elif 'audio/mpeg' in handle.mime:
+        elif hasattr(handle, 'mime') and 'audio/mpeg' in handle.mime:
             LOGGER.info(f"Memanggil set_mp3 untuk: {audio_path}")
             await set_mp3(metadata, handle)
             
-        elif 'audio/x-m4a' in handle.mime: 
+        elif hasattr(handle, 'mime') and 'audio/x-m4a' in handle.mime: 
             LOGGER.info(f"Memanggil set_m4a untuk: {audio_path}")
             await set_m4a(metadata, handle)
             
-        # --- PERBAIKAN: DUKUNGAN WAV (BeatStars) ---
-        elif 'audio/x-wav' in handle.mime or 'audio/wav' in handle.mime:
+        # --- DUKUNGAN WAV (BeatStars) ---
+        # Handle WAV bisa punya mime ['audio/x-wav', 'audio/wav']
+        elif (hasattr(handle, 'mime') and ('audio/x-wav' in handle.mime or 'audio/wav' in handle.mime)) \
+             or isinstance(handle, WAVE): # Cek instance jika mime gagal
+            
             LOGGER.info(f"Memanggil set_wav untuk: {audio_path}")
             await set_wav(metadata, handle)
         # -------------------------------------------
         else:
-            LOGGER.warning(f"Format MIME tidak didukung untuk tagging: {handle.mime}")
+            LOGGER.warning(f"Format MIME tidak didukung untuk tagging: {getattr(handle, 'mime', 'Unknown')}")
 
     except Exception as e:
         LOGGER.error(f"Gagal menulis metadata untuk {audio_path}: {e}")
@@ -223,23 +249,21 @@ async def set_mp3(data, handle):
     handle.save()
     return True
 
-# --- FUNGSI BARU: TAGGING UNTUK WAV ---
+# --- FUNGSI DUKUNGAN WAV ---
 async def set_wav(data, handle):
     """
     Menangani tagging untuk file WAV. 
-    Mutagen menangani WAV dengan menambahkan chunk ID3, 
-    jadi kita bisa menggunakan ulang logika MP3 (ID3).
+    Menggunakan logika ID3v2 (sama dengan MP3).
     """
     if handle.tags is None:
         try:
             handle.add_tags()
         except Exception:
-            pass # Tag mungkin sudah ada atau tidak bisa ditambahkan
+            pass 
     
-    # WAV di Mutagen menggunakan ID3v2, sama persis dengan MP3.
-    # Kita bisa melempar handle WAV ke fungsi set_mp3 untuk efisiensi.
+    # Gunakan logika MP3 karena strukturnya sama (ID3 Chunk)
     return await set_mp3(data, handle)
-# --------------------------------------
+# ---------------------------
 
 async def set_m4a(data, handle):
     if handle.tags is None:
@@ -303,35 +327,43 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    # FLAC
-    if 'audio/x-flac' in handle.mime:
+    # 1. FLAC
+    if hasattr(handle, 'mime') and 'audio/x-flac' in handle.mime:
         pic = flac.Picture()
         pic.data = data
         pic.mime = u"image/jpeg"
         handle.clear_pictures()
         handle.add_picture(pic)
         
-    # MP3 & WAV (ID3)
-    # Perhatikan: MIME WAV bisa audio/x-wav atau audio/wav
-    if 'audio/mpeg' in handle.mime or 'audio/x-wav' in handle.mime or 'audio/wav' in handle.mime:
-        # Hapus cover lama jika ada (untuk ID3)
+    # 2. MP3 & WAV (ID3)
+    # Gunakan pemeriksaan yang lebih toleran
+    is_mp3 = hasattr(handle, 'mime') and 'audio/mpeg' in handle.mime
+    is_wav = isinstance(handle, WAVE) or (hasattr(handle, 'mime') and ('audio/x-wav' in handle.mime or 'audio/wav' in handle.mime))
+    
+    if is_mp3 or is_wav:
+        # Hapus semua cover sebelumnya
         handle.tags.delall("APIC") 
         handle.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=data))
         
-    # M4A
-    if 'audio/x-m4a' in handle.mime:
+    # 3. M4A
+    if hasattr(handle, 'mime') and 'audio/x-m4a' in handle.mime:
         pic = mp4.MP4Cover(data)
         handle.tags['covr'] = [pic]
         
-    # OGG
-    if 'audio/ogg' in handle.mime:
+    # 4. OGG
+    if hasattr(handle, 'mime') and 'audio/ogg' in handle.mime:
         handle['artwork'] = data
 
 
 async def get_audio_extension(path):
+    # Helper sederhana
     handle = File(path)
     if not handle:
-        return 'mp3' # Fallback
+        # Fallback manual berdasarkan ekstensi
+        if path.lower().endswith('.wav'):
+            return 'wav'
+        return 'mp3' 
+        
     if 'audio/x-m4a' in handle.mime:
         return 'm4a'
     elif 'audio/x-flac' in handle.mime:
