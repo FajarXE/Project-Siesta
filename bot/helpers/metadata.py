@@ -5,20 +5,22 @@ import aiohttp
 import aiofiles
 from datetime import datetime
 
+# Import Mutagen Classes
 from mutagen import File
 from mutagen.wave import WAVE, Wave_write
 from mutagen.mp4 import MP4, MP4Cover, MP4Tags
 from mutagen.flac import FLAC, Picture
 from mutagen.mp3 import MP3, EasyMP3
-from config import Config
 
-# Import ID3 frames untuk MP3 & WAV
+# Import ID3 Frames
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
     TCON, TOPE, TSRC, USLT, TPOS, TXXX, \
     TCOM, TDRL, TLEN, TPE2
 
+from config import Config
 from bot.logger import LOGGER
 
+# Import Lyrics Manager (Opsional)
 try:
     from bot.helpers.lyrics.manager import lyrics_manager
 except ImportError:
@@ -28,11 +30,13 @@ except ImportError:
 def parse_duration_to_ms(raw):
     """
     Mengubah berbagai format ("02:51", "171.5", 171500) menjadi integer Milidetik.
+    Digunakan agar tag TLEN dan durasi Telegram akurat.
     """
     if not raw:
         return 0
     try:
         s = str(raw).strip()
+        # 1. Format String Waktu (MM:SS atau HH:MM:SS)
         if ':' in s:
             parts = s.split(':')
             seconds = 0
@@ -40,10 +44,11 @@ def parse_duration_to_ms(raw):
                 seconds = seconds * 60 + float(part)
             return int(seconds * 1000)
         
+        # 2. Format Angka (Detik atau MS)
         val = float(s)
-        if val < 30000: 
+        if val < 30000: # Asumsi Detik (karena lagu jarang > 8 jam dalam detik)
             return int(val * 1000)
-        else:
+        else: # Asumsi sudah Milidetik
             return int(val)
     except Exception:
         return 0
@@ -98,6 +103,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
         return
     
     # 1. FIX DURASI (Global)
+    # Menghitung durasi yang benar (dalam detik) untuk dikirim ke Telegram
     current_dur = metadata.get('duration', 0)
     if not current_dur:
         try:
@@ -108,7 +114,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
 
     dur_ms = parse_duration_to_ms(current_dur)
     if dur_ms > 0:
-        metadata['duration'] = int(dur_ms / 1000) # Update ke detik untuk Telegram
+        metadata['duration'] = int(dur_ms / 1000) # Update ke detik (Integer)
     else:
         metadata['duration'] = 0
 
@@ -124,9 +130,9 @@ async def set_metadata(metadata:dict, user_id: int = None):
         except Exception as e:
             LOGGER.error(f"Error fetching lyrics inside metadata: {e}")
 
-    # 3. ROUTING BERDASARKAN TIPE OBJEK (Lebih Akurat daripada MIME)
+    # 3. ROUTING BERDASARKAN TIPE OBJEK (Mencegah Error M4A)
     try:
-        # Cek tipe class instance
+        # Cek tipe class instance untuk akurasi 100%
         if isinstance(handle, FLAC):
             LOGGER.info(f"Format FLAC terdeteksi: {audio_path}")
             await set_flac(metadata, handle, dur_ms)
@@ -144,7 +150,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
             await set_mp3(metadata, handle, dur_ms)
             
         else:
-            # Coba deteksi manual via ekstensi jika instance check gagal
+            # Fallback Manual via Ekstensi jika instance check gagal
             ext = os.path.splitext(audio_path)[1].lower()
             LOGGER.warning(f"Tipe Mutagen tidak spesifik ({type(handle)}). Mencoba via ekstensi: {ext}")
             
@@ -206,7 +212,15 @@ async def set_flac(data, handle, dur_ms=0):
     if data.get('sample_rate'):
         handle.tags['SAMPLERATE'] = str(int(data['sample_rate'] * 1000))
     
-    # Simpan Cover
+    # MQA Logic (Original)
+    if data.get('mqa_details'):
+        mqa_file = data['mqa_details']
+        encoder_time = datetime.now().strftime("%b %d %Y %H:%M:%S")
+        mqa_encoder_str = f'MQAEncode v1.1, 2.4.0+0 (278f5dd), E24F1DE5-32F1-4930-8197-24954EB9D6F4, {encoder_time}'
+        handle.tags['ENCODER'] = mqa_encoder_str
+        handle.tags['MQAENCODER'] = mqa_encoder_str
+        handle.tags['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
+    
     await savePic(handle, data)
     handle.save()
     return True
@@ -228,10 +242,14 @@ async def set_mp3(data, handle, dur_ms=0):
     genre_text = data.get('genre') or ''
     composer_text = data.get('composer') or ''
 
+    # Standard ID3 Tags
     tags.add(TIT2(encoding=3, text=data['title']))
     tags.add(TALB(encoding=3, text=data['album']))
+    
+    # Album Artist Fix (TPE2 + TOPE)
     tags.add(TPE2(encoding=3, text=data['albumartist']))
     tags.add(TOPE(encoding=3, text=data['albumartist'])) 
+    
     tags.add(TPE1(encoding=3, text=data['artist']))
     tags.add(TCOP(encoding=3, text=data['copyright']))
     tags.add(TRCK(encoding=3, text=track_pos)) 
@@ -252,6 +270,7 @@ async def set_mp3(data, handle, dur_ms=0):
     if composer_text: 
         tags.add(TCOM(encoding=3, text=composer_text)) 
     
+    # Tag Durasi (TLEN)
     if dur_ms > 0:
          tags.add(TLEN(encoding=3, text=str(dur_ms)))
 
@@ -265,9 +284,8 @@ async def set_mp3(data, handle, dur_ms=0):
     return True
 
 async def set_wav(data, handle, dur_ms=0):
-    # Re-init sebagai WAVE agar properti tags ID3 muncul
+    # Re-init sebagai WAVE agar properti tags ID3 muncul jika handle mentah
     try:
-        # Jika handle bukan instance WAVE yang benar, load ulang
         if not isinstance(handle, WAVE) and not isinstance(handle, Wave_write):
             handle = WAVE(data['filepath'])
     except:
@@ -286,6 +304,7 @@ async def set_wav(data, handle, dur_ms=0):
     disc_total = str(data.get('totalvolume') or '')
     disc_pos = f"{disc_num}/{disc_total}" if disc_total and disc_total != '0' else disc_num
 
+    # Wav ID3 Tags
     tags.add(TIT2(encoding=3, text=data['title']))
     tags.add(TALB(encoding=3, text=data['album']))
     tags.add(TPE2(encoding=3, text=data['albumartist']))
@@ -309,6 +328,7 @@ async def set_wav(data, handle, dur_ms=0):
     if data.get('composer'): 
         tags.add(TCOM(encoding=3, text=data['composer'])) 
 
+    # Tag Durasi (TLEN)
     if dur_ms > 0:
          tags.add(TLEN(encoding=3, text=str(dur_ms)))
 
@@ -377,7 +397,7 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    # Deteksi Tipe Handle untuk Cover Art
+    # Deteksi Tipe Handle untuk Cover Art yang Benar
     
     # 1. FLAC
     if isinstance(handle, FLAC):
@@ -400,9 +420,8 @@ async def savePic(handle, metadata):
         pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
         handle.tags['covr'] = [pic]
         
-    # 4. Fallback jika instance check gagal (sangat jarang)
+    # 4. Fallback jika instance check gagal
     else:
-        # Coba cara lama via mime check
         mimes = str(handle.mime) if hasattr(handle, 'mime') else ""
         if 'mp4' in mimes or 'm4a' in mimes:
              pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
