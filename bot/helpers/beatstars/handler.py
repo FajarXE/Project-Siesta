@@ -11,14 +11,14 @@ from bot.helpers.uploder import track_upload, artist_upload, album_upload
 from bot.helpers.metadata import set_metadata
 from bot.helpers.utils import post_art_poster, zip_handler, fetch_zip_settings
 
-# Import Mutagen
+# Import Mutagen Lengkap untuk Penulisan Ulang (Recovery)
 try:
-    from mutagen.id3 import ID3, TPE2, COMM, TSSE, TENC, ID3NoHeaderError
+    from mutagen.id3 import ID3, TIT2, TPE1, TALB, TPE2, COMM, TSSE, TENC, TCON, TRCK, TDRC, APIC, ID3NoHeaderError
 except ImportError:
     LOGGER.error("Mutagen belum terinstall. Fitur patching metadata tidak akan berjalan.")
-    ID3, TPE2, COMM, TSSE, TENC, ID3NoHeaderError = None, None, None, None, None, None
+    ID3 = None
 
-# HEADER 1: Untuk API V2 & Download (Browser-like)
+# HEADER 1: Untuk API V2 & Download
 BASE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
@@ -28,7 +28,7 @@ BASE_HEADERS = {
     "Connection": "keep-alive"
 }
 
-# HEADER 2: Khusus Algolia (Search Engine)
+# HEADER 2: Khusus Algolia
 ALGOLIA_HEADERS = BASE_HEADERS.copy()
 ALGOLIA_HEADERS.update({
     "x-algolia-api-key": "b3513eb709fe8f444b4d5c191b63ea47",
@@ -42,36 +42,25 @@ PLACEHOLDER_COVER = "https://www.beatstars.com/assets/img/placeholder-track.png"
 
 def parse_metadata_rich(data_list, tags_list=None, bpm=None):
     extracted = []
-    
     if data_list:
         iterable = data_list.values() if isinstance(data_list, dict) else data_list
         for item in iterable:
-            if isinstance(item, str):
-                extracted.append(item)
+            if isinstance(item, str): extracted.append(item)
             elif isinstance(item, dict):
                 name = item.get('name') or item.get('slug') or item.get('title')
-                if name:
-                    extracted.append(str(name))
+                if name: extracted.append(str(name))
     
     if tags_list:
         if isinstance(tags_list, list):
             for tag in tags_list[:5]: 
-                tag_name = ""
-                if isinstance(tag, str):
-                    tag_name = tag
-                elif isinstance(tag, dict):
-                    tag_name = tag.get('name', '')
-                if tag_name and tag_name not in extracted:
-                    extracted.append(tag_name)
+                tag_name = tag if isinstance(tag, str) else tag.get('name', '') if isinstance(tag, dict) else ""
+                if tag_name and tag_name not in extracted: extracted.append(tag_name)
         elif isinstance(tags_list, dict):
             for key, val in tags_list.items():
                 if len(extracted) >= 10: break 
-                if isinstance(val, str) and val not in extracted:
-                    extracted.append(val)
+                if isinstance(val, str) and val not in extracted: extracted.append(val)
 
-    if bpm:
-        extracted.append(f"{bpm} BPM")
-
+    if bpm: extracted.append(f"{bpm} BPM")
     return ", ".join(extracted) if extracted else "BeatStars"
 
 def format_date(timestamp):
@@ -79,14 +68,12 @@ def format_date(timestamp):
         if not timestamp: return ""
         dt_object = datetime.fromtimestamp(int(timestamp))
         return dt_object.strftime("%Y-%m-%d")
-    except Exception:
-        return str(timestamp)
+    except: return str(timestamp)
 
 def clean_cover_url(url):
     if not url: return None
     url = url.replace(r'\/', '/')
-    if "://" not in url and "//" in url:
-        url = url.replace("//", "/")
+    if "://" not in url and "//" in url: url = url.replace("//", "/")
     return url
 
 async def resolve_beatstars_redirect(url):
@@ -94,9 +81,7 @@ async def resolve_beatstars_redirect(url):
         async with aiohttp.ClientSession(headers=BASE_HEADERS) as session:
             async with session.head(url, allow_redirects=True, timeout=10) as resp:
                 return str(resp.url)
-    except Exception as e:
-        LOGGER.warning(f"Gagal resolve redirect: {e}")
-        return url
+    except: return url
 
 # --- LOCAL COVER DOWNLOADER ---
 async def download_local_cover(session, url, folderpath):
@@ -108,60 +93,101 @@ async def download_local_cover(session, url, folderpath):
             if resp.status == 200:
                 content = await resp.read()
                 if not content: return PLACEHOLDER_COVER
-                with open(filepath, 'wb') as f:
-                    f.write(content)
+                with open(filepath, 'wb') as f: f.write(content)
                 return filepath
             return PLACEHOLDER_COVER
-    except Exception:
-        return PLACEHOLDER_COVER
+    except: return PLACEHOLDER_COVER
 
-# --- PATCHER METADATA MANUAL ---
-def patch_metadata_manual(filepath, album_artist):
+# --- PATCHER METADATA (SAFE & COMPLETE) ---
+def patch_metadata_manual(filepath, meta):
     """
-    Membersihkan tag dan memperbaiki Album Artist.
-    Menangani kasus file belum punya tag ID3.
+    Memperbaiki tag dengan metode RECOVERY.
+    Jika tag rusak/hilang, fungsi ini akan MENULIS ULANG semua data
+    (Judul, Artis, Album, Cover, dll) agar tidak ada yang hilang.
+    Sekaligus menghapus komentar sampah.
     """
     if not ID3: return
 
     try:
-        # Coba buka tag yang ada, atau buat baru jika kosong
         try:
             audio = ID3(filepath)
         except ID3NoHeaderError:
+            LOGGER.warning("ID3 Header tidak ditemukan. Membuat baru & menulis ulang tag.")
             audio = ID3()
-        except Exception as e:
-            LOGGER.warning(f"Warning saat buka ID3: {e}. Membuat header baru.")
+        except Exception:
             audio = ID3()
 
-        # Hapus kunci yang tidak diinginkan
+        # 1. BERSIHKAN KOMENTAR SAMPAH (CLEANUP)
         keys_to_delete = []
         for key in audio.keys():
             if key.startswith("COMM") or key.startswith("TENC") or key.startswith("TSSE") or key.startswith("TXXX"):
                 keys_to_delete.append(key)
                 continue
-            
-            # Cek isi teks frame
+            # Scan teks "Processed by SoX"
             frame = audio[key]
             if hasattr(frame, 'text'):
                 for text_val in frame.text:
-                    text_lower = str(text_val).lower()
-                    if "processed by" in text_lower or "sox" in text_lower:
+                    if "processed by" in str(text_val).lower() or "sox" in str(text_val).lower():
                         keys_to_delete.append(key)
                         break
-        
         for key in list(set(keys_to_delete)):
             if key in audio: del audio[key]
 
-        # Tambahkan Album Artist
-        if album_artist:
-            audio.add(TPE2(encoding=3, text=str(album_artist)))
-
-        # Simpan (Pastikan filepath disertakan untuk kasus ID3 baru)
-        audio.save(filepath, v2_version=3, v1=2)
-        LOGGER.info("[Patch] Metadata cleaned & fixed.")
+        # 2. TULIS ULANG METADATA PENTING (RECOVERY)
+        # Ini menjamin metadata tidak hilang meski ID3 baru dibuat
         
+        # Title
+        if meta.get('title'):
+            audio.add(TIT2(encoding=3, text=str(meta['title'])))
+        
+        # Artist
+        if meta.get('artist'):
+            audio.add(TPE1(encoding=3, text=str(meta['artist'])))
+            
+        # Album
+        if meta.get('album'):
+            audio.add(TALB(encoding=3, text=str(meta['album'])))
+            
+        # Album Artist (Fix PowerAmp)
+        if meta.get('albumartist'):
+            audio.add(TPE2(encoding=3, text=str(meta['albumartist'])))
+            
+        # Genre
+        if meta.get('genre'):
+            audio.add(TCON(encoding=3, text=str(meta['genre'])))
+
+        # Year / Date
+        if meta.get('date'):
+            audio.add(TDRC(encoding=3, text=str(meta['date'])))
+
+        # Track Number
+        if meta.get('tracknumber'):
+            trck_str = str(meta['tracknumber'])
+            if meta.get('totaltracks'): trck_str += f"/{meta['totaltracks']}"
+            audio.add(TRCK(encoding=3, text=trck_str))
+
+        # Cover Art (Jika hilang, tulis ulang dari file lokal)
+        # Cek apakah sudah ada cover (APIC), jika tidak/baru, tambahkan
+        has_cover = any(key.startswith("APIC") for key in audio.keys())
+        if not has_cover and meta.get('cover') and os.path.exists(meta['cover']):
+            try:
+                with open(meta['cover'], 'rb') as albumart:
+                    audio.add(APIC(
+                        encoding=3,
+                        mime='image/jpeg',
+                        type=3, # 3 is for the cover(front) image
+                        desc=u'Cover',
+                        data=albumart.read()
+                    ))
+            except Exception as e:
+                LOGGER.warning(f"Gagal re-embed cover: {e}")
+
+        # 3. SIMPAN DENGAN FORMAT BERSIH (HAPUS ID3v1)
+        audio.save(filepath, v2_version=3, v1=2)
+        LOGGER.info(f"[Patch] Metadata untuk '{meta.get('title')}' berhasil diperbaiki & diamankan.")
+
     except Exception as e:
-        LOGGER.error(f"Gagal patching: {e}")
+        LOGGER.error(f"Gagal patching metadata: {e}")
 
 # --- AUDIO DOWNLOADER ---
 async def download_beatstars_file(url, path):
@@ -176,16 +202,13 @@ async def download_beatstars_file(url, path):
                             chunk = await response.content.read(1024 * 4)
                             if not chunk: break
                             f.write(chunk)
-                    if os.path.exists(path) and os.path.getsize(path) > 0:
-                        return None
+                    if os.path.exists(path) and os.path.getsize(path) > 0: return None
                     return "File kosong."
                 return f"HTTP Status: {response.status}"
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
 # --- MAIN HANDLER ---
 async def start_beatstars(link: str, user: dict):
-    # 1. Resolve Redirect
     final_link = await resolve_beatstars_redirect(link)
     if final_link != link:
         LOGGER.info(f"BeatStars Redirect: {link} -> {final_link}")
@@ -195,7 +218,6 @@ async def start_beatstars(link: str, user: dict):
     path = parsed.path.strip("/")
     path_parts = path.split("/")
 
-    # 2. Deteksi Mode
     if path.startswith("beat/") or "/beat/" in link:
         track_regex = r'(\d+)$'
         track_match = re.search(track_regex, path)
@@ -203,39 +225,26 @@ async def start_beatstars(link: str, user: dict):
             track_id = track_match.group(1)
             LOGGER.info(f"BeatStars Track Mode: ID {track_id}")
             await process_single_track(user, track_id)
-        else:
-            raise Exception("Link Beat tidak valid: ID tidak ditemukan.")
+        else: raise Exception("Link Beat tidak valid.")
     else:
-        if not path_parts or not path_parts[0]:
-             raise Exception("Link tidak valid.")
-        
+        if not path_parts or not path_parts[0]: raise Exception("Link tidak valid.")
         permalink = path_parts[0]
+        if permalink == 'u' and len(path_parts) > 1: permalink = path_parts[1]
         reserved_words = ['beat', 'tracks', 'feed', 'services', 'publishing', 'dashboard', 'u']
-        
-        if permalink == 'u' and len(path_parts) > 1:
-            permalink = path_parts[1]
-        
-        if permalink.lower() in reserved_words:
-             raise Exception(f"Link tidak valid: '{permalink}' bukan nama artis.")
-             
+        if permalink.lower() in reserved_words: raise Exception("Link tidak valid.")
         LOGGER.info(f"BeatStars Artist Mode: {permalink}")
         await process_artist(user, permalink)
 
 # --- SINGLE TRACK ---
 async def process_single_track(user, track_id):
     url = f"https://main.v2.beatstars.com/beat?id={track_id}&fields=details"
-    
     async with aiohttp.ClientSession(headers=BASE_HEADERS) as session:
         async with session.get(url) as resp:
-            if resp.status != 200:
-                raise Exception(f"BeatStars API Error: {resp.status}")
+            if resp.status != 200: raise Exception(f"API Error: {resp.status}")
             data = await resp.json()
     
-        if not data.get('response', {}).get('data'):
-            raise Exception("Track tidak ditemukan.")
-
+        if not data.get('response', {}).get('data'): raise Exception("Track tidak ditemukan.")
         details = data['response']['data']['details']
-        
         folderpath = f"{user['bot_msg'].chat.id}-beatstars-{details.get('track_id')}"
         if not os.path.exists(folderpath): os.makedirs(folderpath, exist_ok=True)
 
@@ -251,90 +260,60 @@ async def process_single_track(user, track_id):
         duration_ms = details.get('duration', 0)
         
         copyright_txt = details.get('copyright', '') 
-        if not copyright_txt:
-            year = release_date_fmt[:4] if release_date_fmt else "2024"
-            copyright_txt = f"© {year} {artist_name}"
+        if not copyright_txt: copyright_txt = f"© {release_date_fmt[:4] if release_date_fmt else '2024'} {artist_name}"
 
         rich_genre = parse_metadata_rich(details.get('genre', []), tags, bpm)
-
         filename = f"{artist_name} - {track_title}.mp3"
         filename = re.sub(r'[\\/*?:"<>|]', "", filename)
         filepath = f"{folderpath}/{filename}"
 
         meta = {
-            'title': track_title,
-            'artist': artist_name,
-            'albumartist': artist_name, 
-            'performer': artist_name,   
-            'composer': artist_name,
-            'album': f"{artist_name} - Singles",
-            'tracknumber': 1,
-            'totaltracks': 1,
-            'volume': 1,
-            'totalvolume': 1,
-            'copyright': copyright_txt,
-            'isrc': '',
-            'release_date': release_date_fmt,
+            'title': track_title, 'artist': artist_name, 'albumartist': artist_name, 
+            'performer': artist_name, 'composer': artist_name, 'album': f"{artist_name} - Singles",
+            'tracknumber': 1, 'totaltracks': 1, 'volume': 1, 'totalvolume': 1,
+            'copyright': copyright_txt, 'isrc': '', 'release_date': release_date_fmt,
             'date': release_date_fmt[:4] if release_date_fmt else '',
-            'cover': local_cover_path,
-            'provider': 'BeatStars',
-            'type': 'track', 
-            'itemid': str(details.get('track_id')),
-            'genre': rich_genre,
-            'duration': str(duration_ms), 
-            'explicit': False,
-            'description': None,
-            'comment': None,
-            'filepath': filepath,
-            'folderpath': folderpath
+            'cover': local_cover_path, 'provider': 'BeatStars', 'type': 'track', 
+            'itemid': str(details.get('track_id')), 'genre': rich_genre,
+            'duration': str(duration_ms), 'explicit': False, 'description': None, 'comment': None,
+            'filepath': filepath, 'folderpath': folderpath
         }
 
         stream_url = details.get('stream_url')
-        if not stream_url:
-            stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
+        if not stream_url: stream_url = f"https://main.v2.beatstars.com/stream?id={details.get('track_id')}&return=audio"
 
         LOGGER.info(f"Downloading: {track_title}")
         err = await download_beatstars_file(stream_url, filepath)
         if err: raise Exception(f"Gagal download: {err}")
 
     await set_metadata(meta, user['user_id'])
-    patch_metadata_manual(filepath, artist_name)
+    # Patching manual kini menerima objek META lengkap untuk recovery
+    patch_metadata_manual(filepath, meta)
     await track_upload(meta, user)
 
 # --- ARTIST BATCH ---
 async def process_artist(user, permalink):
     permalink = permalink.lower()
-    
     async with aiohttp.ClientSession(headers=BASE_HEADERS) as session:
         artist_url = f"https://main.v2.beatstars.com/musician?permalink={permalink}"
         async with session.get(artist_url) as resp:
-            if resp.status == 404:
-                raise Exception(f"Artis '{permalink}' tidak ditemukan (404).")
-            elif resp.status != 200:
-                raise Exception(f"API Error: {resp.status}")
+            if resp.status == 404: raise Exception(f"Artis '{permalink}' tidak ditemukan.")
+            elif resp.status != 200: raise Exception(f"API Error: {resp.status}")
             artist_data = await resp.json()
         
-        try:
-            user_id_num = int(artist_data['response']['data']['profile']['user_id'])
-        except:
-            raise Exception("Data profil artis tidak valid.")
-            
+        try: user_id_num = int(artist_data['response']['data']['profile']['user_id'])
+        except: raise Exception("Data profil artis tidak valid.")
         member_id = f"MR{user_id_num}"
         query_url = "https://nmmgzjq6qi-dsn.algolia.net/1/indexes/public_prod_inventory_track_index_bycustom/query?x-algolia-agent=Algolia%20for%20JavaScript%20(4.12.0)%3B%20Browser"
         
         all_tracks = []
         page = 0
         await user['bot_msg'].edit(f"Mengambil daftar lagu: {permalink}...")
-        
         folderpath = f"{user['bot_msg'].chat.id}-beatstars-artist-{permalink}"
         if not os.path.exists(folderpath): os.makedirs(folderpath, exist_ok=True)
         
         while True:
-            payload = {
-                "query": "", "page": page, "hitsPerPage": 1000, "facets": ["*"],
-                "facetFilters": [[f"profile.memberId:{member_id}"]],
-                "maxValuesPerFacet": 1000
-            }
+            payload = {"query": "", "page": page, "hitsPerPage": 1000, "facets": ["*"], "facetFilters": [[f"profile.memberId:{member_id}"]], "maxValuesPerFacet": 1000}
             async with aiohttp.ClientSession(headers=ALGOLIA_HEADERS) as algolia_session:
                 async with algolia_session.post(query_url, json=payload) as resp:
                     if resp.status != 200: break
@@ -356,42 +335,25 @@ async def process_artist(user, permalink):
                 copyright_txt = f"© {date_fmt[:4] if date_fmt else '2024'} {artist_name}"
 
                 all_tracks.append({
-                    'title': hit.get('title'),
-                    'artist': artist_name,
-                    'albumartist': artist_name,
-                    'performer': artist_name,
-                    'composer': artist_name,
+                    'title': hit.get('title'), 'artist': artist_name, 'albumartist': artist_name,
+                    'performer': artist_name, 'composer': artist_name,
                     'album': f"{artist_name} - BeatStars Collection",
-                    'cover': clean_url,
-                    'itemid': str(track_id),
-                    'url': stream_url,
-                    'genre': rich_genre,
-                    'copyright': copyright_txt, 
-                    'isrc': '',
-                    'volume': 1,
-                    'totalvolume': 1,
-                    'duration': str(hit.get('duration', '')),
-                    'explicit': False,
-                    'release_date': date_fmt,
-                    'date': date_fmt[:4] if date_fmt else '',
-                    'description': None,
-                    'comment': None
+                    'cover': clean_url, 'itemid': str(track_id), 'url': stream_url,
+                    'genre': rich_genre, 'copyright': copyright_txt, 'isrc': '',
+                    'volume': 1, 'totalvolume': 1, 'duration': str(hit.get('duration', '')),
+                    'explicit': False, 'release_date': date_fmt,
+                    'date': date_fmt[:4] if date_fmt else '', 'description': None, 'comment': None
                 })
             page += 1
             if page >= search_res.get('nbPages', 0): break
 
     if not all_tracks: raise Exception("Tidak ada track ditemukan.")
-
-    album_meta = {
-        'type': 'album', 'title': f"Tracks by {permalink}", 'artist': all_tracks[0]['artist'],
-        'albumartist': all_tracks[0]['artist'], 'cover': all_tracks[0]['cover'],
-        'provider': 'BeatStars', 'folderpath': folderpath, 'poster_msg': None, 'zip_path': None, 'tracks': []
-    }
+    album_meta = {'type': 'album', 'title': f"Tracks by {permalink}", 'artist': all_tracks[0]['artist'],
+        'albumartist': all_tracks[0]['artist'], 'cover': all_tracks[0]['cover'], 'provider': 'BeatStars',
+        'folderpath': folderpath, 'poster_msg': None, 'zip_path': None, 'tracks': []}
 
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     if art_poster: album_meta['poster_msg'] = await post_art_poster(user, album_meta)
-
-    LOGGER.info(f"Ditemukan {len(all_tracks)} track. Memulai unduhan...")
     await user['bot_msg'].edit(f"Ditemukan {len(all_tracks)} track. Memulai unduhan...")
 
     total_items = len(all_tracks)
@@ -400,7 +362,6 @@ async def process_artist(user, permalink):
             filename = f"{t['artist']} - {t['title']}.mp3"
             filename = re.sub(r'[\\/*?:"<>|]', "", filename)
             filepath = f"{folderpath}/{filename}"
-            
             t['filepath'] = filepath
             t['folderpath'] = folderpath
             t['tracknumber'] = i + 1
@@ -418,7 +379,7 @@ async def process_artist(user, permalink):
             
             t['cover'] = await download_local_cover(session, t['cover'], folderpath)
             await set_metadata(t, user['user_id'])
-            patch_metadata_manual(filepath, t['albumartist'])
+            patch_metadata_manual(filepath, t) # Kirim META lengkap untuk recovery
             album_meta['tracks'].append(t)
         except Exception as e:
             LOGGER.error(f"Error track {t['title']}: {e}")
