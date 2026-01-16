@@ -37,16 +37,32 @@ class KhinsiderManager:
         title = soup.select_one("#pageContent h2")
         title = title.get_text(strip=True) if title else "Unknown Album"
         
-        # 2. Ambil Year & Metadata Teks Lainnya
+        # 2. Ambil Metadata Teks (Year, Publisher, Date Added)
         date = "N/A"
-        # Cari di paragraf info (biasanya ada <p><b>Year:</b> 2012</p>)
+        publisher = "N/A"
+        date_added = "N/A"
+        
         page_content = soup.select_one("#pageContent")
         if page_content:
-            text_content = page_content.get_text()
-            # Regex untuk mencari tahun (4 digit setelah 'Year:')
-            match_year = re.search(r"Year:\s*(\d{4})", text_content)
-            if match_year:
-                date = match_year.group(1)
+            # Gunakan separator baris baru untuk memisahkan setiap baris info
+            text_lines = page_content.get_text(separator='\n').split('\n')
+            
+            for line in text_lines:
+                clean_line = line.strip()
+                # Ambil Tahun
+                if "Year:" in clean_line:
+                    # Ambil 4 digit angka
+                    match = re.search(r"(\d{4})", clean_line)
+                    if match:
+                        date = match.group(1)
+                
+                # Ambil Publisher (Published by)
+                if "Published by:" in clean_line:
+                    publisher = clean_line.replace("Published by:", "").strip()
+                
+                # Ambil Date Added
+                if "Date Added:" in clean_line:
+                    date_added = clean_line.replace("Date Added:", "").strip()
 
         # 3. Ambil Gambar
         images = []
@@ -94,18 +110,15 @@ class KhinsiderManager:
                 
                 # Ambil Nomor Track
                 track_num = None
-                # Biasanya kolom setelah disc atau kolom ke-1/ke-2
-                # Kita cari cell yang isinya angka dan ada titik (misal 1.)
                 for cell in cells:
                     txt = cell.get_text(strip=True).replace('.', '')
-                    if txt.isdigit() and len(txt) < 4: # Asumsi nomor track < 1000
-                        # Cek apakah ini kolom disc?
+                    if txt.isdigit() and len(txt) < 4:
                         if disc_col_idx != -1 and cells.index(cell) == disc_col_idx:
                             continue
                         track_num = txt
                         break
                 
-                # Ambil Nomor Disc (Jika ada kolomnya)
+                # Ambil Nomor Disc
                 disc_num = 1
                 if disc_col_idx != -1 and len(cells) > disc_col_idx:
                     try:
@@ -131,9 +144,11 @@ class KhinsiderManager:
             'cover': cover_url,
             'images': images,
             'tracks': tracks,
-            'date': date,               # <-- Baru
-            'totalvolumes': str(total_volumes), # <-- Baru
-            'explicit': False,          # Khinsider mayoritas Game OST (Clean)
+            'date': date,
+            'publisher': publisher,     # <-- Baru
+            'date_added': date_added,   # <-- Baru
+            'totalvolumes': str(total_volumes),
+            'explicit': False,
             'provider': 'Khinsider'
         }
 
