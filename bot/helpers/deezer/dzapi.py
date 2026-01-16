@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from Cryptodome.Hash import MD5
 from Cryptodome.Cipher import Blowfish
 
-from config import Config # Masih diperlukan untuk BF_SECRET
+from config import Config 
 from bot.logger import LOGGER
 
 class APIError(Exception):
@@ -40,14 +40,12 @@ class DeezerAPI:
         self.renew_timestamp = ceil(time())
         self.language = 'en'
         self.available_formats = ['MP3_128']
-        # --- MODIFIKASI: Ambil BF_SECRET saat inisialisasi ---
+        
         if not Config.DEEZER_BF_SECRET:
             LOGGER.warning("DEEZER_BF_SECRET tidak diatur di Config!")
-            self.bf_secret = b'' # Atau tangani error
+            self.bf_secret = b'' 
         else:
             self.bf_secret = Config.DEEZER_BF_SECRET.encode('ascii')
-        # --- BATAS MODIFIKASI ---
-
 
     async def _api_call(self, method, payload={}):
         if not self.session or self.session.closed:
@@ -107,29 +105,23 @@ class DeezerAPI:
         
         return resp['results']
 
-
-    # --- MODIFIKASI: 'login' sekarang menerima kredensial sebagai argumen ---
     async def login(self, arl: str = None, email: str = None, password: str = None):
         try:
             if arl:
                 await self.login_via_arl(arl)
             elif email and password: 
-                await self.login_via_email(
-                    email,
-                    password
-                )
+                await self.login_via_email(email, password)
             else:
-                raise Exception("Tidak ada kredensial Deezer (ARL atau Email/Password) yang disediakan untuk instans klien ini.")
+                raise Exception("Tidak ada kredensial Deezer (ARL atau Email/Password) yang disediakan.")
                 
         except Exception as e:
             LOGGER.error(f"DEEZER : {e}")
             if self.session:
                 await self.session.close()
-            raise e # Lempar ulang error agar pemanggil tahu login gagal
+            raise e 
 
         LOGGER.info(f"Deezer: Berhasil login untuk user ID {self.user['USER']['USER_ID']}")
         return True
-    # --- BATAS MODIFIKASI ---
 
     async def login_via_email(self, email, password):
         async with self.ratelimit:
@@ -158,7 +150,6 @@ class DeezerAPI:
     async def login_via_arl(self, arl):
         cookie = {'arl':arl}
         if not self.session:
-            # Panggil _api_call untuk menginisialisasi sesi jika belum ada
             await self._api_call('deezer.getUserData') 
             
         self.session.cookie_jar.update_cookies(cookie)
@@ -168,16 +159,11 @@ class DeezerAPI:
         self.user = user_data
         return user_data
 
-    # ... (Sisa fungsi get_track, get_album, dll, tetap sama) ...
-    # ... (Pastikan semua fungsi dari sini ke bawah menggunakan self.session) ...
-
     async def custom_url_parse(self, link) -> (str, int):
         url = urlparse(link)
         if url.hostname == 'link.deezer.com':
             async with self.ratelimit:
-                # Pastikan self.session sudah ada
                 if not self.session:
-                    # Ini seharusnya tidak terjadi jika login dipanggil dulu
                     raise Exception("Sesi Deezer belum diinisialisasi sebelum parsing URL")
                 
                 async with self.session.get(link, allow_redirects=True) as r:
@@ -190,15 +176,15 @@ class DeezerAPI:
             raise Exception(f'DEEZER : Invalid URL: {link}')
         return path_match.group(1), path_match.group(2)
 
-
     async def get_track(self, id):
         res = await self._api_call('deezer.pageTrack', {'sng_id': id})
         return res
 
     async def get_track_data(self, id):
+        # Memastikan kita meminta CONTRIBUTORS dan data ALBUM untuk label
         payload = {
             'sng_id': id,
-            'array_default': ['CONTRIBUTORS']
+            'array_default': ['CONTRIBUTORS', 'ALB_TITLE', 'ALB_LABEL', 'ART_NAME']
         }
         res = await self._api_call('song.getData', payload)
         return res
@@ -219,7 +205,6 @@ class DeezerAPI:
             async with self.session.post('https://media.deezer.com/v1/get_url', json=json_payload) as r:
                 resp = await r.json()
         return resp['data'][0]['media'][0]['sources'][0]['url']
-
 
     async def get_album(self, id):
         try:
@@ -249,9 +234,7 @@ class DeezerAPI:
         return res 
     
     async def get_artist(self, id):
-        # --- TAMBAHAN BARU: Fungsi untuk mengambil data artist ---
         return await self._api_call('artist.getData', {'art_id': id})
-        # --- BATAS TAMBAHAN ---
     
     async def get_artist_album_ids(self, id, start, nb, credited_albums):
         payload = {
@@ -263,26 +246,21 @@ class DeezerAPI:
         resp = await self._api_call('album.getDiscography', payload)
         return [a['ALB_ID'] for a in resp['data']]
 
-
     async def get_playlist(self, id, nb, start):
         res = await self._api_call('deezer.pagePlaylist', {'nb': nb, 'start': start, 'playlist_id': id, 'lang': self.language, 'tab': 0, 'tags': True, 'header': True})
         return res
-
 
     def _get_blowfish_key(self, track_id):
         md5_id = MD5.new(str(track_id).encode()).hexdigest().encode('ascii')
         key = bytes([md5_id[i] ^ md5_id[i + 16] ^ self.bf_secret[i] for i in range(16)])
         return key
     
-
     async def dl_track(self, id, url, path):
         bf_key = self._get_blowfish_key(id)
         async with self.session.get(url, allow_redirects=True) as resp:
-            # --- TAMBAHAN: Periksa status 403/404 ---
             if resp.status in [403, 404]:
                 LOGGER.error(f"Deezer download URL gagal (HTTP {resp.status}) untuk track ID {id}")
-                return f"HTTP {resp.status} Error" # Kembalikan pesan error
-            # --- BATAS TAMBAHAN ---
+                return f"HTTP {resp.status} Error" 
             
             buf = bytearray()
             async for data, _ in resp.content.iter_chunks():
@@ -298,23 +276,14 @@ class DeezerAPI:
                     else:
                         decrypted_chunk = data
                     await audio.write(decrypted_chunk)
-        return None # Sukses
-
+        return None 
 
     @staticmethod
     def _decrypt_chunk(key, data):
         return Blowfish.new(key, Blowfish.MODE_CBC, b"\x00\x01\x02\x03\x04\x05\x06\x07").decrypt(data)
 
-    # --- TAMBAHAN BARU: Metode Close ---
     async def close(self):
-        """Menutup aiohttp.ClientSession internal."""
         if self.session and not self.session.closed:
             await self.session.close()
             user_id = self.user['USER']['USER_ID'] if self.user and self.user.get('USER') else 'N/A'
             LOGGER.debug(f"DeezerAPI (User {user_id}): Sesi aiohttp ditutup.")
-    # --- AKHIR TAMBAHAN ---
-
-
-# --- MODIFIKASI: Hapus instans global ---
-# deezerapi = DeezerAPI()
-# --- BATAS MODIFIKASI ---
