@@ -1,7 +1,7 @@
 import os
 import asyncio
 from mutagen.mp3 import MP3, EasyMP3
-from mutagen.id3 import ID3, APIC, TYER, TDRC, TPOS, COMM
+from mutagen.id3 import ID3, APIC, TYER, TDRC, TPOS, TPUB, TXXX
 from mutagen.flac import FLAC, Picture
 
 from ...modules.user_settings import bot_set
@@ -13,7 +13,7 @@ from .manager import khinsider_manager
 
 # --- FUNGSI TAGGING LENGKAP ---
 def set_file_tags(filepath, meta, cover_path, fmt):
-    """Menanamkan Cover + Metadata (Year, Disc, dll) ke file."""
+    """Menanamkan Cover + Metadata (Year, Disc, Publisher, Date Added) ke file."""
     if not os.path.exists(filepath):
         return
 
@@ -21,6 +21,12 @@ def set_file_tags(filepath, meta, cover_path, fmt):
         # Siapkan data tag
         year = meta.get('date', 'N/A')
         if year == 'N/A': year = None
+        
+        publisher = meta.get('publisher', 'N/A')
+        if publisher == 'N/A': publisher = None
+        
+        date_added = meta.get('date_added', 'N/A')
+        if date_added == 'N/A': date_added = None
         
         disc_num = meta.get('disc_number', '1')
         total_discs = meta.get('totalvolumes', '1')
@@ -44,12 +50,23 @@ def set_file_tags(filepath, meta, cover_path, fmt):
                         data=albumart.read()
                     ))
             
-            # 2. Embed Metadata (Year & Disc)
+            # 2. Embed Metadata Standar (Year & Disc)
             if year:
-                audio.tags.add(TDRC(encoding=3, text=[str(year)])) # ID3v2.4
-                audio.tags.add(TYER(encoding=3, text=[str(year)])) # ID3v2.3 compat
+                audio.tags.add(TDRC(encoding=3, text=[str(year)])) 
+                audio.tags.add(TYER(encoding=3, text=[str(year)])) 
             
-            audio.tags.add(TPOS(encoding=3, text=[disc_set])) # Part of Set (Disc)
+            audio.tags.add(TPOS(encoding=3, text=[disc_set])) 
+            
+            # 3. Embed Publisher, Producer, Label (Mapped from 'Published by')
+            if publisher:
+                audio.tags.add(TPUB(encoding=3, text=[publisher])) # Publisher Tag Resmi
+                # Tambahkan custom text frames untuk Label dan Producer agar muncul di MediaInfo
+                audio.tags.add(TXXX(encoding=3, desc='Label', text=[publisher]))
+                audio.tags.add(TXXX(encoding=3, desc='Producer', text=[publisher]))
+            
+            # 4. Embed Date Added
+            if date_added:
+                audio.tags.add(TXXX(encoding=3, desc='Date Added', text=[date_added]))
             
             audio.save()
             
@@ -74,6 +91,17 @@ def set_file_tags(filepath, meta, cover_path, fmt):
             
             audio['DISCNUMBER'] = str(disc_num)
             audio['TOTALDISCS'] = str(total_discs)
+            
+            # 3. Embed Publisher, Producer, Label
+            if publisher:
+                audio['PUBLISHER'] = publisher
+                audio['LABEL'] = publisher
+                audio['PRODUCER'] = publisher
+                audio['ORGANIZATION'] = publisher # Kadang dibaca sbg Pub
+            
+            # 4. Embed Date Added
+            if date_added:
+                audio['DATE_ADDED'] = date_added
             
             audio.save()
             
@@ -141,7 +169,9 @@ async def start_khinsider(url, user):
             track_meta_for_tag = {
                 'date': album_meta['date'],
                 'disc_number': track['disc_number'],
-                'totalvolumes': album_meta['totalvolumes']
+                'totalvolumes': album_meta['totalvolumes'],
+                'publisher': album_meta['publisher'],     # <-- Kirim Publisher
+                'date_added': album_meta['date_added']    # <-- Kirim Date Added
             }
             if cover_path:
                 await asyncio.to_thread(set_file_tags, filepath, track_meta_for_tag, cover_path, fmt)
@@ -195,11 +225,11 @@ async def start_khinsider(url, user):
         'folderpath': album_folder_path,
         'zip_path': zip_path,
         
-        # --- Metadata Tambahan untuk Art Poster ---
+        # --- Metadata Art Poster (Tanpa Publisher/Date Added sesuai request) ---
         'totaltracks': str(track_total),
-        'date': album_meta['date'],           # Year
+        'date': album_meta['date'],           
         'totalvolumes': album_meta['totalvolumes'],
-        'explicit': str(album_meta['explicit']), # False -> "False"
+        'explicit': str(album_meta['explicit']),
         'quality': successful_tracks[0]['quality'] if successful_tracks else 'N/A'
     }
     
