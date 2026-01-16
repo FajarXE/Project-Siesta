@@ -37,32 +37,32 @@ class KhinsiderManager:
         title = soup.select_one("#pageContent h2")
         title = title.get_text(strip=True) if title else "Unknown Album"
         
-        # 2. Ambil Metadata Teks (Year, Publisher, Date Added)
+        # 2. Metadata Teks (Year, Publisher, Date Added)
         date = "N/A"
         publisher = "N/A"
         date_added = "N/A"
         
-        page_content = soup.select_one("#pageContent")
-        if page_content:
-            # Gunakan separator baris baru untuk memisahkan setiap baris info
-            text_lines = page_content.get_text(separator='\n').split('\n')
-            
-            for line in text_lines:
-                clean_line = line.strip()
-                # Ambil Tahun
-                if "Year:" in clean_line:
-                    # Ambil 4 digit angka
-                    match = re.search(r"(\d{4})", clean_line)
-                    if match:
-                        date = match.group(1)
-                
-                # Ambil Publisher (Published by)
-                if "Published by:" in clean_line:
-                    publisher = clean_line.replace("Published by:", "").strip()
-                
-                # Ambil Date Added
-                if "Date Added:" in clean_line:
-                    date_added = clean_line.replace("Date Added:", "").strip()
+        # Cari elemen <b> yang berisi label, lalu ambil teks setelahnya (next_sibling)
+        
+        # --- AMBIL TAHUN ---
+        year_elem = soup.find('b', string=re.compile(r"Year"))
+        if year_elem and year_elem.next_sibling:
+            # Bersihkan teks (misal: "2012" atau " 2012")
+            date_raw = year_elem.next_sibling.strip()
+            # Ambil 4 digit angka saja
+            match = re.search(r"(\d{4})", date_raw)
+            if match:
+                date = match.group(1)
+
+        # --- AMBIL PUBLISHER ---
+        pub_elem = soup.find('b', string=re.compile(r"Published by"))
+        if pub_elem and pub_elem.next_sibling:
+            publisher = pub_elem.next_sibling.strip()
+
+        # --- AMBIL DATE ADDED ---
+        added_elem = soup.find('b', string=re.compile(r"Date Added"))
+        if added_elem and added_elem.next_sibling:
+            date_added = added_elem.next_sibling.strip()
 
         # 3. Ambil Gambar
         images = []
@@ -73,42 +73,36 @@ class KhinsiderManager:
                 images.append(full_img_url)
         cover_url = images[0] if images else None
 
-        # 4. Parse Tracks & Deteksi Disc
+        # 4. Parse Tracks
         tracks = []
         table = soup.find("table", id="songlist")
-        
         disc_numbers = set()
         
         if table:
             # Cek Header untuk kolom Disc
-            headers = []
             header_row = table.find("tr", id="songlist_header")
+            disc_col_idx = -1
             if header_row:
                 headers = [th.get_text(strip=True).lower() for th in header_row.find_all("th")]
-            
-            disc_col_idx = -1
-            for i, h in enumerate(headers):
-                if "disc" in h:
-                    disc_col_idx = i
-                    break
+                for i, h in enumerate(headers):
+                    if "disc" in h:
+                        disc_col_idx = i
+                        break
 
             rows = table.find_all("tr")[1:]
             for row in rows:
                 if row.get("id") in ["songlist_footer", "songlist_header"]:
                     continue
-                
                 cells = row.find_all("td")
-                if len(cells) < 2: 
-                    continue
+                if len(cells) < 2: continue
                 
                 link = row.find("a", href=True)
-                if not link:
-                    continue
+                if not link: continue
                 
                 track_url = urljoin(url, link['href'])
                 track_name = link.get_text(strip=True)
                 
-                # Ambil Nomor Track
+                # Nomor Track
                 track_num = None
                 for cell in cells:
                     txt = cell.get_text(strip=True).replace('.', '')
@@ -118,15 +112,14 @@ class KhinsiderManager:
                         track_num = txt
                         break
                 
-                # Ambil Nomor Disc
+                # Nomor Disc
                 disc_num = 1
                 if disc_col_idx != -1 and len(cells) > disc_col_idx:
                     try:
                         d_txt = cells[disc_col_idx].get_text(strip=True)
                         if d_txt.isdigit():
                             disc_num = int(d_txt)
-                    except:
-                        pass
+                    except: pass
                 
                 disc_numbers.add(disc_num)
 
@@ -145,8 +138,8 @@ class KhinsiderManager:
             'images': images,
             'tracks': tracks,
             'date': date,
-            'publisher': publisher,     # <-- Baru
-            'date_added': date_added,   # <-- Baru
+            'publisher': publisher,
+            'date_added': date_added,
             'totalvolumes': str(total_volumes),
             'explicit': False,
             'provider': 'Khinsider'
