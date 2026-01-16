@@ -1,6 +1,7 @@
 # [GANTI FILE: bot/helpers/qobuz/handler.py]
 
 import shutil
+import os
 from .utils import *
 from config import Config
 
@@ -14,12 +15,83 @@ import traceback
 
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
 
+# --- IMPORTS BARU UNTUK CUSTOM TAGS ---
+try:
+    from mutagen.flac import FLAC
+    from mutagen.id3 import ID3, TXXX
+except ImportError:
+    FLAC = None
+    ID3 = None
+    LOGGER.warning("Mutagen tidak terinstall. Custom tags mungkin tidak tersimpan.")
+# --------------------------------------
+
 # Exception kustom
 try:
     from .utils import QobuzContentUnavailableError
 except ImportError:
     class QobuzContentUnavailableError(Exception):
         pass
+
+
+async def force_custom_tags(filepath, metadata):
+    """
+    Memaksa penulisan tag kustom (creation_time, RELEASETIME, ORIGINALDATE)
+    menggunakan Mutagen, membypass filter set_metadata standar.
+    """
+    if not os.path.exists(filepath):
+        return
+
+    ext = filepath.split('.')[-1].lower()
+    
+    # Tag spesifik yang diminta user
+    target_keys = ['creation_time', 'RELEASETIME', 'ORIGINALDATE']
+    tags_to_write = {}
+    
+    for k in target_keys:
+        val = metadata.get(k)
+        if val:
+            tags_to_write[k] = str(val)
+            
+    if not tags_to_write:
+        return
+
+    try:
+        if ext == 'flac':
+            if FLAC:
+                try:
+                    audio = FLAC(filepath)
+                    for k, v in tags_to_write.items():
+                        # Untuk FLAC, kita tulis sebagai Vorbis Comments
+                        # Kita pertahankan casing sesuai request (huruf kecil/besar)
+                        audio[k] = v
+                    audio.save()
+                    LOGGER.info(f"Custom tags FLAC berhasil ditulis: {tags_to_write}")
+                except Exception as e:
+                    LOGGER.warning(f"Error menulis tag FLAC: {e}")
+            else:
+                LOGGER.warning("Module mutagen.flac tidak ditemukan.")
+                
+        elif ext == 'mp3':
+            if ID3:
+                try:
+                    try:
+                        audio = ID3(filepath)
+                    except:
+                        audio = ID3()
+                        audio.save(filepath)
+                    
+                    for k, v in tags_to_write.items():
+                        # Untuk MP3, gunakan TXXX frame (User Defined Text)
+                        audio.add(TXXX(encoding=3, desc=k, text=v))
+                    audio.save()
+                    LOGGER.info(f"Custom tags MP3 berhasil ditulis: {tags_to_write}")
+                except Exception as e:
+                    LOGGER.warning(f"Error menulis tag MP3: {e}")
+            else:
+                 LOGGER.warning("Module mutagen.id3 tidak ditemukan.")
+
+    except Exception as e:
+        LOGGER.warning(f"Gagal umum dalam force_custom_tags: {e}")
 
 
 async def start_qobuz(url:str, user:dict):
@@ -143,6 +215,14 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
 
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
+    if album_meta.get('cover') and os.path.exists(album_meta['cover']):
+        try:
+            cover_dest = os.path.join(album_meta['folderpath'], "cover.jpg")
+            if not os.path.exists(cover_dest):
+                shutil.copy2(album_meta['cover'], cover_dest)
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover.jpg ke folder album: {e}")
+
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -185,9 +265,11 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         return False
     
     try:
-        # --- MODIFIKASI: Kirim user_id ke set_metadata agar lirik diambil ---
         await set_metadata(track_meta, user['user_id'])
-        # --- BATAS MODIFIKASI ---
+        
+        # --- PAKSA TULIS TAG CUSTOM (Fix untuk creation_time, RELEASETIME, dll) ---
+        await force_custom_tags(full_path, track_meta)
+        # --------------------------------------------------------------------------
 
         if upload:
             await track_upload(track_meta, user, disable_link)
@@ -291,6 +373,14 @@ async def start_playlist(tracks, playlist, user):
             i+=1
         play_meta['tracks'] = successful_tracks_non_conc
         play_meta['totaltracks'] = len(successful_tracks_non_conc)
+
+    if play_meta.get('cover') and os.path.exists(play_meta['cover']):
+        try:
+            cover_dest = os.path.join(play_meta['folderpath'], "cover.jpg")
+            if not os.path.exists(cover_dest):
+                shutil.copy2(play_meta['cover'], cover_dest)
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover.jpg ke folder playlist: {e}")
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
