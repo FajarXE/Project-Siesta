@@ -5,6 +5,9 @@ import asyncio
 from datetime import timedelta, datetime
 from bot.logger import LOGGER
 
+# Konstanta User-Agent agar terlihat seperti browser asli, bukan bot
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 # Ini adalah kelas Error kustom kita
 class BeatportError(Exception):
     def __init__(self, message):
@@ -30,7 +33,7 @@ class BeatportAPI:
         """Membuat sesi aiohttp jika belum ada."""
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
-                headers={'user-agent': 'libbeatport/v2.8.2'}
+                headers={'user-agent': USER_AGENT}
             )
 
     async def close_session(self):
@@ -40,7 +43,7 @@ class BeatportAPI:
 
     def _get_headers(self, use_access_token: bool = False):
         """Mendapatkan header untuk permintaan."""
-        headers = {'user-agent': 'libbeatport/v2.8.2'}
+        headers = {'user-agent': USER_AGENT}
         if use_access_token and self.access_token:
             headers['authorization'] = f'Bearer {self.access_token}'
         return headers
@@ -65,9 +68,9 @@ class BeatportAPI:
         self.email = email
         await self._init_session()
         
+        # Header konsisten menggunakan konstanta USER_AGENT
         acc_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/131.0.0.0 Safari/537.36",
+            "User-Agent": USER_AGENT,
         }
         
         # 1. Otorisasi
@@ -101,7 +104,7 @@ class BeatportAPI:
             "grant_type": "authorization_code",
             "redirect_uri": self.redirect_uri,
         }
-        async with self.session.post(f"{self.API_URL}auth/o/token/", data=data_token) as r:
+        async with self.session.post(f"{self.API_URL}auth/o/token/", data=data_token, headers=acc_headers) as r:
             if r.status != 200:
                 raise BeatportError(f"Auth step 4 (Get Token) gagal: {await r.text()}")
             
@@ -119,7 +122,10 @@ class BeatportAPI:
             'refresh_token': self.refresh_token,
             'grant_type': 'refresh_token',
         }
-        async with self.session.post(f'{self.API_URL}auth/o/token/', data=data) as r:
+        # Gunakan header browser saat refresh juga
+        headers = {'user-agent': USER_AGENT}
+        
+        async with self.session.post(f'{self.API_URL}auth/o/token/', data=data, headers=headers) as r:
             if r.status != 200:
                 LOGGER.error("Beatport: Gagal me-refresh token, mungkin perlu login ulang.")
                 raise BeatportError("Gagal me-refresh token")
