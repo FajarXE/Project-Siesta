@@ -7,6 +7,7 @@ import urllib.parse
 import logging
 import os 
 import traceback 
+import random  # Tambahkan import random
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -14,9 +15,8 @@ from ..metadata import create_cover_file
 from .api import BeatportAPI, BeatportError
 from bot.logger import LOGGER
 
-# --- TAMBAHAN IMPOR KUALITAS ---
+# --- IMPOR MANAGER ---
 from .manager import beatport_manager
-# --- SELESAI ---
 
 # Tentukan path fallback secara eksplisit
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
@@ -28,13 +28,12 @@ QUALITY_MAP = {
     "medium": "medium"    # 128k AAC
 }
 
-# --- FUNGSI HELPER BARU UNTUK MEMOTONG NAMA ---
+# --- FUNGSI HELPER ---
 def truncate_artist_list(artist_str: str, max_len: int = 200) -> str: 
     """Memotong daftar artis agar tidak terlalu panjang untuk nama file."""
     if len(artist_str) > max_len:
         return artist_str[:max_len] + "..."
     return artist_str
-# --- AKHIR FUNGSI HELPER ---
 
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
     try:
@@ -73,16 +72,11 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
 def custom_url_parse(link: str):
     """
     Mengekstrak Tipe dan ID dari URL Beatport.
-    PERBAIKAN REGEX: Memastikan ID diambil setelah slash terakhir, menghindari angka tahun di slug.
-    Format umum: beatport.com/type/slug-name/id
     """
-    # Regex lama yang bermasalah: .*?/?(?P<id>\d+) <- Ini bisa menangkap "2013" dari "album-2013"
-    
-    # Regex baru: Mewajibkan adanya slug (/.+?/) sebelum ID
     match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/.+?/(?P<id>\d+)(?:$|[?#])", link)
     
     if not match:
-        # Fallback regex untuk kasus URL tanpa slug (jarang, tapi mungkin)
+        # Fallback regex untuk kasus URL tanpa slug
         match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/(?P<id>\d+)(?:$|[?#])", link)
     
     if not match:
@@ -136,7 +130,7 @@ async def _process_cover(metadata: dict, beatport_url: str):
 
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None):
-    """Memproses metadata untuk satu lagu dengan MULTI-ACCOUNT FALLBACK."""
+    """Memproses metadata untuk satu lagu dengan MULTI-ACCOUNT LOAD BALANCING."""
     
     primary_client = user['beatport_api']
     available_clients = [primary_client]
@@ -144,6 +138,11 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         for other_client in beatport_manager.clients:
             if other_client != primary_client:
                 available_clients.append(other_client)
+
+    # --- LOAD BALANCING: ACAK CLIENT ---
+    # Agar request tidak selalu numpuk di akun pertama
+    random.shuffle(available_clients)
+    # -----------------------------------
 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -193,7 +192,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     metadata['album'] = album_data.get("name", "Unknown Album")
     metadata['date'] = track_data.get("publish_date")
-    # Gunakan 'number' asli dari API Beatport
     metadata['tracknumber'] = str(track_data.get("number", 1))
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
@@ -270,7 +268,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
 
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
-    """Memproses metadata untuk satu album (release) dengan FALLBACK AKUN."""
+    """Memproses metadata untuk satu album (release) dengan LOAD BALANCING."""
     
     primary_client = user['beatport_api']
     available_clients = [primary_client]
@@ -278,6 +276,10 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         for c in beatport_manager.clients:
             if c != primary_client: available_clients.append(c)
             
+    # --- LOAD BALANCING ---
+    random.shuffle(available_clients)
+    # ----------------------
+
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
@@ -292,7 +294,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             LOGGER.info(f"Beatport: Metadata album {album_id} ditemukan di Akun #{idx+1}")
             break
         except Exception as e:
-            LOGGER.warning(f"Beatport: Akun #{idx+1} gagal memuat album {album_id}: {e}")
             continue
             
     if not active_client or not album_data:
@@ -366,17 +367,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             
             track_meta = await process_track_metadata(track_id_str, r_id, user, track_data_full)
             
-            # --- PERBAIKAN BUG #1: JANGAN TIMPA TRACKNUMBER DENGAN INDEX ---
-            # HAPUS: track_meta['tracknumber'] = i + 1 
-            # Gunakan nomor track yang sudah diproses di process_track_metadata (dari API)
-            # Jika API tidak memberikan nomor, baru gunakan fallback i+1
-            if not track_meta.get('tracknumber') or track_meta.get('tracknumber') == '1':
-                # Hanya override jika tracknumber mencurigakan (selalu 1) padahal ini list
-                # Tapi biasanya Beatport selalu benar. 
-                # Biarkan apa adanya dari process_track_metadata kecuali kosong.
-                pass
-            # -------------------------------------------------------------
-
             track_meta['totaltracks'] = str(total_tracks)
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
@@ -395,13 +385,17 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
-    """Memproses metadata untuk playlist/chart dengan FALLBACK AKUN."""
+    """Memproses metadata untuk playlist/chart dengan LOAD BALANCING."""
     
     primary_client = user['beatport_api']
     available_clients = [primary_client]
     if beatport_manager and beatport_manager.clients:
         for c in beatport_manager.clients:
             if c != primary_client: available_clients.append(c)
+
+    # --- LOAD BALANCING ---
+    random.shuffle(available_clients)
+    # ----------------------
 
     active_client = None
     playlist_data = None
@@ -471,12 +465,8 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
         try:
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
             
-            # --- PERBAIKAN BUG #1: Playlist biasanya berurutan sesuai list ---
-            # Untuk playlist, KITA PERLU index, karena playlist adalah urutan custom user.
-            # Tapi user minta fix untuk COMPILATION (Album), bukan Playlist.
-            # Jadi kita biarkan ini pakai i+1 untuk playlist agar urut 1..N
+            # Playlist membutuhkan nomor urut
             track_meta['tracknumber'] = i + 1 
-            # -------------------------------------------------------------
             
             metadata['tracks'].append(track_meta)
         except Exception as e:
