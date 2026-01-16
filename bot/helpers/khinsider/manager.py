@@ -42,27 +42,26 @@ class KhinsiderManager:
         publisher = "N/A"
         date_added = "N/A"
         
-        # Cari elemen <b> yang berisi label, lalu ambil teks setelahnya (next_sibling)
+        # Cari elemen <b> yang berisi label, lalu ambil teks setelahnya
+        # Contoh HTML: <p><b>Published by:</b> STARCHILD<br><b>Date Added:</b> ...</p>
         
-        # --- AMBIL TAHUN ---
-        year_elem = soup.find('b', string=re.compile(r"Year"))
-        if year_elem and year_elem.next_sibling:
-            # Bersihkan teks (misal: "2012" atau " 2012")
-            date_raw = year_elem.next_sibling.strip()
-            # Ambil 4 digit angka saja
-            match = re.search(r"(\d{4})", date_raw)
+        # Ambil Tahun (Year)
+        year_node = soup.find('b', string=re.compile(r"Year", re.IGNORECASE))
+        if year_node and year_node.next_sibling:
+            raw_date = str(year_node.next_sibling).strip()
+            match = re.search(r"(\d{4})", raw_date)
             if match:
                 date = match.group(1)
 
-        # --- AMBIL PUBLISHER ---
-        pub_elem = soup.find('b', string=re.compile(r"Published by"))
-        if pub_elem and pub_elem.next_sibling:
-            publisher = pub_elem.next_sibling.strip()
+        # Ambil Publisher (Published by)
+        pub_node = soup.find('b', string=re.compile(r"Published by", re.IGNORECASE))
+        if pub_node and pub_node.next_sibling:
+            publisher = str(pub_node.next_sibling).strip()
 
-        # --- AMBIL DATE ADDED ---
-        added_elem = soup.find('b', string=re.compile(r"Date Added"))
-        if added_elem and added_elem.next_sibling:
-            date_added = added_elem.next_sibling.strip()
+        # Ambil Date Added
+        added_node = soup.find('b', string=re.compile(r"Date Added", re.IGNORECASE))
+        if added_node and added_node.next_sibling:
+            date_added = str(added_node.next_sibling).strip()
 
         # 3. Ambil Gambar
         images = []
