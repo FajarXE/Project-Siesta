@@ -22,7 +22,6 @@ class KhinsiderManager:
             await self.session.close()
 
     async def setup_quality(self, user_id, quality):
-        # Hanya flac atau mp3
         self.quality = quality
 
     async def get_album(self, url):
@@ -37,12 +36,18 @@ class KhinsiderManager:
         title = soup.select_one("#pageContent h2")
         title = title.get_text(strip=True) if title else "Unknown Album"
         
-        # Images
+        # --- PERBAIKAN: Ambil Semua Gambar ---
         images = []
+        # Selektor ini mengambil semua link di dalam div class="albumImage"
+        # Sesuai dengan screenshot Anda (deretan gambar)
         for img in soup.select("div.albumImage a"):
             href = img.get('href')
             if href:
-                images.append(href)
+                # Pastikan link absolut
+                full_img_url = href if href.startswith('http') else urljoin(url, href)
+                images.append(full_img_url)
+        
+        # Cover utama adalah gambar pertama (jika ada)
         cover_url = images[0] if images else None
 
         # Tracks
@@ -78,17 +83,14 @@ class KhinsiderManager:
         return {
             'title': title,
             'cover': cover_url,
+            'images': images, # List semua URL gambar
             'tracks': tracks,
-            'images': images,
             'provider': 'Khinsider'
         }
 
     async def get_track_download_url(self, track_url, preferred_formats=None):
-        # Default hanya prioritas FLAC dan MP3
         if not preferred_formats:
             preferred_formats = ['flac', 'mp3']
-            
-            # Jika user memilih kualitas tertentu, taruh di depan
             if self.quality in preferred_formats:
                 preferred_formats.insert(0, preferred_formats.pop(preferred_formats.index(self.quality)))
 
@@ -97,16 +99,13 @@ class KhinsiderManager:
         
         soup = BeautifulSoup(html, 'html.parser')
         
-        # Cari semua link download
         found_links = {}
         for a in soup.find_all('a', href=True):
             href = a['href']
-            # Cek format audio umum
             for fmt in ['flac', 'mp3', 'm4a', 'ogg']:
                 if href.lower().endswith(f".{fmt}"):
                     found_links[fmt] = href
         
-        # Pilih berdasarkan prioritas
         final_url = None
         final_fmt = 'mp3'
         
@@ -116,9 +115,7 @@ class KhinsiderManager:
                 final_fmt = fmt
                 break
         
-        # Fallback (Jika FLAC tidak ada, ambil MP3, dst)
         if not final_url and found_links:
-            # Prioritaskan MP3 sebagai fallback utama jika FLAC gagal
             if 'mp3' in found_links:
                 final_fmt = 'mp3'
                 final_url = found_links['mp3']
