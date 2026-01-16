@@ -3,6 +3,7 @@
 import json
 import base64
 import os
+import shutil  # <-- TAMBAHAN: Untuk menyalin cover
 import asyncio 
 from datetime import datetime 
 
@@ -24,12 +25,10 @@ from ..metadata import set_metadata, get_audio_extension
 from ..uploder import *
 from ..message import send_message, edit_message 
 
-# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
 try:
     from bot.helpers.lyrics.manager import lyrics_manager
 except ImportError:
     lyrics_manager = None
-# --- BATAS TAMBAHAN ---
 
 from ...settings import bot_set
 import bot.helpers.translations as lang
@@ -60,55 +59,41 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
     
     client: TidalApi = user['tidal_api']
 
-    # --- ALUR LOGIKA FINAL ---
     try:
-        # 1. SELALU ambil data track lengkap
         track_data = await client.get_track(track_id)
     except Exception as e:
         LOGGER.error(f"start_track (get_track) gagal: {e}")
         return None
 
-    # 2. Ambil cover/thumb dari stub (jika ada)
     cover = track_meta.get('cover') if track_meta else None
     thumbnail = track_meta.get('thumbnail') if track_meta else None
     
-    # 3. Buat metadata LENGKAP
+    # Metadata Enrichment
     track_meta_full = await get_track_metadata(
         track_id, 
         track_data, 
         user['r_id'], 
         cover, 
-        thumbnail
+        thumbnail,
+        client=client 
     )
     
-    # 4. Tentukan filepath
     if basefolder:
         filepath = basefolder
     else:
-        # Ini adalah trek tunggal
         filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta_full['provider']}/{track_meta_full['albumartist']}/{track_meta_full['album']}"
     
-    # 5. Dapatkan session dan quality (jika tidak diteruskan dari album/playlist)
     if not session:
         session, quality = await get_stream_session(track_data, user)
     
-    # 6. Timpa metadata lengkap dengan info kustom dari stub (jika ada)
     if track_meta: 
-        if track_meta.get('album'):
-            track_meta_full['album'] = track_meta['album']
-        if track_meta.get('albumartist'):
-            track_meta_full['albumartist'] = track_meta['albumartist']
-        if track_meta.get('artist'):
-             track_meta_full['artist'] = track_meta['artist']
-        if track_meta.get('title'):
-             track_meta_full['title'] = track_meta['title']
-        if track_meta.get('tracknumber'):
-             track_meta_full['tracknumber'] = track_meta['tracknumber']
+        if track_meta.get('album'): track_meta_full['album'] = track_meta['album']
+        if track_meta.get('albumartist'): track_meta_full['albumartist'] = track_meta['albumartist']
+        if track_meta.get('artist'): track_meta_full['artist'] = track_meta['artist']
+        if track_meta.get('title'): track_meta_full['title'] = track_meta['title']
+        if track_meta.get('tracknumber'): track_meta_full['tracknumber'] = track_meta['tracknumber']
     
-    # 7. Tetapkan track_meta sebagai versi final yang lengkap
     track_meta = track_meta_full
-    # --- AKHIR ALUR LOGIKA ---
-
 
     try:
         stream_data = await client.get_stream_url(track_id, quality, session)
@@ -131,7 +116,6 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             track_codec = 'AAC' if 'mp4a' in manifest['codecs'] else manifest['codecs'].upper()
             urls = manifest['urls'][0]
 
-        
         track_meta['codec'] = track_codec
         if stream_data['audioQuality'] == 'HI_RES_LOSSLESS':
             track_meta['bit_depth'] = 24
@@ -148,8 +132,7 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
         filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
         filepath += f"/{filename}"
         filepath = sanitize_filepath(filepath)
-        track_meta['filepath'] = filepath # Path SEBELUM ekstensi
-
+        track_meta['filepath'] = filepath 
 
         if type(urls) == list:
             i = 0
@@ -169,52 +152,32 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
                 LOGGER.error(f"Download_file gagal (single): {err}")
                 return None
 
-        # File sekarang ada di `filepath` (tanpa ekstensi)
         track_meta['extension'] = await get_audio_extension(filepath)
         
         try:
-            # Mengambil pengaturan convert (index ke-3)
             _, __, ___, user_convert_m4a = tidal_manager.get_user_quality_settings(user['user_id']) 
         except Exception:
             user_convert_m4a = "OFF" 
         
-        metadata_written = False
-        
-        # --- PERBAIKAN LOGIKA: Convert HANYA untuk LOSSLESS/MAX format M4A ---
-        # 1. Definisi Tier Tinggi (Lossless / HiRes)
         is_high_tier = quality in ['LOSSLESS', 'HI_RES', 'HI_RES_LOSSLESS']
-        
-        # 2. Definisi File M4A
         is_m4a_file = (track_meta['extension'] == 'm4a')
 
-        # JALANKAN CONVERT JIKA: (Kualitas Tinggi) DAN (File M4A) DAN (Setting ON)
+        if lyrics_manager:
+            try:
+                lyrics_text = await lyrics_manager.fetch_lyrics(track_meta, user['user_id'])
+                if lyrics_text:
+                    track_meta['lyrics'] = lyrics_text 
+                    LOGGER.info("Lirik berhasil diambil.")
+            except Exception as e:
+                LOGGER.error(f"Gagal mengambil lirik: {e}")
+
         if is_high_tier and is_m4a_file and user_convert_m4a == "ON":
             LOGGER.info(f"Mengonversi M4A (Tier {quality}) ke FLAC untuk user {user['user_id']} Sesuai pengaturan.")
-            
-            # Jika menggunakan jalur ini, set_metadata (mutagen) dilewati.
-            # Jadi kita HARUS mengambil lirik secara manual di sini agar FFmpeg bisa menulisnya.
-            if lyrics_manager:
-                try:
-                    # Ambil lirik dari API
-                    lyrics_text = await lyrics_manager.fetch_lyrics(track_meta, user['user_id'])
-                    if lyrics_text:
-                        track_meta['lyrics'] = lyrics_text # Masukkan ke dict agar dibaca ffmpeg_convert_and_tag
-                        LOGGER.info("Lirik berhasil diambil untuk jalur FFmpeg.")
-                except Exception as e:
-                    LOGGER.error(f"Gagal mengambil lirik untuk jalur FFmpeg: {e}")
-
             await ffmpeg_convert_and_tag(filepath, track_meta)
-            
             track_meta['filepath'] = track_meta['filepath'] + '.flac'
-            os.remove(filepath) 
-            metadata_written = True 
-            
+            try: os.remove(filepath)
+            except OSError: pass
         else:
-            # LOGIKA ELSE:
-            # - Jika kualitas Low/High (biarkan m4a)
-            # - Jika file aslinya sudah FLAC
-            # - Jika fitur OFF
-            
             if is_high_tier and is_m4a_file and user_convert_m4a == "OFF":
                 LOGGER.info(f"File Lossless/Max format M4A terdeteksi, tapi convert OFF (User {user['user_id']}).")
             
@@ -222,15 +185,8 @@ async def start_track(track_id:int, user:dict, track_meta:dict | None,
             os.rename(filepath, new_filepath)
             track_meta['filepath'] = new_filepath
             
-            
-        if not metadata_written:
-            LOGGER.info(f"Menjalankan set_metadata (Mutagen) untuk: {track_meta['filepath']}")
-            # --- MODIFIKASI: Kirim user_id ke set_metadata agar lirik diambil ---
-            await set_metadata(track_meta, user['user_id']) 
-            # --- BATAS MODIFIKASI ---
-        else:
-            LOGGER.info(f"Melewatkan set_metadata (Mutagen), FFmpeg sudah menulis tag.")
-
+        LOGGER.info(f"Menjalankan FINAL set_metadata (Mutagen) untuk: {track_meta['filepath']}")
+        await set_metadata(track_meta, user['user_id']) 
 
         if upload:
             await track_upload(track_meta, user, False)
@@ -256,6 +212,20 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
     
     album_folder = sanitize_filepath(album_folder)
     album_meta['folderpath'] = album_folder 
+    
+    # Buat folder jika belum ada (untuk antisipasi copy cover)
+    if not os.path.exists(album_folder):
+        os.makedirs(album_folder, exist_ok=True)
+
+    # --- TAMBAHAN: COPY COVER KE DALAM ZIP ---
+    if album_meta.get('cover') and os.path.exists(album_meta['cover']):
+        try:
+            target_cover = os.path.join(album_folder, "cover.jpg")
+            shutil.copy(album_meta['cover'], target_cover)
+            LOGGER.info(f"Cover disalin ke folder album: {target_cover}")
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover ke folder: {e}")
+    # ------------------------------------------
 
     try:
         track_id_sample = tracks_data['items'][0]['id']
@@ -338,6 +308,20 @@ async def start_playlist(playlist_id:str, user:dict, upload=True, basefolder=Non
     
     playlist_folder = sanitize_filepath(playlist_folder)
     playlist_meta['folderpath'] = playlist_folder 
+
+    # Buat folder jika belum ada
+    if not os.path.exists(playlist_folder):
+        os.makedirs(playlist_folder, exist_ok=True)
+
+    # --- TAMBAHAN: COPY COVER KE DALAM ZIP ---
+    if playlist_meta.get('cover') and os.path.exists(playlist_meta['cover']):
+        try:
+            target_cover = os.path.join(playlist_folder, "cover.jpg")
+            shutil.copy(playlist_meta['cover'], target_cover)
+            LOGGER.info(f"Cover disalin ke folder playlist: {target_cover}")
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover ke folder playlist: {e}")
+    # ------------------------------------------
 
     try:
         track_id_sample = playlist_meta['tracks'][0]['itemid'] 
