@@ -38,7 +38,7 @@ async def parse_url(url):
 
 
 async def get_stream_session(track_data: dict, user: dict):
-    # Ambil tag kemampuan audio dari metadata track (contoh: ['LOSSLESS', 'HIRES_LOSSLESS', 'DOLBY_ATMOS'])
+    # Ambil tag kemampuan audio dari metadata track
     media_tags = track_data['mediaMetadata']['tags']
     formats = None
 
@@ -47,7 +47,7 @@ async def get_stream_session(track_data: dict, user: dict):
     
     client: TidalApi = user['tidal_api']
     
-    # Ambil settingan user (misal: qual='HI_RES')
+    # Ambil settingan user
     qual, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
 
     # Logika Session Spasial/HiRes
@@ -66,7 +66,7 @@ async def get_stream_session(track_data: dict, user: dict):
             '360ra': client.mobile_hires if client.mobile_hires else client.mobile_atmos,
             'ac4': client.mobile_atmos,
             'ac3': client.tv_session,
-            None: client.tv_session, # Fallback session (biasanya TV session untuk Lossless/High/Low)
+            None: client.tv_session, 
     }[formats]
 
     # Handle kasus khusus Atmos di session mobile
@@ -74,25 +74,17 @@ async def get_stream_session(track_data: dict, user: dict):
         if client.mobile_hires:
             session = client.mobile_hires
 
-    # --- PERBAIKAN: LOGIKA FALLBACK KUALITAS ---
-    # Masalah: User set MAX (HI_RES), tapi lagu cuma ada LOSSLESS.
-    # Solusi: Cek tag, jika HIRES tidak tersedia, turunkan ke LOSSLESS.
-    
-    # 1. Jika terdeteksi format HiRes (User minta HI_RES + Lagu Support)
+    # Logika Fallback Kualitas
     if formats == 'flac_hires':
         quality = 'HI_RES' 
-        
-    # 2. Jika User minta Spasial (Atmos/360) dan format terdeteksi
     elif formats in ['360ra', 'ac3', 'ac4']:
-        quality = 'DOLBY_ATMOS' if 'DOLBY' in str(formats) else 'LOW' # Placeholder, API biasanya handle via endpoint
-        
-    # 3. Logika Fallback Standar (Stereo)
+        quality = 'DOLBY_ATMOS' if 'DOLBY' in str(formats) else 'LOW' 
     else:
         # Jika user minta MAX (HI_RES) TAPI lagu TIDAK punya tag HIRES_LOSSLESS
         if qual == 'HI_RES' and 'HIRES_LOSSLESS' not in media_tags:
-            quality = 'LOSSLESS' # <-- PAKSA TURUN KE LOSSLESS
+            quality = 'LOSSLESS' 
         else:
-            quality = qual # Gunakan pilihan user (LOW/HIGH/LOSSLESS)
+            quality = qual 
 
     return session, quality
     
@@ -114,7 +106,7 @@ def parse_mpd(xml: bytes):
                 seg_template = rep.find('SegmentTemplate')
                 track_urls = [seg_template.get('initialization')]
                 start_number = int(seg_template.get('startNumber') or 1)
-                seg_timeline = seg_template.find('SegmentTimeline')
+                seg_timeline = rep.find('SegmentTimeline') or seg_template.find('SegmentTimeline')
                 if seg_timeline is not None:
                     seg_time_list = []
                     cur_time = 0
@@ -142,6 +134,7 @@ async def merge_tracks(temp_tracks: list, output_path: str):
     delete_tasks = [asyncio.to_thread(os.remove, temp_location) for temp_location in temp_tracks]
     await asyncio.gather(*delete_tasks)
 
+
 async def get_quality(stream_data: dict):
     quality_dict = qualities = {
         'LOW':'LOW',
@@ -152,7 +145,6 @@ async def get_quality(stream_data: dict):
     }
     if stream_data.get('audioMode') == 'DOLBY_ATMOS':
         return 'DOLBY ATMOS'
-    # Fallback aman jika key audioQuality tidak standar
     return quality_dict.get(stream_data.get('audioQuality', 'LOW'), 'LOW')
 
 
@@ -161,16 +153,13 @@ async def sort_album_from_artist(album_data: dict, user: dict):
     _, spatial, _, __ = tidal_manager.get_user_quality_settings(user["user_id"])
 
     for album in album_data:
-        # Filter berdasarkan mode audio album
         audio_modes = album.get('audioModes', [])
-        
         if 'DOLBY_ATMOS' in audio_modes \
             and spatial in ['ATMOS AC3 JOC', 'ATMOS AC4']: 
             albums.append(album)
         elif 'STEREO' in audio_modes \
             and spatial == 'OFF':
             albums.append(album)
-        # Jika list kosong atau tidak match, bisa jadi album campuran, tambahkan saja sebagai fallback
         elif not audio_modes: 
              albums.append(album)
 
@@ -190,66 +179,98 @@ async def sort_album_from_artist(album_data: dict, user: dict):
 
 async def ffmpeg_convert_and_tag(input_file: str, track_meta: dict):
     """
-    Mengonversi M4A (ALAC) ke FLAC dan menulis semua tag metadata + COVER ART
-    menggunakan FFmpeg dalam satu perintah.
+    Mengonversi dan menulis tag metadata lengkap menggunakan FFmpeg.
     """
     
     def escape_str(value):
-        """Helper untuk meng-escape metadata untuk FFmpeg."""
         if value is None:
             value = ''
         if not isinstance(value, str):
             value = str(value)
+        # Escape untuk shell command
         return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$").replace("`", "\\`")
 
     input_file_escaped = escape_str(input_file)
     output_file_escaped = f"{input_file_escaped}.flac"
     
-    # Logika Cover Art
+    # 1. Setup Cover Art
     cover_cmd = ""
     map_cmd = "-map 0:a" 
     
     cover_path = track_meta.get('cover')
     if cover_path and os.path.exists(cover_path):
         cover_cmd = f'-i "{escape_str(cover_path)}"' 
+        # Attach cover sebagai stream video (standar FFmpeg)
         map_cmd += " -map 1 -c:v copy -disposition:v attached_pic -metadata:s:v title=\"Album cover\" -metadata:s:v comment=\"Cover (front)\""
 
-    # 1. Bangun string metadata teks
-    metadata_cmd = ""
+    # 2. Persiapan Data Metadata
+    # Format "1/10" untuk Track/Total
+    t_num = str(track_meta.get('tracknumber') or '1')
+    t_tot = str(track_meta.get('totaltracks') or '1')
+    track_str = f"{t_num}/{t_tot}" 
     
+    # Format "1/2" untuk Part/Total (Disc)
+    d_num = str(track_meta.get('volume') or '1')
+    d_tot = str(track_meta.get('totalvolume') or '1')
+    disc_str = f"{d_num}/{d_tot}" 
+
+    # --- PERBAIKAN: PUBLISHER MENGGUNAKAN DATA YANG SUDAH DIBERSIHKAN ---
+    publisher = track_meta.get('publisher') or ''
+    # --------------------------------------------------------------------
+    
+    copyright_val = track_meta.get('copyright') or ''
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 3. Mapping Metadata FFmpeg
     tags_to_write = {
-        'TITLE': track_meta.get('title'),
-        'ALBUM': track_meta.get('album'),
-        'ALBUMARTIST': track_meta.get('albumartist'),
-        'ARTIST': track_meta.get('artist'),
-        'COPYRIGHT': track_meta.get('copyright'),
-        'TRACKNUMBER': track_meta.get('tracknumber'),
-        'TRACKTOTAL': track_meta.get('totaltracks'),
-        'GENRE': track_meta.get('genre'),
-        'DATE': track_meta.get('date'),
-        'RELEASETIME': track_meta.get('release_date'), 
+        'title': track_meta.get('title'),
+        'album': track_meta.get('album'),
+        'album_artist': track_meta.get('albumartist'),
+        'artist': track_meta.get('artist'),
+        
+        # Copyright
+        'copyright': copyright_val,
+        
+        # --- PERBAIKAN: MENYAMAKAN TAG SESUAI PERMINTAAN USER ---
+        # Publisher, Label, Organization, dan Producer menggunakan string Copyright yang dibersihkan
+        'publisher': publisher,
+        'organization': publisher, 
+        'label': publisher,
+        'producer': publisher, # User meminta "Producer" juga diisi dengan ini
+        # ----------------------------------------------------------
+        
+        'track': track_str,
+        'disc': disc_str,
+        
+        'genre': track_meta.get('genre'),
+        'date': track_meta.get('date'), # Year
+        
+        'creation_time': now_str, 
+        
         'ISRC': track_meta.get('isrc'),
-        'LYRICS': track_meta.get('lyrics'),
-        'DISCNUMBER': track_meta.get('volume'), 
-        'DISCTOTAL': track_meta.get('totalvolume'), 
-        'COMPOSER': track_meta.get('composer'),
-        'BPS': track_meta.get('bit_depth'),
-        'SAMPLERATE': int(track_meta.get('sample_rate', 44.1) * 1000)
+        'UPC': track_meta.get('upc'),
+        'BARCODE': track_meta.get('upc'),
+        
+        'lyrics': track_meta.get('lyrics'),
+        'composer': track_meta.get('composer'),
+        
+        'rating': '1' if track_meta.get('explicit') is True else '0'
     }
 
-    if track_meta.get('mqa_details'):
-        mqa_file = track_meta['mqa_details']
-        encoder_time = datetime.now().strftime("%b %d %Y %H:%M:%S")
-        mqa_encoder_str = f'MQAEncode v1.1, 2.4.0+0 (278f5dd), E24F1DE5-32F1-4930-8197-24954EB9D6F4, {encoder_time}'
-        tags_to_write['ENCODER'] = mqa_encoder_str
-        tags_to_write['MQAENCODER'] = mqa_encoder_str
-        tags_to_write['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
+    # 4. Custom Metadata (Force Write)
+    # Menambahkan field spesifik 'pub' sesuai permintaan user
+    tags_to_write['pub'] = publisher
+    tags_to_write['cpr'] = copyright_val
+    tags_to_write['encoded_date'] = now_str
+    tags_to_write['tagging_time'] = now_str
 
+    # 5. Build Command
+    metadata_cmd = ""
     for key, value in tags_to_write.items():
         if value is not None and value != '':
             metadata_cmd += f' -metadata {key}="{escape_str(value)}"'
 
-    # 2. Bangun perintah FFmpeg LENGKAP
+    # Jalankan FFmpeg
     cmd = (
         f'ffmpeg -i "{input_file_escaped}" {cover_cmd} '
         f'{map_cmd} '
