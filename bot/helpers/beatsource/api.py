@@ -3,10 +3,14 @@
 import aiohttp
 import asyncio
 from datetime import timedelta, datetime
-from bot.logger import LOGGER
 from urllib.parse import urlparse, parse_qs
+from bot.logger import LOGGER
 
-# Ini adalah kelas Error kustom kita
+# --- KONSTANTA ANTI-BAN ---
+# Gunakan User-Agent Browser Asli (Chrome pada Windows) secara konsisten
+# Jangan gunakan 'libbeatsource' agar tidak terdeteksi sebagai bot
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 class BeatsourceError(Exception):
     def __init__(self, message):
         self.message = message
@@ -15,66 +19,62 @@ class BeatsourceError(Exception):
 class BeatsourceAPI:
     def __init__(self):
         self.API_URL = "https://api.beatsource.com/v4/"
-        # Client ID umum untuk Beatsource Link
+        # Client ID publik untuk Beatsource Link
         self.client_id = "ryZ8LuyQVPqbK2mBX2Hwt4qSMtnWuTYSqBPO92yQ"
 
         self.access_token = None
         self.refresh_token = None
         self.expires = None
         
-        # Simpan email untuk referensi database
         self.email = None
-        
         self.session = None 
 
     async def _init_session(self):
-        """Membuat sesi aiohttp jika belum ada."""
+        """
+        Membuat sesi aiohttp dengan header browser dan cookie jar.
+        CookieJar(unsafe=True) PENTING untuk login Beatsource agar cookie sessionid tersimpan.
+        """
         if self.session is None or self.session.closed:
-            # Kita perlu cookie jar untuk alur login 3 langkah
             self.session = aiohttp.ClientSession(
-                headers={'user-agent': 'libbeatsource/v2.8.2'},
+                headers={'user-agent': USER_AGENT},
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
 
     async def close_session(self):
-        """Menutup sesi aiohttp."""
+        """Menutup sesi aiohttp dengan aman."""
         if self.session and not self.session.closed:
             await self.session.close()
             self.session = None
 
     def _get_headers(self, use_access_token: bool = False):
-        """Mendapatkan header untuk permintaan."""
-        headers = {'user-agent': 'libbeatsource/v2.8.2'}
+        """Mendapatkan header standar dengan User-Agent yang konsisten."""
+        headers = {'user-agent': USER_AGENT}
         if use_access_token and self.access_token:
             headers['authorization'] = f'Bearer {self.access_token}'
         return headers
 
     async def load_session(self, token_data: dict):
-        """
-        Memuat sesi dari data yang tersimpan di DB tanpa login ulang.
-        """
+        """Memuat sesi dari database."""
         await self._init_session()
         self.access_token = token_data.get('access_token')
         self.refresh_token = token_data.get('refresh_token')
         self.email = token_data.get('email')
         
-        # Set expires ke waktu lampau agar memaksa refresh saat request pertama
-        # Ini memastikan token divalidasi ulang ke server Beatsource
+        # Paksa refresh token saat request pertama kali untuk validasi
         self.expires = datetime.now() - timedelta(seconds=10)
         
         LOGGER.debug(f"BeatsourceAPI: Sesi dimuat untuk {self.email} (Pending Refresh)")
 
     async def login(self, email: str, password: str):
-        """Melakukan alur login OAuth 3 langkah Beatsource secara async."""
+        """Melakukan login OAuth 3 langkah penuh."""
         self.email = email
         await self._init_session()
         
-        login_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-        }
+        # Pastikan header login juga menggunakan User-Agent browser
+        login_headers = {"User-Agent": USER_AGENT}
         
         try:
-            # --- Langkah 1: Login (Email/Pass) untuk mendapatkan cookie sessionid ---
+            # --- Langkah 1: POST Login (Mendapatkan cookie sessionid) ---
             login_url = f"{self.API_URL}auth/login/"
             login_payload = {"username": email, "password": password}
             
@@ -86,23 +86,19 @@ class BeatsourceAPI:
                             raise BeatsourceError(f"Login gagal: {resp_json['non_field_errors'][0]}")
                     except Exception:
                         pass 
-                    raise BeatsourceError(f"Login Langkah 1 gagal ({r_login.status}): {await r_login.text()}")
+                    raise BeatsourceError(f"Login Langkah 1 gagal (Status {r_login.status})")
 
-            # Verifikasi cookie sessionid
-            session_id_cookie = self.session.cookie_jar.filter_cookies(self.API_URL).get('sessionid')
-            if not session_id_cookie:
-                raise BeatsourceError("Tidak dapat menemukan cookie sessionid setelah login.")
-
-            # --- Langkah 2: Otorisasi (via cookie) untuk mendapatkan 'code' ---
+            # --- Langkah 2: GET Authorize (Redirect untuk mendapatkan Code) ---
             auth_url = f"{self.API_URL}auth/o/authorize/"
             auth_params = {
                 "client_id": self.client_id,
                 "response_type": "code",
             }
             
+            # allow_redirects=False agar kita bisa menangkap header Location
             async with self.session.get(auth_url, params=auth_params, headers=login_headers, allow_redirects=False) as r_auth:
                 if r_auth.status != 302: 
-                    raise BeatsourceError(f"Otorisasi Langkah 2 gagal ({r_auth.status}).")
+                    raise BeatsourceError(f"Otorisasi Langkah 2 gagal (Status {r_auth.status}).")
 
                 redirect_location = r_auth.headers.get('Location')
                 if not redirect_location:
@@ -116,9 +112,9 @@ class BeatsourceAPI:
                     raise BeatsourceError(f"Gagal mem-parse code otorisasi: {e}")
                 
                 if not code:
-                    raise BeatsourceError(f"Tidak dapat mengekstrak code otorisasi.")
+                    raise BeatsourceError(f"Tidak dapat mengekstrak 'code' otorisasi.")
 
-            # --- Langkah 3: Tukar 'code' dengan token ---
+            # --- Langkah 3: POST Token (Tukar Code dengan Token) ---
             token_url = f"{self.API_URL}auth/o/token/"
             token_payload = {
                 "client_id": self.client_id,
@@ -128,7 +124,7 @@ class BeatsourceAPI:
             
             async with self.session.post(token_url, data=token_payload, headers=login_headers) as r_token:
                 if r_token.status != 200:
-                    raise BeatsourceError(f"Penukaran Token Langkah 3 gagal ({r_token.status}): {await r_token.text()}")
+                    raise BeatsourceError(f"Penukaran Token Langkah 3 gagal (Status {r_token.status})")
                 
                 resp_json = await r_token.json()
                 self.access_token = resp_json['access_token']
@@ -141,31 +137,36 @@ class BeatsourceAPI:
             raise e
 
     async def refresh(self):
-        """Me-refresh access token."""
+        """Me-refresh access token menggunakan refresh token."""
         await self._init_session()
         data = {
             'client_id': self.client_id,
             'refresh_token': self.refresh_token,
             'grant_type': 'refresh_token',
         }
-        async with self.session.post(f'{self.API_URL}auth/o/token/', data=data) as r:
+        
+        # Header user-agent tetap konsisten
+        headers = self._get_headers(use_access_token=False)
+
+        async with self.session.post(f'{self.API_URL}auth/o/token/', data=data, headers=headers) as r:
             if r.status != 200:
                 LOGGER.error("Beatsource: Gagal me-refresh token, perlu login ulang.")
                 raise BeatsourceError("Gagal me-refresh token")
             
             resp_json = await r.json()
             self.access_token = resp_json['access_token']
-            # Token refresh kadang diperbarui juga oleh server
+            # Kadang refresh token juga diperbarui (rotating refresh tokens)
             self.refresh_token = resp_json.get('refresh_token', self.refresh_token)
             self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
             LOGGER.debug("Beatsource: Token berhasil di-refresh.")
 
     async def _get(self, endpoint: str, params: dict = None):
-        """Fungsi pembantu GET yang aman untuk API."""
+        """Fungsi pembantu GET request yang aman."""
         await self._init_session()
         if not params:
             params = {}
 
+        # Cek apakah token sudah kedaluwarsa
         if self.expires and datetime.now() > self.expires:
             try:
                 await self.refresh()
@@ -174,12 +175,14 @@ class BeatsourceAPI:
 
         async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(use_access_token=True)) as r:
             if r.status == 401:
-                raise BeatsourceError("Token tidak valid atau kedaluwarsa.")
+                raise BeatsourceError("Token tidak valid atau kedaluwarsa (401).")
+            
             if r.status == 403:
+                # Cek detail pesan untuk mengetahui apakah karena Region Lock
                 try:
                     detail = (await r.json()).get("detail", "")
                     if "Territory" in detail:
-                        raise BeatsourceError("Region locked (Territory Restricted)")
+                        raise BeatsourceError("Gagal: Region Locked (Territory Restricted)")
                 except:
                     pass
                 raise BeatsourceError(f"Akses ditolak (403): {await r.text()}")
