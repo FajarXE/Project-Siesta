@@ -10,10 +10,15 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 class _DummyManager:
     def __init__(self):
         self.clients = []
+        self.quality = None
     
     # Tambahkan method 'get_client' agar pemeriksaan 'if' berfungsi
     def get_client(self):
         return None
+        
+    # Dummy setup quality agar tidak error jika dipanggil
+    async def setup_quality(self, *args, **kwargs):
+        pass
 
 # Impor manager Beatport
 try:
@@ -75,11 +80,17 @@ try:
 except ImportError:
     moov_manager = _DummyManager()
 
-# --- TAMBAHAN BARU: Impor Manajer LivePhish ---
+# Impor Manajer LivePhish
 try:
     from bot.helpers.livephish.manager import livephish_manager
 except ImportError:
     livephish_manager = _DummyManager()
+
+# --- TAMBAHAN BARU: Impor Manajer Khinsider ---
+try:
+    from bot.helpers.khinsider.manager import khinsider_manager
+except ImportError:
+    khinsider_manager = None # Khinsider mungkin tidak menggunakan atribut .clients
 # --- BATAS TAMBAHAN ---
 
 
@@ -160,7 +171,7 @@ def providers_button():
             [
                 InlineKeyboardButton(
                     text="BEATSOURCE", 
-                    callback_data='bsP' # Beatsource Panel
+                    callback_data='bsP'
                 )
             ]
         )
@@ -170,7 +181,7 @@ def providers_button():
             [
                 InlineKeyboardButton(
                     text="SOUNDCLOUD", 
-                    callback_data='scP' # Soundcloud Panel
+                    callback_data='scP'
                 )
             ]
         )
@@ -190,7 +201,7 @@ def providers_button():
             [
                 InlineKeyboardButton(
                     text="NAPSTER", 
-                    callback_data='npP' # Napster Panel
+                    callback_data='npP'
                 )
             ]
         )
@@ -200,7 +211,7 @@ def providers_button():
             [
                 InlineKeyboardButton(
                     text="IDAGIO", 
-                    callback_data='idP' # Idagio Panel
+                    callback_data='idP'
                 )
             ]
         )
@@ -210,7 +221,7 @@ def providers_button():
             [
                 InlineKeyboardButton(
                     text="BUGS", 
-                    callback_data='bgP' # Bugs Panel
+                    callback_data='bgP'
                 )
             ]
         )
@@ -220,18 +231,28 @@ def providers_button():
             [
                 InlineKeyboardButton(
                     text="MOOV", 
-                    callback_data='mvP' # Moov Panel
+                    callback_data='mvP'
                 )
             ]
         )
 
-    # --- TAMBAHAN BARU: Tombol LivePhish ---
     if livephish_manager and livephish_manager.clients:
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
                     text="LIVEPHISH", 
-                    callback_data='lpP' # LivePhish Panel
+                    callback_data='lpP'
+                )
+            ]
+        )
+
+    # --- TAMBAHAN BARU: Tombol Khinsider ---
+    if khinsider_manager:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="KHINSIDER", 
+                    callback_data='khiP'
                 )
             ]
         )
@@ -767,11 +788,10 @@ def mv_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN BARU: LivePhish Button ---
+# LivePhish Button
 def lp_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
-    # Prefix 'lpQ' untuk admin/global, 'ulps' untuk user setting
     prefix = "lpQ" if not usetting else f"ulps"
     
     row = []
@@ -796,7 +816,32 @@ def lp_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
+
+# --- TAMBAHAN BARU: Khinsider Button ---
+def khi_button(quality: dict, user_id: int = None):
+    buttons = []
+    usetting = user_id is not None
+    prefix = "khiQ" if not usetting else f"ukhis"
+    
+    # HANYA FLAC DAN MP3 SEPERTI YANG DIMINTA
+    row = []
+    if "flac" in quality:
+        row.append(InlineKeyboardButton(quality["flac"], callback_data=f"{prefix}_flac"))
+    if "mp3" in quality:
+        row.append(InlineKeyboardButton(quality["mp3"], callback_data=f"{prefix}_mp3"))
+    
+    if row:
+        buttons.append(row)
+
+    if usetting:
+        buttons.append([InlineKeyboardButton(text="Back", callback_data="uset_back")])
+        return InlineKeyboardMarkup(buttons)
+        
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
 # --- BATAS TAMBAHAN ---
+
 
 # Lyrics Button
 def lyrics_button(user_settings: dict, user_id):
@@ -866,6 +911,9 @@ def usetting_button() -> InlineKeyboardMarkup:
 
     if livephish_manager and livephish_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"LivePhish Quality", callback_data=f"uset_livephish")])
+
+    if khinsider_manager:
+        buttons.append([InlineKeyboardButton(text=f"Khinsider Quality", callback_data=f"uset_khinsider")])
 
     buttons.append([InlineKeyboardButton(text="LYRICS SETTINGS", callback_data="uset_lyrics")])
     
