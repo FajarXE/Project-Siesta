@@ -4,6 +4,7 @@ from pathvalidate import sanitize_filepath
 from config import Config
 import traceback
 import os 
+import shutil
 
 from .metadata import *
 
@@ -215,6 +216,16 @@ async def start_album(album_id:int, user:dict, upload=True, basefolder=None):
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
+        
+        # --- TAMBAHAN BARU: Copy cover ke folder album sebelum ZIP ---
+        if album_meta.get('cover') and os.path.exists(album_meta['cover']):
+            try:
+                cover_dest = os.path.join(album_meta['folderpath'], "cover.jpg")
+                shutil.copy(album_meta['cover'], cover_dest)
+            except Exception as e:
+                LOGGER.warning(f"Gagal menyalin cover.jpg ke folder album: {e}")
+        # --- BATAS TAMBAHAN ---
+
         # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
         # --- AKHIR PERBAIKAN ---
@@ -349,6 +360,16 @@ async def start_playlist(playlist_id, user):
         await edit_message(user['bot_msg'], f"Menyiapkan {play_meta['totaltracks']} lagu menjadi .zip...")
         if playlist_sort:
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
+            
+        # --- TAMBAHAN BARU: Copy cover ke folder playlist sebelum ZIP ---
+        if play_meta.get('cover') and os.path.exists(play_meta['cover']):
+            try:
+                cover_dest = os.path.join(play_meta['folderpath'], "cover.jpg")
+                shutil.copy(play_meta['cover'], cover_dest)
+            except Exception as e:
+                LOGGER.warning(f"Gagal menyalin cover.jpg ke folder playlist: {e}")
+        # --- BATAS TAMBAHAN ---
+
         # --- PERBAIKAN: Gunakan 'zip_path' agar konsisten ---
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
         # --- AKHIR PERBAIKAN ---
