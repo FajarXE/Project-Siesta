@@ -1,7 +1,7 @@
 import os
 import asyncio
 from mutagen.mp3 import MP3, EasyMP3
-from mutagen.id3 import ID3, APIC, TYER, TDRC, TPOS, TPUB, TXXX, COMM
+from mutagen.id3 import ID3, APIC, TYER, TDRC, TPOS, TPUB, TCOP, TXXX
 from mutagen.flac import FLAC, Picture
 
 from ...modules.user_settings import bot_set
@@ -11,17 +11,17 @@ from ...helpers.message import edit_message
 from config import Config
 from .manager import khinsider_manager
 
-# --- FUNGSI TAGGING LENGKAP ---
+# --- FUNGSI TAGGING FINAL ---
 def set_file_tags(filepath, meta, cover_path, fmt):
-    """Menanamkan Metadata Lengkap agar terbaca di MediaInfo."""
     if not os.path.exists(filepath):
         return
 
     try:
-        # Persiapkan Data
+        # Data
         year = meta.get('date', None)
         if year == 'N/A': year = None
         
+        # Gunakan 'publisher' untuk mengisi Label, Producer, dll.
         publisher = meta.get('publisher', None)
         if publisher == 'N/A': publisher = None
         
@@ -39,59 +39,52 @@ def set_file_tags(filepath, meta, cover_path, fmt):
                 audio = MP3(filepath)
                 audio.add_tags()
             
-            # --- 1. COVER ART ---
+            # 1. Cover
             if cover_path and os.path.exists(cover_path):
                 audio.tags.delall("APIC")
                 with open(cover_path, 'rb') as albumart:
                     audio.tags.add(APIC(
-                        encoding=3,
-                        mime='image/jpeg',
-                        type=3, desc=u'Cover',
-                        data=albumart.read()
+                        encoding=3, mime='image/jpeg', type=3, desc=u'Cover', data=albumart.read()
                     ))
             
-            # --- 2. BASIC META ---
+            # 2. Metadata Dasar
             if year:
                 audio.tags.add(TDRC(encoding=3, text=[str(year)])) 
                 audio.tags.add(TYER(encoding=3, text=[str(year)])) 
-            
             audio.tags.add(TPOS(encoding=3, text=[disc_set])) 
             
-            # --- 3. PUBLISHER, LABEL, PRODUCER ---
-            # Khinsider hanya punya "Published by". Kita gunakan nilai ini untuk semua field terkait.
+            # 3. Publisher & Variannya (Brute Force)
             if publisher:
-                # TPUB = Publisher (Standar ID3)
+                # Standar ID3 Publisher
                 audio.tags.add(TPUB(encoding=3, text=[publisher])) 
+                # Standar ID3 Copyright (kadang dibaca MediaInfo)
+                audio.tags.add(TCOP(encoding=3, text=[publisher]))
                 
-                # TXXX Frames untuk MediaInfo Custom Tags
+                # Custom Frames agar muncul persis seperti permintaan
                 audio.tags.add(TXXX(encoding=3, desc='Label', text=[publisher]))
                 audio.tags.add(TXXX(encoding=3, desc='Producer', text=[publisher]))
-                
-                # Kadang MediaInfo membaca TPE3 (Conductor) sebagai "Performer" atau info tambahan,
-                # tapi TXXX lebih aman untuk custom label.
+                audio.tags.add(TXXX(encoding=3, desc='pub', text=[publisher])) # Permintaan khusus "pub"
+                audio.tags.add(TXXX(encoding=3, desc='Organization', text=[publisher])) 
             
-            # --- 4. DATE ADDED ---
+            # 4. Date Added
             if date_added:
                 audio.tags.add(TXXX(encoding=3, desc='Date Added', text=[date_added]))
             
-            # Simpan ID3v2.3 (paling kompatibel dengan Windows/MediaInfo lama)
+            # Simpan sebagai ID3v2.3 agar kompatibilitas maksimal (Windows/Old Players)
             audio.save(v2_version=3)
             
         elif fmt == 'flac':
             audio = FLAC(filepath)
             
-            # --- 1. COVER ART ---
+            # 1. Cover
             if cover_path and os.path.exists(cover_path):
                 image = Picture()
-                image.type = 3
-                image.mime = 'image/jpeg'
-                image.desc = 'Cover'
-                with open(cover_path, 'rb') as f:
-                    image.data = f.read()
+                image.type = 3; image.mime = 'image/jpeg'; image.desc = 'Cover'
+                with open(cover_path, 'rb') as f: image.data = f.read()
                 audio.clear_pictures()
                 audio.add_picture(image)
             
-            # --- 2. BASIC META ---
+            # 2. Metadata
             if year:
                 audio['DATE'] = str(year)
                 audio['YEAR'] = str(year)
@@ -99,14 +92,14 @@ def set_file_tags(filepath, meta, cover_path, fmt):
             audio['DISCNUMBER'] = str(disc_num)
             audio['TOTALDISCS'] = str(total_discs)
             
-            # --- 3. PUBLISHER, LABEL, PRODUCER ---
             if publisher:
                 audio['PUBLISHER'] = publisher
                 audio['LABEL'] = publisher
                 audio['PRODUCER'] = publisher
-                audio['ORGANIZATION'] = publisher 
+                audio['COPYRIGHT'] = publisher
+                audio['ORGANIZATION'] = publisher
+                audio['PUB'] = publisher # Custom tag "pub"
             
-            # --- 4. DATE ADDED ---
             if date_added:
                 audio['DATE_ADDED'] = date_added
             
@@ -127,7 +120,7 @@ async def start_khinsider(url, user):
         await edit_message(msg, f"Gagal mengambil info album: {e}")
         return
 
-    # Folder Output
+    # Buat Folder
     album_folder_path = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['title']}"
     os.makedirs(album_folder_path, exist_ok=True)
 
@@ -159,7 +152,7 @@ async def start_khinsider(url, user):
                 preferred_formats=[bot_set.user_data.get(user['user_id'], {}).get('khinsider_qual', 'flac'), 'mp3']
             )
             
-            # Format nama file: Disc-Track. Title
+            # Format Nama: Disc-Track. Title.ext
             if int(album_meta['totalvolumes']) > 1:
                 filename = f"{track['disc_number']}-{track['track_number'].zfill(2)}. {track['title']}.{fmt}"
             else:
@@ -171,13 +164,13 @@ async def start_khinsider(url, user):
             err = await download_file(dl_url, filepath)
             if err: raise Exception(err)
             
-            # --- Tanam Metadata ---
+            # --- TAGGING ---
             track_meta_for_tag = {
                 'date': album_meta['date'],
                 'disc_number': track['disc_number'],
                 'totalvolumes': album_meta['totalvolumes'],
-                'publisher': album_meta['publisher'],     # "Published by"
-                'date_added': album_meta['date_added']    # "Date Added"
+                'publisher': album_meta['publisher'],
+                'date_added': album_meta['date_added']
             }
             if cover_path:
                 await asyncio.to_thread(set_file_tags, filepath, track_meta_for_tag, cover_path, fmt)
@@ -219,7 +212,7 @@ async def start_khinsider(url, user):
         await edit_message(msg, "Mengompresi album ke ZIP...")
         zip_path = await asyncio.to_thread(zip_folder, album_folder_path)
     
-    # Bungkus Data (TANPA Publisher/Date Added di poster sesuai request)
+    # Bungkus Data (POSTER BERSIH)
     album_data = {
         'title': album_meta['title'],
         'artist': 'Game Soundtrack',
@@ -230,7 +223,7 @@ async def start_khinsider(url, user):
         'folderpath': album_folder_path,
         'zip_path': zip_path,
         
-        # Data Art Poster (Hanya yang diminta sebelumnya)
+        # Metadata Art Poster Saja (Tanpa Publisher/Date Added sesuai request)
         'totaltracks': str(track_total),
         'date': album_meta['date'],           
         'totalvolumes': album_meta['totalvolumes'],
