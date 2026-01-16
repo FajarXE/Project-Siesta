@@ -7,6 +7,7 @@ import shutil
 import traceback
 import asyncio 
 import random 
+import math # Tambahan untuk hitungan matematika progress bar
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -21,12 +22,10 @@ from .api import BeatportError
 
 from ..utils import *
 
-# --- PERBAIKAN SINTAKS DI SINI ---
 try:
     from ..uploder import *
 except ImportError as e:
     raise ImportError(f"Gagal mengimpor uploder.py: {e}")
-# ---------------------------------
 
 from ..metadata import set_metadata
 from ..message import edit_message
@@ -41,6 +40,36 @@ try:
 except ImportError:
     lyrics_manager = None
 
+# --- SEMAPHORE GLOBAL ---
+BEATPORT_SEMAPHORE = asyncio.Semaphore(2)
+
+# --- FUNGSI HELPER PROGRESS BAR ---
+def make_progress_bar(current, total):
+    """Membuat visual progress bar sederhana."""
+    percentage = current / total
+    finished_length = int(percentage * 10) # Panjang bar 10 blok
+    # Karakter bar (bisa diganti sesuai selera)
+    prog_str = "▰" * finished_length + "▱" * (10 - finished_length)
+    return prog_str
+
+async def update_progress_msg(msg, current, total, title, media_type):
+    """Memformat pesan progress agar {0}, {1} terisi."""
+    try:
+        bar = make_progress_bar(current, total)
+        # Format string sesuai template di lang.s.DOWNLOAD_PROGRESS
+        # {0} = Bar, {1} = Current, {2} = Total, {3} = Title, {4} = Type
+        formatted_text = lang.s.DOWNLOAD_PROGRESS.format(
+            bar,      # {0}
+            current,  # {1}
+            total,    # {2}
+            title,    # {3}
+            media_type # {4}
+        )
+        await edit_message(msg, formatted_text)
+    except Exception as e:
+        LOGGER.warning(f"Gagal update pesan progress: {e}")
+
+# ----------------------------------
 
 async def start_beatport(url: str, user: dict):
     """Handler utama untuk link Beatport."""
@@ -84,56 +113,56 @@ async def download_beatport_track(url: str, filepath: str):
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
 
-    # --- RATE LIMITING / ANTI-BAN ---
-    delay = random.uniform(2.0, 6.0)
-    await asyncio.sleep(delay)
-    # --------------------------------
+    # --- RATE LIMITING / ANTI-BAN PENTING ---
+    async with BEATPORT_SEMAPHORE:
+        delay = random.uniform(3.0, 8.0)
+        await asyncio.sleep(delay)
+        
+        if not track_meta:
+            try:
+                track_meta = await process_track_metadata(item_id, user['r_id'], user)
+            except Exception as e:
+                LOGGER.warning(f"Beatport track {item_id} tidak tersedia: {e}")
+                return False
+                
+            filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
+            filepath = sanitize_filepath(filepath)
 
-    if not track_meta:
-        try:
-            track_meta = await process_track_metadata(item_id, user['r_id'], user)
-        except Exception as e:
-            LOGGER.warning(f"Beatport track {item_id} tidak tersedia: {e}")
+        download_url = track_meta.get('download_url')
+        if not download_url:
+            LOGGER.error(f"Tidak ada URL download ditemukan untuk track Beatport {item_id}")
             return False
-            
-        filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
-        filepath = sanitize_filepath(filepath)
 
-    download_url = track_meta.get('download_url')
-    if not download_url:
-        LOGGER.error(f"Tidak ada URL download ditemukan untuk track Beatport {item_id}")
-        return False
+        track_meta['folderpath'] = filepath
+        
+        raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
+        safe_filename = sanitize_filepath(raw_filename)
 
-    track_meta['folderpath'] = filepath
-    
-    raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
-    safe_filename = sanitize_filepath(raw_filename)
+        filepath += f"/{safe_filename}.{track_meta['extension']}"
+        track_meta['filepath'] = filepath
 
-    filepath += f"/{safe_filename}.{track_meta['extension']}"
-    track_meta['filepath'] = filepath
+        err = await download_beatport_track(download_url, track_meta['filepath'])
+        if err:
+            LOGGER.error(f"Beatport dl_track gagal untuk {item_id}: {err}")
+            return False
 
-    err = await download_beatport_track(download_url, track_meta['filepath'])
-    if err:
-        LOGGER.error(f"Beatport dl_track gagal untuk {item_id}: {err}")
-        return False
-
-    try:
-        await set_metadata(track_meta, user['user_id'])
-    except FileNotFoundError:
-        LOGGER.error(f"[Errno 2] File not found setelah download Beatport: {filepath}")
-        return False
-    except Exception as e:
-        LOGGER.error(f"Gagal memproses metadata Beatport: {filepath} -> {e}")
         try:
-            os.remove(filepath)
-        except:
-            pass
-        return False
+            await set_metadata(track_meta, user['user_id'])
+        except FileNotFoundError:
+            LOGGER.error(f"[Errno 2] File not found setelah download Beatport: {filepath}")
+            return False
+        except Exception as e:
+            LOGGER.error(f"Gagal memproses metadata Beatport: {filepath} -> {e}")
+            try:
+                os.remove(filepath)
+            except:
+                pass
+            return False
 
-    if upload:
-        await track_upload(track_meta, user, disable_link)
+        if upload:
+            await track_upload(track_meta, user, disable_link)
 
-    return True
+        return True
 
 
 async def start_album(album_id: str, user: dict, upload=True):
@@ -150,20 +179,22 @@ async def start_album(album_id: str, user: dict, upload=True):
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
 
-    tasks = []
-    for track in album_meta['tracks']:
-        tasks.append(start_track(track['itemid'], user, track, False, album_folder))
+    total = len(album_meta['tracks'])
+    successful_tracks = []
+    
+    # Update pesan awal dengan format yang benar (0/Total)
+    await update_progress_msg(user['bot_msg'], 0, total, album_meta['title'], album_meta['type'])
 
-    update_details = {
-        'text': lang.s.DOWNLOAD_PROGRESS,
-        'msg': user['bot_msg'],
-        'title': album_meta['title'],
-        'type': album_meta['type']
-    }
-    
-    task_results = await run_concurrent_tasks(tasks, update_details)
-    
-    successful_tracks = [album_meta['tracks'][i] for i, result in enumerate(task_results) if result]
+    for i, track in enumerate(album_meta['tracks']):
+        success = await start_track(track['itemid'], user, track, False, album_folder)
+        
+        if success:
+            successful_tracks.append(track)
+            
+        # Update progress setiap kali selesai 1 lagu
+        # Menggunakan format yang benar agar {0} terisi bar
+        await update_progress_msg(user['bot_msg'], i + 1, total, album_meta['title'], album_meta['type'])
+
     album_meta['tracks'] = successful_tracks
     album_meta['totaltracks'] = len(successful_tracks)
 
@@ -206,20 +237,20 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     if upload:
         play_meta['poster_msg'] = await post_art_poster(user, play_meta)
 
-    tasks = []
-    for track in play_meta['tracks']:
-        tasks.append(start_track(track['itemid'], user, track, False, playlist_folder))
+    total = len(play_meta['tracks'])
+    successful_tracks = []
 
-    update_details = {
-        'text': lang.s.DOWNLOAD_PROGRESS,
-        'msg': user['bot_msg'],
-        'title': play_meta['title'],
-        'type': play_meta['type']
-    }
-    
-    task_results = await run_concurrent_tasks(tasks, update_details)
+    # Update pesan awal
+    await update_progress_msg(user['bot_msg'], 0, total, play_meta['title'], play_meta['type'])
 
-    successful_tracks = [play_meta['tracks'][i] for i, result in enumerate(task_results) if result]
+    for i, track in enumerate(play_meta['tracks']):
+        success = await start_track(track['itemid'], user, track, False, playlist_folder)
+        if success:
+            successful_tracks.append(track)
+        
+        # Update progress dengan format yang benar
+        await update_progress_msg(user['bot_msg'], i + 1, total, play_meta['title'], play_meta['type'])
+
     play_meta['tracks'] = successful_tracks
     play_meta['totaltracks'] = len(successful_tracks)
 
