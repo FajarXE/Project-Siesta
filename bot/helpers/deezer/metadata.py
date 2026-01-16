@@ -1,269 +1,568 @@
 # [GANTI FILE: bot/helpers/deezer/metadata.py]
 
 import copy
+import re
+import asyncio
 from datetime import datetime
 import aiohttp
 import urllib.parse
 import logging
-import os # <-- Impor OS
-from config import Config # <-- Impor Config
+import os
+from difflib import SequenceMatcher
+
+from config import Config 
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
 from .dzapi import DeezerAPI 
 from bot.logger import LOGGER
 
-# --- MODIFIKASI: Impor manager Deezer dan Error kustom ---
 from .manager import deezer_manager, DeezerError
-# --- MODIFIKASI SELESAI ---
 
-# --- MODIFIKASI: Path fallback yang sudah diperbaiki ---
 FALLBACK_IMAGE_PATH = os.path.join(Config.WORK_DIR, "project-siesta.png")
-# --- BATAS MODIFIKASI ---
 
+# --- 1. CLEANING UTILS ---
 
-async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
-    """
-    Mencoba mengambil URL sampul resolusi tinggi dari iTunes menggunakan UPC atau pencarian Teks.
-    """
+def clean_string_simple(text):
+    if not text: return ""
+    text = str(text).lower()
+    text = re.sub(r'[^a-z0-9]', '', text)
+    return text
+
+def extract_label_from_copyright(text):
+    if not text: return None
+    clean = re.sub(r'(?:℗|©|^)\s*(?:\d{4})?\s*', '', text)
+    separators = [
+        ", a division of", ", a unit of", " under exclusive license", 
+        " licensed to", " distributed by", ", courtesy of", " / ", 
+        " exclusively distributed by", " joint venture with"
+    ]
+    temp_clean = clean.lower()
+    for sep in separators:
+        if sep in temp_clean:
+            clean = clean[:temp_clean.find(sep)]
+            break
+    clean = re.sub(r'(?i)^(under exclusive license to|licensed to|distributed by)\s*', '', clean)
+    return clean.strip()
+
+# --- 2. DEEZER PUBLIC API HELPERS ---
+
+async def fetch_deezer_public_album(album_id, session):
+    """Ambil data Album dari Public API (untuk Genre & UPC)."""
+    if not album_id or str(album_id) == '0': return {}
     try:
-        # 1. Coba cari via UPC (Paling Akurat)
-        if metadata.get('upc') and metadata['upc'] != "0" and metadata['upc'] != "":
-            upc_url = f"https://itunes.apple.com/lookup?upc={metadata['upc']}&entity=album&limit=1"
-            async with session.get(upc_url) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None) 
-                    if data.get('resultCount', 0) > 0:
-                        artwork_url = data['results'][0].get('artworkUrl100')
-                        if artwork_url:
-                            return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
+        url = f"https://api.deezer.com/album/{album_id}"
+        async with session.get(url) as resp:
+            if resp.status == 200: return await resp.json()
+    except: pass
+    return {}
 
-        # 2. Jika UPC gagal/tidak ada, coba cari via Teks (Album Artist + Album Title)
-        if metadata.get('albumartist') and metadata.get('album'):
-            search_term = urllib.parse.quote(f"{metadata['albumartist']} {metadata['album']}")
-            search_url = f"https://itunes.apple.com/search?term={search_term}&entity=album&media=music&limit=5"
-            async with session.get(search_url) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None) 
-                    if data.get('resultCount', 0) > 0:
-                        for result in data['results']:
-                            itunes_album = result.get('collectionName', '').lower()
-                            itunes_artist = result.get('artistName', '').lower()
-                            local_album = metadata['album'].lower()
-                            local_artist = metadata['albumartist'].lower()
-                            
-                            if (local_album in itunes_album or itunes_album in local_album) and \
-                               (local_artist in itunes_artist):
-                                artwork_url = result.get('artworkUrl100')
-                                if artwork_url:
-                                    return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
+async def fetch_deezer_public_track(track_id, session):
+    """Ambil data Track dari Public API (untuk Composer)."""
+    if not track_id: return {}
+    try:
+        url = f"https://api.deezer.com/track/{track_id}"
+        async with session.get(url) as resp:
+            if resp.status == 200: return await resp.json()
+    except: pass
+    return {}
 
-    except Exception as e:
-        logging.warning(f"Pencarian sampul iTunes gagal untuk UPC {metadata.get('upc')}: {e}")
-        return None
-    
+# --- 3. ITUNES LOGIC ---
+
+async def fetch_itunes_lookup(id_val, id_type, country, session):
+    try:
+        base = "https://itunes.apple.com/lookup"
+        if id_type == 'upc':
+            url = f"{base}?upc={id_val}&entity=album&limit=1&country={country}"
+        else:
+            url = f"{base}?id={id_val}&entity=album&country={country}"
+        async with session.get(url) as resp:
+            data = await resp.json()
+            if data.get('resultCount', 0) > 0:
+                return data['results'][0]
+    except: pass
     return None
 
+async def search_itunes_brute_force(artist, title, country, session):
+    try:
+        term = urllib.parse.quote(f"{artist} {title}")
+        url = f"https://itunes.apple.com/search?term={term}&entity=song&media=music&limit=10&country={country}"
+        async with session.get(url) as resp:
+            data = await resp.json()
+            results = data.get('results', [])
+            clean_q_artist = clean_string_simple(artist)
+            clean_q_title = clean_string_simple(title)
+            for item in results:
+                it_artist = clean_string_simple(item.get('artistName', ''))
+                it_track = clean_string_simple(item.get('trackName', ''))
+                if (clean_q_artist in it_artist or it_artist in clean_q_artist) and \
+                   (clean_q_title in it_track or it_track in clean_q_title):
+                    return item.get('collectionId')
+    except: pass
+    return None
+
+async def get_extended_itunes_info(metadata: dict, session: aiohttp.ClientSession) -> dict:
+    itunes_data = {
+        'cover_url': None, 'date': None, 'copyright': None, 
+        'genre': None, 'label': None, 'found': False
+    }
+    COUNTRIES = ['ID', 'US', 'GB', 'JP', 'AU', 'DE']
+
+    if metadata.get('upc') and metadata['upc'] not in ["0", ""]:
+        for country in COUNTRIES:
+            res = await fetch_itunes_lookup(metadata['upc'], 'upc', country, session)
+            if res: return parse_itunes_item(res)
+
+    dz_artist = metadata.get('albumartist') or metadata.get('artist', '')
+    dz_title = metadata.get('title', '')
+    if not (dz_artist and dz_title): return itunes_data
+
+    target_collection_id = None
+    found_country = 'US'
+
+    for country in COUNTRIES:
+        col_id = await search_itunes_brute_force(dz_artist, dz_title, country, session)
+        if col_id:
+            target_collection_id = col_id
+            found_country = country
+            break 
+    
+    if target_collection_id:
+        album_details = await fetch_itunes_lookup(target_collection_id, 'id', found_country, session)
+        if album_details:
+            return parse_itunes_item(album_details)
+
+    return itunes_data
+
+def parse_itunes_item(item):
+    data = {'found': True, 'cover_url': None, 'date': None, 'copyright': None, 'genre': None, 'label': None}
+    if item.get('artworkUrl100'):
+        data['cover_url'] = item['artworkUrl100'].replace('100x100bb.jpg', '1200x1200bb.jpg')
+    if item.get('releaseDate'):
+        data['date'] = item['releaseDate'].split('T')[0]
+    if item.get('copyright'):
+        data['copyright'] = item['copyright']
+        data['label'] = extract_label_from_copyright(item['copyright'])
+    if item.get('primaryGenreName'):
+        data['genre'] = item['primaryGenreName']
+    return data
+
+# --- 4. MUSICBRAINZ FALLBACK ---
+async def get_musicbrainz_info(metadata: dict, session: aiohttp.ClientSession) -> dict:
+    mb_data = {'label': None, 'date': None, 'copyright': None, 'genre': None}
+    headers = {'User-Agent': 'SiestaBot/2.0', 'Accept': 'application/json'}
+    artist = metadata.get('albumartist') or metadata.get('artist', '')
+    album = metadata.get('album', '')
+    if not (artist and album): return mb_data
+    
+    query = f'artist:"{artist}" AND release:"{album}"'
+    try:
+        url = f"https://musicbrainz.org/ws/2/release?query={urllib.parse.quote(query)}&fmt=json&limit=1&inc=tags"
+        async with session.get(url, headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data.get('releases'):
+                    rel = data['releases'][0]
+                    if rel.get('date'): mb_data['date'] = rel['date']
+                    if rel.get('label-info'):
+                        l = rel['label-info'][0].get('label', {})
+                        if l.get('name'): mb_data['label'] = l['name']
+                    if rel.get('tags'):
+                        sorted_tags = sorted(rel['tags'], key=lambda x: x.get('count', 0), reverse=True)
+                        if sorted_tags:
+                            mb_data['genre'] = sorted_tags[0].get('name', '').title()
+    except: pass
+    return mb_data
+
+
+# --- MAIN LOGIC ---
 
 async def process_track_metadata(track_id, r_id, cover=None, 
     thumbnail=None, total_tracks=None, album_genre=None, total_disks=None, user: dict = None): 
     
-    if not user:
-        raise DeezerError("Fungsi process_track_metadata memerlukan argumen 'user'.")
+    if not user: raise DeezerError("User arg required")
     deezerapi = user['deezer_api']
-
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
 
+    # --- DEEZER DATA (INTERNAL) ---
     try:
         raw_meta_data = await deezerapi.get_track_data(track_id)
-        t_meta = raw_meta_data.get('FALLBACK', raw_meta_data)
-    except Exception as e:
-        LOGGER.warning(f"Deezer: song.getData gagal untuk {track_id}: {e}")
-        t_meta = {} 
+        t_meta_api = raw_meta_data.get('FALLBACK', raw_meta_data)
+    except: t_meta_api = {} 
+
     try:
         raw_meta_page = await deezerapi.get_track(track_id)
         t_meta_page = raw_meta_page.get('DATA', {}) 
         t_meta_page = t_meta_page.get('FALLBACK', t_meta_page) 
-    except Exception as e:
-        LOGGER.error(f"Deezer: deezer.pageTrack gagal total untuk {track_id}: {e}")
-        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
-        raise DeezerError(f"Deezer : Track not available (pageTrack API failed)")
-        # --- BATAS PERBAIKAN ---
+    except: raise DeezerError(f"Deezer : Track not available")
     
+    get_val = lambda k, d=None: t_meta_page.get(k) or t_meta_api.get(k) or d
+
     metadata['itemid'] = track_id
-    metadata['albumartist'] = t_meta.get('ART_NAME', t_meta_page.get('ART_NAME', ''))
-    metadata['album'] = t_meta.get('ALB_TITLE', t_meta_page.get('ALB_TITLE', ''))
-    metadata['upc'] = t_meta.get('UPC', t_meta_page.get('UPC', ''))
-    metadata['artist'] = get_artists_name(t_meta)
-    if not metadata['artist']:
-        metadata['artist'] = get_artists_name(t_meta_page)
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'track'
-    metadata['copyright'] = t_meta.get('COPYRIGHT', t_meta_page.get('COPYRIGHT', ''))
-    metadata['isrc'] = t_meta.get('ISRC', t_meta_page.get('ISRC', ''))
-    metadata['title'] = t_meta.get('SNG_TITLE', t_meta_page.get('SNG_TITLE', ''))
-    if t_meta.get('VERSION'):
-        metadata['title'] += f' ({t_meta["VERSION"]})'
-    elif t_meta_page.get('VERSION'):
-         metadata['title'] += f' ({t_meta_page["VERSION"]})'
-    metadata['title'] = metadata['title'].replace('/', ' ')
-    metadata['duration'] = t_meta.get('DURATION', t_meta_page.get('DURATION', 0))
-    try:
-        explicit_data = t_meta.get('EXPLICIT_TRACK_CONTENT')
-        if not explicit_data:
-            explicit_data = t_meta_page.get('EXPLICIT_TRACK_CONTENT', {})
-        explicit_status = explicit_data.get('EXPLICIT_LYRICS_STATUS', 0)
-        metadata['explicit'] = True if explicit_status == 1 else False
-    except Exception:
-        metadata['explicit'] = False 
-    metadata['tracknumber'] = t_meta.get('TRACK_NUMBER', t_meta_page.get('TRACK_NUMBER', '1'))
-    if total_tracks:
-        metadata['totaltracks'] = total_tracks
-    metadata['date'] = t_meta.get('PHYSICAL_RELEASE_DATE', t_meta_page.get('PHYSICAL_RELEASE_DATE', ''))
-    if album_genre:
-        metadata['genre'] = album_genre
-    elif t_meta_page.get('GENRE_NAME'): 
-         metadata['genre'] = t_meta_page['GENRE_NAME']
-    metadata['volume'] = str(t_meta.get('DISK_NUMBER', t_meta_page.get('DISK_NUMBER', '1')))
-    if total_disks:
-        metadata['totalvolume'] = str(total_disks)
-    if t_meta.get('CONTRIBUTORS'): 
-        composers = []
-        for contributor in t_meta['CONTRIBUTORS']:
-            role_id = str(contributor.get('ROLE_ID'))
-            if role_id in ['1', '4', '5']: 
-                composers.append(contributor.get('ART_NAME'))
-        if composers:
-            metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
+    metadata['title'] = get_val('SNG_TITLE', '')
+    if get_val('VERSION'): metadata['title'] += f' ({get_val("VERSION")})'
     
-    cover_id = t_meta.get('ALB_PICTURE', t_meta_page.get('ALB_PICTURE', ''))
+    metadata['album'] = get_val('ALB_TITLE', '')
+    metadata['albumartist'] = get_val('ART_NAME', '')
+    metadata['artist'] = get_artists_name(t_meta_page) or get_artists_name(t_meta_api)
     
-    if cover:
-        metadata['cover'] = cover
-    else:
-        cover_url = None
-        try:
-            async with aiohttp.ClientSession() as session:
-                logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
-                cover_url = await get_itunes_cover_url(metadata, session)
-        except Exception as e:
-            logging.warning(f"Sesi pencarian sampul iTunes gagal (track): {e}")
+    metadata['tracknumber'] = str(get_val('TRACK_NUMBER', '1')).zfill(2)
+    metadata['volume'] = str(get_val('DISK_NUMBER', '1'))
+    if total_tracks: metadata['totaltracks'] = str(total_tracks)
+    if total_disks: metadata['totalvolume'] = str(total_disks)
+    
+    metadata['isrc'] = get_val('ISRC', '')
 
-        if not cover_url and cover_id:
-            logging.debug(f"iTunes gagal, menggunakan sampul Deezer.")
-            cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
+    # --- 1. PRODUCER & COMPOSER (INTERNAL CHECK) ---
+    contributors = t_meta_page.get('CONTRIBUTORS') or t_meta_api.get('CONTRIBUTORS') or []
+    composers, producers = [], []
+    
+    # Internal parsing
+    for c in contributors:
+        rid = str(c.get('ROLE_ID'))
+        name = c.get('ART_NAME')
+        if not name: continue
+        # 16=Composer, 1=Author, 4=Composer, 5=Arranger
+        if rid in ['16', '1', '4', '5']: composers.append(name)
+        # 2=Producer
+        elif rid == '2': producers.append(name)
+
+    # --- 2. EXTERNAL FETCH (PUBLIC API & ITUNES) ---
+    itunes_info = {'found': False}
+    mb_info = {}
+    pub_album_data = {} 
+    
+    async with aiohttp.ClientSession() as session:
+        # A. PUBLIC TRACK (Composer Fallback)
+        # Jika internal kosong, tembak Public API Track
+        if not composers:
+            pub_track = await fetch_deezer_public_track(track_id, session)
+            if pub_track.get('contributors'):
+                for c in pub_track['contributors']:
+                    role = c.get('role', '').lower()
+                    name = c.get('name')
+                    if not name: continue
+                    if role == 'composer': composers.append(name)
+                    elif role == 'producer': producers.append(name)
+
+        # B. UPC Extraction (Priority: Internal -> Nested -> Public Album)
+        found_upc = get_val('UPC')
+        if not found_upc and t_meta_page.get('ALBUM'):
+            found_upc = t_meta_page['ALBUM'].get('UPC')
         
-        final_cover_path_or_url = cover_url
-        if not cover_url:
-            if os.path.exists(FALLBACK_IMAGE_PATH):
-                logging.warning(f"Semua sumber online gagal, menggunakan fallback lokal: {FALLBACK_IMAGE_PATH}")
-                final_cover_path_or_url = FALLBACK_IMAGE_PATH
-            else:
-                logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
+        # C. GENRE Preparation
+        # Ambil ID Album untuk fetch Public Album jika UPC atau Genre kosong
+        alb_id = get_val('ALB_ID')
+        if not alb_id and t_meta_page.get('ALBUM'): alb_id = t_meta_page['ALBUM'].get('ALB_ID')
 
-        metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
+        # D. PUBLIC ALBUM FETCH (Genre & UPC Savior)
+        if alb_id and (not found_upc or not album_genre):
+            pub_album_data = await fetch_deezer_public_album(alb_id, session)
+            if not found_upc:
+                found_upc = pub_album_data.get('upc')
 
-    if thumbnail:
-        metadata['thumbnail'] = thumbnail
+        # SET UPC/EAN/BARCODE
+        metadata['upc'] = found_upc or ''
+        if metadata['upc']:
+            metadata['ean'] = metadata['upc']
+            metadata['barcode'] = metadata['upc']
+
+        # E. iTunes & MB Lookup
+        try:
+            itunes_info = await get_extended_itunes_info(metadata, session)
+        except: pass
+        
+        if not itunes_info.get('label') or not itunes_info.get('genre'):
+            try:
+                mb_info = await get_musicbrainz_info(metadata, session)
+            except: pass
+
+    # SET COMPOSER & PRODUCER
+    if composers: metadata['composer'] = ', '.join(list(dict.fromkeys(composers)))
+    if producers: metadata['producer'] = ', '.join(list(dict.fromkeys(producers)))
+
+    # --- MERGE METADATA ---
+
+    # DATE
+    dz_phys = get_val('PHYSICAL_RELEASE_DATE')
+    dz_digi = get_val('DIGITAL_RELEASE_DATE')
+    final_date = datetime.now().strftime('%Y-%m-%d')
+    if dz_phys and dz_phys != '0000-00-00': final_date = dz_phys
+    elif itunes_info.get('date'): final_date = itunes_info['date']
+    elif mb_info.get('date'): final_date = mb_info['date']
+    elif dz_digi and dz_digi != '0000-00-00': final_date = dz_digi
+
+    metadata['date'] = final_date
+    metadata['originaldate'] = final_date
+    metadata['releasetime'] = final_date
+    metadata['release_date'] = final_date
+    metadata['recorded_date'] = final_date
+    if final_date and len(final_date) >= 4:
+        metadata['year'] = final_date[:4]
+
+    # COPYRIGHT
+    if itunes_info.get('copyright'):
+        metadata['copyright'] = itunes_info['copyright']
+    elif mb_info.get('copyright'):
+        metadata['copyright'] = mb_info['copyright']
     else:
-        metadata['thumbnail'] = await get_cover(cover_id, metadata, True)
+        metadata['copyright'] = get_val('COPYRIGHT', '')
+    metadata['cpr'] = metadata.get('copyright', '')
 
-    metadata['token'] = t_meta_page['TRACK_TOKEN']
-    metadata['token_expiry'] = t_meta_page['TRACK_TOKEN_EXPIRE']
-    
+    # LABEL
+    if itunes_info.get('label'):
+        metadata['label'] = itunes_info['label']
+    elif mb_info.get('label'):
+        metadata['label'] = mb_info['label']
+    elif get_val('ALB_LABEL') or get_val('LABEL_NAME'):
+        metadata['label'] = get_val('ALB_LABEL') or get_val('LABEL_NAME')
+    elif metadata.get('copyright'):
+        metadata['label'] = extract_label_from_copyright(metadata['copyright'])
+    else:
+        metadata['label'] = ''
+    metadata['publisher'] = metadata['label']
+    metadata['pub'] = metadata['label']
+
+    if not metadata.get('copyright') and metadata.get('label'):
+        try:
+            yr = final_date.split('-')[0]
+            metadata['copyright'] = f"© {yr} {metadata['label']}"
+            metadata['cpr'] = metadata['copyright']
+        except: pass
+
+    # GENRE (ROBUST LOGIC)
+    found_genre = ''
+    # 1. Argument (Album Level Priority)
+    if album_genre: found_genre = album_genre
+    # 2. Public API Album (Very Reliable)
+    elif pub_album_data and pub_album_data.get('genres') and pub_album_data['genres'].get('data'):
+        found_genre = pub_album_data['genres']['data'][0].get('name')
+    # 3. Internal Track Data (API)
+    elif get_val('GENRE_NAME'): found_genre = get_val('GENRE_NAME')
+    # 4. Internal Nested Data (Check Both Keys)
+    elif t_meta_page.get('ALBUM'):
+        # Check 'genres' (lowercase)
+        if t_meta_page['ALBUM'].get('genres') and t_meta_page['ALBUM']['genres'].get('data'):
+             found_genre = t_meta_page['ALBUM']['genres']['data'][0].get('name')
+        # Check 'GENRES' (uppercase)
+        elif t_meta_page['ALBUM'].get('GENRES') and t_meta_page['ALBUM']['GENRES'].get('data'):
+             found_genre = t_meta_page['ALBUM']['GENRES']['data'][0].get('name')
+    # 5. External (iTunes/MB)
+    elif itunes_info.get('genre'): found_genre = itunes_info['genre']
+    elif mb_info.get('genre'): found_genre = mb_info['genre']
+
+    metadata['genre'] = found_genre or ''
+
+    # EXPLICIT
+    try:
+        exp_data = t_meta_page.get('EXPLICIT_TRACK_CONTENT') or t_meta_api.get('EXPLICIT_TRACK_CONTENT') or {}
+        status = exp_data.get('EXPLICIT_LYRICS_STATUS', 0)
+        metadata['explicit'] = (status == 1)
+        metadata['itunesadvisory'] = '1' if status == 1 else '0' 
+    except:
+        metadata['explicit'] = False
+        metadata['itunesadvisory'] = '0'
+
+    # COVER ART
+    cover_id = get_val('ALB_PICTURE')
+    final_cover_url = itunes_info.get('cover_url') 
+    if not final_cover_url and cover_id:
+        final_cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
+    if not final_cover_url and os.path.exists(FALLBACK_IMAGE_PATH):
+        final_cover_url = FALLBACK_IMAGE_PATH
+
+    metadata['cover'] = await create_cover_file(final_cover_url, metadata)
+    metadata['thumbnail'] = await get_cover(cover_id, metadata, True)
+
+    metadata['token'] = t_meta_page.get('TRACK_TOKEN')
+    metadata['token_expiry'] = t_meta_page.get('TRACK_TOKEN_EXPIRE')
     metadata['quality'] = await get_quality(t_meta_page, deezerapi, user['user_id'])
+    
     return metadata
             
 
 async def process_album_metadata(album_id:int, a_meta:dict, t_meta:list, r_id, user: dict = None):
-    if not user:
-        raise DeezerError("Fungsi process_album_metadata memerlukan argumen 'user'.")
+    if not user: raise DeezerError("User arg required")
     deezerapi = user['deezer_api']
 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     metadata['itemid'] = album_id
-    metadata['albumartist'] = a_meta.get('ART_NAME', '')
-    metadata['upc'] = a_meta.get('UPC', '')
-    metadata['title'] = a_meta.get('ALB_TITLE', 'Unknown Album')
-    metadata['album'] = a_meta.get('ALB_TITLE', 'Unknown Album')
-    metadata['artist'] = get_artists_name(a_meta) 
     metadata['provider'] = 'Deezer'
     metadata['type'] = 'album'
-    if a_meta.get('VERSION'):
-        metadata['title'] += f' ({a_meta["VERSION"]})'
-    metadata['date'] = a_meta.get('DIGITAL_RELEASE_DATE', '')
+    
+    metadata['albumartist'] = a_meta.get('ART_NAME', '')
+    metadata['artist'] = get_artists_name(a_meta) 
+    metadata['title'] = a_meta.get('ALB_TITLE', 'Unknown Album')
+    metadata['album'] = metadata['title']
+    if a_meta.get('VERSION'): metadata['title'] += f' ({a_meta["VERSION"]})'
+
+    # UPC (INTERNAL)
+    metadata['upc'] = a_meta.get('UPC', '')
+
     metadata['totaltracks'] = a_meta.get('NUMBER_TRACK', '0')
     metadata['duration'] = a_meta.get('DURATION', 0)
-    metadata['copyright'] = a_meta.get('COPYRIGHT', '')
-    metadata['explicit'] = a_meta.get('explicit_lyrics', False)
-    album_genre_name = ''
-    if a_meta.get('genres') and a_meta.get('genres').get('data'):
-        if a_meta['genres']['data']:
-            album_genre_name = a_meta['genres']['data'][0].get('NAME', '')
-            metadata['genre'] = album_genre_name
     metadata['totalvolume'] = str(a_meta.get('DISK_COUNT', '1'))
+
+    # --- Fetch External Info ---
+    itunes_info = {'found': False}
+    mb_info = {}
+    pub_album_data = {}
     
+    async with aiohttp.ClientSession() as session:
+        # UPC / GENRE FALLBACK (PUBLIC API)
+        # Jika UPC internal kosong, atau kita ingin genre yang lebih akurat
+        if not metadata['upc'] or not a_meta.get('genres'):
+             pub_album_data = await fetch_deezer_public_album(album_id, session)
+             
+             if not metadata['upc'] and pub_album_data.get('upc'):
+                 metadata['upc'] = pub_album_data['upc']
+
+        try:
+            itunes_info = await get_extended_itunes_info(metadata, session)
+        except: pass
+        if not itunes_info.get('label') or not itunes_info.get('genre'):
+             try:
+                mb_info = await get_musicbrainz_info(metadata, session)
+             except: pass
+
+    # SET UPC/BARCODE
+    if metadata['upc']:
+        metadata['ean'] = metadata['upc']
+        metadata['barcode'] = metadata['upc']
+
+    # --- Merge ---
     
+    # DATE
+    dz_phys = a_meta.get('PHYSICAL_RELEASE_DATE')
+    dz_digi = a_meta.get('DIGITAL_RELEASE_DATE')
+    final_date = datetime.now().strftime('%Y-%m-%d')
+    if dz_phys and dz_phys != '0000-00-00': final_date = dz_phys
+    elif itunes_info.get('date'): final_date = itunes_info['date']
+    elif mb_info.get('date'): final_date = mb_info['date']
+    elif dz_digi and dz_digi != '0000-00-00': final_date = dz_digi
+        
+    metadata['date'] = final_date
+    metadata['originaldate'] = final_date
+    metadata['releasetime'] = final_date
+    metadata['release_date'] = final_date
+    metadata['recorded_date'] = final_date 
+    if final_date and len(final_date) >= 4:
+        metadata['year'] = final_date[:4]
+
+    # COPYRIGHT
+    dz_copyright = a_meta.get('COPYRIGHT', '')
+    if itunes_info.get('copyright'):
+        metadata['copyright'] = itunes_info['copyright']
+    elif dz_copyright:
+        metadata['copyright'] = dz_copyright
+    elif mb_info.get('copyright'):
+        metadata['copyright'] = mb_info['copyright']
+    metadata['cpr'] = metadata.get('copyright', '')
+
+    # LABEL
+    if itunes_info.get('label'):
+        metadata['label'] = itunes_info['label']
+    elif mb_info.get('label'):
+        metadata['label'] = mb_info['label']
+    elif a_meta.get('LABEL_NAME'):
+        metadata['label'] = a_meta.get('LABEL_NAME')
+    elif metadata.get('copyright'):
+        metadata['label'] = extract_label_from_copyright(metadata['copyright'])
+    else:
+        metadata['label'] = ''
+    metadata['publisher'] = metadata['label']
+    metadata['pub'] = metadata['label']
+
+    # EXPLICIT
+    explicit_status = a_meta.get('explicit_lyrics')
+    if explicit_status is None:
+        explicit_content = int(a_meta.get('explicit_content_lyrics', 0))
+        metadata['explicit'] = True if explicit_content in [1, 4, 6] else False
+    else:
+        metadata['explicit'] = bool(explicit_status)
+    metadata['itunesadvisory'] = '1' if metadata['explicit'] else '0'
+
+    # GENRE
+    found_genre = ''
+    # 1. Internal API Check (Lowercase & Uppercase)
+    if a_meta.get('genres') and a_meta.get('genres').get('data'):
+        data = a_meta['genres']['data']
+        if len(data) > 0: found_genre = data[0].get('NAME') or data[0].get('name')
+    elif a_meta.get('GENRES') and a_meta.get('GENRES').get('data'):
+        data = a_meta['GENRES']['data']
+        if len(data) > 0: found_genre = data[0].get('NAME') or data[0].get('name')
+    
+    # 2. Public API Fallback
+    if not found_genre and pub_album_data.get('genres') and pub_album_data['genres'].get('data'):
+        found_genre = pub_album_data['genres']['data'][0].get('name')
+
+    # 3. iTunes & MB
+    if not found_genre:
+        if itunes_info.get('genre'): found_genre = itunes_info['genre']
+        elif mb_info.get('genre'): found_genre = mb_info['genre']
+
+    metadata['genre'] = found_genre or ''
+
     cover_id = a_meta.get('ALB_PICTURE', '')
-    cover_url = None
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            logging.debug(f"Mencari sampul di iTunes untuk {metadata['album']}...")
-            cover_url = await get_itunes_cover_url(metadata, session)
-    except Exception as e:
-        logging.warning(f"Sesi pencarian sampul iTunes gagal (album): {e}")
+    final_cover_url = itunes_info.get('cover_url')
+    if not final_cover_url and cover_id:
+        final_cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
+    if not final_cover_url and os.path.exists(FALLBACK_IMAGE_PATH):
+        final_cover_url = FALLBACK_IMAGE_PATH
 
-    if not cover_url and cover_id:
-        logging.debug(f"iTunes gagal, menggunakan sampul Deezer.")
-        cover_url = f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
-
-    final_cover_path_or_url = cover_url
-    if not cover_url:
-        if os.path.exists(FALLBACK_IMAGE_PATH):
-            logging.warning(f"Semua sumber online gagal, menggunakan fallback lokal: {FALLBACK_IMAGE_PATH}")
-            final_cover_path_or_url = FALLBACK_IMAGE_PATH
-        else:
-            logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
-
-    metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
-    
+    metadata['cover'] = await create_cover_file(final_cover_url, metadata)
     metadata['thumbnail'] = await get_cover(cover_id, metadata, True)
         
     metadata['tracks'] = []
     for track in t_meta['data']:
         try:
             track_meta = await process_track_metadata(
-                track['SNG_ID'], 
-                r_id,
-                metadata['cover'], 
-                metadata['thumbnail'],
-                metadata['totaltracks'],
-                album_genre_name, 
-                metadata['totalvolume'],
-                user=user
+                track['SNG_ID'], r_id, metadata['cover'], metadata['thumbnail'],
+                metadata['totaltracks'], metadata['genre'], metadata['totalvolume'], user=user
             )
-            metadata['tracks'].append(track_meta)
-        except Exception as e:
-            LOGGER.warning(f"Gagal memproses metadata untuk track ID {track.get('SNG_ID')}: {e}")
-            continue
+            
+            # FORCE SYNC TRACK DATA
+            track_meta['date'] = metadata['date']
+            track_meta['originaldate'] = metadata['date']
+            track_meta['releasetime'] = metadata['date']
+            track_meta['release_date'] = metadata['date']
+            track_meta['recorded_date'] = metadata['date']
+            track_meta['year'] = metadata['year']
+            
+            # Sync Copyright/Label if missing
+            if metadata.get('copyright'):
+                track_meta['copyright'] = metadata['copyright']
+                track_meta['cpr'] = metadata['cpr']
+            if metadata.get('label'):
+                track_meta['label'] = metadata['label']
+                track_meta['publisher'] = metadata['publisher']
+                track_meta['pub'] = metadata['pub']
+            
+            # Sync Genre
+            if not track_meta.get('genre') and metadata.get('genre'):
+                track_meta['genre'] = metadata['genre']
+            
+            # Sync UPC (Important!)
+            if not track_meta.get('upc') and metadata.get('upc'):
+                track_meta['upc'] = metadata['upc']
+                track_meta['ean'] = metadata['upc']
+                track_meta['barcode'] = metadata['upc']
 
-    if not metadata['tracks']:
-        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
-        raise DeezerError(f"Tidak ada lagu yang valid ditemukan (Track not available) untuk album {metadata['title']}")
-        # --- BATAS PERBAIKAN ---
-    
+            metadata['tracks'].append(track_meta)
+        except: continue
+
+    if not metadata['tracks']: raise DeezerError(f"No tracks found for album {metadata['title']}")
     metadata['quality'] = metadata['tracks'][0]['quality']
     return metadata
 
-
-
+# --- Helper Functions (Standard) ---
 async def process_playlist_meta(raw_meta, r_id, user: dict = None):
-    if not user:
-        raise DeezerError("Fungsi process_playlist_meta memerlukan argumen 'user'.")
+    if not user: raise DeezerError("User arg required")
     deezerapi = user['deezer_api']
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -280,90 +579,37 @@ async def process_playlist_meta(raw_meta, r_id, user: dict = None):
     for track in raw_meta['SONGS']['data']:
         try:
             track_meta = await process_track_metadata(
-                track['SNG_ID'], 
-                r_id,
-                total_tracks=metadata['totaltracks'],
-                user=user 
+                track['SNG_ID'], r_id, total_tracks=metadata['totaltracks'], user=user 
             )
-        except:
-            continue
-        metadata['tracks'].append(track_meta)
-    if metadata['tracks']:
-        metadata['quality'] = metadata['tracks'][0]['quality']
-    else:
-        metadata['quality'] = "N/A"
+            metadata['tracks'].append(track_meta)
+        except: continue
+    if metadata['tracks']: metadata['quality'] = metadata['tracks'][0]['quality']
+    else: metadata['quality'] = "N/A"
     return metadata
-
 
 def get_artists_name(meta:dict):
     artists = []
     if meta.get('ARTISTS'):
-        for a in meta['ARTISTS']:
-            artists.append(a['ART_NAME'])
-    elif meta.get('ART_NAME'):
-        artists.append(meta.get('ART_NAME'))
+        for a in meta['ARTISTS']: artists.append(a['ART_NAME'])
+    elif meta.get('ART_NAME'): artists.append(meta.get('ART_NAME'))
     return ', '.join([str(artist) for artist in artists if artist])
-
 
 async def get_cover(cover_id, meta:dict, thumbnail=False):
     url = None
     if cover_id:
-        url = (
-            f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png'
-            if not thumbnail
-            else f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/80x0-none-100-0-0.png'
-        )
+        url = (f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/1200x0-none-100-0-0.png' 
+               if not thumbnail else 
+               f'https://cdn-images.dzcdn.net/images/cover/{cover_id}/80x0-none-100-0-0.png')
     return await create_cover_file(url, meta, thumbnail)
 
-
-# --- MODIFIKASI: Fungsi get_quality diubah total ---
 async def get_quality(meta:dict, deezerapi: DeezerAPI, user_id: int):
     countries = meta.get('AVAILABLE_COUNTRIES', {}).get('STREAM_ADS')
-    if not countries:
-        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
-        raise DeezerError("Deezer : Track not available")
-        # --- BATAS PERBAIKAN ---
-    elif deezerapi.country not in countries:
-        # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
+    if not countries or deezerapi.country not in countries:
         raise DeezerError("Deezer : Track not available in your country")
-        # --- BATAS PERBAIKAN ---
-    
-    # Dapatkan preferensi pengguna
     preferred_quality = deezer_manager.get_user_quality(user_id)
-    LOGGER.debug(f"Deezer: Menggunakan preferensi kualitas '{preferred_quality}' for user {user_id}")
-
-    # Buat daftar format untuk dicoba, berdasarkan preferensi
-    formats_to_check = []
-    if preferred_quality == "FLAC":
-        formats_to_check = ['FLAC', 'MP3_320', 'MP3_128']
-    elif preferred_quality == "MP3_320":
-        formats_to_check = ['MP3_320', 'MP3_128']
-    else: # MP3_128
-        formats_to_check = ['MP3_128']
-
-    final_format = None
-    
-    # Loop melalui format yang disukai
-    for f in formats_to_check:
-        # Periksa apakah format didukung oleh langganan ARL INI
-        if f not in deezerapi.available_formats:
-            continue # Coba format berikutnya yang lebih rendah
-            
-        # Periksa apakah lagu tersedia dalam format ini
-        if f'FILESIZE_{f}' in meta and meta[f'FILESIZE_{f}'] != '0':
-            final_format = f
-            break # Format ditemukan, keluar dari loop
-
-    if final_format is None:
-        # Ini terjadi jika langganan ARL hanya gratis (MP3_128)
-        # tetapi pengguna meminta FLAC, dan loop di atas gagal
-        # Kita coba paksa MP3_128 sebagai upaya terakhir
-        if 'MP3_128' in deezerapi.available_formats and f'FILESIZE_MP3_128' in meta and meta[f'FILESIZE_MP3_128'] != '0':
-            final_format = 'MP3_128'
-        else:
-             # --- PERBAIKAN: Ganti Exception menjadi DeezerError ---
-             raise DeezerError(f"Deezer: Format yang diminta ({preferred_quality}) atau fallback (MP3_128) tidak tersedia untuk lagu ini atau oleh langganan ARL ini.")
-             # --- BATAS PERBAIKAN ---
-
-    return final_format
-# --- MODIFIKASI SELESAI ---
+    formats = ['FLAC', 'MP3_320', 'MP3_128'] if preferred_quality == "FLAC" else \
+              ['MP3_320', 'MP3_128'] if preferred_quality == "MP3_320" else ['MP3_128']
+    for f in formats:
+        if f in deezerapi.available_formats and meta.get(f'FILESIZE_{f}', '0') != '0': return f
+    if 'MP3_128' in deezerapi.available_formats and meta.get('FILESIZE_MP3_128', '0') != '0': return 'MP3_128'
+    raise DeezerError(f"Deezer: Format {preferred_quality} not available.")
