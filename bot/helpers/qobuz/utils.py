@@ -7,6 +7,7 @@ import logging
 import aiohttp
 import urllib.parse
 import os
+from datetime import datetime
 from config import Config
 
 from ..message import send_message, edit_message
@@ -59,6 +60,59 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
     return None
 
 
+def get_credits(meta, keys, roles=None):
+    """
+    Mengambil daftar nama dari berbagai sumber secara agresif.
+    """
+    names = []
+    target_roles = [r.lower() for r in roles] if roles else []
+    
+    # 1. Parsing String 'performers'
+    if roles and meta.get('performers'):
+        try:
+            raw_perf = meta['performers'].replace('\r', '').replace('\n', '')
+            chunks = raw_perf.split(' - ')
+            for chunk in chunks:
+                chunk_lower = chunk.lower()
+                if any(tr in chunk_lower for tr in target_roles):
+                    parts = chunk.split(',')
+                    if len(parts) > 0:
+                        potential_name = parts[0].strip()
+                        if potential_name.lower() not in target_roles:
+                            names.append(potential_name)
+        except Exception as e:
+            logging.warning(f"Gagal parsing performers: {e}")
+
+    # 2. Cek 'contributors' list
+    if roles and 'contributors' in meta and isinstance(meta['contributors'], list):
+        for item in meta['contributors']:
+            item_role = item.get('role', '').lower()
+            if any(tr in item_role for tr in target_roles):
+                if item.get('name'):
+                    names.append(item['name'])
+
+    # 3. Cek kunci langsung
+    for key in keys:
+        if key in meta:
+            val = meta[key]
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and item.get('name'):
+                        names.append(item['name'])
+                    elif isinstance(item, str):
+                        names.append(item)
+            elif isinstance(val, dict):
+                if val.get('name'):
+                    names.append(val['name'])
+            elif isinstance(val, str):
+                names.append(val)
+
+    seen = set()
+    unique_names = [x for x in names if not (x in seen or seen.add(x))]
+    
+    return ', '.join(unique_names)
+
+
 async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     if user is None:
         logging.error("User dict None in get_track_metadata! Multi-login will fail.")
@@ -77,30 +131,92 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
     
     metadata = copy.deepcopy(base_meta)
 
+    # --- Waktu Tagging ---
+    now = datetime.now()
+    tag_time_str = now.strftime('%Y-%m-%d %H:%M:%S')
+    utc_time_str = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+
     metadata['tempfolder'] += f"{r_id}-temp/"
     metadata['itemid'] = item_id
-    metadata['copyright'] = q_meta['copyright']
-    metadata['albumartist'] = q_meta['album']['artist']['name']
-    metadata['artist'] = await get_artists_name(q_meta['album'])
-    metadata['upc'] = q_meta['album']['upc']
-    metadata['album'] = q_meta['album']['title']
-    metadata['isrc'] = q_meta['isrc']
+    
+    # --- Standard Tags ---
     metadata['title'] = q_meta['title']
     if q_meta['version']:
         metadata['title'] += f' ({q_meta["version"]})'
+        
+    metadata['album'] = q_meta['album']['title']
+    metadata['albumartist'] = q_meta['album']['artist']['name']
+    metadata['artist'] = await get_artists_name(q_meta['album'])
+    
+    metadata['copyright'] = q_meta.get('copyright', '')
+    metadata['cpr'] = q_meta.get('copyright', '')
+    
+    label_name = q_meta['album'].get('label', {}).get('name', '')
+    metadata['label'] = label_name
+    metadata['publisher'] = label_name
+    metadata['pub'] = label_name
+    
+    upc_code = q_meta['album'].get('upc', '')
+    metadata['upc'] = upc_code
+    metadata['ean'] = upc_code
+    metadata['barcode'] = upc_code
+    metadata['isrc'] = q_meta.get('isrc', '')
+    
+    # --- DATES ---
+    rel_date = q_meta.get('release_date_original', '')
+    metadata['date'] = rel_date
+    
+    # PERBAIKAN: creation_time = Waktu Sekarang (UTC ISO Format)
+    metadata['creation_time'] = utc_time_str
+    
+    # Release Time & Original Date tetap tanggal rilis asli
+    metadata['releasetime'] = rel_date
+    metadata['RELEASETIME'] = rel_date
+    
+    metadata['originaldate'] = rel_date
+    metadata['ORIGINALDATE'] = rel_date
+    
+    metadata['tagging_time'] = tag_time_str
+    metadata['date_tagged'] = tag_time_str
+    metadata['encoded_date'] = utc_time_str
+
     metadata['duration'] = q_meta['duration']
-    metadata['explicit'] = q_meta['parental_warning']
-    metadata['tracknumber'] = q_meta['track_number']
-    metadata['date'] = q_meta['release_date_original']
-    metadata['totaltracks'] = q_meta['album']['tracks_count']
+    
+    # --- NUMBERING FORMAT ---
+    metadata['tracknumber'] = str(q_meta['track_number']).zfill(2)
+    metadata['totaltracks'] = str(q_meta['album']['tracks_count'])
+    metadata['volume'] = str(q_meta.get('media_number', '1'))
+    metadata['totalvolume'] = str(q_meta['album'].get('media_count', '1'))
+    
     if q_meta.get('album') and q_meta['album'].get('genre'):
          metadata['genre'] = q_meta['album']['genre'].get('name', '')
+    
+    is_explicit = q_meta.get('parental_warning', False)
+    metadata['explicit'] = is_explicit
+    metadata['itunesadvisory'] = '1' if is_explicit else '0'
+    
+    # --- CREDITS ---
+    metadata['composer'] = get_credits(
+        q_meta, 
+        ['composers', 'composer'], 
+        ['composer', 'writer', 'author']
+    )
+    metadata['lyricist'] = get_credits(
+        q_meta, 
+        ['lyricist', 'writer'], 
+        ['lyricist', 'writer', 'author']
+    )
+    metadata['writer'] = metadata['lyricist']
+    metadata['producer'] = get_credits(q_meta, ['producer'], ['producer'])
+
+    if q_meta.get('performer'):
+        metadata['performer'] = q_meta['performer'].get('name', '')
+
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'track'
-    metadata['volume'] = q_meta.get('media_number', '')
-    metadata['totalvolume'] = q_meta['album'].get('media_count', '')
-    if q_meta.get('composer'):
-        metadata['composer'] = q_meta['composer'].get('name', '')
+
+    metadata['bps'] = str(q_meta.get('bit_depth', ''))
+    metadata['sample_rate'] = str(q_meta.get('sampling_rate', ''))
 
     qobuz_fallback_url = q_meta['album']['image'].get('original', q_meta['album']['image'].get('large'))
     cover_url = None
@@ -125,7 +241,6 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
             logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
     
     metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
-    
     metadata['thumbnail'] = await create_cover_file(q_meta['album']['image']['thumbnail'], metadata, True)
 
     return metadata, None  
@@ -139,20 +254,56 @@ async def get_album_metadata(item_id, r_id, user: dict):
     
     metadata = copy.deepcopy(base_meta)
 
+    now = datetime.now()
+    tag_time_str = now.strftime('%Y-%m-%d %H:%M:%S')
+    utc_time_str = now.strftime('%Y-%m-%dT%H:%M:%SZ') # Ditambahkan untuk creation_time album
+    
     metadata['tempfolder'] += f"{r_id}-temp/"
     metadata['itemid'] = item_id
-    metadata['albumartist'] = q_meta['artist']['name']
-    metadata['upc'] = q_meta['upc']
+    
     metadata['title'] = q_meta['title']
     metadata['album'] = q_meta['title']
+    metadata['albumartist'] = q_meta['artist']['name']
     metadata['artist'] = q_meta['artist']['name']
-    metadata['date'] = q_meta['release_date_original']
-    metadata['totaltracks'] = q_meta['tracks_count']
+    
+    metadata['upc'] = q_meta.get('upc', '')
+    metadata['ean'] = q_meta.get('upc', '')
+    metadata['barcode'] = q_meta.get('upc', '')
+    
+    label_name = q_meta.get('label', {}).get('name', '')
+    metadata['label'] = label_name
+    metadata['publisher'] = label_name
+    metadata['pub'] = label_name
+    
+    metadata['copyright'] = q_meta.get('copyright', '')
+    metadata['cpr'] = q_meta.get('copyright', '')
+
+    # --- DATES ---
+    rel_date = q_meta.get('release_date_original', '')
+    metadata['date'] = rel_date
+    
+    # PERBAIKAN: creation_time = Waktu Sekarang
+    metadata['creation_time'] = utc_time_str
+    
+    metadata['releasetime'] = rel_date
+    metadata['RELEASETIME'] = rel_date
+    
+    metadata['originaldate'] = rel_date
+    metadata['ORIGINALDATE'] = rel_date
+    
+    metadata['tagging_time'] = tag_time_str
+    metadata['date_tagged'] = tag_time_str
+    
+    # --- NUMBERING FORMAT ---
+    metadata['totaltracks'] = str(q_meta['tracks_count'])
+    metadata['totalvolume'] = str(q_meta.get('media_count', '1'))
+
     metadata['duration'] = q_meta['duration']
-    metadata['copyright'] = q_meta['copyright']
+    
     metadata['genre'] = q_meta['genre']['name']
-    metadata['totalvolume'] = q_meta.get('media_count', '')
     metadata['explicit'] = q_meta['parental_warning']
+    metadata['itunesadvisory'] = '1' if q_meta['parental_warning'] else '0'
+    
     metadata['provider'] = 'Qobuz'
     metadata['type'] = 'album'
 
@@ -179,7 +330,6 @@ async def get_album_metadata(item_id, r_id, user: dict):
             logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
     
     metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
-    
     metadata['thumbnail'] = await create_cover_file(q_meta['image']['thumbnail'], metadata, True)
 
     metadata['tracks'] = await get_track_meta_from_alb(q_meta, metadata) 
@@ -188,6 +338,11 @@ async def get_album_metadata(item_id, r_id, user: dict):
 
 async def get_track_meta_from_alb(q_meta:dict, alb_meta):
     tracks = []
+    
+    now = datetime.now()
+    tag_time_str = now.strftime('%Y-%m-%d %H:%M:%S')
+    utc_time_str = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+
     for track in q_meta['tracks']['items']:
         metadata = copy.deepcopy(alb_meta)
         metadata['itemid'] = track['id']
@@ -196,10 +351,36 @@ async def get_track_meta_from_alb(q_meta:dict, alb_meta):
             metadata['title'] += f' ({track["version"]})'
         metadata['duration'] = track['duration']
         metadata['isrc'] = track['isrc']
-        metadata['tracknumber'] = track['track_number']
-        metadata['volume'] = track.get('media_number', '')
-        if track.get('composer'):
-            metadata['composer'] = track['composer'].get('name', '')
+        
+        # --- NUMBERING FORMAT ---
+        metadata['tracknumber'] = str(track['track_number']).zfill(2)
+        metadata['volume'] = str(track.get('media_number', '1'))
+        
+        # --- CREDITS ---
+        metadata['composer'] = get_credits(
+            track, 
+            ['composers', 'composer'], 
+            ['composer', 'writer', 'author']
+        )
+        metadata['lyricist'] = get_credits(
+            track, 
+            ['lyricist', 'writer'], 
+            ['lyricist', 'writer', 'author']
+        )
+        metadata['writer'] = metadata['lyricist']
+        metadata['producer'] = get_credits(track, ['producer'], ['producer'])
+            
+        if track.get('performer'):
+             metadata['performer'] = track['performer'].get('name', '')
+             
+        metadata['tagging_time'] = tag_time_str
+        metadata['date_tagged'] = tag_time_str
+        metadata['encoded_date'] = utc_time_str
+        
+        is_explicit_track = track.get('parental_warning', False)
+        metadata['explicit'] = is_explicit_track
+        metadata['itunesadvisory'] = '1' if is_explicit_track else '0'
+
         metadata['tracks'] = ''
         metadata['type'] = 'track'
         tracks.append(metadata)
@@ -213,7 +394,8 @@ async def get_playlist_meta(raw_meta, tracks, r_id, user: dict):
 
     metadata['title'] = raw_meta['name']
     metadata['duration'] = raw_meta['duration']
-    metadata['totaltracks'] = raw_meta['tracks']['total'] 
+    
+    metadata['totaltracks'] = str(raw_meta['tracks']['total'])
     metadata['itemid'] = raw_meta['id']
     
     metadata['type'] = 'playlist'
@@ -430,25 +612,20 @@ def smart_discography_filter(contents: list, save_space: bool = False, skip_extr
 async def get_quality(meta: dict, user: dict):
     client = user['qobuz_api'] 
     
-    # --- PERBAIKAN UTAMA: Paksa user_id ke Integer ---
     try:
         u_id = int(user.get("user_id", 0))
     except:
         u_id = 0
         
-    # Ambil setting dari qopy.py user_data (yang kuncinya Integer)
     user_dict = client.user_data.get(u_id, {})
     quality = user_dict.get("qobuz_qual", client.quality)
     
-    # Format ID 5 = MP3 320
     if quality == 5:
         return 'mp3', '320K'
     else:
-        # Format ID 6, 7, 27 = FLAC
         bit_depth = meta.get("bit_depth", 16)
         sampling_rate = meta.get("sampling_rate", 44.1)
         
-        # Rapikan tampilan (misal 96.0 -> 96)
         if isinstance(sampling_rate, float) and sampling_rate.is_integer():
             sampling_rate = int(sampling_rate)
 
