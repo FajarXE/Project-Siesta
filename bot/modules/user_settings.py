@@ -69,6 +69,13 @@ try:
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor livephish_manager.")
     livephish_manager = None
+
+# --- TAMBAHAN BARU: Khinsider Manager ---
+try:
+    from ..helpers.khinsider.manager import khinsider_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor khinsider_manager.")
+    khinsider_manager = None
 # --- BATAS TAMBAHAN ---
 
 # --- IMPORT BUTTONS ---
@@ -77,8 +84,8 @@ from ..helpers.buttons.settings import (
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
     bugs_button, lyrics_button, mv_button,
-    # --- TAMBAHAN BARU: lp_button ---
-    lp_button
+    # --- TAMBAHAN BARU: lp_button & khi_button ---
+    lp_button, khi_button
     # --- BATAS TAMBAHAN ---
 )
 from ..helpers.database.mongo_async import database
@@ -126,8 +133,8 @@ Choose Menu option bellow:
 
 
 # --- HANDLER UTAMA TOMBOL MENU ---
-# Tambahkan 'livephish' ke regex pattern
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs|moov|livephish)"))
+# Tambahkan 'livephish' dan 'khinsider' ke regex pattern
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs|moov|livephish|khinsider)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
         return
@@ -377,7 +384,7 @@ async def uset_cb(client, query, datatype=""):
         
         return await edit_message(query.message, text, markup=mv_button(quality, user_id))
 
-    # --- TAMBAHAN BARU: LIVEPHISH MENU ---
+    # --- LIVEPHISH MENU ---
     if data[1] == "livephish" or datatype == "livephish":
         text = f"Choose LivePhish Audio Quality bellow:"
         quality = {
@@ -391,13 +398,33 @@ async def uset_cb(client, query, datatype=""):
         main_user_dict = bot_set.user_data.get(user_id, {})
         current = main_user_dict.get("livephish_qual", livephish_manager.quality)
         
-        # Simpan state ke manager jika perlu
         await livephish_manager.setup_quality(user_id, current)
         
         if current in quality:
             quality[current] += '✅'
         
         return await edit_message(query.message, text, markup=lp_button(quality, user_id))
+
+    # --- KHINSIDER MENU (TAMBAHAN BARU) ---
+    if data[1] == "khinsider" or datatype == "khinsider":
+        text = f"Choose Khinsider Preferred Format:"
+        # Hanya FLAC dan MP3
+        quality = {
+            "flac": "FLAC",
+            "mp3": "MP3"
+        }
+        if not khinsider_manager:
+             return await edit_message(query.message, "Layanan Khinsider tidak aktif.")
+        
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        current = main_user_dict.get("khinsider_qual", khinsider_manager.quality)
+        
+        await khinsider_manager.setup_quality(user_id, current)
+        
+        if current in quality:
+            quality[current] += '✅'
+        
+        return await edit_message(query.message, text, markup=khi_button(quality, user_id))
     # --- BATAS TAMBAHAN ---
 
 
@@ -746,7 +773,7 @@ async def uset_moov_handler(client, query):
     await uset_cb(client, query, "moov")
 
 
-# --- TAMBAHAN BARU: HANDLER LIVEPHISH SPECIFIC ---
+# --- HANDLER LIVEPHISH SPECIFIC ---
 @Client.on_callback_query(filters.regex("^ulps"))
 async def uset_livephish_handler(client, query):
     m = query.message
@@ -768,6 +795,30 @@ async def uset_livephish_handler(client, query):
     await database.save_user_settings(user_id, {'livephish_qual': to_set})
     
     await uset_cb(client, query, "livephish")
+
+
+# --- HANDLER KHINSIDER SPECIFIC (TAMBAHAN BARU) ---
+@Client.on_callback_query(filters.regex("^ukhis"))
+async def uset_khinsider_handler(client, query):
+    m = query.message
+    if not await check_user(msg=m):
+        return
+    
+    # Data format: ukhis_flac, ukhis_mp3
+    to_set = query.data.split('_')[1]
+    
+    if not khinsider_manager:
+        await query.answer("Layanan Khinsider tidak aktif!", show_alert=True)
+        return
+
+    user_id = query.from_user.id
+    
+    # Simpan ke Manager & DB
+    await khinsider_manager.setup_quality(user_id, to_set)
+    bot_set.user_data.setdefault(user_id, {})['khinsider_qual'] = to_set
+    await database.save_user_settings(user_id, {'khinsider_qual': to_set})
+    
+    await uset_cb(client, query, "khinsider")
 # --- BATAS TAMBAHAN ---
 
 
@@ -978,7 +1029,7 @@ async def debug(c, m):
     else:
         dt_mv += "Tidak ada klien Moov yang aktif."
 
-    # LIVEPHISH DEBUG (BARU)
+    # LIVEPHISH DEBUG
     dt_lp = "\n\nLIVEPHISH:\n"
     if livephish_manager and livephish_manager.clients:
         dt_lp += f"{len(livephish_manager.clients)} klien LivePhish aktif.\n"
@@ -987,11 +1038,20 @@ async def debug(c, m):
     else:
         dt_lp += "Tidak ada klien LivePhish yang aktif."
 
+    # KHINSIDER DEBUG
+    dt_khi = "\n\nKHINSIDER:\n"
+    if khinsider_manager:
+        dt_khi += f"Klien Khinsider aktif.\n"
+        dt_khi += f"Kualitas Default: {khinsider_manager.quality}\n"
+        dt_khi += f"Cache User (Global): {len([u for u in bot_set.user_data if 'khinsider_qual' in bot_set.user_data[u]])} pengguna"
+    else:
+        dt_khi += "Tidak ada klien Khinsider yang aktif."
+
     # ZIP SETTINGS DEBUG
     zips = f"\n\nAlbum Zip (Global): {bot_set.album_zip}"
     
     # Combine all debug texts
-    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + dt_mv + dt_lp + zips
+    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + dt_mv + dt_lp + dt_khi + zips
     
     # Reply safely
     await m.reply(final_debug_text, True)
