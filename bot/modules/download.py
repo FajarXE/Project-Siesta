@@ -125,6 +125,12 @@ try:
 except ImportError:
     beatstars_manager = None
 
+# 18. Khinsider (TAMBAHAN BARU)
+try:
+    from bot.helpers.khinsider.manager import khinsider_manager
+except ImportError:
+    khinsider_manager = None
+
 
 # --- IMPOR HANDLER LAYANAN ---
 
@@ -236,6 +242,13 @@ except ImportError as e:
     LOGGER.error(f"Gagal Import BeatStars Handler: {err_bs}")
     async def start_beatstars(*args, **kwargs):
         raise NotImplementedError(f"Modul BeatStars Rusak: {err_bs}")
+
+# Khinsider (TAMBAHAN BARU)
+try:
+    from ..helpers.khinsider.handler import start_khinsider
+except ImportError:
+    async def start_khinsider(*args, **kwargs):
+        raise NotImplementedError("Modul Khinsider belum diimplementasikan.")
 
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
@@ -437,6 +450,9 @@ async def start_link(link: str, user: dict) -> None:
     
     # BeatStars Domains (BARU)
     beatstars = ["https://www.beatstars.com", "beatstars.com", "https://main.v2.beatstars.com", "https://bsta.rs", "bsta.rs"]
+
+    # Khinsider Domains (TAMBAHAN BARU)
+    khinsider = ["https://downloads.khinsider.com", "downloads.khinsider.com", "http://downloads.khinsider.com"]
     
     # Blok TIDAL
     if link.startswith(tuple(tidal)):
@@ -849,6 +865,20 @@ async def start_link(link: str, user: dict) -> None:
             return
         except Exception as e:
             LOGGER.error(f"BeatStars Gagal: {e}")
+            raise e
+
+    # Blok KHINSIDER (TAMBAHAN BARU)
+    elif link.startswith(tuple(khinsider)):
+        user['provider'] = 'Khinsider'
+        if not khinsider_manager:
+             raise Exception("Modul Khinsider tidak dimuat (Folder/file helper hilang).")
+        
+        try:
+            await start_khinsider(link, user)
+            LOGGER.info("Khinsider: Unduhan berhasil.")
+            return
+        except Exception as e:
+            LOGGER.error(f"Khinsider Gagal: {e}")
             raise e
 
     else:
