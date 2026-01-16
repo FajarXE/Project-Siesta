@@ -37,31 +37,16 @@ class KhinsiderManager:
         title = soup.select_one("#pageContent h2")
         title = title.get_text(strip=True) if title else "Unknown Album"
         
-        # 2. Metadata Teks (Year, Publisher, Date Added)
+        # 2. Ambil Year & Metadata Teks Lainnya
         date = "N/A"
-        publisher = "N/A"
-        date_added = "N/A"
-        
-        # Cari elemen <b> yang berisi label, lalu ambil teks setelahnya
-        # Contoh HTML: <p><b>Published by:</b> STARCHILD<br><b>Date Added:</b> ...</p>
-        
-        # Ambil Tahun (Year)
-        year_node = soup.find('b', string=re.compile(r"Year", re.IGNORECASE))
-        if year_node and year_node.next_sibling:
-            raw_date = str(year_node.next_sibling).strip()
-            match = re.search(r"(\d{4})", raw_date)
-            if match:
-                date = match.group(1)
-
-        # Ambil Publisher (Published by)
-        pub_node = soup.find('b', string=re.compile(r"Published by", re.IGNORECASE))
-        if pub_node and pub_node.next_sibling:
-            publisher = str(pub_node.next_sibling).strip()
-
-        # Ambil Date Added
-        added_node = soup.find('b', string=re.compile(r"Date Added", re.IGNORECASE))
-        if added_node and added_node.next_sibling:
-            date_added = str(added_node.next_sibling).strip()
+        # Cari di paragraf info (biasanya ada <p><b>Year:</b> 2012</p>)
+        page_content = soup.select_one("#pageContent")
+        if page_content:
+            text_content = page_content.get_text()
+            # Regex untuk mencari tahun (4 digit setelah 'Year:')
+            match_year = re.search(r"Year:\s*(\d{4})", text_content)
+            if match_year:
+                date = match_year.group(1)
 
         # 3. Ambil Gambar
         images = []
@@ -72,53 +57,63 @@ class KhinsiderManager:
                 images.append(full_img_url)
         cover_url = images[0] if images else None
 
-        # 4. Parse Tracks
+        # 4. Parse Tracks & Deteksi Disc
         tracks = []
         table = soup.find("table", id="songlist")
+        
         disc_numbers = set()
         
         if table:
             # Cek Header untuk kolom Disc
+            headers = []
             header_row = table.find("tr", id="songlist_header")
-            disc_col_idx = -1
             if header_row:
                 headers = [th.get_text(strip=True).lower() for th in header_row.find_all("th")]
-                for i, h in enumerate(headers):
-                    if "disc" in h:
-                        disc_col_idx = i
-                        break
+            
+            disc_col_idx = -1
+            for i, h in enumerate(headers):
+                if "disc" in h:
+                    disc_col_idx = i
+                    break
 
             rows = table.find_all("tr")[1:]
             for row in rows:
                 if row.get("id") in ["songlist_footer", "songlist_header"]:
                     continue
+                
                 cells = row.find_all("td")
-                if len(cells) < 2: continue
+                if len(cells) < 2: 
+                    continue
                 
                 link = row.find("a", href=True)
-                if not link: continue
+                if not link:
+                    continue
                 
                 track_url = urljoin(url, link['href'])
                 track_name = link.get_text(strip=True)
                 
-                # Nomor Track
+                # Ambil Nomor Track
                 track_num = None
+                # Biasanya kolom setelah disc atau kolom ke-1/ke-2
+                # Kita cari cell yang isinya angka dan ada titik (misal 1.)
                 for cell in cells:
                     txt = cell.get_text(strip=True).replace('.', '')
-                    if txt.isdigit() and len(txt) < 4:
+                    if txt.isdigit() and len(txt) < 4: # Asumsi nomor track < 1000
+                        # Cek apakah ini kolom disc?
                         if disc_col_idx != -1 and cells.index(cell) == disc_col_idx:
                             continue
                         track_num = txt
                         break
                 
-                # Nomor Disc
+                # Ambil Nomor Disc (Jika ada kolomnya)
                 disc_num = 1
                 if disc_col_idx != -1 and len(cells) > disc_col_idx:
                     try:
                         d_txt = cells[disc_col_idx].get_text(strip=True)
                         if d_txt.isdigit():
                             disc_num = int(d_txt)
-                    except: pass
+                    except:
+                        pass
                 
                 disc_numbers.add(disc_num)
 
@@ -136,11 +131,9 @@ class KhinsiderManager:
             'cover': cover_url,
             'images': images,
             'tracks': tracks,
-            'date': date,
-            'publisher': publisher,
-            'date_added': date_added,
-            'totalvolumes': str(total_volumes),
-            'explicit': False,
+            'date': date,               # <-- Baru
+            'totalvolumes': str(total_volumes), # <-- Baru
+            'explicit': False,          # Khinsider mayoritas Game OST (Clean)
             'provider': 'Khinsider'
         }
 
