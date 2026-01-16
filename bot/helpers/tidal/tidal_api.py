@@ -89,6 +89,11 @@ class TidalApi:
     async def get_track(self, track_id):
         return await self._get(f'tracks/{track_id}')
 
+    # --- TAMBAHAN BARU UNTUK COMPOSER ---
+    async def get_track_contributors(self, track_id):
+        """Mengambil daftar kontributor/kredit untuk sebuah lagu (untuk Composer)."""
+        return await self._get(f'tracks/{track_id}/contributors')
+    # --- AKHIR TAMBAHAN ---
 
     async def get_album(self, album_id):
         return await self._get('albums/' + str(album_id))
@@ -500,7 +505,3 @@ class TvSession(BaseSession):
             'Accept-Encoding': 'gzip',
             'User-Agent': 'TIDAL_ANDROID/1039 okhttp/3.14.9'
         }
-
-# --- MODIFIKASI: HAPUS BARIS INI ---
-# tidalapi = TidalApi()
-# --- MODIFIKASI SELESAI ---
