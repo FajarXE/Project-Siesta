@@ -3,6 +3,8 @@
 import requests
 import json
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bot.logger import LOGGER
 
 class HighResAudioApi:
@@ -14,6 +16,20 @@ class HighResAudioApi:
         
         self.exception = exception
         self.s = requests.Session()
+        
+        # --- PERBAIKAN: Strategi Retry Otomatis ---
+        # Mengonfigurasi session untuk melakukan retry otomatis jika koneksi putus
+        retries = Retry(
+            total=5,
+            backoff_factor=1,  # Tunggu 1s, 2s, 4s...
+            status_forcelist=[500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS", "POST"]
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.s.mount("https://", adapter)
+        self.s.mount("http://", adapter)
+        # ------------------------------------------
+
         # Header User-Agent diambil dari HRA-DL.py
         self.s.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:67.0) Gecko/20100101 Firefox/67.0"
@@ -32,7 +48,7 @@ class HighResAudioApi:
             r = self.s.get(f'{self.API_URL}user/login', params={
                 'password': password,
                 'username': username
-            }, timeout=10)
+            }, timeout=30)
 
             r.raise_for_status()
             data = r.json()
@@ -59,7 +75,7 @@ class HighResAudioApi:
         Logika dari HRA-DL.py fetchAlbumId()
         """
         try:
-            r = self.s.get(url)
+            r = self.s.get(url, timeout=30)
             r.raise_for_status()
             
             soup = BeautifulSoup(r.text, "html.parser")
@@ -87,7 +103,7 @@ class HighResAudioApi:
             r = self.s.get(f'{self.API_URL}vault/album/', params={
                 'album_id': album_id,
                 'userData': self.user_data_string 
-            })
+            }, timeout=30)
             r.raise_for_status()
             return r.json()
         except Exception as e:
@@ -101,11 +117,13 @@ class HighResAudioApi:
         """
         headers = {
             "range": "bytes=0-",
-            "referer": f"{self.STREAM_REFERER_URL}{album_id_referer}"
+            "referer": f"{self.STREAM_REFERER_URL}{album_id_referer}",
+            "Connection": "close" # --- PERBAIKAN: Paksa koneksi baru untuk mencegah RemoteDisconnected ---
         }
         
         try:
-            r = self.s.get(url, headers=headers, stream=True, timeout=20)
+            # Timeout dinaikkan ke 30 detik
+            r = self.s.get(url, headers=headers, stream=True, timeout=30)
             r.raise_for_status()
             return r
         except Exception as e:
@@ -118,17 +136,16 @@ class HighResAudioApi:
         Logika dari HRA-DL.py fetchBooklet()
         """
         try:
-            # Booklet adalah URL lengkap 'https://...'
-            r = self.s.get(url, stream=True, timeout=20)
+            # Tambahkan header close juga di sini untuk keamanan
+            headers = {"Connection": "close"}
+            r = self.s.get(url, headers=headers, stream=True, timeout=30)
             r.raise_for_status()
             return r
         except Exception as e:
             LOGGER.error(f"HighResAudio: Gagal memulai stream booklet: {e}")
             raise self.exception(f'Gagal memulai stream booklet: {e}')
 
-    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
     def close_session(self):
         """Menutup sesi 'requests' internal."""
         if self.s:
             self.s.close()
-    # --- AKHIR TAMBAHAN ---
