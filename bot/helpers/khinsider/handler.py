@@ -147,6 +147,19 @@ async def start_khinsider(url, user):
                 await asyncio.to_thread(set_file_tags, filepath, track_meta_for_tag, cover_path, fmt)
             # -----------------------------------
             
+            # --- FIX DURASI: Ambil durasi asli file ---
+            duration = 0
+            try:
+                if fmt == 'flac':
+                    audio = FLAC(filepath)
+                    duration = int(audio.info.length)
+                elif fmt == 'mp3':
+                    audio = MP3(filepath)
+                    duration = int(audio.info.length)
+            except Exception as e:
+                print(f"Gagal baca durasi {filename}: {e}")
+            # ------------------------------------------
+
             meta = {
                 'title': track['title'],
                 'album': album_meta['title'],
@@ -157,7 +170,8 @@ async def start_khinsider(url, user):
                 'cover': cover_path, 
                 'provider': 'Khinsider',
                 'type': 'album',
-                'quality': fmt.upper()
+                'quality': fmt.upper(),
+                'duration': duration # <-- Penting agar durasi tampil di Telegram
             }
             return meta
         except Exception: return None
