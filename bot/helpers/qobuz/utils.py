@@ -332,6 +332,17 @@ async def get_album_metadata(item_id, r_id, user: dict):
     metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
     metadata['thumbnail'] = await create_cover_file(q_meta['image']['thumbnail'], metadata, True)
 
+    # --- BOOKLET CHECK ---
+    metadata['booklet_url'] = None
+    if q_meta.get('goodies'):
+        for goodie in q_meta['goodies']:
+            # ID 21 adalah format untuk PDF Booklet di Qobuz
+            if goodie.get('file_format_id') == 21 and goodie.get('url'):
+                metadata['booklet_url'] = goodie['url']
+                logging.info(f"Booklet ditemukan untuk album: {metadata['title']}")
+                break
+    # ---------------------
+
     metadata['tracks'] = await get_track_meta_from_alb(q_meta, metadata) 
 
     return metadata, None
@@ -613,12 +624,26 @@ async def get_quality(meta: dict, user: dict):
     client = user['qobuz_api'] 
     
     try:
-        u_id = int(user.get("user_id", 0))
+        u_id = str(user.get("user_id", 0))
     except:
-        u_id = 0
+        u_id = "0"
         
-    user_dict = client.user_data.get(u_id, {})
-    quality = user_dict.get("qobuz_qual", client.quality)
+    # --- PERBAIKAN: ADAPTASI UNTUK QOBUZ STATELESS CLIENT ---
+    quality = client.quality
+    if hasattr(client, "_read_db"):
+        # Jika menggunakan qopy.py baru (Stateless)
+        db_data = client._read_db()
+        quality = db_data.get(u_id, client.quality)
+    elif hasattr(client, "user_data"):
+        # Jika menggunakan qopy.py lama (In-Memory)
+        # Handle kemungkinan key berupa int atau string
+        try:
+            u_id_int = int(u_id)
+        except:
+            u_id_int = 0
+        user_dict = client.user_data.get(u_id_int, {})
+        quality = user_dict.get("qobuz_qual", client.quality)
+    # --------------------------------------------------------
     
     if quality == 5:
         return 'mp3', '320K'
