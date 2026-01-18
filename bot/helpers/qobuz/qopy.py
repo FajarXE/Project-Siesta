@@ -5,6 +5,8 @@ import time
 import hashlib
 import aiohttp
 import aiolimiter
+import json
+import os
 
 from config import Config
 
@@ -27,7 +29,30 @@ class QoClient:
         self.ratelimit = aiolimiter.AsyncLimiter(30, 60)
         self.base = "https://www.qobuz.com/api.json/0.2/"
         self.quality = 6
-        self.user_data = {}
+        
+        # Lokasi database file JSON untuk persistensi
+        self.db_file = "qobuz_user_data.json"
+
+    # --- METODE DATABASE (BACA/TULIS LANGSUNG) ---
+    def _read_db(self):
+        """Membaca database dari disk secara real-time."""
+        if os.path.exists(self.db_file):
+            try:
+                with open(self.db_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                LOGGER.error(f"QOBUZ: Gagal membaca DB ({e}), mengembalikan dict kosong.")
+                return {}
+        return {}
+
+    def _write_db(self, data):
+        """Menulis database ke disk."""
+        try:
+            with open(self.db_file, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            LOGGER.error(f"QOBUZ: Gagal menyimpan DB: {e}")
+    # ---------------------------------------------
 
     async def api_call(self, epoint, **kwargs):
         if epoint == "user/login":
@@ -70,7 +95,6 @@ class QoClient:
                 "extra": "albums",
             }
         elif epoint == "favorite/getUserFavorites":
-            # --- FIX: Gunakan timestamp integer ---
             unix = int(time.time())
             r_sig = "favoritegetUserFavorites" + str(unix) + kwargs["sec"]
             
@@ -83,12 +107,10 @@ class QoClient:
                 "request_sig": r_sig_hashed,
             }
         elif epoint == "track/getFileUrl":
-            # --- FIX: Gunakan timestamp integer ---
             unix = int(time.time())
             track_id = kwargs["id"]
             fmt_id = kwargs["fmt_id"]
             
-            # Validasi format ID agar tidak error (5=MP3, 6=FLAC, 7/27=HiRes)
             if int(fmt_id) not in (5, 6, 7, 27):
                 LOGGER.warning(f"QOBUZ: Format ID {fmt_id} tidak valid, fallback ke 6 (Lossless).")
                 fmt_id = 6
@@ -256,22 +278,21 @@ class QoClient:
         if self.sec is None:
             raise Exception("QOBUZ : Can't find any valid app secret") 
 
-    # --- PERBAIKAN UTAMA: Konsistensi User ID Integer ---
+    # --- PERBAIKAN: Baca dari file setiap kali URL diminta ---
     async def get_track_url(self, id, user: dict):
-        # Pastikan user_id adalah integer agar cocok dengan key di user_data
         try:
-            u_id = int(user.get("user_id", 0))
+            u_id = str(user.get("user_id", 0)) # Convert ke string utk key JSON
         except:
-            u_id = 0
+            u_id = "0"
 
-        user_dict = self.user_data.get(u_id, {})
-        quality = user_dict.get("qobuz_qual")
+        # BACA DATABASE LANGSUNG (FRESH)
+        db_data = self._read_db()
+        quality = db_data.get(u_id)
         
-        # Fallback: Jika tidak ada di memori, gunakan default class
+        # Fallback
         if not quality:
             quality = self.quality
 
-        # Log untuk debugging
         LOGGER.info(f"QOBUZ_DEBUG: UserID={u_id} | TrackID={id} | QualityRequested={quality}")
 
         fmt_id = quality
@@ -301,25 +322,26 @@ class QoClient:
             res.append(data)
         return res
 
-    # --- PERBAIKAN UTAMA: Konsistensi User ID saat menyimpan ---
+    # --- PERBAIKAN: Baca -> Update -> Tulis ke file ---
     async def setup_quality(self, user_id: int=0, qual: int=0) -> None:
-        # Paksa user_id dan qual menjadi integer
         try:
-            user_id = int(user_id)
-            qual = int(qual)
+            # Pastikan key adalah string untuk konsistensi JSON
+            s_user_id = str(user_id)
+            i_qual = int(qual)
         except (ValueError, TypeError):
             LOGGER.error(f"QOBUZ: Setup quality gagal, input invalid. User: {user_id}, Qual: {qual}")
             return
 
-        data = {}
-        if user_id not in self.user_data:
-            self.user_data[user_id] = {}
-            
-        if qual:
-            data["qobuz_qual"] = qual
-            LOGGER.info(f"QOBUZ: Quality diset untuk UserID {user_id} -> {qual}")
+        # 1. BACA TERLEBIH DAHULU
+        current_data = self._read_db()
         
-        self.user_data[user_id].update(data)
+        # 2. UPDATE DATA
+        if i_qual:
+            current_data[s_user_id] = i_qual
+            LOGGER.info(f"QOBUZ: Quality diset untuk UserID {s_user_id} -> {i_qual}")
+        
+        # 3. SIMPAN KEMBALI
+        self._write_db(current_data)
 
     async def close_session(self):
         """Menutup sesi aiohttp jika ada."""
