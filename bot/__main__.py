@@ -77,8 +77,17 @@ async def load_all_user_settings_into_managers():
             logging.warning("Main: bot_set.user_data kosong/belum dimuat.")
             return
 
+        # --- FIX: Ambil Referensi Client Qobuz (Untuk Sinkronisasi) ---
+        qobuz_interface = None
+        if BOT_QOBUZ_CLIENTS:
+            # Ambil client pertama saja karena mereka berbagi database JSON yang sama (di qopy.py baru)
+            qobuz_interface = list(BOT_QOBUZ_CLIENTS.values())[0]
+        # --------------------------------------------------------------
+
         for user_id, user_data in bot_set.user_data.items():
             if not user_id: continue
+            
+            # 1. Sinkronisasi Manager Standar
             for key, manager in settings_map.items():
                 quality_val = user_data.get(key)
                 if quality_val and manager:
@@ -86,6 +95,15 @@ async def load_all_user_settings_into_managers():
                         await manager.setup_quality(user_id, quality_val)
                         count += 1
                     except Exception: pass
+            
+            # 2. Sinkronisasi QOBUZ (Manual, karena tidak masuk settings_map)
+            # Ini akan menulis ulang setting dari Mongo ke file JSON qobuz saat startup
+            if qobuz_interface and user_data.get('qobuz_qual'):
+                try:
+                    await qobuz_interface.setup_quality(user_id, user_data['qobuz_qual'])
+                    count += 1
+                except Exception: pass
+
         logging.info(f"Main: Berhasil menyinkronkan {count} pengaturan.")
     except Exception as e:
         logging.error(f"Main: Gagal sinkronisasi pengaturan pengguna: {e}")
