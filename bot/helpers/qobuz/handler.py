@@ -215,6 +215,26 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
 
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
+    # --- LOGIKA DOWNLOAD BOOKLET ---
+    booklet_path = None
+    if album_meta.get('booklet_url'):
+        try:
+            await edit_message(user['bot_msg'], f"Mengunduh Booklet...")
+            LOGGER.info(f"Booklet URL ditemukan: {album_meta['booklet_url']}")
+            
+            temp_path = os.path.join(album_meta['folderpath'], "Booklet.pdf")
+            err_booklet = await download_file(album_meta['booklet_url'], temp_path)
+            
+            if err_booklet:
+                LOGGER.warning(f"Gagal mengunduh booklet: {err_booklet}")
+            else:
+                booklet_path = temp_path
+                LOGGER.info(f"Booklet berhasil disimpan di: {booklet_path}")
+                
+        except Exception as e:
+            LOGGER.warning(f"Error saat memproses booklet: {e}")
+    # -------------------------------
+
     if album_meta.get('cover') and os.path.exists(album_meta['cover']):
         try:
             cover_dest = os.path.join(album_meta['folderpath'], "cover.jpg")
@@ -226,6 +246,22 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
+    
+    # --- LOGIKA KIRIM BOOKLET JIKA TIDAK ZIP (BARU) ---
+    elif booklet_path and os.path.exists(booklet_path):
+        try:
+            await edit_message(user['bot_msg'], "Mengunggah Booklet...")
+            # Menggunakan fitur reply_document dari pesan bot (asumsi Pyrogram)
+            await user['bot_msg'].reply_document(
+                document=booklet_path,
+                caption=f"Booklet: {album_meta['title']} - {album_meta['artist']}",
+                file_name=f"Booklet - {album_meta['title']}.pdf"
+            )
+        except AttributeError:
+             LOGGER.error("Gagal mengirim booklet: Objek pesan tidak mendukung reply_document.")
+        except Exception as e:
+            LOGGER.error(f"Gagal mengunggah booklet: {e}")
+    # --------------------------------------------------
 
     if upload:
         await album_upload(album_meta, user)
