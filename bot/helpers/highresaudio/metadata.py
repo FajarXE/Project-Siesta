@@ -90,6 +90,14 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     metadata['genre'] = data.get('genre', '') 
     metadata['subgenre'] = data.get('subgenre', '') 
     metadata['composer'] = data.get('composer', '')
+    
+    # --- TAMBAHAN BARU: Publisher & UPC ---
+    # Mengambil 'label' sebagai Publisher
+    metadata['publisher'] = data.get('label', '')
+    
+    # Mencoba mengambil 'upc', jika kosong coba ambil 'ean'
+    metadata['upc'] = data.get('upc') or data.get('ean', '')
+    # --------------------------------------
 
     # --- Logika Sampul ---
     cover_url_str = None
@@ -132,6 +140,11 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['genre'] = metadata['genre']
             track_meta['subgenre'] = metadata['subgenre']
             track_meta['composer'] = metadata['composer']
+            
+            # --- TAMBAHAN BARU: Salin Publisher & UPC ke Track ---
+            track_meta['publisher'] = metadata['publisher']
+            track_meta['upc'] = metadata['upc']
+            # -----------------------------------------------------
 
             # Metadata spesifik lagu
             track_meta['itemid'] = track.get('id') 
@@ -148,7 +161,15 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['quality'] = f"{track.get('format')} kHz FLAC"
             track_meta['extension'] = 'flac'
             
-            track_meta['download_url'] = track.get('url')
+            # --- PERBAIKAN URL (DNS FIX) ---
+            raw_url = track.get('url')
+            if raw_url:
+                # Mengganti domain internal/rusak 'cdn.' dengan 'stream.'
+                track_meta['download_url'] = raw_url.replace('cdn.highresaudio.com', 'stream.highresaudio.com')
+            else:
+                track_meta['download_url'] = None
+            # --------------------------------
+
             track_meta['album_id_referer'] = album_id 
 
             if not track_meta['download_url']:
@@ -160,10 +181,9 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             LOGGER.error(f"HighResAudio: Gagal memproses track {track.get('title')}: {e}\n{traceback.format_exc()}")
             continue
 
-    # --- PERBAIKAN: Logika Booklet ---
+    # --- Logika Booklet ---
     if "booklet" in data and data['booklet']:
         booklet_url = data['booklet']
-        # Cek apakah URL memiliki skema (http/https), jika tidak tambahkan https://
         if not booklet_url.startswith('http'):
             booklet_url = f"https://{booklet_url}"
             
