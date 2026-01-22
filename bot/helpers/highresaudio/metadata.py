@@ -76,9 +76,12 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
-    # --- Metadata Dasar ---
+    # --- PERBAIKAN TANGGAL ---
+    # Menangani format 'YYYY-MM-DD HH:MM:SS' (spasi) atau 'YYYY-MM-DDTHH:MM:SSZ' (ISO)
     release_date_raw = data.get('releaseDate', '') 
-    if ' ' in release_date_raw:
+    if 'T' in release_date_raw:
+        metadata['release_date'] = release_date_raw.split('T')[0]
+    elif ' ' in release_date_raw:
         metadata['release_date'] = release_date_raw.split(' ')[0] 
     else:
         metadata['release_date'] = release_date_raw
@@ -91,13 +94,9 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     metadata['subgenre'] = data.get('subgenre', '') 
     metadata['composer'] = data.get('composer', '')
     
-    # --- TAMBAHAN BARU: Publisher & UPC ---
-    # Mengambil 'label' sebagai Publisher
+    # --- Publisher & UPC ---
     metadata['publisher'] = data.get('label', '')
-    
-    # Mencoba mengambil 'upc', jika kosong coba ambil 'ean'
     metadata['upc'] = data.get('upc') or data.get('ean', '')
-    # --------------------------------------
 
     # --- Logika Sampul ---
     cover_url_str = None
@@ -141,10 +140,9 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['subgenre'] = metadata['subgenre']
             track_meta['composer'] = metadata['composer']
             
-            # --- TAMBAHAN BARU: Salin Publisher & UPC ke Track ---
+            # Salin Publisher & UPC ke Track
             track_meta['publisher'] = metadata['publisher']
             track_meta['upc'] = metadata['upc']
-            # -----------------------------------------------------
 
             # Metadata spesifik lagu
             track_meta['itemid'] = track.get('id') 
@@ -161,11 +159,12 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['quality'] = f"{track.get('format')} kHz FLAC"
             track_meta['extension'] = 'flac'
             
-            # --- PERBAIKAN URL (DNS FIX) ---
+            # --- PERBAIKAN URL (DNS FIX REVISI) ---
             raw_url = track.get('url')
             if raw_url:
-                # Mengganti domain internal/rusak 'cdn.' dengan 'stream.'
-                track_meta['download_url'] = raw_url.replace('cdn.highresaudio.com', 'stream.highresaudio.com')
+                # Mengganti 'cdn.' yang rusak dengan 'streaming.' (domain API)
+                # 'stream.' (sebelumnya) ternyata juga tidak bisa di-resolve.
+                track_meta['download_url'] = raw_url.replace('cdn.highresaudio.com', 'streaming.highresaudio.com')
             else:
                 track_meta['download_url'] = None
             # --------------------------------
