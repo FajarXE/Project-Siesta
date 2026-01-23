@@ -7,6 +7,8 @@ import asyncio
 import aiofiles
 import hashlib
 import traceback
+import random
+import aiohttp
 from mutagen.flac import FLAC, Picture
 from config import Config
 from bot.logger import LOGGER
@@ -58,9 +60,7 @@ async def start_moov(url: str, user: dict):
             await start_album(album_id, user, filter_track_id=track_id)
             
         except Exception as e:
-            # FIX: Jangan telan error download sebagai error parsing
-            if "Gagal mengunduh" in str(e):
-                raise e
+            if "Gagal mengunduh" in str(e): raise e
             raise Exception(f"Gagal memparsing/memproses link Share Moov: {e}")
     else:
         raise Exception("Link Moov tidak dikenali. Mendukung: Album, Lagu, Chart, Playlist, dan Share Link.")
@@ -112,19 +112,34 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
 
     if upload and not filter_track_id:
         try:
-            album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+            asyncio.create_task(post_art_poster(user, album_meta))
         except Exception as e:
             LOGGER.error(f"Poster Error (Ignored): {e}")
 
     tasks = []
     for track in album_meta['tracks']:
-        tasks.append(download_track(track, user, album_folder))
+        # [SETTING] ALBUM & TRACK = TURBO MODE (TRUE)
+        tasks.append(download_track(track, user, album_folder, turbo_mode=True))
 
     dl_type = 'Single Track' if filter_track_id else 'Album'
+    
+    ui_template = (
+        "╭─ ᴘʀᴏɢʀᴇss\n"
+        "│\n"
+        "├ {0}\n"
+        "│\n"
+        "├ ᴅᴏɴᴇ : {1} / {2}\n"
+        "│\n"
+        "├ ᴛɪᴛʟᴇ : {3}\n"
+        "│\n"
+        "╰─ ᴛʏᴘᴇ : {4}"
+    )
+    
     update_details = {
-        'text': f"Downloading {dl_type}: {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': ui_template,
         'msg': user['bot_msg'], 
-        'title': album_meta['title'], 'type': 'album'
+        'title': album_meta['title'], 
+        'type': dl_type
     }
     
     task_results = await run_concurrent_tasks(tasks, update_details)
@@ -139,7 +154,6 @@ async def start_album(album_id, user, upload=True, filter_track_id=None):
             album_meta['tracks'] = successful_tracks
             album_meta['type'] = 'album'
     else:
-        # Pesan error ini yang muncul di log Anda sebelumnya
         raise Exception("Gagal mengunduh lagu (Stream key kosong atau region blocked).")
 
     try:
@@ -165,10 +179,7 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
         full_product = await client.get_product_meta(track_id)
         if full_product:
             album_id = full_product.get('albumId') or full_product.get('album', {}).get('id')
-        else:
-            LOGGER.warning(f"Moov: Product {track_id} gagal (404/Null), menggunakan data Shallow.")
-    except Exception:
-        LOGGER.warning(f"Moov: Exception saat ambil product {track_id}.")
+    except Exception: pass
 
     if not album_id:
         album_id = shallow_track_meta.get('moov_album_id')
@@ -183,8 +194,7 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
                 if raw_album:
                     album_meta_full = await process_album_metadata(raw_album, user['r_id'], user)
                     album_cache[album_id] = album_meta_full 
-            except Exception as e:
-                LOGGER.warning(f"Gagal fetch album context {album_id}: {e}")
+            except Exception as e: pass
 
     deep_meta = None
 
@@ -198,29 +208,21 @@ async def enrich_and_download_chart_track(shallow_track_meta, user, folderpath, 
         )
     else:
         deep_meta = shallow_track_meta.copy()
-        
-        # INJECT DATA ALBUM (FALLBACK)
         if album_meta_full:
-            if album_meta_full.get('cover'):
-                deep_meta['cover'] = album_meta_full['cover']
-                deep_meta['cover_url'] = None 
-                
-            if album_meta_full.get('label'):
-                deep_meta['label'] = album_meta_full['label']
+            if album_meta_full.get('cover'): deep_meta['cover'] = album_meta_full['cover']
+            if album_meta_full.get('label'): deep_meta['label'] = album_meta_full['label']
             if album_meta_full.get('date'):
                 deep_meta['date'] = album_meta_full['date']
                 deep_meta['year'] = album_meta_full['year']
-            if album_meta_full.get('copyright'):
-                deep_meta['copyright'] = album_meta_full['copyright']
-                
-            # FIX: Injeksi Total Tracks manual untuk Fallback
-            if album_meta_full.get('totaltracks'):
-                deep_meta['totaltracks'] = album_meta_full['totaltracks']
-            if album_meta_full.get('totalvolumes'):
-                deep_meta['totalvolumes'] = album_meta_full['totalvolumes']
+            if album_meta_full.get('copyright'): deep_meta['copyright'] = album_meta_full['copyright']
+            if album_meta_full.get('totaltracks'): deep_meta['totaltracks'] = album_meta_full['totaltracks']
+            if album_meta_full.get('totalvolumes'): deep_meta['totalvolumes'] = album_meta_full['totalvolumes']
+            if album_meta_full.get('upc'): deep_meta['upc'] = album_meta_full.get('upc')
+            if album_meta_full.get('ean'): deep_meta['ean'] = album_meta_full.get('ean')
 
     deep_meta['folderpath'] = folderpath
-    return await download_track(deep_meta, user, folderpath)
+    # [SETTING] PLAYLIST = DEFAULT MODE (FALSE) AGAR AMAN
+    return await download_track(deep_meta, user, folderpath, turbo_mode=False)
 
 async def start_playlist(pid, user):
     client = user['moov_api']
@@ -240,7 +242,7 @@ async def start_playlist(pid, user):
     pl_meta['folderpath'] = pl_folder
 
     try:
-        pl_meta['poster_msg'] = await post_art_poster(user, pl_meta)
+        asyncio.create_task(post_art_poster(user, pl_meta))
     except: pass
 
     album_cache = {} 
@@ -249,10 +251,23 @@ async def start_playlist(pid, user):
     for track in pl_meta['tracks']:
         tasks.append(enrich_and_download_chart_track(track, user, pl_folder, album_cache))
 
+    ui_template = (
+        "╭─ ᴘʀᴏɢʀᴇss\n"
+        "│\n"
+        "├ {0}\n"
+        "│\n"
+        "├ ᴅᴏɴᴇ : {1} / {2}\n"
+        "│\n"
+        "├ ᴛɪᴛʟᴇ : {3}\n"
+        "│\n"
+        "╰─ ᴛʏᴘᴇ : {4}"
+    )
+
     update_details = {
-        'text': f"Downloading Playlist: {{0}} {{1}}/{{2}}\n{{3}} ({{4}})", 
+        'text': ui_template, 
         'msg': user['bot_msg'], 
-        'title': pl_meta['title'], 'type': 'playlist'
+        'title': pl_meta['title'], 
+        'type': 'Playlist'
     }
     
     task_results = await run_concurrent_tasks(tasks, update_details)
@@ -278,51 +293,87 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         audio = FLAC(filepath)
         audio.delete() 
         
-        audio['TITLE'] = meta.get('title', '')
-        audio['ARTIST'] = meta.get('artist', '')
-        audio['PERFORMER'] = meta.get('artist', '') 
+        # --- BASIC ---
+        if meta.get('title'): audio['TITLE'] = meta.get('title')
+        if meta.get('artist'): 
+            audio['ARTIST'] = meta.get('artist')
+            audio['PERFORMER'] = meta.get('artist')
+        if meta.get('albumartist'): audio['ALBUMARTIST'] = meta.get('albumartist')
+        if meta.get('album'): audio['ALBUM'] = meta.get('album')
+        if meta.get('genre'): audio['GENRE'] = meta.get('genre')
+        if meta.get('composer'): audio['COMPOSER'] = meta.get('composer')
+        if meta.get('producer'): audio['PRODUCER'] = meta.get('producer')
         
-        audio['ALBUMARTIST'] = meta.get('albumartist', '')
-        audio['ALBUM'] = meta.get('album', '')
-        
-        audio['GENRE'] = meta.get('genre', '')
-        audio['COMPOSER'] = meta.get('composer', '')
-        
-        if meta.get('producer'):
-            audio['PRODUCER'] = meta.get('producer')
-            
-        audio['COPYRIGHT'] = meta.get('copyright', '')
-        audio['DISCNUMBER'] = str(meta.get('disk', ''))
-        audio['TRACKNUMBER'] = str(meta.get('tracknumber', ''))
-        
-        if meta.get('totaltracks'):
-            audio['TRACKTOTAL'] = str(meta.get('totaltracks'))
-            audio['TOTALTRACKS'] = str(meta.get('totaltracks'))
-        
-        if meta.get('date'):
-            audio['DATE'] = str(meta.get('date'))
-            audio['YEAR'] = str(meta.get('date'))[:4]
-            audio['ORIGINALDATE'] = str(meta.get('date'))
-            audio['RELEASEDATE'] = str(meta.get('date')) 
-            audio['RECORDEDDATE'] = str(meta.get('date')) 
+        # --- COPYRIGHT ---
+        final_cpr = meta.get('copyright')
+        if not final_cpr: final_cpr = meta.get('label')
+             
+        if final_cpr:
+            audio['COPYRIGHT'] = str(final_cpr)
+            audio['RIGHTS'] = str(final_cpr) 
 
         if meta.get('label'):
-            audio['ORGANIZATION'] = meta.get('label', '')
-            audio['LABEL'] = meta.get('label', '')
-            audio['PUBLISHER'] = meta.get('label', '') 
+            audio['ORGANIZATION'] = meta.get('label')
+            audio['LABEL'] = meta.get('label')
+            audio['PUBLISHER'] = meta.get('label') 
 
+        # --- TRACK/DISC ---
+        if meta.get('tracknumber'): audio['TRACKNUMBER'] = str(meta.get('tracknumber'))
+        if meta.get('disk'): audio['DISCNUMBER'] = str(meta.get('disk'))
+        
+        t_tracks = meta.get('totaltracks')
+        if t_tracks and str(t_tracks) != 'None':
+            audio['TRACKTOTAL'] = str(t_tracks)
+            audio['TOTALTRACKS'] = str(t_tracks)
+        
+        t_vols = meta.get('totalvolumes')
+        if t_vols and str(t_vols) != 'None':
+            audio['DISCTOTAL'] = str(t_vols)
+            audio['TOTALDISCS'] = str(t_vols)
+
+        # --- DATES ---
+        if meta.get('date'):
+            d = str(meta.get('date'))
+            audio['DATE'] = d
+            audio['YEAR'] = d[:4]
+            audio['ORIGINALDATE'] = d
+            audio['RELEASEDATE'] = d
+
+        # --- ISRC ---
+        if meta.get('isrc'):
+            audio['ISRC'] = str(meta.get('isrc'))
+
+        # --- BARCODE ---
+        upc_val = meta.get('upc') or meta.get('ean') or meta.get('barcode')
+        if upc_val:
+            val = str(upc_val)
+            audio['BARCODE'] = val
+            audio['UPC'] = val
+            audio['EAN'] = val
+
+        # --- EXPLICIT ---
+        if meta.get('explicit') == "True":
+            audio['ITUNESADVISORY'] = '1'
+            audio['RATING'] = 'Explicit'
+        else:
+            audio['ITUNESADVISORY'] = '0'
+
+        # --- LYRICS ---
         if lyrics and isinstance(lyrics, str) and len(lyrics) > 10:
             audio['LYRICS'] = lyrics
             audio['UNSYNCEDLYRICS'] = lyrics 
         
+        # --- COVER ---
         if cover_path and os.path.exists(cover_path):
-            p = Picture()
-            with open(cover_path, 'rb') as f:
-                p.data = f.read()
-            p.type = 3 
-            p.mime = 'image/jpeg'
-            p.desc = 'Front Cover'
-            audio.add_picture(p)
+            try:
+                p = Picture()
+                with open(cover_path, 'rb') as f:
+                    p.data = f.read()
+                p.type = 3 
+                p.mime = 'image/jpeg'
+                p.desc = 'Front Cover'
+                audio.add_picture(p)
+            except: pass
             
         audio.save()
         return int(audio.info.length)
@@ -331,62 +382,65 @@ async def apply_mutagen_tags(filepath, meta, cover_path, lyrics=None):
         LOGGER.error(f"Mutagen Error: {e}")
         return 0
 
-async def download_track(track_meta, user, folderpath):
+# --- TURBO WORKER (Untuk Album/Track) ---
+async def download_segment_worker(session, url, path, semaphore):
+    async with semaphore:
+        for attempt in range(5): 
+            try:
+                timeout = aiohttp.ClientTimeout(total=45) 
+                async with session.get(url, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        async with aiofiles.open(path, 'wb') as f:
+                            await f.write(data)
+                        return True
+                    else:
+                        pass
+            except Exception: pass
+            await asyncio.sleep(1 + (attempt * 0.5))
+        return False
+
+# --- HYBRID DOWNLOADER ---
+async def download_track(track_meta, user, folderpath, turbo_mode=False):
     meta = track_meta.copy()
     client = user['moov_api']
     
-    if not meta.get('itemid'):
-        LOGGER.error("Moov: Fatal - Item ID hilang dalam metadata.")
-        return False
+    if not meta.get('itemid'): return False
 
     file_meta = None
     target_quality = meta.get('moov_quality_code', 'LL')
-    
-    # Ambil Album ID dari metadata
     album_context_id = meta.get('moov_album_id')
 
+    # STEP 1: API Checkout
     try:
-        # Kirim album_id ke API checkout
         file_meta = await client.get_track_file_meta(
-            meta['itemid'], 
-            target_quality, 
-            album_id=album_context_id
+            meta['itemid'], target_quality, album_id=album_context_id
         )
     except Exception as e:
         LOGGER.warning(f"Moov Stream Check Error ({target_quality}): {e}")
 
     if not file_meta and target_quality != 'LL':
-        LOGGER.info(f"Moov: Kualitas {target_quality} tidak tersedia untuk {meta.get('itemid')}, mencoba Fallback ke LL...")
         try:
-            # Kirim album_id juga untuk fallback
             file_meta = await client.get_track_file_meta(
-                meta['itemid'], 
-                'LL', 
-                album_id=album_context_id
+                meta['itemid'], 'LL', album_id=album_context_id
             )
-            if file_meta:
-                meta['quality'] = 'FLAC 16bit' 
+            if file_meta: meta['quality'] = 'FLAC 16bit' 
         except: pass
 
     if not file_meta:
-        LOGGER.warning(f"Moov: Gagal mendapatkan Stream URL untuk {meta.get('itemid')} (Mungkin Region Locked/Video?).")
         return False
         
     play_url = file_meta.get('playUrl')
     content_key = file_meta.get('contentKey')
-    
-    if not play_url or not content_key:
-        LOGGER.warning(f"Moov: PlayUrl/ContentKey kosong untuk {meta.get('itemid')}.")
-        return False
+    if not play_url or not content_key: return False
 
+    # STEP 2: Key Processing
     key_bytes = None
     try:
         m = hashlib.md5()
         m.update((content_key + SECRET_SALT).encode('UTF-8'))
         key_bytes = bytes.fromhex(m.hexdigest())
-    except Exception as e:
-        LOGGER.error(f"Moov: Gagal decode Key: {e}")
-        return False
+    except Exception as e: return False
 
     try:
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, meta, user)
@@ -398,15 +452,11 @@ async def download_track(track_meta, user, folderpath):
 
         final_filepath = os.path.join(folderpath, f"{safe_filename}.flac")
         
-        abs_path = os.path.abspath(final_filepath)
-        meta['filepath'] = abs_path
-        meta['filename'] = os.path.basename(abs_path)
-        meta['is_downloaded'] = True
-        
         key_filepath = os.path.join(track_temp_dir, "key.bin")
         async with aiofiles.open(key_filepath, 'wb') as f:
             await f.write(key_bytes)
 
+        # COVER
         cover_local_path = None
         target_url = meta.get('cover_url')
         if target_url:
@@ -427,6 +477,7 @@ async def download_track(track_meta, user, folderpath):
             cover_local_path = os.path.join(track_temp_dir, "cover_fallback.jpg")
             shutil.copy(meta['cover'], cover_local_path)
 
+        # STEP 3: M3U8
         hls_headers = {'User-Agent': 'Moov-Android/1.0/hls-hr'} 
         m3u8_content = None
         
@@ -436,14 +487,10 @@ async def download_track(track_meta, user, folderpath):
                     if resp.status == 200: 
                         m3u8_content = await resp.text()
                         break
-                    else:
-                        LOGGER.warning(f"Moov: M3U8 Fetch Status {resp.status}, Retrying...")
-            except Exception as e:
-                LOGGER.warning(f"Moov: M3U8 Fetch Exception ({e}), Retrying...")
-                await asyncio.sleep(2) 
+                    else: pass
+            except: await asyncio.sleep(1)
         
         if not m3u8_content:
-            LOGGER.error(f"Moov: Gagal mengambil M3U8 setelah 3x percobaan.")
             shutil.rmtree(track_temp_dir)
             return False
 
@@ -458,27 +505,50 @@ async def download_track(track_meta, user, folderpath):
         remote_segments = [line.strip() for line in m3u8_content.splitlines() if line and not line.startswith('#')]
         local_segment_names = []
         
-        for index, seg_url in enumerate(remote_segments):
-            seg_name = f"seg_{index:04d}.flac"
-            seg_path = os.path.join(track_temp_dir, seg_name)
-            local_segment_names.append(seg_name)
+        # STEP 4: HYBRID SEGMENT DOWNLOADER
+        if turbo_mode:
+            # --- TURBO MODE (ALBUM/TRACK) ---
+            # Menggunakan 16 koneksi paralel
+            semaphore = asyncio.Semaphore(16) 
+            seg_tasks = []
             
-            success = False
-            for _ in range(3):
-                try:
-                    async with client.session.get(seg_url) as seg_resp:
-                        if seg_resp.status == 200:
-                            data = await seg_resp.read()
-                            async with aiofiles.open(seg_path, 'wb') as f:
-                                await f.write(data)
-                            success = True
-                            break
-                except: continue
+            for index, seg_url in enumerate(remote_segments):
+                seg_name = f"seg_{index:04d}.flac"
+                seg_path = os.path.join(track_temp_dir, seg_name)
+                local_segment_names.append(seg_name)
+                seg_tasks.append(download_segment_worker(client.session, seg_url, seg_path, semaphore))
             
-            if not success:
+            seg_results = await asyncio.gather(*seg_tasks)
+            if not all(seg_results):
+                LOGGER.error(f"Turbo Mode: Gagal mengunduh beberapa segmen.")
                 shutil.rmtree(track_temp_dir)
                 return False
+        else:
+            # --- DEFAULT MODE (PLAYLIST) ---
+            # Mengunduh SATU PER SATU (Sequential) agar aman dari ban
+            for index, seg_url in enumerate(remote_segments):
+                seg_name = f"seg_{index:04d}.flac"
+                seg_path = os.path.join(track_temp_dir, seg_name)
+                local_segment_names.append(seg_name)
+                
+                success = False
+                for _ in range(3): # Retry 3x
+                    try:
+                        async with client.session.get(seg_url) as seg_resp:
+                            if seg_resp.status == 200:
+                                data = await seg_resp.read()
+                                async with aiofiles.open(seg_path, 'wb') as f:
+                                    await f.write(data)
+                                success = True
+                                break
+                    except: await asyncio.sleep(0.5)
+                
+                if not success:
+                    LOGGER.error(f"Default Mode: Gagal segmen {index}.")
+                    shutil.rmtree(track_temp_dir)
+                    return False
 
+        # Local M3U8 Gen
         local_m3u8_path = os.path.join(track_temp_dir, "local.m3u8")
         iv_line = ""
         iv_match = re.search(r'IV=0x([0-9a-fA-F]+)', m3u8_content)
@@ -495,10 +565,12 @@ async def download_track(track_meta, user, folderpath):
                 await f.write(f"{seg_name}\n")
             await f.write("#EXT-X-ENDLIST\n")
 
+        # STEP 5: FFmpeg Optimized
         cmd = [
             'ffmpeg', '-y',
             '-allowed_extensions', 'ALL',
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+            '-threads', '0',      
             '-i', local_m3u8_path,
             '-c', 'flac', 
             final_filepath
@@ -518,7 +590,11 @@ async def download_track(track_meta, user, folderpath):
             return False
             
         meta['filesize'] = os.path.getsize(final_filepath)
+        meta['filepath'] = os.path.abspath(final_filepath)
+        meta['filename'] = os.path.basename(final_filepath)
+        meta['is_downloaded'] = True
 
+        # STEP 6: Lyrics & Tags
         lyrics_text = None
         try:
             track_id = str(meta.get('itemid', ''))
