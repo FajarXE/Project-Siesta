@@ -3,6 +3,7 @@
 import aiohttp
 import aiofiles
 import os
+import shutil
 import traceback
 import asyncio
 
@@ -194,6 +195,21 @@ async def start_album(album_id: str, user: dict, upload=True):
     # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     # --- AKHIR PERBAIKAN ---
+
+    # --- MODIFIKASI: MENYALIN COVER KE FOLDER ALBUM SEBELUM ZIP ---
+    # Kita cek apakah file cover ada di path sementara, lalu copy ke folder album sebagai 'cover.jpg'
+    if album_meta.get('cover') and os.path.exists(album_meta['cover']):
+        try:
+            cover_filename = "cover.jpg"
+            cover_dest_path = os.path.join(album_meta['folderpath'], cover_filename)
+            
+            # Hanya salin jika belum ada di sana
+            if not os.path.exists(cover_dest_path):
+                shutil.copy2(album_meta['cover'], cover_dest_path)
+                LOGGER.info(f"Cover disalin ke folder zip: {cover_dest_path}")
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover ke folder album: {e}")
+    # --- BATAS MODIFIKASI ---
 
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
