@@ -21,18 +21,6 @@ QUALITY_MAP_BITRATE = {
     "MP3_128": 128,
     "MP3_64": 64
 }
-# Pemetaan dari nilai bitrate ke tampilan
-QUALITY_MAP_DISPLAY = {
-    "FLAC": ("FLAC", "flac"),
-    "AAC_320": ("AAC 320k", "m4a"),
-    "AAC_192": ("AAC 192k", "m4a"),
-    "AAC_128": ("AAC 128k", "m4a"),
-    "AAC_64": ("AAC 64k", "m4a"),
-    # MQA tidak didukung, kita perlakukan sebagai FLAC
-}
-# Urutan prioritas kualitas
-QUALITY_ORDER = ["FLAC", "MP3_320", "MP3_192", "MP3_128", "MP3_64"]
-
 
 def custom_url_parse(link: str):
     """Mengekstrak Tipe dan ID dari URL Napster"""
@@ -56,16 +44,6 @@ def custom_url_parse(link: str):
 
         item_id_str = '/'.join([i for i in path_components if i not in ['', 'track', 'album', 'artist', 'playlist']])
         
-        # API tampaknya menggunakan ID, bukan string path.
-        # Kita mungkin perlu pencarian tambahan di handler.
-        # Untuk saat ini, kita kembalikan string path.
-        # TODO: Handler mungkin perlu mencari ID dari string ini.
-        # Untuk track/album/artist, ID biasanya ada di path
-        
-        # Asumsi format: /artist/nama-artis/album/nama-album/track/nama-track
-        # Asumsi format: /album/art.12345
-        
-        # Mari kita asumsikan ID ada di path, cari format 'art.123', 'alb.123', 'tra.123'
         item_id = None
         for comp in reversed(path_components):
              if comp.startswith(('art.', 'alb.', 'tra.', 'ppl.')):
@@ -73,19 +51,15 @@ def custom_url_parse(link: str):
                  break
         
         if not item_id:
-             # Jika tidak ada ID, kita harus mencari berdasarkan nama (ini rumit)
-             # Untuk saat ini, kita coba kembalikan komponen terakhir sebagai ID
              item_id = item_id_str.split('/')[-1]
-             LOGGER.warning(f"Napster: URL path tidak mengandung ID eksplisit. Mencoba menggunakan '{item_id}'. Ini mungkin gagal.")
+             LOGGER.warning(f"Napster: URL path tidak mengandung ID eksplisit. Mencoba menggunakan '{item_id}'.")
 
         return item_type, item_id, {}
 
 
 async def _process_cover(metadata: dict, album_id: str):
     """Memproses sampul dari ID Album Napster"""
-    # --- PERBAIKAN: Memperbaiki typo URL (https. -> https://) ---
     url = f"https://api.napster.com/imageserver/v2/albums/{album_id}/images/600x600.jpg"
-    # --- BATAS PERBAIKAN ---
     return await create_cover_file(url, metadata)
 
 
@@ -96,25 +70,20 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     try:
-        # Panggil API di thread terpisah
         if pre_data:
             track_data = pre_data
         else:
             track_data_list = await asyncio.to_thread(client.get_items_list, 'tracks', track_id)
-            # --- PERBAIKAN: Tangani IndexError ---
             if not track_data_list:
-                raise NapsterError(f"Track {track_id} tidak ditemukan atau tidak tersedia (mungkin region-lock).")
-            # --- BATAS PERBAIKAN ---
+                raise NapsterError(f"Track {track_id} tidak ditemukan.")
             track_data = track_data_list[0]
             
         if alb_info_pre:
             album_data = alb_info_pre
         else:
             album_data_list = await asyncio.to_thread(client.get_items_list, 'albums', track_data['albumId'])
-            # --- PERBAIKAN: Tangani IndexError (meskipun jarang terjadi di sini) ---
             if not album_data_list:
-                raise NapsterError(f"Album {track_data['albumId']} untuk track {track_id} tidak ditemukan.")
-            # --- BATAS PERBAIKAN ---
+                raise NapsterError(f"Album {track_data['albumId']} tidak ditemukan.")
             album_data = album_data_list[0]
 
     except Exception as e:
@@ -122,65 +91,94 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         raise e
 
     if not track_data.get('isStreamable', False):
-        raise NapsterError(f"Track '{track_data['name']}' tidak streamable.")
+        raise NapsterError(f"Track '{track_data.get('name')}' tidak streamable.")
 
     metadata['itemid'] = track_id
     
-    # --- PERBAIKAN: Gunakan .get() atau '' untuk semua tag string ---
-    # Ini untuk mencegah crash 'NoneType' di set_m4a
     metadata['title'] = track_data.get('name') or ''
     metadata['album'] = track_data.get('albumName') or ''
     metadata['albumartist'] = album_data.get('artistName') or ''
     
-    metadata['tracknumber'] = str(track_data.get('index') or '')
-    
-    # Sediakan nilai default untuk 'volume' dan 'totalvolume'
+    # --- MODIFIKASI: Menambahkan .zfill(2) agar format menjadi 01, 02, dst ---
+    _idx = track_data.get('index')
+    metadata['tracknumber'] = str(_idx).zfill(2) if _idx else ''
+    # ------------------------------------------------------------------------
+
     metadata['volume'] = str(track_data.get('disc') or '')
     metadata['totalvolume'] = str(album_data.get('discCount') or '')
-    
     metadata['totaltracks'] = str(album_data.get('trackCount') or '')
     
-    # Tangani jika tanggal rilis (released) adalah None
     release_date = album_data.get('released')
     if release_date:
         metadata['date'] = release_date.split('-')[0]
-    # 'date' akan menjadi '' jika tidak ada, yang aman untuk set_m4a
     
     metadata['copyright'] = album_data.get('copyright') or ''
     metadata['upc'] = album_data.get('upc') or ''
     metadata['isrc'] = track_data.get('isrc') or ''
-    # --- BATAS PERBAIKAN ---
     
+    # Label & Publisher
+    if album_data.get('label'):
+        metadata['label'] = album_data['label']
+        metadata['publisher'] = album_data['label']
+    else:
+        metadata['label'] = ''
+        metadata['publisher'] = ''
+
     metadata['explicit'] = bool(track_data.get('isExplicit'))
     metadata['provider'] = 'Napster'
     metadata['type'] = 'track'
 
-    # --- Logika Artis & Composer ---
+    # --- PERBAIKAN LOGIKA KONTRIBUTOR (COMPOSER) ---
     artists = [track_data.get('artistName') or '']
     composers = []
+    producers = [] 
     
+    # Inisialisasi key agar tidak KeyError di set_metadata
+    metadata['composer'] = ''
+    metadata['producer'] = ''
+
     if track_data.get('contributors'):
         try:
+            # Napster ID -> Nama
             contrib_ids = list(track_data['contributors'].values())
             contrib_data = await asyncio.to_thread(client.get_string_from_items_list, 'artists', contrib_ids, 'name')
             
-            # Balikkan data untuk pemetaan mudah
-            contrib_map = {role: contrib_data[id] for role, id in track_data['contributors'].items()}
+            # Log untuk debugging (Cek Console saat bot berjalan!)
+            LOGGER.info(f"Napster Debug [{track_id}]: Roles ditemukan -> {list(track_data['contributors'].keys())}")
 
-            if 'nonPrimary' in contrib_map and contrib_map['nonPrimary'] not in artists:
-                artists.append(contrib_map['nonPrimary'])
-            
-            if 'composer' in contrib_map:
-                composers.append(contrib_map['composer'])
+            for role, artist_id in track_data['contributors'].items():
+                name = contrib_data.get(artist_id)
+                if not name: continue
+                
+                role_lower = role.lower()
+                
+                # Artist
+                if any(x in role_lower for x in ['primary', 'guest', 'featured']):
+                    if name not in artists: artists.append(name)
+                
+                # Composer (termasuk writer/lyricist jika perlu)
+                elif any(x in role_lower for x in ['composer', 'writer', 'lyricist', 'author']):
+                    if name not in composers: composers.append(name)
+                
+                # Producer (termasuk engineer/mixer jika perlu)
+                elif any(x in role_lower for x in ['producer', 'engineer', 'mixer', 'remixer']):
+                    if name not in producers: producers.append(name)
+
         except Exception as e:
             LOGGER.warning(f"Napster: Gagal memproses kontributor: {e}")
 
+    # Set ke metadata dict
     metadata['artist'] = ", ".join(artists)
+    
     if composers:
         metadata['composer'] = ", ".join(composers)
-    # --- Batas Logika Artis ---
+        LOGGER.info(f"Napster Debug [{track_id}]: Composer set ke -> {metadata['composer']}")
     
-    # --- Logika Genre ---
+    if producers:
+        metadata['producer'] = ", ".join(producers)
+    # --- BATAS PERBAIKAN ---
+    
+    # Genre
     if track_data['links'].get('genres'):
         try:
             genre_ids = track_data['links']['genres']['ids']
@@ -191,70 +189,51 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     # Sampul
     metadata['cover'] = await _process_cover(metadata, track_data["albumId"])
-    metadata['thumbnail'] = metadata['cover'] # Napster tidak menyediakan thumbnail kecil
+    metadata['thumbnail'] = metadata['cover']
 
-    # --- Logika Kualitas ---
+    # Kualitas
     user_id = user.get('user_id')
     preferred_quality_key = napster_manager.get_user_quality(user_id)
     requested_bitrate = QUALITY_MAP_BITRATE[preferred_quality_key]
     
-    # Periksa batas langganan klien
     if requested_bitrate > client.max_bitrate:
         requested_bitrate = client.max_bitrate
     if requested_bitrate == -1 and not client.hires_enabled:
-        requested_bitrate = 320 # Turunkan ke 320 jika HiRes tidak aktif
+        requested_bitrate = 320 
 
     chosen_bitrate = 0
     chosen_codec = ""
     
     if requested_bitrate == -1 and track_data.get('losslessFormats'):
-        # Coba dapatkan Lossless
         l_format = track_data['losslessFormats'][0]
         chosen_bitrate = l_format['bitrate']
-        chosen_codec = l_format['name'] # Akan menjadi 'FLAC' atau 'MQA'
+        chosen_codec = l_format['name'] 
         metadata['quality'] = f"FLAC {l_format['sampleBits']}-bit {l_format['sampleRate']/1000}kHz"
         metadata['extension'] = "flac"
         if chosen_codec == 'MQA':
              metadata['quality'] = f"MQA {l_format['sampleBits']}-bit {l_format['sampleRate']/1000}kHz"
 
     else:
-        # --- PERBAIKAN: Logika Fallback Kualitas ---
-        # Jika FLAC diminta (bitrate == -1) TAPI tidak tersedia (kita masuk ke block 'else' ini),
-        # kita harus mencari kualitas lossy terbaik yang tersedia.
-        # Kita atur 'effective_bitrate' ke nilai tinggi (320) agar loop di bawah
-        # dapat menemukan format lossy terbaik.
+        effective_bitrate = requested_bitrate if requested_bitrate != -1 else 320
         
-        effective_bitrate = requested_bitrate
-        if effective_bitrate == -1:
-            # Ini adalah fallback dari FLAC. Cari lossy terbaik (maks 320k).
-            effective_bitrate = 320 
-        # --- BATAS PERBAIKAN ---
-
-        # Cari format lossy terbaik (AAC)
         for f in track_data['formats']:
-            # Gunakan effective_bitrate untuk perbandingan
             if f['bitrate'] <= effective_bitrate and f['bitrate'] > chosen_bitrate and f['name'] != 'MQA':
                 chosen_bitrate = f['bitrate']
-                chosen_codec = f['name'] # Akan menjadi 'AAC' atau 'AAC PLUS'
+                chosen_codec = f['name']
         
         if chosen_bitrate == 0:
-            # Jika masih 0, berarti TIDAK ADA format yang tersedia
             raise NapsterError(f"Tidak ada bitrate yang cocok ditemukan (diminta <= {effective_bitrate})")
         
-        display_codec = "AAC"
-        if chosen_codec == "AAC PLUS":
-            display_codec = "HE-AAC"
-
+        display_codec = "AAC" if chosen_codec != "AAC PLUS" else "HE-AAC"
         metadata['quality'] = f"{display_codec} {chosen_bitrate}k"
         metadata['extension'] = "m4a"
 
     metadata['download_bitrate'] = chosen_bitrate
     metadata['download_codec'] = chosen_codec
-    # --- Batas Logika Kualitas ---
     
     return metadata
 
-
+# --- BAGIAN PROCESS_ALBUM SAMA SEPERTI SEBELUMNYA (TIDAK PERLU DIUBAH JIKA SUDAH) ---
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
     """Memproses metadata untuk satu album."""
     client = user['napster_api']
@@ -262,15 +241,11 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     try:
-        # Panggil API di thread terpisah
         album_data_list = await asyncio.to_thread(client.get_items_list, 'albums', album_id)
-        # --- PERBAIKAN: Tangani IndexError ---
         if not album_data_list:
-            raise NapsterError(f"Album {album_id} tidak ditemukan atau tidak tersedia (mungkin region-lock).")
-        # --- BATAS PERBAIKAN ---
+            raise NapsterError(f"Album {album_id} tidak ditemukan.")
         album_data = album_data_list[0]
         
-        # Dapatkan semua track untuk album
         tracks_dict = await asyncio.to_thread(client.get_items_dict, 'albums', album_data['id'], 'tracks', 'tracks', 200)
 
     except Exception as e:
@@ -278,31 +253,24 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
         raise e
 
     metadata['itemid'] = album_id
-    
-    # --- PERBAIKAN: Gunakan .get() atau '' untuk semua tag string ---
     metadata['title'] = album_data.get('name') or ''
     metadata['album'] = album_data.get('name') or ''
     metadata['artist'] = album_data.get('artistName') or ''
     metadata['albumartist'] = album_data.get('artistName') or ''
     
-    # Tangani jika tanggal rilis (released) adalah None
     release_date = album_data.get('released')
     if release_date:
         metadata['date'] = release_date.split('-')[0]
-    # 'date' akan menjadi '' jika tidak ada, yang aman untuk poster
     
     metadata['totaltracks'] = str(album_data.get('trackCount') or '')
-    
-    # Tambahkan Total Volumes (Total Discs) untuk Poster Album
     if album_data.get('discCount'):
         metadata['totalvolumes'] = str(album_data.get('discCount'))
-    # --- BATAS PERBAIKAN ---
-    
+
+    metadata['label'] = album_data.get('label') or ''
     metadata['explicit'] = bool(album_data.get('isExplicit'))
     metadata['provider'] = 'Napster'
     metadata['type'] = 'album'
     
-    # Sampul
     metadata['cover'] = await _process_cover(metadata, album_data["id"])
     metadata['thumbnail'] = metadata['cover']
 
