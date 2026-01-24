@@ -118,12 +118,9 @@ async def process_track_metadata(item_id: str, r_id: str, user: dict):
         final_quality = None
         
         # 4. Cari Link Download (Retry Logic)
-        # Kita coba akun 'active_client' dulu. Jika gagal (misal limit), coba akun lain.
-        # Urutkan: active_client ditaruh paling depan, sisanya diacak.
         download_candidates = [active_client] + [c for c in clients if c != active_client]
         
         for client in download_candidates:
-            # Perbarui prioritas kualitas berdasarkan status sub akun INI
             current_sub = beatsource_manager.subscription_cache.get(client, "basic")
             current_priority = quality_priority if current_sub == "pro" else ["medium"]
 
@@ -138,7 +135,7 @@ async def process_track_metadata(item_id: str, r_id: str, user: dict):
                     pass
             
             if dl_url:
-                break # Berhasil dapat link
+                break 
         
         if not dl_url:
             raise BeatsourceError(f"Gagal mendapatkan URL unduhan track {item_id} di semua akun yang tersedia.")
@@ -155,7 +152,10 @@ async def process_track_metadata(item_id: str, r_id: str, user: dict):
         meta['album'] = release_data['name']
         meta['albumartist'] = ", ".join([a['name'] for a in release_artists])
         
-        meta['tracknumber'] = str(track_data.get('track_number') or 1)
+        # --- PERBAIKAN: Gunakan .zfill(2) untuk Track Number Single ---
+        raw_track_number = str(track_data.get('track_number') or 1)
+        meta['tracknumber'] = raw_track_number.zfill(2)
+        
         meta['totaltracks'] = str(release_data.get('track_count') or 1)
         meta['volume'] = "1"
         meta['totalvolume'] = "1"
@@ -198,7 +198,6 @@ async def process_album_metadata(item_id: str, r_id: str, user: dict):
     meta['volume'] = "1"
     meta['totalvolume'] = "1"
 
-    # Load Balancing: Acak klien untuk request metadata album
     clients = get_shuffled_clients()
     
     release_data = None
@@ -225,7 +224,7 @@ async def process_album_metadata(item_id: str, r_id: str, user: dict):
             if not tracks_data.get('next'):
                 break
             page += 1
-            if page > 10: break # Safety break
+            if page > 10: break 
         except:
             break
 
@@ -249,12 +248,10 @@ async def process_album_metadata(item_id: str, r_id: str, user: dict):
     
     for i, track_data in enumerate(tracks_list):
         try:
-            # Panggil process_track_metadata untuk setiap lagu
-            # Ini akan otomatis melakukan load balancing untuk download link tiap lagunya
             track_meta = await process_track_metadata(track_data['id'], r_id, user)
             
-            # Override tracknumber agar sesuai urutan album
-            track_meta['tracknumber'] = str(i + 1)
+            # --- PERBAIKAN: Override tracknumber dengan .zfill(2) ---
+            track_meta['tracknumber'] = str(i + 1).zfill(2)
             track_meta['totaltracks'] = meta['totaltracks']
             
             tracks_meta_list.append(track_meta)
@@ -293,12 +290,10 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
     # Cari apakah ini Playlist atau Chart di semua akun
     for client in clients:
         try:
-            # Coba sebagai Playlist
             try:
                 playlist_data = await client.get_playlist(item_id)
                 tracks_endpoint = client.get_playlist_tracks
             except:
-                # Jika gagal, coba sebagai Chart
                 playlist_data = await client.get_chart(item_id)
                 tracks_endpoint = client.get_chart_tracks
             
@@ -324,7 +319,6 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
         except:
             break
         
-    # Filter hasil (Struktur playlist beda dengan chart)
     tracks_list = []
     if tracks_endpoint == active_client.get_playlist_tracks:
         for item in tracks_list_raw:
@@ -337,10 +331,8 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
     meta['artist'] = playlist_data.get('user', {}).get('name', 'Beatsource')
     meta['totaltracks'] = str(len(tracks_list))
     
-    # Cover Art
     cover_uri = playlist_data.get('image', {}).get('dynamic_uri', '')
     if not cover_uri and playlist_data.get("release_images"):
-        # Jika cover playlist kosong, ambil dari salah satu rilis di dalamnya
         cover_uri = playlist_data.get("release_images")[0].get("dynamic_uri", "")
 
     meta['cover'] = await create_cover_file(cover_uri.format(w=1400, h=1400), meta)
@@ -352,7 +344,9 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
     for i, track_data in enumerate(tracks_list):
         try:
             track_meta = await process_track_metadata(track_data['id'], r_id, user)
-            track_meta['tracknumber'] = str(i + 1)
+            
+            # --- PERBAIKAN: Override tracknumber dengan .zfill(2) ---
+            track_meta['tracknumber'] = str(i + 1).zfill(2)
             track_meta['totaltracks'] = meta['totaltracks']
             tracks_meta_list.append(track_meta)
             
