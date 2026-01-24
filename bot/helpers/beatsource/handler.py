@@ -18,7 +18,8 @@ from .metadata import (
     process_playlist_metadata,
     custom_url_parse
 )
-from .api import BeatsourceError
+from .api import BeatsourceError, USER_AGENT # Import USER_AGENT
+from .manager import beatsource_manager # Import manager untuk refresh link
 
 from ..utils import *
 
@@ -41,38 +42,64 @@ except ImportError:
     lyrics_manager = None
 
 # --- KONFIGURASI KEAMANAN ---
-# Batasi hanya 2 koneksi unduhan bersamaan untuk Beatsource agar akun aman
 BEATSOURCE_SEMAPHORE = asyncio.Semaphore(2)
 
 # --- HELPER PROGRESS BAR ---
 def make_progress_bar(current, total):
-    """Membuat string visual bar (misal: ▰▰▰▱▱)."""
-    if total == 0:
-        return "▱" * 10
+    if total == 0: return "▱" * 10
     percentage = current / total
     finished_length = int(percentage * 10)
     prog_str = "▰" * finished_length + "▱" * (10 - finished_length)
     return prog_str
 
 async def update_progress_msg(msg, current, total, title, media_type):
-    """
-    Memformat pesan progress agar placeholder {0}, {1} terisi dengan benar.
-    Mencegah tampilan error raw string.
-    """
     try:
         bar = make_progress_bar(current, total)
-        # Format string sesuai template di lang.s.DOWNLOAD_PROGRESS
-        # {0} = Bar, {1} = Current, {2} = Total, {3} = Title, {4} = Type
         formatted_text = lang.s.DOWNLOAD_PROGRESS.format(
-            bar,      # {0}
-            current,  # {1}
-            total,    # {2}
-            title,    # {3}
-            media_type # {4}
+            bar, current, total, title, media_type
         )
         await edit_message(msg, formatted_text)
     except Exception as e:
         LOGGER.debug(f"Gagal update pesan progress: {e}")
+
+async def refresh_track_url(item_id: str, current_meta: dict):
+    """
+    Fungsi darurat: Meminta URL baru ke API jika URL lama expired (403).
+    Menggunakan akun dari manager secara acak/tersedia.
+    """
+    try:
+        # Mapping kualitas Metadata -> API Key
+        # Metadata: "FLAC" -> API: "lossless"
+        # Metadata: "AAC 256" -> API: "high"
+        quality_map = {
+            "FLAC": "lossless",
+            "AAC 256": "high",
+            "AAC 128": "medium"
+        }
+        
+        display_quality = current_meta.get('quality', 'AAC 256')
+        api_quality = quality_map.get(display_quality, "high")
+
+        LOGGER.info(f"Beatsource: Refreshing URL for track {item_id} ({api_quality})...")
+        
+        # Ambil daftar klien yang aktif dari manager
+        clients = list(beatsource_manager.clients)
+        random.shuffle(clients) # Acak agar load balancing tetap jalan
+        
+        for client in clients:
+            try:
+                # Coba minta link download baru
+                stream_data = await client.get_track_download(item_id, api_quality)
+                new_url = stream_data.get("location")
+                if new_url:
+                    return new_url
+            except Exception:
+                continue
+        
+        return None
+    except Exception as e:
+        LOGGER.error(f"Gagal refresh URL track Beatsource {item_id}: {e}")
+        return None
 
 # ----------------------------
 
@@ -101,11 +128,28 @@ async def start_beatsource(url: str, user: dict):
 
 
 async def download_beatsource_track(url: str, filepath: str):
-    """Pengunduh HTTP async sederhana."""
+    """
+    Pengunduh HTTP async dengan Header Browser & Deteksi 403.
+    """
     try:
-        async with aiohttp.ClientSession() as session:
+        # Header lengkap agar tidak dianggap bot
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+            "Referer": "https://www.beatsource.com/"
+        }
+
+        # Timeout 10 menit
+        timeout = aiohttp.ClientTimeout(total=600)
+
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.get(url) as response:
+                # Tangkap 403 (Forbidden/Expired) secara spesifik
+                if response.status == 403:
+                    return "403_FORBIDDEN"
+
                 response.raise_for_status()
+                
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
                 async with aiofiles.open(filepath, "wb") as f:
                     async for chunk in response.content.iter_chunked(8192):
@@ -118,11 +162,8 @@ async def download_beatsource_track(url: str, filepath: str):
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
 
-    # --- RATE LIMITING / ANTI-BAN ---
-    # Menggunakan Semaphore memastikan tidak ada lonjakan request
     async with BEATSOURCE_SEMAPHORE:
-        # Tambahkan delay random (3-7 detik) agar terlihat humanis
-        delay = random.uniform(3.0, 7.0)
+        delay = random.uniform(3.0, 6.0)
         await asyncio.sleep(delay)
         
         if not track_meta:
@@ -148,7 +189,23 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         filepath += f"/{safe_filename}.{track_meta['extension']}"
         track_meta['filepath'] = filepath
 
+        # --- DOWNLOAD PERTAMA ---
         err = await download_beatsource_track(download_url, track_meta['filepath'])
+
+        # --- LOGIKA RETRY (AUTO REFRESH URL) ---
+        if err == "403_FORBIDDEN":
+            LOGGER.warning(f"URL Beatsource Track {item_id} expired (403). Mencoba refresh URL...")
+            
+            # Minta URL baru
+            new_url = await refresh_track_url(item_id, track_meta)
+            
+            if new_url:
+                track_meta['download_url'] = new_url # Update di memori
+                # Coba download lagi
+                err = await download_beatsource_track(new_url, track_meta['filepath'])
+            else:
+                err = "Gagal refresh URL Beatsource (tetap 403/Error API)."
+
         if err:
             LOGGER.error(f"Beatsource dl_track gagal untuk {item_id}: {err}")
             return False
@@ -189,17 +246,15 @@ async def start_album(album_id: str, user: dict, upload=True):
     total = len(album_meta['tracks'])
     successful_tracks = []
 
-    # Update Progress Awal (0/Total)
     await update_progress_msg(user['bot_msg'], 0, total, album_meta['title'], album_meta['type'])
 
-    # Loop Sekuensial (Aman)
     for i, track in enumerate(album_meta['tracks']):
+        # URL mungkin expired, start_track akan handle
         success = await start_track(track['itemid'], user, track, False, album_folder)
         
         if success:
             successful_tracks.append(track)
             
-        # Update Progress Bar setiap lagu selesai
         await update_progress_msg(user['bot_msg'], i + 1, total, album_meta['title'], album_meta['type'])
 
     album_meta['tracks'] = successful_tracks
@@ -246,15 +301,14 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     total = len(play_meta['tracks'])
     successful_tracks = []
 
-    # Update Progress Awal
     await update_progress_msg(user['bot_msg'], 0, total, play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
+        # Start_track akan otomatis refresh URL jika kena 403
         success = await start_track(track['itemid'], user, track, False, playlist_folder)
         if success:
             successful_tracks.append(track)
         
-        # Update Progress Bar
         await update_progress_msg(user['bot_msg'], i + 1, total, play_meta['title'], play_meta['type'])
 
     play_meta['tracks'] = successful_tracks
