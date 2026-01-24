@@ -18,8 +18,8 @@ from .metadata import (
     process_playlist_metadata,
     custom_url_parse
 )
-from .api import BeatsourceError, USER_AGENT # Import USER_AGENT
-from .manager import beatsource_manager # Import manager untuk refresh link
+from .api import BeatsourceError, USER_AGENT
+from .manager import beatsource_manager
 
 from ..utils import *
 
@@ -65,26 +65,29 @@ async def update_progress_msg(msg, current, total, title, media_type):
 async def refresh_track_url(item_id: str, current_meta: dict):
     """
     Fungsi darurat: Meminta URL baru ke API jika URL lama expired (403).
-    Menggunakan akun dari manager secara acak/tersedia.
+    PERBAIKAN: Mapping kualitas diperluas agar format file (FLAC/AAC) konsisten.
     """
     try:
         # Mapping kualitas Metadata -> API Key
-        # Metadata: "FLAC" -> API: "lossless"
-        # Metadata: "AAC 256" -> API: "high"
+        # Metadata dari metadata.py menggunakan capitalize() -> Lossless, High, Medium
         quality_map = {
+            "Lossless": "lossless", # Fix: Tambahkan ini agar FLAC tetap FLAC
             "FLAC": "lossless",
+            "High": "high",
             "AAC 256": "high",
+            "Medium": "medium",
             "AAC 128": "medium"
         }
         
-        display_quality = current_meta.get('quality', 'AAC 256')
+        display_quality = current_meta.get('quality', 'High')
+        # Default ke 'high' (AAC) hanya jika kualitas tidak dikenali
         api_quality = quality_map.get(display_quality, "high")
 
         LOGGER.info(f"Beatsource: Refreshing URL for track {item_id} ({api_quality})...")
         
         # Ambil daftar klien yang aktif dari manager
         clients = list(beatsource_manager.clients)
-        random.shuffle(clients) # Acak agar load balancing tetap jalan
+        random.shuffle(clients) 
         
         for client in clients:
             try:
@@ -132,25 +135,23 @@ async def download_beatsource_track(url: str, filepath: str):
     Pengunduh HTTP async dengan Header Browser & Deteksi 403.
     """
     try:
-        # Header lengkap agar tidak dianggap bot
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "*/*",
             "Referer": "https://www.beatsource.com/"
         }
 
-        # Timeout 10 menit
         timeout = aiohttp.ClientTimeout(total=600)
 
         async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.get(url) as response:
-                # Tangkap 403 (Forbidden/Expired) secara spesifik
                 if response.status == 403:
                     return "403_FORBIDDEN"
 
                 response.raise_for_status()
                 
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                # Mode "wb" akan menimpa file lama (truncate), jadi aman untuk retry
                 async with aiofiles.open(filepath, "wb") as f:
                     async for chunk in response.content.iter_chunked(8192):
                         await f.write(chunk)
@@ -196,12 +197,12 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         if err == "403_FORBIDDEN":
             LOGGER.warning(f"URL Beatsource Track {item_id} expired (403). Mencoba refresh URL...")
             
-            # Minta URL baru
+            # Minta URL baru dengan kualitas yang BENAR
             new_url = await refresh_track_url(item_id, track_meta)
             
             if new_url:
-                track_meta['download_url'] = new_url # Update di memori
-                # Coba download lagi
+                track_meta['download_url'] = new_url 
+                # Coba download lagi (akan menimpa file .flac dengan konten FLAC yang baru)
                 err = await download_beatsource_track(new_url, track_meta['filepath'])
             else:
                 err = "Gagal refresh URL Beatsource (tetap 403/Error API)."
@@ -218,6 +219,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         except Exception as e:
             LOGGER.error(f"Gagal memproses metadata Beatsource: {filepath} -> {e}")
             try:
+                # Hapus file korup agar tidak menuhin disk
                 os.remove(filepath)
             except:
                 pass
@@ -249,7 +251,6 @@ async def start_album(album_id: str, user: dict, upload=True):
     await update_progress_msg(user['bot_msg'], 0, total, album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
-        # URL mungkin expired, start_track akan handle
         success = await start_track(track['itemid'], user, track, False, album_folder)
         
         if success:
@@ -304,7 +305,6 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     await update_progress_msg(user['bot_msg'], 0, total, play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
-        # Start_track akan otomatis refresh URL jika kena 403
         success = await start_track(track['itemid'], user, track, False, playlist_folder)
         if success:
             successful_tracks.append(track)
