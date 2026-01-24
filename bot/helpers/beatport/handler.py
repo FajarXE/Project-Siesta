@@ -7,7 +7,7 @@ import shutil
 import traceback
 import asyncio 
 import random 
-import math # Tambahan untuk hitungan matematika progress bar
+import math 
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -18,7 +18,7 @@ from .metadata import (
     process_playlist_metadata,
     custom_url_parse
 )
-from .api import BeatportError
+from .api import BeatportError, USER_AGENT # Import USER_AGENT dari api.py
 
 from ..utils import *
 
@@ -46,9 +46,9 @@ BEATPORT_SEMAPHORE = asyncio.Semaphore(2)
 # --- FUNGSI HELPER PROGRESS BAR ---
 def make_progress_bar(current, total):
     """Membuat visual progress bar sederhana."""
+    if total == 0: return "▱" * 10
     percentage = current / total
-    finished_length = int(percentage * 10) # Panjang bar 10 blok
-    # Karakter bar (bisa diganti sesuai selera)
+    finished_length = int(percentage * 10) 
     prog_str = "▰" * finished_length + "▱" * (10 - finished_length)
     return prog_str
 
@@ -56,8 +56,6 @@ async def update_progress_msg(msg, current, total, title, media_type):
     """Memformat pesan progress agar {0}, {1} terisi."""
     try:
         bar = make_progress_bar(current, total)
-        # Format string sesuai template di lang.s.DOWNLOAD_PROGRESS
-        # {0} = Bar, {1} = Current, {2} = Total, {3} = Title, {4} = Type
         formatted_text = lang.s.DOWNLOAD_PROGRESS.format(
             bar,      # {0}
             current,  # {1}
@@ -96,11 +94,27 @@ async def start_beatport(url: str, user: dict):
 
 
 async def download_beatport_track(url: str, filepath: str):
-    """Pengunduh HTTP async sederhana untuk file Beatport (MP4/FLAC)."""
+    """
+    Pengunduh HTTP async untuk file Beatport.
+    PERBAIKAN: Menambahkan User-Agent agar tidak ditolak (403 Forbidden) oleh CDN.
+    """
     try:
-        async with aiohttp.ClientSession() as session:
+        # Gunakan header User-Agent yang sama dengan API agar dianggap browser valid
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+            "Referer": "https://www.beatport.com/"
+        }
+        
+        timeout = aiohttp.ClientTimeout(total=600) # Timeout 10 menit buat jaga-jaga file besar
+        
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.get(url) as response:
+                if response.status == 403:
+                    return f"Akses ditolak (403 Forbidden). URL mungkin expired atau UA salah."
+                
                 response.raise_for_status()
+                
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
                 async with aiofiles.open(filepath, "wb") as f:
                     async for chunk in response.content.iter_chunked(8192):
@@ -115,7 +129,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
     # --- RATE LIMITING / ANTI-BAN PENTING ---
     async with BEATPORT_SEMAPHORE:
-        delay = random.uniform(3.0, 8.0)
+        delay = random.uniform(2.0, 5.0) # Sedikit dipercepat delay-nya
         await asyncio.sleep(delay)
         
         if not track_meta:
@@ -141,6 +155,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         filepath += f"/{safe_filename}.{track_meta['extension']}"
         track_meta['filepath'] = filepath
 
+        # Download dengan header yang sudah diperbaiki
         err = await download_beatport_track(download_url, track_meta['filepath'])
         if err:
             LOGGER.error(f"Beatport dl_track gagal untuk {item_id}: {err}")
@@ -182,7 +197,6 @@ async def start_album(album_id: str, user: dict, upload=True):
     total = len(album_meta['tracks'])
     successful_tracks = []
     
-    # Update pesan awal dengan format yang benar (0/Total)
     await update_progress_msg(user['bot_msg'], 0, total, album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
@@ -191,8 +205,6 @@ async def start_album(album_id: str, user: dict, upload=True):
         if success:
             successful_tracks.append(track)
             
-        # Update progress setiap kali selesai 1 lagu
-        # Menggunakan format yang benar agar {0} terisi bar
         await update_progress_msg(user['bot_msg'], i + 1, total, album_meta['title'], album_meta['type'])
 
     album_meta['tracks'] = successful_tracks
@@ -240,7 +252,6 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     total = len(play_meta['tracks'])
     successful_tracks = []
 
-    # Update pesan awal
     await update_progress_msg(user['bot_msg'], 0, total, play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
@@ -248,7 +259,6 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
         if success:
             successful_tracks.append(track)
         
-        # Update progress dengan format yang benar
         await update_progress_msg(user['bot_msg'], i + 1, total, play_meta['title'], play_meta['type'])
 
     play_meta['tracks'] = successful_tracks
