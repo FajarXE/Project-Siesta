@@ -7,7 +7,7 @@ import urllib.parse
 import logging
 import os 
 import traceback 
-import random  # Tambahkan import random
+import random 
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -140,10 +140,8 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                 available_clients.append(other_client)
 
     # --- LOAD BALANCING: ACAK CLIENT ---
-    # Agar request tidak selalu numpuk di akun pertama
     random.shuffle(available_clients)
-    # -----------------------------------
-
+    
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
@@ -192,7 +190,11 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     metadata['album'] = album_data.get("name", "Unknown Album")
     metadata['date'] = track_data.get("publish_date")
-    metadata['tracknumber'] = str(track_data.get("number", 1))
+    
+    # --- PERBAIKAN: Format 2 Digit (01, 02) ---
+    raw_track_number = str(track_data.get("number", 1))
+    metadata['tracknumber'] = raw_track_number.zfill(2)
+    
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
     metadata['volume'] = "1"
@@ -278,7 +280,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             
     # --- LOAD BALANCING ---
     random.shuffle(available_clients)
-    # ----------------------
 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -395,7 +396,6 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
 
     # --- LOAD BALANCING ---
     random.shuffle(available_clients)
-    # ----------------------
 
     active_client = None
     playlist_data = None
@@ -465,8 +465,8 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
         try:
             track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
             
-            # Playlist membutuhkan nomor urut
-            track_meta['tracknumber'] = i + 1 
+            # --- PERBAIKAN: Format 2 Digit untuk Playlist (01, 02) ---
+            track_meta['tracknumber'] = str(i + 1).zfill(2)
             
             metadata['tracks'].append(track_meta)
         except Exception as e:
