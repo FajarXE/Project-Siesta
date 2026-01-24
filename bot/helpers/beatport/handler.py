@@ -18,7 +18,7 @@ from .metadata import (
     process_playlist_metadata,
     custom_url_parse
 )
-from .api import BeatportError, USER_AGENT # Import USER_AGENT dari api.py
+from .api import BeatportError, USER_AGENT
 
 from ..utils import *
 
@@ -67,6 +67,37 @@ async def update_progress_msg(msg, current, total, title, media_type):
     except Exception as e:
         LOGGER.warning(f"Gagal update pesan progress: {e}")
 
+async def refresh_track_url(item_id: str, current_meta: dict, user: dict):
+    """
+    Fungsi darurat untuk mengambil URL baru jika URL lama expired (403).
+    """
+    try:
+        client = user.get('beatport_api')
+        if not client: return None
+
+        # Mapping balik dari nama kualitas di Metadata ke Key API
+        # Metadata: "FLAC" -> API: "lossless"
+        # Metadata: "AAC 256" -> API: "high"
+        quality_map = {
+            "FLAC": "lossless",
+            "AAC 256": "high",
+            "AAC 128": "medium"
+        }
+        
+        display_quality = current_meta.get('quality', 'AAC 256')
+        api_quality = quality_map.get(display_quality, "high") # Default ke high jika bingung
+
+        LOGGER.info(f"Beatport: Refreshing URL for track {item_id} ({api_quality})...")
+        
+        # Request URL baru
+        stream_data = await client.get_track_download(item_id, api_quality)
+        new_url = stream_data.get("location")
+        
+        return new_url
+    except Exception as e:
+        LOGGER.error(f"Gagal refresh URL track {item_id}: {e}")
+        return None
+
 # ----------------------------------
 
 async def start_beatport(url: str, user: dict):
@@ -94,24 +125,21 @@ async def start_beatport(url: str, user: dict):
 
 
 async def download_beatport_track(url: str, filepath: str):
-    """
-    Pengunduh HTTP async untuk file Beatport.
-    PERBAIKAN: Menambahkan User-Agent agar tidak ditolak (403 Forbidden) oleh CDN.
-    """
+    """Pengunduh HTTP async dengan proteksi User-Agent."""
     try:
-        # Gunakan header User-Agent yang sama dengan API agar dianggap browser valid
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "*/*",
             "Referer": "https://www.beatport.com/"
         }
         
-        timeout = aiohttp.ClientTimeout(total=600) # Timeout 10 menit buat jaga-jaga file besar
+        timeout = aiohttp.ClientTimeout(total=600) 
         
         async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.get(url) as response:
+                # Tangkap 403 secara spesifik agar bisa diretry
                 if response.status == 403:
-                    return f"Akses ditolak (403 Forbidden). URL mungkin expired atau UA salah."
+                    return "403_FORBIDDEN"
                 
                 response.raise_for_status()
                 
@@ -127,9 +155,8 @@ async def download_beatport_track(url: str, filepath: str):
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
 
-    # --- RATE LIMITING / ANTI-BAN PENTING ---
     async with BEATPORT_SEMAPHORE:
-        delay = random.uniform(2.0, 5.0) # Sedikit dipercepat delay-nya
+        delay = random.uniform(2.0, 5.0)
         await asyncio.sleep(delay)
         
         if not track_meta:
@@ -155,8 +182,24 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         filepath += f"/{safe_filename}.{track_meta['extension']}"
         track_meta['filepath'] = filepath
 
-        # Download dengan header yang sudah diperbaiki
+        # --- DOWNLOAD PERTAMA ---
         err = await download_beatport_track(download_url, track_meta['filepath'])
+
+        # --- LOGIKA RETRY JIKA EXPIRED (403) ---
+        if err == "403_FORBIDDEN":
+            LOGGER.warning(f"URL Track {item_id} expired (403). Mencoba refresh URL...")
+            
+            # Minta URL baru yang segar
+            new_url = await refresh_track_url(item_id, track_meta, user)
+            
+            if new_url:
+                track_meta['download_url'] = new_url # Update metadata
+                # Coba download lagi dengan URL baru
+                err = await download_beatport_track(new_url, track_meta['filepath'])
+            else:
+                err = "Gagal refresh URL (tetap 403 atau API error)."
+
+        # Cek hasil akhir
         if err:
             LOGGER.error(f"Beatport dl_track gagal untuk {item_id}: {err}")
             return False
@@ -200,6 +243,8 @@ async def start_album(album_id: str, user: dict, upload=True):
     await update_progress_msg(user['bot_msg'], 0, total, album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
+        # Kita passing metadata track apa adanya. Jika URL expired di tengah jalan, 
+        # start_track akan otomatis memperbaruinya.
         success = await start_track(track['itemid'], user, track, False, album_folder)
         
         if success:
@@ -255,6 +300,7 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     await update_progress_msg(user['bot_msg'], 0, total, play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
+        # URL mungkin expired di sini untuk track2 terakhir, tapi start_track akan mengurusnya
         success = await start_track(track['itemid'], user, track, False, playlist_folder)
         if success:
             successful_tracks.append(track)
