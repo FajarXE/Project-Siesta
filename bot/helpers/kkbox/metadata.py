@@ -153,6 +153,12 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                 if not album_data_more or 'info' not in album_data_more:
                     raise KKBoxError("Invalid get_album_more response")
                 alb_info = album_data_more['info']
+                # --- MENANGKAP LABEL/COMPANY ---
+                if 'company' in album_data_more.get('info', {}):
+                    alb_info['label'] = album_data_more['info']['company']
+                else:
+                    alb_info['label'] = ""
+                # -------------------------------
                 alb_info['num_tracks'] = len(album_data_more.get('song_list', {}).get('song', []))
             except Exception as e:
                 alb_obj = track_data.get('album', {})
@@ -161,7 +167,8 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                     'artist_name': alb_obj.get('artist', {}).get('name', 'Unknown Artist'),
                     'album_date': alb_obj.get('release_date', ''),
                     'num_tracks': 1, 
-                    'album_photo_info': {'url_template': alb_obj.get('images', [{}])[0].get('url', '')}
+                    'album_photo_info': {'url_template': alb_obj.get('images', [{}])[0].get('url', '')},
+                    'label': '' # Default kosong
                 }
 
     except Exception as e:
@@ -193,6 +200,24 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['isrc'] = track_data.get('isrc') or ""
     # ----------------------
 
+    # --- MENANGKAP COMPOSER ---
+    composers = []
+    if 'composer' in track_data:
+        comp_data = track_data['composer']
+        if isinstance(comp_data, list):
+            for c in comp_data:
+                if 'name' in c: composers.append(c['name'])
+        elif isinstance(comp_data, dict) and 'name' in comp_data:
+            composers.append(comp_data['name'])
+            
+    metadata['composer'] = ", ".join(composers) if composers else ""
+    # --------------------------
+
+    # --- MENANGKAP LABEL & PUBLISHER ---
+    metadata['label'] = alb_info.get('label') or alb_info.get('company') or ""
+    metadata['publisher'] = metadata['label'] # Seringkali label dianggap publisher
+    # -----------------------------------
+
     fixed_alb_date = alb_info.get('album_date')
     track_date = track_data.get('release_date')
     
@@ -209,7 +234,11 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['date'] = final_date
     metadata['year'] = final_date[:4] if final_date else ""
 
-    metadata['tracknumber'] = str(track_data.get('song_idx', 1))
+    # --- PERBAIKAN: ZERO PADDING (01, 02...) ---
+    track_num = str(track_data.get('song_idx', 1))
+    metadata['tracknumber'] = track_num.zfill(2)
+    # -------------------------------------------
+
     metadata['totaltracks'] = str(alb_info.get('num_tracks', 1))
     metadata['totalvolume'] = str(alb_info.get('num_volumes', 1))
     
@@ -281,6 +310,10 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             album_data_more = await asyncio.to_thread(client.get_album_more, raw_id)
             if album_data_more and 'info' in album_data_more and 'song_list' in album_data_more:
                 alb_info = album_data_more['info']
+                # --- MENANGKAP LABEL DI LEVEL ALBUM ---
+                if 'company' in album_data_more.get('info', {}):
+                    alb_info['label'] = album_data_more['info']['company']
+                # --------------------------------------
                 tracks_list = album_data_more['song_list']['song']
                 alb_info['num_tracks'] = len(tracks_list)
             else:
@@ -305,7 +338,8 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 'album_is_explicit': v_data.get('explicit', False),
                 'album_photo_info': {
                     'url_template': v_data.get('images', [{}])[0].get('url', '')
-                }
+                },
+                'label': '' # Default
             }
             
             for rt in data_tracks:
@@ -352,6 +386,11 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['provider'] = 'KKBox'
     metadata['type'] = 'album'
     
+    # --- MENANGKAP LABEL ALBUM ---
+    metadata['label'] = alb_info.get('label') or alb_info.get('company') or ""
+    metadata['publisher'] = metadata['label']
+    # -----------------------------
+
     cover_template = alb_info['album_photo_info']['url_template']
     metadata['cover'] = await _process_cover(metadata, cover_template)
     metadata['thumbnail'] = await create_cover_file(cover_template.replace('{width}', '80').replace('{height}', '80').replace('{format}', 'jpg'), metadata, True)
