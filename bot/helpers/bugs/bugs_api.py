@@ -19,20 +19,29 @@ class BugsApi:
 
         self.s = requests.Session()
 
-        retries = Retry(total=10,
-                        backoff_factor=0.4,
-                        status_forcelist=[429, 500, 502, 503, 504])
+        # Konfigurasi Retry yang lebih agresif untuk menangani putus koneksi sesaat
+        retries = Retry(total=5,
+                        backoff_factor=1,
+                        status_forcelist=[429, 500, 502, 503, 504],
+                        allowed_methods=["HEAD", "GET", "POST", "OPTIONS"])
 
         self.s.mount('http://', HTTPAdapter(max_retries=retries))
         self.s.mount('https://', HTTPAdapter(max_retries=retries))
 
     def headers(self):
+        # --- PERBAIKAN: Update User-Agent ke versi terbaru (v5.40.0) & Android 13 ---
+        # Format lama (5.03) sering diblokir oleh server Bugs
         return {
-            'User-Agent': 'Mobile|Bugs|5.03.33|Android|12|Pixel 6|Google|market|105033301',
+            'User-Agent': 'Mobile|Bugs|5.40.0|Android|13|SM-S918N|Samsung|market|105400001',
             'Authorization': f'Bearer {self.access_token}' if self.access_token else '',
+            'Connection': 'keep-alive',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept': '*/*'
         }
 
     def auth(self, username, password):
+        # Gunakan headers() agar User-Agent konsisten
         r = self.s.post('https://secure.bugs.co.kr/api/5/login', params={
             'capText': '',
             'device_model': 'android',
@@ -92,18 +101,29 @@ class BugsApi:
         if additional_headers:
             headers.update(additional_headers)
 
-        # always add the device id to the params?
+        # always add the device id to the params
         params.update({'device_id': self.device_id})
 
-        if method == 'GET':
-            r = self.s.get(f'https://mapi.bugs.co.kr/music/5/{endpoint}', params=params, headers=headers)
-        else:
-            r = self.s.post(f'https://mapi.bugs.co.kr/music/5/{endpoint}', params=params, json=json, headers=headers)
+        url = f'https://mapi.bugs.co.kr/music/5/{endpoint}'
 
-        if r.status_code not in {200, 201, 202}:
-            raise ConnectionError(r.text)
+        try:
+            if method == 'GET':
+                r = self.s.get(url, params=params, headers=headers, timeout=30)
+            else:
+                r = self.s.post(url, params=params, json=json, headers=headers, timeout=30)
+            
+            # Raise error for bad status codes
+            r.raise_for_status()
 
-        return r.json()
+            # Handle non-JSON responses gracefully
+            if not r.content:
+                raise ConnectionError("Empty response from Bugs API")
+
+            return r.json()
+
+        except requests.exceptions.RequestException as e:
+            # Catch network layer errors
+            raise ConnectionError(f"Network Error during Bugs API call to {endpoint}: {str(e)}")
 
     def get_artist(self, artist_id: str or int):
         artist_id = int(artist_id)
@@ -225,9 +245,8 @@ class BugsApi:
 
     def get_stream(self, track_id: int, bitrate: str = 'flac'):
         # bitrate is either 'flac24', 'flac', 'aac256', 'aac', '320k'
-        # --- PERBAIKAN: Hapus 'flac24' dari set yang valid ---
         valid_bitrate = {'flac', 'aac256', 'aac', '320k'}
-        # --- BATAS PERBAIKAN ---
+        
         if bitrate not in valid_bitrate:
             raise ValueError('bitrate: must be one of %r ' % valid_bitrate)
 
@@ -254,9 +273,7 @@ class BugsApi:
             'flac_str_only': 'N'
         })
 
-    # --- TAMBAHAN BARU: Metode Close (Sinkron) ---
     def close_session(self):
         """Menutup sesi 'requests' internal."""
         if self.s:
             self.s.close()
-    # --- AKHIR TAMBAHAN ---
