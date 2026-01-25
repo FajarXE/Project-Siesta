@@ -139,9 +139,9 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        # --- PERBAIKAN: Menambahkan 'isrc' ---
-        fields_req = 'album,release_date,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,isrc'
-        # -------------------------------------
+        # --- PERBAIKAN: Menambahkan 'composer' ke dalam request fields ---
+        fields_req = 'album,release_date,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,isrc,composer'
+        # -----------------------------------------------------------------
         
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
