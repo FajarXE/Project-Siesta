@@ -3,6 +3,7 @@
 import aiohttp
 import aiofiles
 import os
+import shutil
 import traceback
 import asyncio
 
@@ -152,6 +153,21 @@ async def start_album(album_id: str, user: dict, upload=True):
 
     if upload:
         album_meta['poster_msg'] = await post_art_poster(user, album_meta)
+
+    # --- TAMBAHAN: Salin Cover ke Folder Album Sebelum Zip ---
+    try:
+        # Pastikan folder tujuan ada
+        os.makedirs(album_folder, exist_ok=True)
+        
+        # Cek apakah ada cover di metadata (ini path ke file temp)
+        if album_meta.get('cover') and os.path.exists(album_meta['cover']):
+            # Salin ke folder album dengan nama cover.jpg
+            cover_dest = os.path.join(album_folder, "cover.jpg")
+            shutil.copy(album_meta['cover'], cover_dest)
+            LOGGER.info(f"Berhasil menyalin cover ke: {cover_dest}")
+    except Exception as e:
+        LOGGER.warning(f"Gagal menyalin cover.jpg ke folder album: {e}")
+    # --- AKHIR TAMBAHAN ---
 
     tasks = []
     for track in album_meta['tracks']:
