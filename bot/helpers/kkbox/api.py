@@ -153,17 +153,50 @@ class KkboxAPI:
         return self.api_call('ds', f'v1/song/{id}/lyrics')
 
     def get_album(self, id):
-        # Percobaan 1: Endpoint Standar
+        # Percobaan 1: Endpoint Standar (v2)
         resp = self.api_call('ds', f'v2/album/{id}')
         if resp and resp.get('status', {}).get('type') == 'OK':
             return resp['data']
             
-        # Percobaan 2: Endpoint Shared Albums (Fallback untuk link/ID sharing)
+        # Percobaan 2: Endpoint Shared Albums (v1) - untuk ID hasil share/pendek
         resp = self.api_call('ds', f'v1/shared-albums/{id}')
         if resp and resp.get('status', {}).get('type') == 'OK':
             return resp['data']
 
-        # Jika keduanya gagal
+        # Percobaan 3: Endpoint Legacy (album_more.php) - Fallback Terkuat
+        # Jika API v2 dan Shared gagal, coba ambil langsung dari backend legacy.
+        # Ini penting untuk album yang memiliki 'Shared ID' tapi tidak terdaftar di endpoint REST v1/v2.
+        try:
+            more_resp = self.api_call('ds', 'album_more.php', params={'album': id})
+            if more_resp and 'info' in more_resp and more_resp['info']:
+                info = more_resp['info']
+                # Kita perlu mengubah format 'info' (legacy) menjadi format objek 'album v2'
+                # agar metadata.py bisa memprosesnya tanpa error.
+                fake_v2_data = {
+                    'id': info.get('album_id', id),
+                    'name': info.get('name', 'Unknown Album'),
+                    'url': info.get('url', ''),
+                    'explicit': False,
+                    'available_territories': ['TW', 'HK', 'SG', 'MY', 'JP'],
+                    'release_date': info.get('album_date', ''),
+                    'artist': {
+                        'id': '',
+                        'name': info.get('artist_name', 'Unknown Artist'),
+                        'url': ''
+                    },
+                    'images': [
+                        {
+                            'height': 1000,
+                            'width': 1000,
+                            'url': info.get('album_photo_info', {}).get('url_template', '')
+                        }
+                    ]
+                }
+                return fake_v2_data
+        except Exception:
+            pass
+
+        # Jika semua 3 metode gagal, baru raise error
         raise self.exception('Album not found')
 
     def get_album_more(self, raw_id):
