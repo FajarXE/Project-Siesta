@@ -139,9 +139,7 @@ class KkboxAPI:
             self.available_qualities.append('hires')
 
     def get_songs(self, ids):
-        # --- PERBAIKAN: Menambahkan 'composer' ke dalam request fields ---
         fields_req = 'album,release_date,artist_role,song_idx,album_photo_info,song_is_explicit,song_more_url,album_more_url,artist_more_url,genre_name,is_lyrics,audio_quality,isrc,composer'
-        # -----------------------------------------------------------------
         
         resp = self.api_call('ds', 'v2/song', payload={
             'ids': ','.join(ids),
@@ -155,10 +153,18 @@ class KkboxAPI:
         return self.api_call('ds', f'v1/song/{id}/lyrics')
 
     def get_album(self, id):
+        # Percobaan 1: Endpoint Standar
         resp = self.api_call('ds', f'v2/album/{id}')
-        if not resp or resp['status']['type'] != 'OK':
-            raise self.exception('Album not found')
-        return resp['data']
+        if resp and resp.get('status', {}).get('type') == 'OK':
+            return resp['data']
+            
+        # Percobaan 2: Endpoint Shared Albums (Fallback untuk link/ID sharing)
+        resp = self.api_call('ds', f'v1/shared-albums/{id}')
+        if resp and resp.get('status', {}).get('type') == 'OK':
+            return resp['data']
+
+        # Jika keduanya gagal
+        raise self.exception('Album not found')
 
     def get_album_more(self, raw_id):
         return self.api_call('ds', 'album_more.php', params={
