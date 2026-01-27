@@ -76,8 +76,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     track_list = data.get('tracks', [])
     metadata['totaltracks'] = str(len(track_list))
     
-    # --- PERBAIKAN TANGGAL ---
-    # Menangani format 'YYYY-MM-DD HH:MM:SS' (spasi) atau 'YYYY-MM-DDTHH:MM:SSZ' (ISO)
+    # --- PERBAIKAN TANGGAL (Tetap Dipertahankan) ---
     release_date_raw = data.get('releaseDate', '') 
     if 'T' in release_date_raw:
         metadata['release_date'] = release_date_raw.split('T')[0]
@@ -94,7 +93,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     metadata['subgenre'] = data.get('subgenre', '') 
     metadata['composer'] = data.get('composer', '')
     
-    # --- Publisher & UPC ---
+    # --- Publisher & UPC (Tetap Dipertahankan) ---
     metadata['publisher'] = data.get('label', '')
     metadata['upc'] = data.get('upc') or data.get('ean', '')
 
@@ -159,15 +158,20 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['quality'] = f"{track.get('format')} kHz FLAC"
             track_meta['extension'] = 'flac'
             
-            # --- PERBAIKAN URL (DNS FIX REVISI) ---
+            # --- PERBAIKAN URL FINAL (Anti 404 & Anti Double Slash) ---
             raw_url = track.get('url')
             if raw_url:
-                # Mengganti 'cdn.' yang rusak dengan 'streaming.' (domain API)
-                # 'stream.' (sebelumnya) ternyata juga tidak bisa di-resolve.
-                track_meta['download_url'] = raw_url.replace('cdn.highresaudio.com', 'streaming.highresaudio.com')
+                # 1. Ganti domain cdn yang rusak dengan streaming
+                new_url = raw_url.replace('cdn.highresaudio.com', 'streaming.highresaudio.com')
+                
+                # 2. HAPUS double slash yang menyebabkan 404
+                # Mengubah 'highresaudio.com//' menjadi 'highresaudio.com/'
+                new_url = new_url.replace('highresaudio.com//', 'highresaudio.com/')
+                
+                track_meta['download_url'] = new_url
             else:
                 track_meta['download_url'] = None
-            # --------------------------------
+            # ----------------------------------------------------------
 
             track_meta['album_id_referer'] = album_id 
 
