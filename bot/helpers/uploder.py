@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/uploder.py]
+# [FILE: bot/helpers/uploder.py]
 
 import os
 import asyncio
@@ -11,6 +11,76 @@ from .message import send_message, edit_message
 from .utils import *
 from bot.logger import LOGGER 
 
+# Import DirectUploader
+from ..modules.direct_uploader import DirectUpload
+
+# --- HELPER CLASS UNTUK DIRECT UPLOAD ---
+class FakeListener:
+    """
+    Kelas dummy untuk memanipulasi DirectUpload agar membaca token user kita.
+    DirectUpload mengharapkan 'listener.user_dict'.
+    """
+    def __init__(self, user_id, gofile_token):
+        self.user_dict = {
+            # Key "gofile" atau "gf" sesuai direct_uploader.py
+            "gofile": {
+                "api": gofile_token,
+                "folder_id": "" 
+            }
+        }
+        self.extra_details = {} 
+        self.is_cancelled = False 
+
+    async def onUploadError(self, error):
+        LOGGER.error(f"Gofile Upload Error: {error}")
+        return str(error)
+    
+    async def onUploadComplete(self, link, size, files, folders, mime, name):
+        pass # Tidak digunakan karena kita mengambil return value langsung dari .upload()
+
+# --- FUNGSI EKSEKUTOR GOFILE ---
+async def upload_to_gofile_handler(filepath, user, metadata):
+    user_id = user['user_id']
+    user_data = bot_set.user_data.get(user_id, {})
+    token = user_data.get('gofile_token')
+
+    # Cek Token
+    if not token:
+        await send_message(user, "⚠️ <b>Gofile Token Missing!</b>\nPlease set it using <code>/set_gofile token</code>\nFalling back to Telegram...", 'text')
+        return None 
+
+    try:
+        if 'bot_msg' in user:
+            await edit_message(user['bot_msg'], f"🚀 Uploading to Gofile...\nFile: `{os.path.basename(filepath)}`")
+
+        # Inisialisasi FakeListener dengan token user
+        listener = FakeListener(user_id, token)
+        
+        # Inisialisasi DirectUpload
+        # DirectUpload(listener=None, name=None, path=None)
+        uploader = DirectUpload(
+            listener=listener, 
+            name=os.path.basename(filepath), 
+            path=os.path.dirname(filepath)
+        )
+        
+        filesize = os.path.getsize(filepath) if os.path.isfile(filepath) else 0
+        
+        # Eksekusi Upload ("gf" adalah kode untuk Gofile di direct_uploader.py)
+        # return format: {'Gofile': 'https://gofile.io/d/xyz'}
+        result_links = await uploader.upload(os.path.basename(filepath), filesize, "gf")
+        
+        if result_links and isinstance(result_links, dict):
+            return result_links.get('Gofile')
+        
+        return None
+
+    except Exception as e:
+        LOGGER.error(f"Gofile Handler Error: {e}")
+        await send_message(user, f"⚠️ Gofile Error: {e}\nFalling back to Telegram...", 'text')
+        return None
+
+
 #
 #
 #  TASK HANDLER
@@ -19,15 +89,44 @@ from bot.logger import LOGGER
 #
 
 async def track_upload(metadata, user, disable_link=False):
+    # Cek Mode User (Default Telegram)
+    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+    upload_success = False
+
+    # 1. GOFILE UPLOAD
+    if user_mode == 'Gofile':
+        gofile_link = await upload_to_gofile_handler(metadata['filepath'], user, metadata)
+        
+        if gofile_link:
+            caption = await create_simple_text(metadata, user)
+            caption += f"\n\n🔗 <b>GOFILE LINK:</b>\n{gofile_link}"
+            
+            # Kirim Poster dengan Link
+            if metadata.get('cover') and os.path.exists(metadata['cover']):
+                 await send_message(user, metadata['cover'], 'pic', caption)
+            else:
+                 await send_message(user, caption, 'text')
+            
+            upload_success = True
+            # Jangan lupa hapus file
+            try:
+                if os.path.exists(metadata['filepath']):
+                    os.remove(metadata['filepath'])
+            except: pass
+            return # Selesai, keluar fungsi
+
+    # 2. STANDARD UPLOAD (Local / Telegram / Rclone)
+    # Jika Gofile gagal atau mode bukan Gofile, jalankan ini
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
-    elif bot_set.upload_mode == 'Telegram':
+    elif bot_set.upload_mode == 'Telegram' or user_mode == 'Telegram':
         await telegram_upload(metadata, user)
     else:
         rclone_link, index_link = await rclone_upload(user, metadata['filepath'])
         if not disable_link:
             await post_simple_message(user, metadata, rclone_link, index_link)
 
+    # Cleanup File Single Track
     try:
         if os.path.exists(metadata['filepath']):
             os.remove(metadata['filepath'])
@@ -37,7 +136,39 @@ async def track_upload(metadata, user, disable_link=False):
 
 async def album_upload(metadata, user):
     user_dict = user.copy()
+    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
+    # 1. GOFILE UPLOAD
+    if user_mode == 'Gofile':
+        # Tentukan apa yang mau diupload (ZIP atau Folder)
+        targets = []
+        if metadata.get('zip_path'):
+            zip_p = metadata['zip_path']
+            if isinstance(zip_p, list): targets = zip_p
+            else: targets = [zip_p]
+        elif metadata.get('folderpath'):
+            targets = [metadata['folderpath']]
+            
+        links = []
+        for target in targets:
+            link = await upload_to_gofile_handler(target, user, metadata)
+            if link: links.append(link)
+        
+        if links:
+            caption = await create_simple_text(metadata, user)
+            caption += "\n\n🔗 <b>GOFILE LINKS:</b>\n"
+            for l in links:
+                caption += f"{l}\n"
+            
+            if metadata.get('poster_msg'):
+                 await edit_message(metadata['poster_msg'], caption)
+            else:
+                 await send_message(user, caption)
+            
+            await cleanup(None, metadata, user_dict)
+            return # Selesai
+
+    # 2. STANDARD UPLOAD
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -68,6 +199,38 @@ async def album_upload(metadata, user):
 
 async def artist_upload(metadata, user):
     user_dict = user.copy()
+    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+
+    # 1. GOFILE UPLOAD
+    if user_mode == 'Gofile':
+        targets = []
+        if metadata.get('zip_path'):
+            zip_p = metadata['zip_path']
+            if isinstance(zip_p, list): targets = zip_p
+            else: targets = [zip_p]
+        elif metadata.get('folderpath'):
+            targets = [metadata['folderpath']]
+            
+        links = []
+        for target in targets:
+            link = await upload_to_gofile_handler(target, user, metadata)
+            if link: links.append(link)
+        
+        if links:
+            caption = await create_simple_text(metadata, user)
+            caption += "\n\n🔗 <b>GOFILE LINKS:</b>\n"
+            for l in links:
+                caption += f"{l}\n"
+            
+            if metadata.get('poster_msg'):
+                 await edit_message(metadata['poster_msg'], caption)
+            else:
+                 await send_message(user, caption)
+            
+            await cleanup(None, metadata, user_dict)
+            return
+
+    # 2. STANDARD UPLOAD
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -82,7 +245,7 @@ async def artist_upload(metadata, user):
                     meta=metadata
                 )
         else:
-            pass # Artist telegram uploads are handled by album function usually
+            pass 
     else:
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata.get('poster_msg'):
@@ -97,6 +260,38 @@ async def artist_upload(metadata, user):
 
 
 async def playlist_upload(metadata, user):
+    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+    
+    # 1. GOFILE UPLOAD
+    if user_mode == 'Gofile':
+        targets = []
+        if metadata.get('zip_path'):
+            zip_p = metadata['zip_path']
+            if isinstance(zip_p, list): targets = zip_p
+            else: targets = [zip_p]
+        elif metadata.get('folderpath'):
+            targets = [metadata['folderpath']]
+            
+        links = []
+        for target in targets:
+            link = await upload_to_gofile_handler(target, user, metadata)
+            if link: links.append(link)
+        
+        if links:
+            caption = await create_simple_text(metadata, user)
+            caption += "\n\n🔗 <b>GOFILE LINKS:</b>\n"
+            for l in links:
+                caption += f"{l}\n"
+            
+            if metadata.get('poster_msg'):
+                 await edit_message(metadata['poster_msg'], caption)
+            else:
+                 await send_message(user, caption)
+            
+            await cleanup(None, metadata, user)
+            return
+
+    # 2. STANDARD UPLOAD
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -113,7 +308,7 @@ async def playlist_upload(metadata, user):
         else:
             await batch_telegram_upload(metadata, user)
     else:
-        playlist_zip, _, __ = fetch_zip_settings(user)
+        playlist_zip, _, __, ___ = fetch_zip_settings(user)
         if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
                 await rclone_upload(user, f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
