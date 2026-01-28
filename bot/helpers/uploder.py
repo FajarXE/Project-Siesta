@@ -49,61 +49,70 @@ async def upload_to_gofile_handler(filepath, user, metadata):
         await send_message(user, "⚠️ <b>Gofile Token Missing!</b>\nPlease set it using <code>/set_gofile token</code>\nFalling back to Telegram...", 'text')
         return None 
 
-    # --- LOGIC AUTO-ZIP FOLDER ---
-    # Jika input adalah FOLDER, kita zip dulu agar bisa diupload ke Gofile
-    is_temp_zip = False
-    original_filepath = filepath # Simpan path asli untuk referensi
-    
-    if os.path.isdir(filepath):
+    # Inisialisasi Uploader Helper
+    # Kita buat fungsi kecil untuk upload satu file agar bisa dipanggil berulang
+    async def _upload_single_file(path_to_file):
         try:
-            if 'bot_msg' in user:
-                await edit_message(user['bot_msg'], "🗜️ Folder detected. Zipping for Gofile...")
+            # Listener Dummy
+            listener = FakeListener(user_id, token)
+            uploader = DirectUpload(
+                listener=listener, 
+                name=os.path.basename(path_to_file), 
+                path=os.path.dirname(path_to_file)
+            )
+            filesize = os.path.getsize(path_to_file)
+            result = await uploader.upload(os.path.basename(path_to_file), filesize, "gf")
             
-            # Membuat arsip zip sementara
-            # format: /path/to/folder -> /path/to/folder.zip
-            archive_path = shutil.make_archive(filepath, 'zip', filepath)
-            filepath = archive_path # Update filepath ke file .zip
-            is_temp_zip = True
+            if result and isinstance(result, dict):
+                return result.get('Gofile')
         except Exception as e:
-            LOGGER.error(f"Gagal membuat zip sementara: {e}")
-            return None
-    # -----------------------------
-
-    try:
-        if 'bot_msg' in user:
-            await edit_message(user['bot_msg'], f"🚀 Uploading to Gofile...\nFile: `{os.path.basename(filepath)}`")
-
-        # Inisialisasi FakeListener dengan token user
-        listener = FakeListener(user_id, token)
-        
-        # Inisialisasi DirectUpload
-        uploader = DirectUpload(
-            listener=listener, 
-            name=os.path.basename(filepath), 
-            path=os.path.dirname(filepath)
-        )
-        
-        filesize = os.path.getsize(filepath) if os.path.isfile(filepath) else 0
-        
-        # Eksekusi Upload
-        result_links = await uploader.upload(os.path.basename(filepath), filesize, "gf")
-        
-        # --- CLEANUP TEMP ZIP ---
-        # Hapus file zip sementara setelah upload selesai (atau gagal) agar hemat storage
-        if is_temp_zip and os.path.exists(filepath):
-            os.remove(filepath)
-        # ------------------------
-        
-        if result_links and isinstance(result_links, dict):
-            return result_links.get('Gofile')
-        
+            LOGGER.error(f"Gagal upload file {os.path.basename(path_to_file)}: {e}")
         return None
 
-    except Exception as e:
-        # Cleanup jika error
-        if is_temp_zip and os.path.exists(filepath):
-            os.remove(filepath)
+    # --- LOGIKA UTAMA ---
+    try:
+        links = []
+        
+        # KASUS 1: INPUT ADALAH FOLDER (Album/Playlist tanpa ZIP)
+        if os.path.isdir(filepath):
+            if 'bot_msg' in user:
+                await edit_message(user['bot_msg'], f"📂 Mengunggah isi folder ke Gofile...")
+
+            # Loop semua file dalam folder
+            files_to_upload = []
+            for root, dirs, files in os.walk(filepath):
+                for file in files:
+                    # Filter file yang relevan (audio/gambar/zip) agar tidak mengunggah file sampah sistem
+                    if file.lower().endswith(('.mp3', '.flac', '.m4a', '.wav', '.jpg', '.jpeg', '.png', '.zip', '.rar')):
+                        files_to_upload.append(os.path.join(root, file))
             
+            total_files = len(files_to_upload)
+            for index, file_path in enumerate(files_to_upload, 1):
+                # Update status progres ke user (opsional, agar tidak spam bisa dikurangi frekuensinya)
+                if 'bot_msg' in user and index % 2 != 0: # Update tiap 2 file
+                     await edit_message(user['bot_msg'], f"🚀 Uploading Gofile ({index}/{total_files})...\nFile: `{os.path.basename(file_path)}`")
+                
+                link = await _upload_single_file(file_path)
+                if link:
+                    # Format: NamaFile - Link
+                    clean_name = os.path.basename(file_path)
+                    links.append(f"• {clean_name}: {link}")
+
+            if not links:
+                return None
+            
+            # Gabungkan semua link menjadi satu string
+            return "\n".join(links)
+
+        # KASUS 2: INPUT ADALAH SINGLE FILE (ZIP atau Single Track)
+        else:
+            if 'bot_msg' in user:
+                await edit_message(user['bot_msg'], f"🚀 Uploading to Gofile...\nFile: `{os.path.basename(filepath)}`")
+            
+            link = await _upload_single_file(filepath)
+            return link
+
+    except Exception as e:
         LOGGER.error(f"Gofile Handler Error: {e}")
         await send_message(user, f"⚠️ Gofile Error: {e}\nFalling back to Telegram...", 'text')
         return None
