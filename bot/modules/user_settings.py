@@ -185,7 +185,7 @@ PLAYLIST : {PLAYLIST_ZIP} | ALBUM : {ALBUM_ZIP}
 ARTIST   : {ARTIST_ZIP}   | POSTER : {ART_POSTER}
 
 <b>☁️ UPLOAD MODE: {upload_mode}</b>
-Gofile: {t_gf} | Buzz: {t_bh}   | Viking: {t_vk}
+Gofile: {t_gf} | Buzz: {t_bh} | Viking: {t_vk}
 </blockquote>
 {m.date.now().strftime("%d/%m/%Y %H:%M:%S")}
 Choose Menu option below:
