@@ -99,10 +99,10 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
     uploader = DirectUpload(listener=listener, path=base_path)
 
     try:
-        # A. KASUS FOLDER (ALBUM / PLAYLIST)
+        # A. KASUS FOLDER (ALBUM / PLAYLIST yang belum di-zip)
         if os.path.isdir(filepath):
             
-            # --- 1. GOFILE (SUPPORT FOLDER API) ---
+            # --- 1. GOFILE (MANUAL FOLDER CREATION & LOOP) ---
             if mode == 'Gofile':
                 if 'bot_msg' in user: 
                     await edit_message(user['bot_msg'], f"📂 Creating Folder on Gofile...")
@@ -131,40 +131,46 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                     
                     return f"https://gofile.io/d/{final_link}"
             
-            # --- 2. BUZZHEAVIER & VIKINGFILES (NON-ZIP / MULTI LINKS) ---
-            else:
+            # --- 2. BUZZHEAVIER (NATIVE FOLDER SUPPORT) ---
+            elif mode == 'Buzzheavier':
                 if 'bot_msg' in user: 
-                    await edit_message(user['bot_msg'], f"📂 Reading files for {mode}...")
+                    await edit_message(user['bot_msg'], f"📂 Uploading Folder to Buzzheavier...")
                 
-                files_to_upload = []
-                for root, dirs, files in os.walk(filepath):
-                    for file in files:
-                        if file.lower().endswith(('.mp3', '.flac', '.m4a', '.wav', '.jpg', '.jpeg', '.png', '.zip', '.rar')):
-                            files_to_upload.append(os.path.join(root, file))
+                # Buzzheavier support folder upload di direct_uploader, cukup kirim nama folder
+                # Pastikan uploader.path menunjuk ke parent dari folder tersebut
+                uploader.path = os.path.dirname(filepath.rstrip('/'))
+                res = await uploader.upload(os.path.basename(filepath), 0, upload_type)
                 
-                total_files = len(files_to_upload)
-                generated_links = []
+                if res:
+                    return list(res.values())[0]
+
+            # --- 3. VIKINGFILES (AUTO-ZIP FORCE) ---
+            elif mode == 'Vikingfiles':
+                if 'bot_msg' in user:
+                    await edit_message(user['bot_msg'], f"🤐 Vikingfiles doesn't support folders.\nZipping files...")
                 
-                for index, file_path in enumerate(files_to_upload, 1):
-                    file_name = os.path.basename(file_path)
-                    if 'bot_msg' in user and index % 2 != 0:
-                         await edit_message(user['bot_msg'], f"🚀 Uploading ({index}/{total_files}) to {mode}...\nFile: `{file_name}`")
-                    
-                    # Update path uploader ke folder file saat ini
-                    uploader.path = os.path.dirname(file_path)
-                    
-                    # Upload
-                    res = await uploader.upload(file_name, 0, upload_type)
-                    
-                    if res:
-                        # Ambil link dari result (e.g. {'Vikingfiles': 'url'})
-                        link = list(res.values())[0]
-                        generated_links.append(f"• {file_name}: {link}")
+                # Buat ZIP sementara karena Vikingfiles tidak support folder
+                # make_archive akan membuat file .zip di lokasi filepath
+                zip_path = shutil.make_archive(filepath, 'zip', filepath)
+                zip_name = os.path.basename(zip_path)
                 
-                if generated_links:
-                    return "\n".join(generated_links)
-                else:
-                    return None
+                # Update path uploader ke lokasi zip berada
+                uploader.path = os.path.dirname(zip_path)
+                
+                if 'bot_msg' in user:
+                     await edit_message(user['bot_msg'], f"🚀 Uploading Zip to Vikingfiles...")
+
+                # Upload Zip
+                res = await uploader.upload(zip_name, 0, upload_type)
+                
+                # Hapus Zip sementara
+                try:
+                    if os.path.exists(zip_path):
+                        os.remove(zip_path)
+                except: pass
+
+                if res:
+                    return list(res.values())[0]
 
         # B. KASUS SINGLE FILE (TRACK / ZIP yang sudah ada)
         else:
@@ -226,20 +232,19 @@ async def album_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
-        # Gunakan folder asli (jangan dipaksa zip jika user tidak minta)
+        # Gunakan folder asli
         target = metadata.get('folderpath')
         
-        # Kecuali jika user memang mengaktifkan "ALBUM ZIP: ON" di pengaturan, maka gunakan zip
+        # Kecuali jika user memang mengaktifkan "ALBUM ZIP: ON" di pengaturan, gunakan zip yg sudah dibuat
         if metadata.get('zip_path'):
              target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
 
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         
         if link:
-            # Caption Detail untuk Album
             caption = create_cloud_caption(metadata)
             
-            # Jika link berupa list (newline separated), tambahkan header 'LINKS' jamak
+            # Formatting Link (Sekarang semua harusnya single link kecuali ada error)
             if '\n' in link:
                 caption += f"\n\n🔗 <b>{user_mode.upper()} LINKS:</b>\n{link}"
             else:
