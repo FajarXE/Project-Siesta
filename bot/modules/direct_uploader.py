@@ -5,6 +5,8 @@ import asyncio
 import requests
 import json
 from urllib.parse import quote
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bot.logger import LOGGER
 
 class DirectUpload:
@@ -14,13 +16,24 @@ class DirectUpload:
         self.listener = listener
         self.user_dict = listener.user_dict if listener else {}
         self.is_cancelled = False
+        
+        # --- KONFIGURASI SESI DENGAN RETRY OTOMATIS ---
+        self.session = requests.Session()
+        retries = Retry(
+            total=5,  # Coba ulang 5 kali
+            backoff_factor=1,  # Tunggu 1s, 2s, 4s...
+            status_forcelist=[500, 502, 503, 504], # Coba ulang jika server error
+            allowed_methods=["HEAD", "GET", "PUT", "POST", "OPTIONS"]
+        )
+        self.session.mount('https://', HTTPAdapter(max_retries=retries))
+        # ----------------------------------------------
 
     # ============================
     # GOFILE HANDLER
     # ============================
     def _get_gofile_server(self):
         try:
-            resp = requests.get("https://api.gofile.io/servers", timeout=10)
+            resp = self.session.get("https://api.gofile.io/servers", timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('status') == 'ok' and data['data'].get('servers'):
@@ -30,7 +43,7 @@ class DirectUpload:
 
     def _get_gofile_account(self, token):
         try:
-            r = requests.get(f"https://api.gofile.io/accounts/getid?token={token}", timeout=10)
+            r = self.session.get(f"https://api.gofile.io/accounts/getid?token={token}", timeout=10)
             if r.status_code == 200 and r.json()['status'] == 'ok':
                 return r.json()['data']['id']
         except: pass
@@ -39,7 +52,7 @@ class DirectUpload:
     def _gofile_create_folder(self, token, parent_id, name):
         try:
             data = {'token': token, 'parentFolderId': parent_id, 'folderName': name}
-            r = requests.post("https://api.gofile.io/contents/createFolder", data=data, timeout=10)
+            r = self.session.post("https://api.gofile.io/contents/createFolder", data=data, timeout=15)
             if r.status_code == 200 and r.json()['status'] == 'ok':
                 return r.json()['data']
         except Exception as e:
@@ -55,7 +68,7 @@ class DirectUpload:
                 data = {'token': token}
                 if folder_id: data['folderId'] = folder_id
                 
-                r = requests.post(url, files=files, data=data, timeout=3600)
+                r = self.session.post(url, files=files, data=data, timeout=3600)
                 res = r.json()
                 if res.get('status') == 'ok':
                     return res['data']['downloadPage']
@@ -69,16 +82,15 @@ class DirectUpload:
     # PIXELDRAIN HANDLER (DIPERBAIKI)
     # ============================
     def _upload_pixeldrain(self, filepath, token):
-        # Menggunakan PUT /api/file/{name} untuk raw upload (Lebih stabil & Cepat)
         filename = os.path.basename(filepath)
         url = f"https://pixeldrain.com/api/file/{quote(filename)}"
         try:
-            # Pixeldrain menggunakan Basic Auth (user='', password=token)
+            # Gunakan Token sebagai Password di Basic Auth (User kosong)
             auth = ('', token)
             
             with open(filepath, 'rb') as f:
-                # Menggunakan 'data=f' memicu streaming upload
-                r = requests.put(url, auth=auth, data=f, timeout=3600)
+                # PUT Method + Session Retry
+                r = self.session.put(url, auth=auth, data=f, timeout=3600)
                 
                 if r.status_code in [200, 201]:
                     res = r.json()
@@ -96,7 +108,7 @@ class DirectUpload:
     def _get_buzz_root(self, token):
         try:
             headers = {"Authorization": f"Bearer {token}"}
-            r = requests.get("https://buzzheavier.com/api/fs", headers=headers, timeout=10)
+            r = self.session.get("https://buzzheavier.com/api/fs", headers=headers, timeout=10)
             res = r.json()
             if res.get('code') == 200:
                 return res['data']['id']
@@ -110,7 +122,8 @@ class DirectUpload:
             headers = {"Authorization": f"Bearer {token}"}
             
             with open(filepath, 'rb') as f:
-                r = requests.put(url, headers=headers, data=f, timeout=3600)
+                # PUT Method
+                r = self.session.put(url, headers=headers, data=f, timeout=3600)
                 res = r.json()
                 
                 if res.get('code') == 201 and res.get('data'):
@@ -126,7 +139,7 @@ class DirectUpload:
     def _upload_viking(self, filepath, token):
         try:
             # 1. Get Server
-            r_srv = requests.get("https://vikingfile.com/api/get-server", timeout=10)
+            r_srv = self.session.get("https://vikingfile.com/api/get-server", timeout=15)
             server_url = r_srv.json().get('server')
             
             if not server_url:
@@ -138,10 +151,9 @@ class DirectUpload:
                 files = {'file': (filename, f)}
                 data = {'user': token} 
                 
-                r = requests.post(server_url, files=files, data=data, timeout=3600)
+                r = self.session.post(server_url, files=files, data=data, timeout=3600)
                 res = r.json()
                 
-                # Vikingfiles mengembalikan {'url': '...'} jika sukses
                 if res.get('url'):
                     return res['url']
                 
@@ -164,7 +176,7 @@ class DirectUpload:
         try:
             acc_id = await loop.run_in_executor(None, self._get_gofile_account, token)
             if acc_id:
-                r = await loop.run_in_executor(None, requests.get, f"https://api.gofile.io/accounts/{acc_id}?token={token}")
+                r = await loop.run_in_executor(None, self.session.get, f"https://api.gofile.io/accounts/{acc_id}?token={token}")
                 data = r.json()['data']
                 return data['rootFolder']
         except: pass
