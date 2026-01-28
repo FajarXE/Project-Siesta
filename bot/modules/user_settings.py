@@ -129,18 +129,7 @@ async def del_gofile_cmd(client, message):
     if await check_user(msg=message):
         await _del_token(message, 'gofile_token', 'Gofile')
 
-# --- 2. PIXELDRAIN ---
-@Client.on_message(filters.command("set_pixeldrain"))
-async def set_pd_cmd(client, message):
-    if await check_user(msg=message):
-        await _save_token(message, 'pixeldrain_token', 'Pixeldrain')
-
-@Client.on_message(filters.command(["del_pixeldrain", "delete_pixeldrain"]))
-async def del_pd_cmd(client, message):
-    if await check_user(msg=message):
-        await _del_token(message, 'pixeldrain_token', 'Pixeldrain')
-
-# --- 3. BUZZHEAVIER ---
+# --- 2. BUZZHEAVIER ---
 @Client.on_message(filters.command("set_buzzheavier"))
 async def set_bh_cmd(client, message):
     if await check_user(msg=message):
@@ -151,7 +140,7 @@ async def del_bh_cmd(client, message):
     if await check_user(msg=message):
         await _del_token(message, 'buzzheavier_token', 'Buzzheavier')
 
-# --- 4. VIKINGFILES ---
+# --- 3. VIKINGFILES ---
 @Client.on_message(filters.command("set_viking"))
 async def set_vk_cmd(client, message):
     if await check_user(msg=message):
@@ -185,7 +174,6 @@ async def start_user_setting(client: Client, m: Message, edit=False, users_: dic
     
     # Cek status ketersediaan token (Indikator UI)
     t_gf = "✅" if curr_settings.get('gofile_token') else "❌"
-    t_pd = "✅" if curr_settings.get('pixeldrain_token') else "❌"
     t_bh = "✅" if curr_settings.get('buzzheavier_token') else "❌"
     t_vk = "✅" if curr_settings.get('viking_token') else "❌"
 
@@ -197,8 +185,7 @@ PLAYLIST : {PLAYLIST_ZIP} | ALBUM : {ALBUM_ZIP}
 ARTIST   : {ARTIST_ZIP}   | POSTER : {ART_POSTER}
 
 <b>☁️ UPLOAD MODE: {upload_mode}</b>
-Gofile: {t_gf} | Pixel: {t_pd}
-Buzz: {t_bh}   | Viking: {t_vk}
+Gofile: {t_gf} | Buzz: {t_bh}   | Viking: {t_vk}
 </blockquote>
 {m.date.now().strftime("%d/%m/%Y %H:%M:%S")}
 Choose Menu option below:
@@ -220,7 +207,7 @@ async def uset_upload_mode_handler(client, query):
     current_mode = bot_set.user_data.get(user_id, {}).get('upload_mode', 'Telegram')
     
     # Daftar Mode yang tersedia
-    modes = ['Telegram', 'Gofile', 'Pixeldrain', 'Buzzheavier', 'Vikingfiles']
+    modes = ['Telegram', 'Gofile', 'Buzzheavier', 'Vikingfiles']
     
     # Cari index saat ini
     try:
