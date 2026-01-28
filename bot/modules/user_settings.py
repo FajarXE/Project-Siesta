@@ -112,6 +112,25 @@ async def set_gofile_token(client, message):
         await message.reply_text("❌ <b>Invalid Format.</b>\nUsage: <code>/set_gofile your_token_here</code>\n\nGet token from Gofile Dashboard.")
 
 
+# --- COMMAND: DELETE GOFILE TOKEN (BARU) ---
+@Client.on_message(filters.command(["del_gofile", "delete_gofile"]))
+async def del_gofile_token(client, message):
+    if not await check_user(msg=message):
+        return
+
+    user_id = message.from_user.id
+    
+    # Hapus dari Memory
+    if user_id in bot_set.user_data:
+        # Gunakan pop untuk menghapus key jika ada, default None jika tidak ada
+        bot_set.user_data[user_id].pop('gofile_token', None)
+    
+    # Hapus dari Database (Set value ke None)
+    await database.save_user_settings(user_id, {'gofile_token': None})
+    
+    await message.reply_text("🗑️ <b>Gofile Token Deleted!</b>\nToken Anda telah dihapus dari database bot.")
+
+
 # --- MENU USER SETTINGS UTAMA ---
 @Client.on_message(filters.command(cmd.USETTING))
 async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
@@ -143,13 +162,14 @@ Choose Menu option below:
     user_id = user_data['user_id']
     
     # Ambil data settings dari memory
-    # Unpack settings (pastikan fetch_zip_settings mengembalikan 4 value)
     PLAYLIST_ZIP, ALBUM_ZIP, ARTIST_ZIP, ART_POSTER = await asyncio.to_thread(fetch_zip_settings, user_data)
     
     # Ambil Mode Upload & Status Token
     current_settings = bot_set.user_data.get(user_id, {})
     upload_mode = current_settings.get('upload_mode', 'Telegram')
     gofile_token = current_settings.get('gofile_token')
+    
+    # Status Token
     gofile_status = "✅ Set" if gofile_token else "❌ Not Set"
 
     text = USETTING_TEXT.format_map({
@@ -162,7 +182,6 @@ Choose Menu option below:
         "date": m.date.now().strftime("%d/%m/%Y %H:%M:%S"),
     })
     
-    # Passing user_id ke usetting_button agar tombol dinamis (jika diimplementasikan di buttons/settings.py)
     if not edit:
         await send_message(user, text, markup=usetting_button(user_id))
         return
