@@ -71,7 +71,6 @@ class DirectUpload:
     def _upload_pixeldrain(self, filepath, token):
         url = "https://pixeldrain.com/api/file"
         try:
-            # Pixeldrain menggunakan Basic Auth (user='', password=token)
             auth = ('', token)
             filename = os.path.basename(filepath)
             
@@ -105,13 +104,11 @@ class DirectUpload:
 
     def _upload_buzzheavier(self, filepath, token):
         try:
-            # Simple Upload (Tanpa Folder Support dulu untuk kestabilan)
             filename = os.path.basename(filepath)
             url = f"https://w.buzzheavier.com/{quote(filename)}"
             headers = {"Authorization": f"Bearer {token}"}
             
             with open(filepath, 'rb') as f:
-                # Buzzheavier menggunakan PUT dengan body raw
                 r = requests.put(url, headers=headers, data=f, timeout=3600)
                 res = r.json()
                 
@@ -123,7 +120,7 @@ class DirectUpload:
         return None
 
     # ============================
-    # VIKINGFILES HANDLER
+    # VIKINGFILES HANDLER (DIPERBAIKI)
     # ============================
     def _upload_viking(self, filepath, token):
         try:
@@ -138,13 +135,18 @@ class DirectUpload:
             filename = os.path.basename(filepath)
             with open(filepath, 'rb') as f:
                 files = {'file': (filename, f)}
-                data = {'user': token} # Token dikirim sebagai field 'user'
+                data = {'user': token} 
                 
                 r = requests.post(server_url, files=files, data=data, timeout=3600)
                 res = r.json()
                 
-                if res.get('status') == 200 and res.get('url'):
+                # --- PERBAIKAN DI SINI ---
+                # Vikingfiles response sukses: {'name': '...', 'url': '...'} 
+                # Tidak ada key 'status': 200
+                if res.get('url'):
                     return res['url']
+                # -------------------------
+                
                 LOGGER.error(f"Vikingfiles Error: {res}")
         except Exception as e:
             LOGGER.error(f"Vikingfiles Upload Error: {e}")
@@ -155,20 +157,15 @@ class DirectUpload:
     # PUBLIC METHODS
     # ============================
     
-    # Helper async untuk membuat folder Gofile
     async def gofile_create_folder_async(self, token, parent_id, name):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._gofile_create_folder, token, parent_id, name)
 
     async def gofile_get_root(self, token):
         loop = asyncio.get_running_loop()
-        # Ambil Account ID dulu lalu Root Folder
         try:
             acc_id = await loop.run_in_executor(None, self._get_gofile_account, token)
             if acc_id:
-                # Logic sederhana: request ulang ke endpoint akun untuk dapat rootFolder
-                # (Disederhanakan di sini, implementasi penuh ada di _get_gofile_account jika API mengembalikan data lengkap)
-                # API Gofile getAccount biasanya mengembalikan rootFolder
                 r = await loop.run_in_executor(None, requests.get, f"https://api.gofile.io/accounts/{acc_id}?token={token}")
                 data = r.json()['data']
                 return data['rootFolder']
@@ -176,10 +173,6 @@ class DirectUpload:
         return None
 
     async def upload(self, file_name, size, upload_type, specific_folder_id=None):
-        """
-        Main Upload Entrypoint.
-        upload_type: 'gofile', 'pixeldrain', 'buzzheavier', 'viking'
-        """
         loop = asyncio.get_running_loop()
         filepath = os.path.join(self.path, file_name)
         
@@ -190,7 +183,6 @@ class DirectUpload:
         if upload_type in ['gf', 'gofile']:
             token = self.user_dict.get("gofile", {}).get("api")
             if not token: return None
-            # Gunakan folder ID spesifik jika disediakan (untuk album), jika tidak pakai default
             folder_target = specific_folder_id or self.user_dict.get("gofile", {}).get("folder_id")
             
             LOGGER.info(f"Uploading Gofile: {file_name}")
