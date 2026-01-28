@@ -66,25 +66,26 @@ class DirectUpload:
         return None
 
     # ============================
-    # PIXELDRAIN HANDLER
+    # PIXELDRAIN HANDLER (DIPERBAIKI)
     # ============================
     def _upload_pixeldrain(self, filepath, token):
-        url = "https://pixeldrain.com/api/file"
+        # Menggunakan PUT /api/file/{name} untuk raw upload (Lebih stabil & Cepat)
+        filename = os.path.basename(filepath)
+        url = f"https://pixeldrain.com/api/file/{quote(filename)}"
         try:
+            # Pixeldrain menggunakan Basic Auth (user='', password=token)
             auth = ('', token)
-            filename = os.path.basename(filepath)
             
             with open(filepath, 'rb') as f:
-                files = {'file': (filename, f)}
-                data = {'name': filename, 'anonymous': 'false'}
-                
-                r = requests.post(url, auth=auth, files=files, data=data, timeout=3600)
+                # Menggunakan 'data=f' memicu streaming upload
+                r = requests.put(url, auth=auth, data=f, timeout=3600)
                 
                 if r.status_code in [200, 201]:
                     res = r.json()
                     if res.get('success'):
                         return f"https://pixeldrain.com/u/{res['id']}"
-                LOGGER.error(f"Pixeldrain Error: {r.text}")
+                
+                LOGGER.error(f"Pixeldrain Error: {r.status_code} - {r.text}")
         except Exception as e:
             LOGGER.error(f"Pixeldrain Upload Error: {e}")
         return None
@@ -120,7 +121,7 @@ class DirectUpload:
         return None
 
     # ============================
-    # VIKINGFILES HANDLER (DIPERBAIKI)
+    # VIKINGFILES HANDLER
     # ============================
     def _upload_viking(self, filepath, token):
         try:
@@ -140,12 +141,9 @@ class DirectUpload:
                 r = requests.post(server_url, files=files, data=data, timeout=3600)
                 res = r.json()
                 
-                # --- PERBAIKAN DI SINI ---
-                # Vikingfiles response sukses: {'name': '...', 'url': '...'} 
-                # Tidak ada key 'status': 200
+                # Vikingfiles mengembalikan {'url': '...'} jika sukses
                 if res.get('url'):
                     return res['url']
-                # -------------------------
                 
                 LOGGER.error(f"Vikingfiles Error: {res}")
         except Exception as e:
