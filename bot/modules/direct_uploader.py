@@ -4,6 +4,7 @@ import os
 import asyncio
 import requests
 import json
+import re
 from urllib.parse import quote
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -100,14 +101,27 @@ class DirectUpload:
             r = self.session.post(url, headers=headers, json=data, timeout=15)
             res = r.json()
             
-            # 200 OK, 409 Conflict (Folder exists - biasanya API akan tetap return data atau error)
-            # Untuk simplifikasi, kita ambil ID jika sukses
+            # 200 OK
             if res.get('code') == 200:
                 return res['data']['id']
+            
+            # 409 CONFLICT (Folder Exists) -> Auto Rename Logic
             elif res.get('code') == 409:
-                # Jika duplikat, coba tambahkan suffix angka random atau biarkan
-                LOGGER.warning(f"Buzzheavier folder '{name}' conflict.")
-                return None 
+                LOGGER.warning(f"Buzzheavier folder '{name}' conflict. Renaming...")
+                
+                # Cek apakah nama sudah berakhiran (angka), misal: Folder (1)
+                match = re.search(r"\((\d+)\)$", name)
+                if match:
+                    # Jika sudah ada angka, increment angkanya
+                    num = int(match.group(1)) + 1
+                    new_name = re.sub(r"\(\d+\)$", f"({num})", name)
+                else:
+                    # Jika belum ada, tambahkan (1)
+                    new_name = f"{name} (1)"
+                
+                # Coba buat lagi dengan nama baru (Rekursif)
+                return self._buzzheavier_create_folder(token, parent_id, new_name)
+                
         except Exception as e:
             LOGGER.error(f"Buzzheavier Create Folder Error: {e}")
         return None
@@ -153,9 +167,6 @@ class DirectUpload:
             for root, dirs, files in os.walk(folderpath):
                 for file in files:
                     full_path = os.path.join(root, file)
-                    # Saat ini support flat folder upload ke dalam satu folder parent
-                    # Jika butuh nested folder structure, perlu rekursif create_folder lebih lanjut
-                    # Untuk sekarang, masukkan semua file ke folder utama agar link rapi
                     self._upload_buzzheavier_file(full_path, token, folder_id=created_folder_id)
             
             return f"https://buzzheavier.com/{created_folder_id}"
@@ -218,9 +229,6 @@ class DirectUpload:
             token = self.user_dict.get("gofile", {}).get("api")
             if not token: return None
             
-            # Gofile folder logic handled in uploder.py manually, direct_uploader expects file here usually
-            # unless using specific helpers. If directory passed here without specific_folder_id logic from uploder.py
-            # it might fail, but uploder.py logic handles it.
             folder_target = specific_folder_id or self.user_dict.get("gofile", {}).get("folder_id")
             LOGGER.info(f"Uploading Gofile: {file_name}")
             link = await loop.run_in_executor(None, self._upload_gofile, filepath, token, folder_target)
@@ -246,7 +254,6 @@ class DirectUpload:
             if not token: return None
             
             if is_directory:
-                # Should have been zipped by uploder.py
                 LOGGER.error(f"Vikingfiles received a folder: {file_name}. Skipping.")
                 return None
             
