@@ -76,9 +76,6 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
     if mode == 'Gofile':
         token = user_data.get('gofile_token')
         upload_type = 'gofile'
-    elif mode == 'Pixeldrain':
-        token = user_data.get('pixeldrain_token')
-        upload_type = 'pixeldrain'
     elif mode == 'Buzzheavier':
         token = user_data.get('buzzheavier_token')
         upload_type = 'buzzheavier'
@@ -94,7 +91,6 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
     # Siapkan Dictionary Token untuk DirectUpload
     server_dict = {
         "gofile": {"api": user_data.get('gofile_token')},
-        "pixeldrain": {"api": user_data.get('pixeldrain_token')},
         "buzzheavier": {"api": user_data.get('buzzheavier_token')},
         "vikingfiles": {"api": user_data.get('viking_token')}
     }
@@ -200,7 +196,7 @@ async def track_upload(metadata, user, disable_link=False):
     upload_success = False
 
     # 1. CLOUD UPLOAD (Gofile/Pixel/Buzz/Viking)
-    if user_mode in ['Gofile', 'Pixeldrain', 'Buzzheavier', 'Vikingfiles']:
+    if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         link = await upload_to_cloud_handler(metadata['filepath'], user, metadata, user_mode)
         
         if link:
@@ -241,7 +237,7 @@ async def album_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
     # 1. CLOUD UPLOAD
-    if user_mode in ['Gofile', 'Pixeldrain', 'Buzzheavier', 'Vikingfiles']:
+    if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         # Tentukan target upload (Folder atau Zip)
         target = metadata.get('folderpath') 
         # Jika user mengaktifkan ZIP di settings, target mungkin sudah jadi ZIP
@@ -303,7 +299,7 @@ async def artist_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
 
     # 1. CLOUD UPLOAD
-    if user_mode in ['Gofile', 'Pixeldrain', 'Buzzheavier', 'Vikingfiles']:
+    if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
              target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
@@ -355,7 +351,7 @@ async def playlist_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
     # 1. CLOUD UPLOAD
-    if user_mode in ['Gofile', 'Pixeldrain', 'Buzzheavier', 'Vikingfiles']:
+    if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
              target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
