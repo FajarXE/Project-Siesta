@@ -27,15 +27,32 @@ class FakeListener:
 
 # --- CAPTION GENERATOR ---
 def create_cloud_caption(metadata):
+    # Ambil data umum
     title = metadata.get('title', 'Unknown')
-    artist = metadata.get('artist', 'Unknown')
-    date = metadata.get('date') or metadata.get('release_date') or 'Unknown'
+    quality = metadata.get('quality', 'Unknown')
+    provider = metadata.get('provider', 'Unknown')
     
+    # Hitung Tracks
     if 'tracks' in metadata:
         total_tracks = len(metadata['tracks'])
     else:
         total_tracks = metadata.get('totaltracks', 1)
-        
+
+    # --- LOGIC KHUSUS PLAYLIST ---
+    # Jika tipe adalah playlist, gunakan format pendek (Simple)
+    if metadata.get('type') == 'playlist':
+        text = (
+            f"<b>ᴛɪᴛʟᴇ</b> : {title}\n"
+            f"<b>ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs</b> : {total_tracks}\n"
+            f"<b>ǫᴜᴀʟɪᴛʏ</b> : {quality}\n"
+            f"<b>ᴘʀᴏᴠɪᴅᴇʀ</b> : {provider}"
+        )
+        return text
+
+    # --- LOGIC STANDARD (ALBUM / ARTIST / SINGLE) ---
+    artist = metadata.get('artist', 'Unknown')
+    date = metadata.get('date') or metadata.get('release_date') or 'Unknown'
+    
     total_volumes = metadata.get('total_volumes')
     if not total_volumes:
         if 'tracks' in metadata and metadata['tracks']:
@@ -47,8 +64,6 @@ def create_cloud_caption(metadata):
         else:
             total_volumes = 1
 
-    quality = metadata.get('quality', 'Unknown')
-    provider = metadata.get('provider', 'Unknown')
     explicit = str(metadata.get('explicit', False))
 
     text = (
