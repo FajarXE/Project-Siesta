@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/modules/user_settings.py]
+# [FILE: bot/modules/user_settings.py]
 
 import bot.helpers.translations as lang
 import logging, asyncio
@@ -62,21 +62,16 @@ try:
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor moov_manager.")
     moov_manager = None
-
-# --- TAMBAHAN BARU: LivePhish Manager ---
 try:
     from ..helpers.livephish.manager import livephish_manager
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor livephish_manager.")
     livephish_manager = None
-
-# --- TAMBAHAN BARU: Khinsider Manager ---
 try:
     from ..helpers.khinsider.manager import khinsider_manager
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor khinsider_manager.")
     khinsider_manager = None
-# --- BATAS TAMBAHAN ---
 
 # --- IMPORT BUTTONS ---
 from ..helpers.buttons.settings import (
@@ -84,9 +79,7 @@ from ..helpers.buttons.settings import (
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
     bugs_button, lyrics_button, mv_button,
-    # --- TAMBAHAN BARU: lp_button & khi_button ---
     lp_button, khi_button
-    # --- BATAS TAMBAHAN ---
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -94,46 +87,112 @@ from ..settings import bot_set
 from ..helpers.message import send_message, edit_message, check_user, fetch_user_details
 
 
+# --- COMMAND: SET GOFILE TOKEN ---
+@Client.on_message(filters.command("set_gofile"))
+async def set_gofile_token(client, message):
+    if not await check_user(msg=message):
+        return
+
+    user_id = message.from_user.id
+    try:
+        # Format: /set_gofile <token>
+        if len(message.command) < 2:
+            raise IndexError
+
+        token = message.text.split(maxsplit=1)[1].strip()
+        
+        # Simpan ke memori bot
+        bot_set.user_data.setdefault(user_id, {})['gofile_token'] = token
+        
+        # Simpan ke Database
+        await database.save_user_settings(user_id, {'gofile_token': token})
+        
+        await message.reply_text(f"✅ <b>Gofile Token Saved!</b>\nToken: <code>{token}</code>")
+    except IndexError:
+        await message.reply_text("❌ <b>Invalid Format.</b>\nUsage: <code>/set_gofile your_token_here</code>\n\nGet token from Gofile Dashboard.")
+
+
+# --- MENU USER SETTINGS UTAMA ---
 @Client.on_message(filters.command(cmd.USETTING))
 async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
     if not await check_user(msg=m):
         return
     
+    # Tambahkan Info Upload Mode & Token Status
     USETTING_TEXT = """
 <blockquote>
+<b>📦 ZIP SETTINGS</b>
 PLAYLIST_ZIP  : {playlist}
 ALBUM_ZIP     : {album}
 ARTIST_ZIP    : {artist}
 ART_POSTER    : {poster}
+
+<b>☁️ UPLOAD SETTINGS</b>
+UPLOAD MODE   : {upload_mode}
+GOFILE TOKEN  : {gofile_status}
 </blockquote>
 {date}
-Choose Menu option bellow:
+Choose Menu option below:
 """
     
     user = await fetch_user_details(m)
     user_data = users_
     if not users_:
         user_data = user
-        
+    
+    user_id = user_data['user_id']
+    
+    # Ambil data settings dari memory
     # Unpack settings (pastikan fetch_zip_settings mengembalikan 4 value)
     PLAYLIST_ZIP, ALBUM_ZIP, ARTIST_ZIP, ART_POSTER = await asyncio.to_thread(fetch_zip_settings, user_data)
     
+    # Ambil Mode Upload & Status Token
+    current_settings = bot_set.user_data.get(user_id, {})
+    upload_mode = current_settings.get('upload_mode', 'Telegram')
+    gofile_token = current_settings.get('gofile_token')
+    gofile_status = "✅ Set" if gofile_token else "❌ Not Set"
+
     text = USETTING_TEXT.format_map({
         "playlist".lower(): PLAYLIST_ZIP,
         "album".lower(): ALBUM_ZIP,
         "artist".lower(): ARTIST_ZIP,
         "poster": ART_POSTER,
+        "upload_mode": upload_mode,
+        "gofile_status": gofile_status,
         "date": m.date.now().strftime("%d/%m/%Y %H:%M:%S"),
     })
     
+    # Passing user_id ke usetting_button agar tombol dinamis (jika diimplementasikan di buttons/settings.py)
     if not edit:
-        await send_message(user, text, markup=usetting_button())
+        await send_message(user, text, markup=usetting_button(user_id))
         return
-    await edit_message(m, text, markup=usetting_button())
+    await edit_message(m, text, markup=usetting_button(user_id))
+
+
+# --- HANDLER TOGGLE UPLOAD MODE ---
+@Client.on_callback_query(filters.regex("^uset_upload_mode"))
+async def uset_upload_mode_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+
+    user_id = query.from_user.id
+    
+    # Ambil mode saat ini, defaultnya 'Telegram'
+    current_mode = bot_set.user_data.get(user_id, {}).get('upload_mode', 'Telegram')
+    
+    # Toggle Logic
+    new_mode = 'Gofile' if current_mode == 'Telegram' else 'Telegram'
+    
+    # Simpan Perubahan
+    bot_set.user_data.setdefault(user_id, {})['upload_mode'] = new_mode
+    await database.save_user_settings(user_id, {'upload_mode': new_mode})
+    
+    # Refresh Menu
+    users_ = {"user_id": user_id}
+    await start_user_setting(client, query.message, True, users_)
 
 
 # --- HANDLER UTAMA TOMBOL MENU ---
-# Tambahkan 'livephish' dan 'khinsider' ke regex pattern
 @Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs|moov|livephish|khinsider)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
@@ -146,6 +205,7 @@ async def uset_cb(client, query, datatype=""):
         return await start_user_setting(client, query.message, True, users_)
     if data[1] == "close":
         await query.message.delete()
+        return
         
     # --- TIDAL MENU ---
     if data[1] == "tidal" or datatype == "tidal":
@@ -159,7 +219,6 @@ async def uset_cb(client, query, datatype=""):
         }
         
         main_user_dict = bot_set.user_data.get(user_id, {})
-        # Sinkronkan setting user ke manager
         await tidal_manager.setup_user_settings(
             user_id,
             qual=main_user_dict.get("tidal_qual"),
@@ -405,10 +464,9 @@ async def uset_cb(client, query, datatype=""):
         
         return await edit_message(query.message, text, markup=lp_button(quality, user_id))
 
-    # --- KHINSIDER MENU (TAMBAHAN BARU) ---
+    # --- KHINSIDER MENU ---
     if data[1] == "khinsider" or datatype == "khinsider":
         text = f"Choose Khinsider Preferred Format:"
-        # Hanya FLAC dan MP3
         quality = {
             "flac": "FLAC",
             "mp3": "MP3"
@@ -425,7 +483,6 @@ async def uset_cb(client, query, datatype=""):
             quality[current] += '✅'
         
         return await edit_message(query.message, text, markup=khi_button(quality, user_id))
-    # --- BATAS TAMBAHAN ---
 
 
 # --- HANDLER SETTING TIDAL SPECIFIC ---
@@ -797,7 +854,7 @@ async def uset_livephish_handler(client, query):
     await uset_cb(client, query, "livephish")
 
 
-# --- HANDLER KHINSIDER SPECIFIC (TAMBAHAN BARU) ---
+# --- HANDLER KHINSIDER SPECIFIC ---
 @Client.on_callback_query(filters.regex("^ukhis"))
 async def uset_khinsider_handler(client, query):
     m = query.message
@@ -819,7 +876,6 @@ async def uset_khinsider_handler(client, query):
     await database.save_user_settings(user_id, {'khinsider_qual': to_set})
     
     await uset_cb(client, query, "khinsider")
-# --- BATAS TAMBAHAN ---
 
 
 # --- HANDLER CALLBACK BARU UNTUK LIRIK ---
