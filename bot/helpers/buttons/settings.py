@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/buttons/settings.py]
+# [FILE: bot/helpers/buttons/settings.py]
 
 import bot.helpers.translations as lang
 
@@ -86,12 +86,11 @@ try:
 except ImportError:
     livephish_manager = _DummyManager()
 
-# --- TAMBAHAN BARU: Impor Manajer Khinsider ---
+# Impor Manajer Khinsider
 try:
     from bot.helpers.khinsider.manager import khinsider_manager
 except ImportError:
-    khinsider_manager = None # Khinsider mungkin tidak menggunakan atribut .clients
-# --- BATAS TAMBAHAN ---
+    khinsider_manager = None 
 
 
 def fetch_base_buttons():
@@ -246,7 +245,6 @@ def providers_button():
             ]
         )
 
-    # --- TAMBAHAN BARU: Tombol Khinsider ---
     if khinsider_manager:
         inline_keyboard.append(
             [
@@ -256,7 +254,6 @@ def providers_button():
                 )
             ]
         )
-    # --- BATAS TAMBAHAN ---
         
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
@@ -817,7 +814,7 @@ def lp_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
-# --- TAMBAHAN BARU: Khinsider Button ---
+# Khinsider Button
 def khi_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -840,7 +837,6 @@ def khi_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
-# --- BATAS TAMBAHAN ---
 
 
 # Lyrics Button
@@ -873,7 +869,7 @@ def lyrics_button(user_settings: dict, user_id):
     return InlineKeyboardMarkup(buttons)
 
 
-def usetting_button() -> InlineKeyboardMarkup:
+def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
     buttons = []
     
     if tidal_manager and tidal_manager.clients:
@@ -914,6 +910,10 @@ def usetting_button() -> InlineKeyboardMarkup:
 
     if khinsider_manager:
         buttons.append([InlineKeyboardButton(text=f"Khinsider Quality", callback_data=f"uset_khinsider")])
+
+    # --- BUTTON SWITCH UPLOAD MODE ---
+    buttons.append([InlineKeyboardButton(text="🔁 Switch Upload Mode (TG/Gofile)", callback_data="uset_upload_mode")])
+    # ---------------------------------
 
     buttons.append([InlineKeyboardButton(text="LYRICS SETTINGS", callback_data="uset_lyrics")])
     
