@@ -80,20 +80,87 @@ class DirectUpload:
     # ============================
     # BUZZHEAVIER HANDLER
     # ============================
-    def _upload_buzzheavier(self, filepath, token):
+    def _buzzheavier_get_root(self, token):
+        try:
+            headers = {"Authorization": f"Bearer {token}"}
+            r = self.session.get("https://buzzheavier.com/api/fs", headers=headers, timeout=15)
+            res = r.json()
+            if res.get('code') == 200:
+                return res['data']['id']
+        except Exception as e:
+            LOGGER.error(f"Buzzheavier Get Root Error: {e}")
+        return None
+
+    def _buzzheavier_create_folder(self, token, parent_id, name):
+        try:
+            url = f"https://buzzheavier.com/api/fs/{parent_id}"
+            headers = {"Authorization": f"Bearer {token}"}
+            data = {"name": name, "parentId": parent_id}
+            
+            r = self.session.post(url, headers=headers, json=data, timeout=15)
+            res = r.json()
+            
+            # 200 OK, 409 Conflict (Folder exists - biasanya API akan tetap return data atau error)
+            # Untuk simplifikasi, kita ambil ID jika sukses
+            if res.get('code') == 200:
+                return res['data']['id']
+            elif res.get('code') == 409:
+                # Jika duplikat, coba tambahkan suffix angka random atau biarkan
+                LOGGER.warning(f"Buzzheavier folder '{name}' conflict.")
+                return None 
+        except Exception as e:
+            LOGGER.error(f"Buzzheavier Create Folder Error: {e}")
+        return None
+
+    def _upload_buzzheavier_file(self, filepath, token, folder_id=None):
         try:
             filename = os.path.basename(filepath)
-            url = f"https://w.buzzheavier.com/{quote(filename)}"
+            # Jika ada folder_id, URL berubah formatnya
+            if folder_id:
+                url = f"https://w.buzzheavier.com/{folder_id}/{quote(filename)}"
+            else:
+                url = f"https://w.buzzheavier.com/{quote(filename)}"
+            
             headers = {"Authorization": f"Bearer {token}"}
+            
+            # PENTING: Cek jika ini direktori (guard clause)
+            if os.path.isdir(filepath):
+                return None 
             
             with open(filepath, 'rb') as f:
                 r = self.session.put(url, headers=headers, data=f, timeout=3600)
                 res = r.json()
                 if res.get('code') == 201 and res.get('data'):
+                    # Jika upload ke folder, kita tidak butuh link per file, tapi sukses ID
                     return f"https://buzzheavier.com/{res['data']['id']}"
                 LOGGER.error(f"Buzzheavier Error: {res}")
         except Exception as e:
             LOGGER.error(f"Buzzheavier Upload Error: {e}")
+        return None
+
+    def _upload_buzzheavier_folder_recursive(self, folderpath, token):
+        try:
+            # 1. Get Root
+            root_id = self._buzzheavier_get_root(token)
+            if not root_id: return None
+            
+            # 2. Create Parent Folder
+            folder_name = os.path.basename(folderpath)
+            created_folder_id = self._buzzheavier_create_folder(token, root_id, folder_name)
+            if not created_folder_id: return None
+            
+            # 3. Walk and Upload
+            for root, dirs, files in os.walk(folderpath):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    # Saat ini support flat folder upload ke dalam satu folder parent
+                    # Jika butuh nested folder structure, perlu rekursif create_folder lebih lanjut
+                    # Untuk sekarang, masukkan semua file ke folder utama agar link rapi
+                    self._upload_buzzheavier_file(full_path, token, folder_id=created_folder_id)
+            
+            return f"https://buzzheavier.com/{created_folder_id}"
+        except Exception as e:
+            LOGGER.error(f"Buzzheavier Recursive Error: {e}")
         return None
 
     # ============================
@@ -101,6 +168,10 @@ class DirectUpload:
     # ============================
     def _upload_viking(self, filepath, token):
         try:
+            if os.path.isdir(filepath):
+                LOGGER.error("Vikingfiles does not support folder upload directly.")
+                return None
+
             r_srv = self.session.get("https://vikingfile.com/api/get-server", timeout=15)
             server_url = r_srv.json().get('server')
             if not server_url: raise Exception("No Viking server available")
@@ -138,31 +209,47 @@ class DirectUpload:
     async def upload(self, file_name, size, upload_type, specific_folder_id=None):
         loop = asyncio.get_running_loop()
         filepath = os.path.join(self.path, file_name)
+        
         if not os.path.exists(filepath): return None
+        is_directory = os.path.isdir(filepath)
 
         # 1. GOFILE
         if upload_type in ['gf', 'gofile']:
             token = self.user_dict.get("gofile", {}).get("api")
             if not token: return None
+            
+            # Gofile folder logic handled in uploder.py manually, direct_uploader expects file here usually
+            # unless using specific helpers. If directory passed here without specific_folder_id logic from uploder.py
+            # it might fail, but uploder.py logic handles it.
             folder_target = specific_folder_id or self.user_dict.get("gofile", {}).get("folder_id")
             LOGGER.info(f"Uploading Gofile: {file_name}")
             link = await loop.run_in_executor(None, self._upload_gofile, filepath, token, folder_target)
             return {'Gofile': link} if link else None
 
-        # [PIXELDRAIN DIHAPUS DARI BLOK INI]
-
         # 2. BUZZHEAVIER
         elif upload_type in ['bh', 'buzzheavier']:
             token = self.user_dict.get("buzzheavier", {}).get("api")
             if not token: return None
-            LOGGER.info(f"Uploading Buzzheavier: {file_name}")
-            link = await loop.run_in_executor(None, self._upload_buzzheavier, filepath, token)
+            
+            if is_directory:
+                LOGGER.info(f"Uploading Buzzheavier Folder: {file_name}")
+                link = await loop.run_in_executor(None, self._upload_buzzheavier_folder_recursive, filepath, token)
+            else:
+                LOGGER.info(f"Uploading Buzzheavier File: {file_name}")
+                link = await loop.run_in_executor(None, self._upload_buzzheavier_file, filepath, token)
+            
             return {'Buzzheavier': link} if link else None
 
         # 3. VIKINGFILES
         elif upload_type in ['vk', 'viking', 'vikingfiles']:
             token = self.user_dict.get("vikingfiles", {}).get("api")
             if not token: return None
+            
+            if is_directory:
+                # Should have been zipped by uploder.py
+                LOGGER.error(f"Vikingfiles received a folder: {file_name}. Skipping.")
+                return None
+            
             LOGGER.info(f"Uploading Vikingfiles: {file_name}")
             link = await loop.run_in_executor(None, self._upload_viking, filepath, token)
             return {'Vikingfiles': link} if link else None
