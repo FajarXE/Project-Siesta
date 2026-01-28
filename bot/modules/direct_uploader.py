@@ -17,16 +17,15 @@ class DirectUpload:
         self.user_dict = listener.user_dict if listener else {}
         self.is_cancelled = False
         
-        # --- KONFIGURASI SESI DENGAN RETRY OTOMATIS ---
+        # Session Setup
         self.session = requests.Session()
         retries = Retry(
-            total=5,  # Coba ulang 5 kali
-            backoff_factor=1,  # Tunggu 1s, 2s, 4s...
-            status_forcelist=[500, 502, 503, 504], # Coba ulang jika server error
+            total=5,
+            backoff_factor=1,
+            status_forcelist=[500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "PUT", "POST", "OPTIONS"]
         )
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
-        # ----------------------------------------------
 
     # ============================
     # GOFILE HANDLER
@@ -79,42 +78,8 @@ class DirectUpload:
         return None
 
     # ============================
-    # PIXELDRAIN HANDLER (DIPERBAIKI)
-    # ============================
-    def _upload_pixeldrain(self, filepath, token):
-        filename = os.path.basename(filepath)
-        url = f"https://pixeldrain.com/api/file/{quote(filename)}"
-        try:
-            # Gunakan Token sebagai Password di Basic Auth (User kosong)
-            auth = ('', token)
-            
-            with open(filepath, 'rb') as f:
-                # PUT Method + Session Retry
-                r = self.session.put(url, auth=auth, data=f, timeout=3600)
-                
-                if r.status_code in [200, 201]:
-                    res = r.json()
-                    if res.get('success'):
-                        return f"https://pixeldrain.com/u/{res['id']}"
-                
-                LOGGER.error(f"Pixeldrain Error: {r.status_code} - {r.text}")
-        except Exception as e:
-            LOGGER.error(f"Pixeldrain Upload Error: {e}")
-        return None
-
-    # ============================
     # BUZZHEAVIER HANDLER
     # ============================
-    def _get_buzz_root(self, token):
-        try:
-            headers = {"Authorization": f"Bearer {token}"}
-            r = self.session.get("https://buzzheavier.com/api/fs", headers=headers, timeout=10)
-            res = r.json()
-            if res.get('code') == 200:
-                return res['data']['id']
-        except: pass
-        return None
-
     def _upload_buzzheavier(self, filepath, token):
         try:
             filename = os.path.basename(filepath)
@@ -122,10 +87,8 @@ class DirectUpload:
             headers = {"Authorization": f"Bearer {token}"}
             
             with open(filepath, 'rb') as f:
-                # PUT Method
                 r = self.session.put(url, headers=headers, data=f, timeout=3600)
                 res = r.json()
-                
                 if res.get('code') == 201 and res.get('data'):
                     return f"https://buzzheavier.com/{res['data']['id']}"
                 LOGGER.error(f"Buzzheavier Error: {res}")
@@ -138,35 +101,25 @@ class DirectUpload:
     # ============================
     def _upload_viking(self, filepath, token):
         try:
-            # 1. Get Server
             r_srv = self.session.get("https://vikingfile.com/api/get-server", timeout=15)
             server_url = r_srv.json().get('server')
-            
-            if not server_url:
-                raise Exception("No Viking server available")
+            if not server_url: raise Exception("No Viking server available")
 
-            # 2. Upload
             filename = os.path.basename(filepath)
             with open(filepath, 'rb') as f:
                 files = {'file': (filename, f)}
                 data = {'user': token} 
-                
                 r = self.session.post(server_url, files=files, data=data, timeout=3600)
                 res = r.json()
-                
-                if res.get('url'):
-                    return res['url']
-                
+                if res.get('url'): return res['url']
                 LOGGER.error(f"Vikingfiles Error: {res}")
         except Exception as e:
             LOGGER.error(f"Vikingfiles Upload Error: {e}")
         return None
 
-
     # ============================
     # PUBLIC METHODS
     # ============================
-    
     async def gofile_create_folder_async(self, token, parent_id, name):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._gofile_create_folder, token, parent_id, name)
@@ -185,43 +138,31 @@ class DirectUpload:
     async def upload(self, file_name, size, upload_type, specific_folder_id=None):
         loop = asyncio.get_running_loop()
         filepath = os.path.join(self.path, file_name)
-        
-        if not os.path.exists(filepath):
-            return None
+        if not os.path.exists(filepath): return None
 
         # 1. GOFILE
         if upload_type in ['gf', 'gofile']:
             token = self.user_dict.get("gofile", {}).get("api")
             if not token: return None
             folder_target = specific_folder_id or self.user_dict.get("gofile", {}).get("folder_id")
-            
             LOGGER.info(f"Uploading Gofile: {file_name}")
             link = await loop.run_in_executor(None, self._upload_gofile, filepath, token, folder_target)
             return {'Gofile': link} if link else None
 
-        # 2. PIXELDRAIN
-        elif upload_type in ['pd', 'pixeldrain']:
-            token = self.user_dict.get("pixeldrain", {}).get("api")
-            if not token: return None
-            
-            LOGGER.info(f"Uploading Pixeldrain: {file_name}")
-            link = await loop.run_in_executor(None, self._upload_pixeldrain, filepath, token)
-            return {'Pixeldrain': link} if link else None
+        # [PIXELDRAIN DIHAPUS DARI BLOK INI]
 
-        # 3. BUZZHEAVIER
+        # 2. BUZZHEAVIER
         elif upload_type in ['bh', 'buzzheavier']:
             token = self.user_dict.get("buzzheavier", {}).get("api")
             if not token: return None
-            
             LOGGER.info(f"Uploading Buzzheavier: {file_name}")
             link = await loop.run_in_executor(None, self._upload_buzzheavier, filepath, token)
             return {'Buzzheavier': link} if link else None
 
-        # 4. VIKINGFILES
+        # 3. VIKINGFILES
         elif upload_type in ['vk', 'viking', 'vikingfiles']:
             token = self.user_dict.get("vikingfiles", {}).get("api")
             if not token: return None
-            
             LOGGER.info(f"Uploading Vikingfiles: {file_name}")
             link = await loop.run_in_executor(None, self._upload_viking, filepath, token)
             return {'Vikingfiles': link} if link else None
