@@ -49,6 +49,26 @@ async def upload_to_gofile_handler(filepath, user, metadata):
         await send_message(user, "⚠️ <b>Gofile Token Missing!</b>\nPlease set it using <code>/set_gofile token</code>\nFalling back to Telegram...", 'text')
         return None 
 
+    # --- LOGIC AUTO-ZIP FOLDER ---
+    # Jika input adalah FOLDER, kita zip dulu agar bisa diupload ke Gofile
+    is_temp_zip = False
+    original_filepath = filepath # Simpan path asli untuk referensi
+    
+    if os.path.isdir(filepath):
+        try:
+            if 'bot_msg' in user:
+                await edit_message(user['bot_msg'], "🗜️ Folder detected. Zipping for Gofile...")
+            
+            # Membuat arsip zip sementara
+            # format: /path/to/folder -> /path/to/folder.zip
+            archive_path = shutil.make_archive(filepath, 'zip', filepath)
+            filepath = archive_path # Update filepath ke file .zip
+            is_temp_zip = True
+        except Exception as e:
+            LOGGER.error(f"Gagal membuat zip sementara: {e}")
+            return None
+    # -----------------------------
+
     try:
         if 'bot_msg' in user:
             await edit_message(user['bot_msg'], f"🚀 Uploading to Gofile...\nFile: `{os.path.basename(filepath)}`")
@@ -57,7 +77,6 @@ async def upload_to_gofile_handler(filepath, user, metadata):
         listener = FakeListener(user_id, token)
         
         # Inisialisasi DirectUpload
-        # DirectUpload(listener=None, name=None, path=None)
         uploader = DirectUpload(
             listener=listener, 
             name=os.path.basename(filepath), 
@@ -66,9 +85,14 @@ async def upload_to_gofile_handler(filepath, user, metadata):
         
         filesize = os.path.getsize(filepath) if os.path.isfile(filepath) else 0
         
-        # Eksekusi Upload ("gf" adalah kode untuk Gofile di direct_uploader.py)
-        # return format: {'Gofile': 'https://gofile.io/d/xyz'}
+        # Eksekusi Upload
         result_links = await uploader.upload(os.path.basename(filepath), filesize, "gf")
+        
+        # --- CLEANUP TEMP ZIP ---
+        # Hapus file zip sementara setelah upload selesai (atau gagal) agar hemat storage
+        if is_temp_zip and os.path.exists(filepath):
+            os.remove(filepath)
+        # ------------------------
         
         if result_links and isinstance(result_links, dict):
             return result_links.get('Gofile')
@@ -76,6 +100,10 @@ async def upload_to_gofile_handler(filepath, user, metadata):
         return None
 
     except Exception as e:
+        # Cleanup jika error
+        if is_temp_zip and os.path.exists(filepath):
+            os.remove(filepath)
+            
         LOGGER.error(f"Gofile Handler Error: {e}")
         await send_message(user, f"⚠️ Gofile Error: {e}\nFalling back to Telegram...", 'text')
         return None
