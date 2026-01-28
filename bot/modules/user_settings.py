@@ -87,120 +87,150 @@ from ..settings import bot_set
 from ..helpers.message import send_message, edit_message, check_user, fetch_user_details
 
 
-# --- COMMAND: SET GOFILE TOKEN ---
-@Client.on_message(filters.command("set_gofile"))
-async def set_gofile_token(client, message):
-    if not await check_user(msg=message):
-        return
+# ==================================
+# COMMANDS SET/DEL TOKEN
+# ==================================
 
+# --- HELPER FUNCTION ---
+async def _save_token(message, key, name):
     user_id = message.from_user.id
     try:
-        # Format: /set_gofile <token>
         if len(message.command) < 2:
             raise IndexError
-
         token = message.text.split(maxsplit=1)[1].strip()
         
-        # Simpan ke memori bot
-        bot_set.user_data.setdefault(user_id, {})['gofile_token'] = token
+        # Simpan ke Memory & DB
+        bot_set.user_data.setdefault(user_id, {})[key] = token
+        await database.save_user_settings(user_id, {key: token})
         
-        # Simpan ke Database
-        await database.save_user_settings(user_id, {'gofile_token': token})
-        
-        await message.reply_text(f"✅ <b>Gofile Token Saved!</b>\nToken: <code>{token}</code>")
+        await message.reply_text(f"✅ <b>{name} Token Saved!</b>\nToken: <code>{token}</code>")
     except IndexError:
-        await message.reply_text("❌ <b>Invalid Format.</b>\nUsage: <code>/set_gofile your_token_here</code>\n\nGet token from Gofile Dashboard.")
+        await message.reply_text(f"❌ <b>Format Salah.</b>\nContoh: <code>/set_{name.lower()} your_token_here</code>")
 
-
-# --- COMMAND: DELETE GOFILE TOKEN (BARU) ---
-@Client.on_message(filters.command(["del_gofile", "delete_gofile"]))
-async def del_gofile_token(client, message):
-    if not await check_user(msg=message):
-        return
-
+async def _del_token(message, key, name):
     user_id = message.from_user.id
-    
     # Hapus dari Memory
     if user_id in bot_set.user_data:
-        # Gunakan pop untuk menghapus key jika ada, default None jika tidak ada
-        bot_set.user_data[user_id].pop('gofile_token', None)
+        bot_set.user_data[user_id].pop(key, None)
     
-    # Hapus dari Database (Set value ke None)
-    await database.save_user_settings(user_id, {'gofile_token': None})
-    
-    await message.reply_text("🗑️ <b>Gofile Token Deleted!</b>\nToken Anda telah dihapus dari database bot.")
+    # Hapus dari DB
+    await database.save_user_settings(user_id, {key: None})
+    await message.reply_text(f"🗑️ <b>{name} Token Deleted!</b>")
 
 
-# --- MENU USER SETTINGS UTAMA ---
+# --- 1. GOFILE ---
+@Client.on_message(filters.command("set_gofile"))
+async def set_gofile_cmd(client, message):
+    if await check_user(msg=message):
+        await _save_token(message, 'gofile_token', 'Gofile')
+
+@Client.on_message(filters.command(["del_gofile", "delete_gofile"]))
+async def del_gofile_cmd(client, message):
+    if await check_user(msg=message):
+        await _del_token(message, 'gofile_token', 'Gofile')
+
+# --- 2. PIXELDRAIN ---
+@Client.on_message(filters.command("set_pixeldrain"))
+async def set_pd_cmd(client, message):
+    if await check_user(msg=message):
+        await _save_token(message, 'pixeldrain_token', 'Pixeldrain')
+
+@Client.on_message(filters.command(["del_pixeldrain", "delete_pixeldrain"]))
+async def del_pd_cmd(client, message):
+    if await check_user(msg=message):
+        await _del_token(message, 'pixeldrain_token', 'Pixeldrain')
+
+# --- 3. BUZZHEAVIER ---
+@Client.on_message(filters.command("set_buzzheavier"))
+async def set_bh_cmd(client, message):
+    if await check_user(msg=message):
+        await _save_token(message, 'buzzheavier_token', 'Buzzheavier')
+
+@Client.on_message(filters.command(["del_buzzheavier", "delete_buzzheavier"]))
+async def del_bh_cmd(client, message):
+    if await check_user(msg=message):
+        await _del_token(message, 'buzzheavier_token', 'Buzzheavier')
+
+# --- 4. VIKINGFILES ---
+@Client.on_message(filters.command("set_viking"))
+async def set_vk_cmd(client, message):
+    if await check_user(msg=message):
+        await _save_token(message, 'viking_token', 'Vikingfiles')
+
+@Client.on_message(filters.command(["del_viking", "delete_viking"]))
+async def del_vk_cmd(client, message):
+    if await check_user(msg=message):
+        await _del_token(message, 'viking_token', 'Vikingfiles')
+
+
+# ==================================
+# MENU PENGATURAN UTAMA
+# ==================================
+
 @Client.on_message(filters.command(cmd.USETTING))
 async def start_user_setting(client: Client, m: Message, edit=False, users_: dict=None):
     if not await check_user(msg=m):
         return
     
-    # Tambahkan Info Upload Mode & Token Status
-    USETTING_TEXT = """
+    user = await fetch_user_details(m)
+    user_data = users_ if users_ else user
+    user_id = user_data['user_id']
+    
+    # Ambil pengaturan ZIP
+    PLAYLIST_ZIP, ALBUM_ZIP, ARTIST_ZIP, ART_POSTER = await asyncio.to_thread(fetch_zip_settings, user_data)
+    
+    # Ambil Pengaturan Cloud Upload
+    curr_settings = bot_set.user_data.get(user_id, {})
+    upload_mode = curr_settings.get('upload_mode', 'Telegram')
+    
+    # Cek status ketersediaan token (Indikator UI)
+    t_gf = "✅" if curr_settings.get('gofile_token') else "❌"
+    t_pd = "✅" if curr_settings.get('pixeldrain_token') else "❌"
+    t_bh = "✅" if curr_settings.get('buzzheavier_token') else "❌"
+    t_vk = "✅" if curr_settings.get('viking_token') else "❌"
+
+    # Template Teks Menu
+    USETTING_TEXT = f"""
 <blockquote>
 <b>📦 ZIP SETTINGS</b>
-PLAYLIST_ZIP  : {playlist}
-ALBUM_ZIP     : {album}
-ARTIST_ZIP    : {artist}
-ART_POSTER    : {poster}
+PLAYLIST : {PLAYLIST_ZIP} | ALBUM : {ALBUM_ZIP}
+ARTIST   : {ARTIST_ZIP}   | POSTER : {ART_POSTER}
 
-<b>☁️ UPLOAD SETTINGS</b>
-UPLOAD MODE   : {upload_mode}
-GOFILE TOKEN  : {gofile_status}
+<b>☁️ UPLOAD MODE: {upload_mode}</b>
+Gofile: {t_gf} | Pixel: {t_pd}
+Buzz: {t_bh}   | Viking: {t_vk}
 </blockquote>
-{date}
+{m.date.now().strftime("%d/%m/%Y %H:%M:%S")}
 Choose Menu option below:
 """
     
-    user = await fetch_user_details(m)
-    user_data = users_
-    if not users_:
-        user_data = user
-    
-    user_id = user_data['user_id']
-    
-    # Ambil data settings dari memory
-    PLAYLIST_ZIP, ALBUM_ZIP, ARTIST_ZIP, ART_POSTER = await asyncio.to_thread(fetch_zip_settings, user_data)
-    
-    # Ambil Mode Upload & Status Token
-    current_settings = bot_set.user_data.get(user_id, {})
-    upload_mode = current_settings.get('upload_mode', 'Telegram')
-    gofile_token = current_settings.get('gofile_token')
-    
-    # Status Token
-    gofile_status = "✅ Set" if gofile_token else "❌ Not Set"
-
-    text = USETTING_TEXT.format_map({
-        "playlist".lower(): PLAYLIST_ZIP,
-        "album".lower(): ALBUM_ZIP,
-        "artist".lower(): ARTIST_ZIP,
-        "poster": ART_POSTER,
-        "upload_mode": upload_mode,
-        "gofile_status": gofile_status,
-        "date": m.date.now().strftime("%d/%m/%Y %H:%M:%S"),
-    })
-    
     if not edit:
-        await send_message(user, text, markup=usetting_button(user_id))
+        await send_message(user, USETTING_TEXT, markup=usetting_button(user_id))
         return
-    await edit_message(m, text, markup=usetting_button(user_id))
+    await edit_message(m, USETTING_TEXT, markup=usetting_button(user_id))
 
 
-# --- HANDLER TOGGLE UPLOAD MODE ---
+# --- HANDLER GANTI MODE UPLOAD (CYCLING) ---
 @Client.on_callback_query(filters.regex("^uset_upload_mode"))
 async def uset_upload_mode_handler(client, query):
     if not await check_user(msg=query.message):
         return
 
     user_id = query.from_user.id
-    
-    # Ambil mode saat ini, defaultnya 'Telegram'
     current_mode = bot_set.user_data.get(user_id, {}).get('upload_mode', 'Telegram')
     
-    # Toggle Logic
-    new_mode = 'Gofile' if current_mode == 'Telegram' else 'Telegram'
+    # Daftar Mode yang tersedia
+    modes = ['Telegram', 'Gofile', 'Pixeldrain', 'Buzzheavier', 'Vikingfiles']
+    
+    # Cari index saat ini
+    try:
+        idx = modes.index(current_mode)
+    except ValueError:
+        idx = 0
+        
+    # Pindah ke mode selanjutnya (Looping)
+    next_idx = (idx + 1) % len(modes)
+    new_mode = modes[next_idx]
     
     # Simpan Perubahan
     bot_set.user_data.setdefault(user_id, {})['upload_mode'] = new_mode
@@ -211,7 +241,7 @@ async def uset_upload_mode_handler(client, query):
     await start_user_setting(client, query.message, True, users_)
 
 
-# --- HANDLER UTAMA TOMBOL MENU ---
+# --- HANDLER UTAMA TOMBOL MENU (PROVIDER SETTINGS) ---
 @Client.on_callback_query(filters.regex("^uset_(tidal|back|qobuz|close|beatport|deezer|kkbox|beatsource|soundcloud|napster|idagio|bugs|moov|livephish|khinsider)"))
 async def uset_cb(client, query, datatype=""):
     if not await check_user(msg=query.message):
@@ -347,8 +377,8 @@ async def uset_cb(client, query, datatype=""):
         text = f"Choose Deezer Audio Quality bellow:"
         quality = {
             "FLAC": "FLAC",
-            "MP3_320": "MP3 320",
-            "MP3_128": "MP3 128"
+            "MP3 320": "MP3 320",
+            "MP3 128": "MP3 128"
         }
         if not deezer_manager or not deezer_manager.clients:
             return await edit_message(query.message, "Layanan Deezer tidak aktif (tidak ada klien yang login).")
@@ -450,7 +480,7 @@ async def uset_cb(client, query, datatype=""):
             "MP3_320": "Std (16bit/LL)"
         }
         if not moov_manager or not moov_manager.clients:
-            return await edit_message(query.message, "Layanan Moov tidak aktif.")
+            return await edit_message(query.message, "Layanan Moov tidak aktif!")
         
         main_user_dict = bot_set.user_data.get(user_id, {})
         current = main_user_dict.get("moov_qual", moov_manager.quality) 
@@ -471,7 +501,7 @@ async def uset_cb(client, query, datatype=""):
             "AAC": "AAC"
         }
         if not livephish_manager or not livephish_manager.clients:
-             return await edit_message(query.message, "Layanan LivePhish tidak aktif.")
+             return await edit_message(query.message, "Layanan LivePhish tidak aktif!")
         
         main_user_dict = bot_set.user_data.get(user_id, {})
         current = main_user_dict.get("livephish_qual", livephish_manager.quality)
@@ -491,7 +521,7 @@ async def uset_cb(client, query, datatype=""):
             "mp3": "MP3"
         }
         if not khinsider_manager:
-             return await edit_message(query.message, "Layanan Khinsider tidak aktif.")
+             return await edit_message(query.message, "Layanan Khinsider tidak aktif!")
         
         main_user_dict = bot_set.user_data.get(user_id, {})
         current = main_user_dict.get("khinsider_qual", khinsider_manager.quality)
