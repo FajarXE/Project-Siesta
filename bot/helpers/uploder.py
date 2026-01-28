@@ -126,7 +126,7 @@ async def upload_to_gofile_handler(filepath, user, metadata):
 #
 
 async def track_upload(metadata, user, disable_link=False):
-    # Cek Mode User (Default Telegram)
+    # Cek Mode User
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     upload_success = False
 
@@ -138,32 +138,30 @@ async def track_upload(metadata, user, disable_link=False):
             caption = await create_simple_text(metadata, user)
             caption += f"\n\n🔗 <b>GOFILE LINK:</b>\n{gofile_link}"
             
-            # Kirim Poster dengan Link
-            if metadata.get('cover') and os.path.exists(metadata['cover']):
-                 await send_message(user, metadata['cover'], 'pic', caption)
-            else:
-                 await send_message(user, caption, 'text')
+            # --- MODIFIKASI: SELALU KIRIM TEKS (JANGAN KIRIM GAMBAR) ---
+            # Kita abaikan metadata['cover'] untuk tampilan pesan Gofile
+            await send_message(user, caption, 'text')
+            # -----------------------------------------------------------
             
             upload_success = True
-            # Jangan lupa hapus file
             try:
                 if os.path.exists(metadata['filepath']):
                     os.remove(metadata['filepath'])
             except: pass
-            return # Selesai, keluar fungsi
+            return 
 
-    # 2. STANDARD UPLOAD (Local / Telegram / Rclone)
-    # Jika Gofile gagal atau mode bukan Gofile, jalankan ini
-    if bot_set.upload_mode == 'Local':
-        await local_upload(metadata, user)
-    elif bot_set.upload_mode == 'Telegram' or user_mode == 'Telegram':
-        await telegram_upload(metadata, user)
-    else:
-        rclone_link, index_link = await rclone_upload(user, metadata['filepath'])
-        if not disable_link:
-            await post_simple_message(user, metadata, rclone_link, index_link)
+    # 2. STANDARD UPLOAD
+    if not upload_success:
+        if bot_set.upload_mode == 'Local':
+            await local_upload(metadata, user)
+        elif bot_set.upload_mode == 'Telegram' or user_mode == 'Telegram':
+            await telegram_upload(metadata, user)
+        else:
+            rclone_link, index_link = await rclone_upload(user, metadata['filepath'])
+            if not disable_link:
+                await post_simple_message(user, metadata, rclone_link, index_link)
 
-    # Cleanup File Single Track
+    # Cleanup
     try:
         if os.path.exists(metadata['filepath']):
             os.remove(metadata['filepath'])
