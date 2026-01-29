@@ -138,10 +138,18 @@ class Config:
     while True:
         email = getenv(f"BEATPORT_EMAIL_{i}")
         password = getenv(f"BEATPORT_PASSWORD_{i}")
+        proxy = getenv(f"BEATPORT_PROXY_{i}") # Format: socks5h://user:pass@host:port
         
         if email and password:
             logging.info(f"Ditemukan Beatport Akun #{i} (Email/Pass)")
             account_data = {"email": email, "password": password, "id": i}
+            
+            # --- LOGIKA PROXY ---
+            if proxy:
+                logging.info(f" -> Proxy ditemukan untuk Beatport #{i}")
+                account_data["proxy"] = proxy
+            # --------------------
+
             BEATPORT_ACCOUNTS.append(account_data)
             i += 1
         else:
