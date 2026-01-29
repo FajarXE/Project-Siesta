@@ -12,12 +12,12 @@ import math
 from pathvalidate import sanitize_filepath
 from config import Config
 
-# --- TAMBAHAN: Import ProxyConnector ---
+# --- ProxyConnector ---
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
     ProxyConnector = None
-# ---------------------------------------
+# ----------------------
 
 from .metadata import (
     process_track_metadata, 
@@ -43,12 +43,6 @@ from ...settings import bot_set
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
-try:
-    from bot.helpers.lyrics.manager import lyrics_manager
-except ImportError:
-    lyrics_manager = None
-
-# --- KONFIGURASI KEAMANAN ---
 BEATSOURCE_SEMAPHORE = asyncio.Semaphore(2)
 
 # --- HELPER PROGRESS BAR ---
@@ -67,48 +61,50 @@ async def update_progress_msg(msg, current, total, title, media_type):
         )
         await edit_message(msg, formatted_text)
     except Exception as e:
-        LOGGER.debug(f"Gagal update pesan progress: {e}")
+        pass
 
 async def refresh_track_url(item_id: str, current_meta: dict):
     """
-    Fungsi darurat: Meminta URL baru ke API jika URL lama expired (403).
+    Mengambil URL baru. Digunakan untuk Just-in-Time download & Retry 403.
+    Returns: (url, actual_quality)
     """
     try:
-        quality_map = {
-            "Lossless": "lossless",
-            "FLAC": "lossless",
-            "High": "high",
-            "AAC 256": "high",
-            "Medium": "medium",
-            "AAC 128": "medium"
-        }
+        # User preference dari metadata (atau default High)
+        pref_qual = current_meta.get('quality', 'High').lower()
         
-        display_quality = current_meta.get('quality', 'High')
-        api_quality = quality_map.get(display_quality, "high")
+        quality_priority = []
+        if pref_qual == "lossless":
+            quality_priority = ["lossless", "high", "medium"]
+        elif pref_qual == "high":
+            quality_priority = ["high", "medium"]
+        else:
+            quality_priority = ["medium"]
 
-        LOGGER.info(f"Beatsource: Refreshing URL for track {item_id} ({api_quality})...")
+        LOGGER.info(f"Beatsource: Fetching fresh URL for {item_id} (Pref: {pref_qual})...")
         
         clients = list(beatsource_manager.clients)
         random.shuffle(clients) 
         
         for client in clients:
-            try:
-                stream_data = await client.get_track_download(item_id, api_quality)
-                new_url = stream_data.get("location")
-                if new_url:
-                    return new_url
-            except Exception:
-                continue
+            for qual in quality_priority:
+                try:
+                    stream_data = await client.get_track_download(item_id, qual)
+                    new_url = stream_data.get("location")
+                    if new_url:
+                        return new_url, qual # Return URL dan Kualitas yang didapat
+                except Exception:
+                    continue
+            # Jika sudah dapat di satu client, break loop client
+            # (Tapi loop di atas sudah return, jadi aman)
         
-        return None
+        return None, None
     except Exception as e:
-        LOGGER.error(f"Gagal refresh URL track Beatsource {item_id}: {e}")
-        return None
+        LOGGER.error(f"Gagal get/refresh URL Beatsource {item_id}: {e}")
+        return None, None
 
 # ----------------------------
 
 async def start_beatsource(url: str, user: dict):
-    """Handler utama untuk link Beatsource."""
     try:
         media_type, item_id, extra_kwargs = custom_url_parse(url)
 
@@ -116,9 +112,10 @@ async def start_beatsource(url: str, user: dict):
             raise NotImplementedError("Unduhan Artis Beatsource belum didukung.")
         
         elif media_type == 'track':
+            # fetch_stream=True karena single track
             success = await start_track(item_id, user, None)
             if not success:
-                raise Exception("Gagal mengunduh atau memproses track.")
+                raise Exception("Gagal mengunduh track.")
         
         elif media_type == 'album':
             await start_album(item_id, user)
@@ -131,11 +128,7 @@ async def start_beatsource(url: str, user: dict):
         raise e 
 
 
-# --- PERBAIKAN: Download dengan Proxy Support + Fix Socks5h ---
 async def download_beatsource_track(url: str, filepath: str, proxy: str = None):
-    """
-    Pengunduh HTTP async dengan Header Browser & Deteksi 403 & Proxy.
-    """
     try:
         headers = {
             "User-Agent": USER_AGENT,
@@ -143,22 +136,16 @@ async def download_beatsource_track(url: str, filepath: str, proxy: str = None):
             "Referer": "https://www.beatsource.com/"
         }
 
-        # --- LOGIKA KONEKTOR DENGAN FIX SOCKS5H ---
         connector = None
         if proxy and ProxyConnector:
             try:
                 proxy_url = proxy
                 use_rdns = False
-                
-                # FIX MANUAL: aiohttp-socks kadang menolak scheme 'socks5h://'
                 if proxy_url.startswith("socks5h://"):
                     proxy_url = proxy_url.replace("socks5h://", "socks5://")
                     use_rdns = True
-                
                 connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
-            except Exception as e:
-                LOGGER.warning(f"Gagal membuat konektor proxy untuk download ({e}), mencoba direct.")
-        # -----------------------------------------------------------
+            except Exception: pass
 
         timeout = aiohttp.ClientTimeout(total=600)
 
@@ -182,23 +169,20 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     filepath=None, disable_link=False):
 
     async with BEATSOURCE_SEMAPHORE:
-        delay = random.uniform(3.0, 6.0)
+        delay = random.uniform(2.0, 5.0)
         await asyncio.sleep(delay)
         
-        # --- CARI PROXY DARI POOL MANAGER ---
-        # Karena Beatsource pakai load balancing, kita ambil sembarang proxy yang aktif
-        # agar download file juga lewat proxy tersebut.
         user_proxy = None
         if beatsource_manager.clients:
             for c in beatsource_manager.clients:
                 if c.proxy:
                     user_proxy = c.proxy
                     break
-        # ------------------------------------
         
         if not track_meta:
             try:
-                track_meta = await process_track_metadata(item_id, user['r_id'], user)
+                # Single track -> fetch_stream=True
+                track_meta = await process_track_metadata(item_id, user['r_id'], user, fetch_stream=True)
             except Exception as e:
                 LOGGER.warning(f"Beatsource track {item_id} tidak tersedia: {e}")
                 return False
@@ -206,31 +190,51 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
             filepath = sanitize_filepath(filepath)
 
-        download_url = track_meta.get('download_url')
-        if not download_url:
-            LOGGER.error(f"Tidak ada URL download ditemukan untuk track Beatsource {item_id}")
-            return False
+        # --- JUST-IN-TIME URL FETCHING ---
+        # Jika download_url kosong (karena dari Playlist), ambil SEKARANG agar fresh.
+        if not track_meta.get('download_url'):
+            new_url, qual = await refresh_track_url(item_id, track_meta)
+            if new_url:
+                track_meta['download_url'] = new_url
+                # Update kualitas dan ekstensi jika berubah
+                if qual:
+                    track_meta['quality'] = qual.capitalize()
+                    track_meta['extension'] = 'flac' if qual == 'lossless' else 'm4a'
+            else:
+                LOGGER.error(f"Gagal mendapatkan URL segar untuk track {item_id}")
+                return False
+        # ---------------------------------
 
         track_meta['folderpath'] = filepath
-        
         raw_filename = await format_string(Config.TRACK_NAME_FORMAT, track_meta, user)
         safe_filename = sanitize_filepath(raw_filename)
 
+        # Pastikan filepath akhir sesuai ekstensi yang didapat
         filepath += f"/{safe_filename}.{track_meta['extension']}"
         track_meta['filepath'] = filepath
 
-        # --- DOWNLOAD PERTAMA (PAKAI PROXY) ---
+        download_url = track_meta['download_url']
+
+        # --- DOWNLOAD ---
         err = await download_beatsource_track(download_url, track_meta['filepath'], proxy=user_proxy)
 
-        # --- LOGIKA RETRY (AUTO REFRESH URL) ---
+        # --- RETRY JIKA 403 (Double Safety) ---
         if err == "403_FORBIDDEN":
-            LOGGER.warning(f"URL Beatsource Track {item_id} expired (403). Mencoba refresh URL...")
-            
-            new_url = await refresh_track_url(item_id, track_meta)
+            LOGGER.warning(f"URL Beatsource Track {item_id} expired (403) saat dl. Mencoba refresh lagi...")
+            new_url, qual = await refresh_track_url(item_id, track_meta)
             
             if new_url:
-                track_meta['download_url'] = new_url 
-                # Coba download lagi (pakai proxy)
+                track_meta['download_url'] = new_url
+                # Update ekstensi jika perlu (misal fallback dari flac ke aac)
+                if qual and qual != track_meta['quality'].lower():
+                     # Perbarui path file jika ekstensi berubah
+                     new_ext = 'flac' if qual == 'lossless' else 'm4a'
+                     if new_ext != track_meta['extension']:
+                         # Hapus path lama dari memori string (file belum dibuat jadi aman)
+                         filepath = filepath.rsplit('.', 1)[0] + f".{new_ext}"
+                         track_meta['filepath'] = filepath
+                         track_meta['extension'] = new_ext
+                
                 err = await download_beatsource_track(new_url, track_meta['filepath'], proxy=user_proxy)
             else:
                 err = "Gagal refresh URL Beatsource (tetap 403/Error API)."
@@ -242,14 +246,10 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         try:
             await set_metadata(track_meta, user['user_id'])
         except FileNotFoundError:
-            LOGGER.error(f"File hilang setelah download: {filepath}")
             return False
-        except Exception as e:
-            LOGGER.error(f"Gagal memproses metadata Beatsource: {filepath} -> {e}")
-            try:
-                os.remove(filepath)
-            except:
-                pass
+        except Exception:
+            try: os.remove(filepath)
+            except: pass
             return False
 
         if upload:
@@ -265,7 +265,6 @@ async def start_album(album_id: str, user: dict, upload=True):
         raise Exception(f"Gagal mendapatkan metadata album Beatsource: {e}")
 
     album_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{album_meta['provider']}/{album_meta['artist']}/{album_meta['title']}"
-    
     album_folder = sanitize_filepath(album_folder)
     album_meta['folderpath'] = album_folder
 
@@ -278,11 +277,10 @@ async def start_album(album_id: str, user: dict, upload=True):
     await update_progress_msg(user['bot_msg'], 0, total, album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
+        # track sudah berisi metadata tanpa URL
         success = await start_track(track['itemid'], user, track, False, album_folder)
-        
         if success:
             successful_tracks.append(track)
-            
         await update_progress_msg(user['bot_msg'], i + 1, total, album_meta['title'], album_meta['type'])
 
     album_meta['tracks'] = successful_tracks
@@ -302,7 +300,6 @@ async def start_album(album_id: str, user: dict, upload=True):
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    # Gunakan proxy untuk cover juga jika ada
                     proxy_for_cover = None
                     if beatsource_manager.clients and beatsource_manager.clients[0].proxy:
                          proxy_for_cover = beatsource_manager.clients[0].proxy
@@ -336,10 +333,10 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     await update_progress_msg(user['bot_msg'], 0, total, play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
+        # Just-in-Time akan dipicu di dalam start_track
         success = await start_track(track['itemid'], user, track, False, playlist_folder)
         if success:
             successful_tracks.append(track)
-        
         await update_progress_msg(user['bot_msg'], i + 1, total, play_meta['title'], play_meta['type'])
 
     play_meta['tracks'] = successful_tracks
