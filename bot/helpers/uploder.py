@@ -1,4 +1,5 @@
 # [FILE: bot/helpers/uploder.py]
+# PERUBAHAN UTAMA: Perbaikan logika playlist_upload untuk menangani non-zip cloud upload
 
 import os
 import asyncio
@@ -208,62 +209,20 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
 #
 
 async def track_upload(metadata, user, disable_link=False):
-    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
-    upload_success = False
-
-    if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
-        link = await upload_to_cloud_handler(metadata['filepath'], user, metadata, user_mode)
-        
-        if link:
-            # Simple Text untuk Track
-            caption = await create_simple_text(metadata, user)
-            caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
-            
-            await send_message(user, caption, 'text')
-            
-            upload_success = True
-            try:
-                if os.path.exists(metadata['filepath']): os.remove(metadata['filepath'])
-            except: pass
-            return 
-
-    if not upload_success:
-        if bot_set.upload_mode == 'Local':
-            await local_upload(metadata, user)
-        elif bot_set.upload_mode == 'Telegram' or user_mode == 'Telegram':
-            await telegram_upload(metadata, user)
-        else:
-            rclone_link, index_link = await rclone_upload(user, metadata['filepath'])
-            if not disable_link:
-                await post_simple_message(user, metadata, rclone_link, index_link)
-
-    try:
-        if os.path.exists(metadata['filepath']): os.remove(metadata['filepath'])
-    except: pass
-        
-
-async def album_upload(metadata, user):
-    user_dict = user.copy()
-    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+    """
+    Upload single track to cloud or telegram.
+    """
+    user_dict = bot_set.user_data.get(user['user_id'], {})
+    user_mode = user_dict.get('upload_mode', 'Telegram')
     
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
-        # Gunakan folder asli
-        target = metadata.get('folderpath')
+        target = metadata.get('filepath')
         
-        # Kecuali jika user memang mengaktifkan "ALBUM ZIP: ON" di pengaturan, gunakan zip yg sudah dibuat
-        if metadata.get('zip_path'):
-             target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
-
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         
         if link:
             caption = create_cloud_caption(metadata)
-            
-            # Formatting Link (Sekarang semua harusnya single link kecuali ada error)
-            if '\n' in link:
-                caption += f"\n\n🔗 <b>{user_mode.upper()} LINKS:</b>\n{link}"
-            else:
-                caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
+            caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
             
             if metadata.get('poster_msg'):
                  await edit_message(metadata['poster_msg'], caption)
@@ -271,35 +230,20 @@ async def album_upload(metadata, user):
                  await send_message(user, caption, 'text')
             
             await cleanup(None, metadata, user_dict)
-            return 
-
-    # Fallback Standard
-    if bot_set.upload_mode == 'Local':
-        await local_upload(metadata, user)
-    elif bot_set.upload_mode == 'Telegram':
-        if metadata.get('zip_path'):
-            zip_files = metadata['zip_path']
-            if isinstance(zip_files, str): zip_files = [zip_files] 
-            for item in zip_files: 
-                await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
-        else:
-            await batch_telegram_upload(metadata, user)
-    else:
-        rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
-        if metadata.get('poster_msg'):
-            try:
-                await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ALBUM_TEMPLATE, metadata, user))
-            except MessageNotModified: pass
-        else:
-            await post_simple_message(user, metadata, rclone_link, index_link)
-
+            return
+    
+    # Fallback ke Telegram atau lainnya
+    if bot_set.upload_mode == 'Telegram':
+        await telegram_upload(metadata, user)
+    
     await cleanup(None, metadata, user_dict)
 
 
-async def artist_upload(metadata, user):
-    user_dict = user.copy()
-    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
-
+async def album_upload(metadata, user):
+    user_dict = bot_set.user_data.get(user['user_id'], {})
+    user_mode = user_dict.get('upload_mode', 'Telegram')
+    
+    # === CLOUD UPLOAD MODE ===
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
@@ -345,32 +289,54 @@ async def artist_upload(metadata, user):
     await cleanup(None, metadata, user_dict)
 
 
+# ========================================
+# PERBAIKAN UTAMA: playlist_upload
+# ========================================
 async def playlist_upload(metadata, user):
-    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+    """
+    Upload playlist ke cloud atau telegram.
     
+    PERUBAHAN PENTING:
+    - Sekarang playlist diperlakukan sama seperti album untuk cloud upload
+    - Folder playlist akan diupload sebagai satu kesatuan
+    - Tidak ada lagi per-track upload yang menyebabkan link berserakan
+    """
+    user_dict = bot_set.user_data.get(user['user_id'], {})
+    user_mode = user_dict.get('upload_mode', 'Telegram')
+    
+    # === CLOUD UPLOAD MODE (SAMA SEPERTI ALBUM) ===
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
+        # Tentukan target upload
         target = metadata.get('folderpath')
+        
+        # Jika ada zip_path, gunakan zip
         if metadata.get('zip_path'):
              target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
 
+        # Upload ke cloud dengan handler yang sama seperti album
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         
         if link:
+            # Buat caption
             caption = create_cloud_caption(metadata)
+            
+            # Tambahkan link
             if '\n' in link:
                 caption += f"\n\n🔗 <b>{user_mode.upper()} LINKS:</b>\n{link}"
             else:
                 caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
             
+            # Kirim atau edit message
             if metadata.get('poster_msg'):
                  await edit_message(metadata['poster_msg'], caption)
             else:
                  await send_message(user, caption, 'text')
             
+            # Cleanup
             await cleanup(None, metadata, user)
             return
 
-    # Fallback
+    # === FALLBACK UNTUK MODE LAIN ===
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -381,8 +347,10 @@ async def playlist_upload(metadata, user):
             for item in zip_files: 
                 await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
         else:
+            # Upload tracks satu per satu ke Telegram
             await batch_telegram_upload(metadata, user)
     else:
+        # Rclone mode
         playlist_zip, _, __, ___ = fetch_zip_settings(user)
         if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
