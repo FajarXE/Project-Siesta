@@ -208,62 +208,15 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
 #
 
 async def track_upload(metadata, user, disable_link=False):
-    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
-    upload_success = False
-
+    user_dict = bot_set.user_data.get(user['user_id'], {})
+    user_mode = user_dict.get('upload_mode', 'Telegram')
+    
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         link = await upload_to_cloud_handler(metadata['filepath'], user, metadata, user_mode)
         
         if link:
-            # Simple Text untuk Track
-            caption = await create_simple_text(metadata, user)
-            caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
-            
-            await send_message(user, caption, 'text')
-            
-            upload_success = True
-            try:
-                if os.path.exists(metadata['filepath']): os.remove(metadata['filepath'])
-            except: pass
-            return 
-
-    if not upload_success:
-        if bot_set.upload_mode == 'Local':
-            await local_upload(metadata, user)
-        elif bot_set.upload_mode == 'Telegram' or user_mode == 'Telegram':
-            await telegram_upload(metadata, user)
-        else:
-            rclone_link, index_link = await rclone_upload(user, metadata['filepath'])
-            if not disable_link:
-                await post_simple_message(user, metadata, rclone_link, index_link)
-
-    try:
-        if os.path.exists(metadata['filepath']): os.remove(metadata['filepath'])
-    except: pass
-        
-
-async def album_upload(metadata, user):
-    user_dict = user.copy()
-    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
-    
-    if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
-        # Gunakan folder asli
-        target = metadata.get('folderpath')
-        
-        # Kecuali jika user memang mengaktifkan "ALBUM ZIP: ON" di pengaturan, gunakan zip yg sudah dibuat
-        if metadata.get('zip_path'):
-             target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
-
-        link = await upload_to_cloud_handler(target, user, metadata, user_mode)
-        
-        if link:
             caption = create_cloud_caption(metadata)
-            
-            # Formatting Link (Sekarang semua harusnya single link kecuali ada error)
-            if '\n' in link:
-                caption += f"\n\n🔗 <b>{user_mode.upper()} LINKS:</b>\n{link}"
-            else:
-                caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
+            caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
             
             if metadata.get('poster_msg'):
                  await edit_message(metadata['poster_msg'], caption)
@@ -271,35 +224,30 @@ async def album_upload(metadata, user):
                  await send_message(user, caption, 'text')
             
             await cleanup(None, metadata, user_dict)
-            return 
-
-    # Fallback Standard
+            return
+    
+    # Fallback
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
-        if metadata.get('zip_path'):
-            zip_files = metadata['zip_path']
-            if isinstance(zip_files, str): zip_files = [zip_files] 
-            for item in zip_files: 
-                await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
-        else:
-            await batch_telegram_upload(metadata, user)
+        await telegram_upload(metadata, user)
     else:
-        rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
+        rclone_link, index_link = await rclone_upload(user, metadata['filepath'])
         if metadata.get('poster_msg'):
             try:
-                await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ALBUM_TEMPLATE, metadata, user))
-            except MessageNotModified: pass
+                await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.SINGLE_TEMPLATE, metadata, user))
+            except MessageNotModified:
+                pass
         else:
             await post_simple_message(user, metadata, rclone_link, index_link)
-
+    
     await cleanup(None, metadata, user_dict)
 
 
-async def artist_upload(metadata, user):
-    user_dict = user.copy()
+async def album_upload(metadata, user):
+    user_dict = bot_set.user_data.get(user['user_id'], {})
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
-
+    
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
@@ -346,31 +294,43 @@ async def artist_upload(metadata, user):
 
 
 async def playlist_upload(metadata, user):
+    """
+    PERBAIKAN: Playlist non-zip sekarang diperlakukan sama seperti album.
+    Mengirim SATU link folder, bukan link terpisah per track.
+    """
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
+    # ========== CLOUD UPLOAD MODE (DIPERBAIKI) ==========
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
+        # Tentukan target upload: folder (non-zip) atau file zip
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
              target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
 
+        # Upload ke cloud dan dapatkan link
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         
         if link:
+            # Buat caption
             caption = create_cloud_caption(metadata)
+            
+            # Tambahkan link (cek apakah multiple links atau single link)
             if '\n' in link:
                 caption += f"\n\n🔗 <b>{user_mode.upper()} LINKS:</b>\n{link}"
             else:
                 caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
             
+            # Kirim atau edit pesan
             if metadata.get('poster_msg'):
                  await edit_message(metadata['poster_msg'], caption)
             else:
                  await send_message(user, caption, 'text')
             
+            # Cleanup
             await cleanup(None, metadata, user)
             return
 
-    # Fallback
+    # ========== FALLBACK KE MODE LAIN ==========
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
