@@ -72,6 +72,7 @@ async def refresh_track_url(item_id: str, current_meta: dict):
         # User preference dari metadata (atau default High)
         pref_qual = current_meta.get('quality', 'High').lower()
         
+        # Pastikan urutan fallback selalu tersedia
         quality_priority = []
         if pref_qual == "lossless":
             quality_priority = ["lossless", "high", "medium"]
@@ -83,7 +84,13 @@ async def refresh_track_url(item_id: str, current_meta: dict):
         LOGGER.info(f"Beatsource: Fetching fresh URL for {item_id} (Pref: {pref_qual})...")
         
         clients = list(beatsource_manager.clients)
+        if not clients:
+            LOGGER.error("Beatsource: Tidak ada klien aktif untuk refresh URL.")
+            return None, None
+            
         random.shuffle(clients) 
+        
+        last_error = None
         
         for client in clients:
             for qual in quality_priority:
@@ -92,11 +99,16 @@ async def refresh_track_url(item_id: str, current_meta: dict):
                     new_url = stream_data.get("location")
                     if new_url:
                         return new_url, qual # Return URL dan Kualitas yang didapat
-                except Exception:
+                except Exception as e:
+                    # Simpan error terakhir untuk debug log jika semua gagal
+                    last_error = str(e)
+                    # Jangan spam log, tapi jika ini Client terakhir dan Kualitas terakhir, kita butuh info
                     continue
-            # Jika sudah dapat di satu client, break loop client
-            # (Tapi loop di atas sudah return, jadi aman)
+            
+            # Jika sudah dapat di satu client, break loop client (sudah return di atas)
         
+        # Jika sampai sini berarti gagal total
+        LOGGER.warning(f"Beatsource: Gagal refresh URL {item_id} di semua akun/kualitas. Last Err: {last_error}")
         return None, None
     except Exception as e:
         LOGGER.error(f"Gagal get/refresh URL Beatsource {item_id}: {e}")
@@ -201,7 +213,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
                     track_meta['quality'] = qual.capitalize()
                     track_meta['extension'] = 'flac' if qual == 'lossless' else 'm4a'
             else:
-                LOGGER.error(f"Gagal mendapatkan URL segar untuk track {item_id}")
+                LOGGER.error(f"Skip track {item_id}: Gagal mendapatkan URL segar.")
                 return False
         # ---------------------------------
 
