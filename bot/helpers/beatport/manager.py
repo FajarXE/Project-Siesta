@@ -64,6 +64,13 @@ class BeatportLoginManager:
     async def _login_task(self, account: dict, saved_token: dict = None):
         client = BeatportAPI()
         email, password = account['email'], account['password']
+        
+        # --- TAMBAHAN PROXY ---
+        # Set proxy ke instance client jika tersedia di config akun
+        proxy = account.get('proxy')
+        if proxy:
+            client.proxy = proxy
+        # ----------------------
 
         if saved_token and saved_token.get('refresh_token'):
             try:
@@ -92,8 +99,6 @@ class BeatportLoginManager:
                         'email': client.email
                     }
             
-            # --- PERBAIKAN DISINI ---
-            # Menggunakan format (KEY, VALUE) sesuai error log
             await database.set_variable('BEATPORT_TOKENS', tokens_map)
             LOGGER.info("Beatport Manager: Tokens saved.")
             
