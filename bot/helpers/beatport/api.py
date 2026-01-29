@@ -5,13 +5,13 @@ import asyncio
 from datetime import timedelta, datetime
 from bot.logger import LOGGER
 
-# --- TAMBAHAN: Import ProxyConnector ---
+# --- Cek Library Proxy ---
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
     LOGGER.warning("Modul 'aiohttp_socks' tidak ditemukan. Proxy SOCKS/SOCKS5H tidak akan berjalan.")
     ProxyConnector = None
-# ---------------------------------------
+# -------------------------
 
 # Konstanta User-Agent
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -32,15 +32,12 @@ class BeatportAPI:
         self.expires = None
         
         self.email = None
-        
-        # --- TAMBAHAN: Variabel Proxy ---
-        self.proxy = None
-        # --------------------------------
+        self.proxy = None # Variabel proxy
         
         self.session = None 
 
     async def _init_session(self):
-        """Membuat sesi aiohttp dengan dukungan Proxy jika ada."""
+        """Membuat sesi aiohttp dengan dukungan Proxy (Auto-fix socks5h)."""
         if self.session is None or self.session.closed:
             connector = None
             
@@ -48,8 +45,16 @@ class BeatportAPI:
             if self.proxy:
                 if ProxyConnector:
                     try:
-                        connector = ProxyConnector.from_url(self.proxy)
-                        LOGGER.debug(f"BeatportAPI: Menggunakan Proxy untuk {self.email}")
+                        # FIX: Handle socks5h manual jika library menolak skemanya
+                        proxy_url = self.proxy
+                        use_rdns = False
+                        
+                        if proxy_url.startswith("socks5h://"):
+                            proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                            use_rdns = True
+                        
+                        connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+                        LOGGER.debug(f"BeatportAPI: Menggunakan Proxy untuk {self.email} (RDNS: {use_rdns})")
                     except Exception as e:
                         LOGGER.error(f"BeatportAPI: Gagal menginisialisasi Proxy Connector: {e}")
                 else:
@@ -73,13 +78,11 @@ class BeatportAPI:
         return headers
 
     async def load_session(self, token_data: dict):
-        # Pastikan proxy diset sebelum init session jika ada di data (biasanya diset manual oleh manager)
         await self._init_session()
         self.access_token = token_data.get('access_token')
         self.refresh_token = token_data.get('refresh_token')
         self.email = token_data.get('email')
         self.expires = datetime.now() - timedelta(seconds=10)
-        
         LOGGER.debug(f"BeatportAPI: Sesi dimuat untuk {self.email} (Pending Refresh)")
 
     async def login(self, email: str, password: str):
@@ -177,7 +180,7 @@ class BeatportAPI:
 
             return await r.json()
 
-    # --- Endpoint Katalog (Sama seperti sebelumnya) ---
+    # --- Endpoint Katalog ---
 
     async def get_account(self):
         return await self._get('auth/o/introspect')
