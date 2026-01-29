@@ -129,11 +129,21 @@ async def _process_cover(metadata: dict, beatport_url: str):
     return await create_cover_file(final_cover_path_or_url, metadata)
 
 
-async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None):
-    """Memproses metadata untuk satu lagu dengan MULTI-ACCOUNT LOAD BALANCING."""
+async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, fetch_stream: bool = True):
+    """
+    Memproses metadata untuk satu lagu dengan MULTI-ACCOUNT LOAD BALANCING.
+    Args:
+        fetch_stream: Jika False, melewati proses download URL (untuk playlist/album agar tidak expired).
+    """
     
-    primary_client = user['beatport_api']
-    available_clients = [primary_client]
+    primary_client = user.get('beatport_api')
+    if not primary_client and beatport_manager.clients:
+        primary_client = beatport_manager.clients[0]
+        
+    available_clients = []
+    if primary_client:
+        available_clients.append(primary_client)
+        
     if beatport_manager and beatport_manager.clients:
         for other_client in beatport_manager.clients:
             if other_client != primary_client:
@@ -158,8 +168,11 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         raise BeatportError(f"Gagal mendapatkan metadata dasar track {track_id} (cek ID atau Region).")
 
     try:
-        if not track_data.get("is_available_for_streaming"):
-             raise BeatportError(f"Track '{track_data.get('name')}' tidak streamable!")
+        # Cek ketersediaan (kadang API tetap return data meski unavailable)
+        if track_data.get("is_available_for_streaming") is False:
+             # Kita log warning saja, karena kadang bisa didownload meski flag ini false di beberapa region
+             LOGGER.warning(f"Track '{track_data.get('name')}' flag is_available_for_streaming = False.")
+             
         if track_data.get("preorder"):
             raise BeatportError(f"Track '{track_data.get('name')}' adalah pre-order!")
     except Exception as e:
@@ -168,6 +181,8 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     album_id = track_data.get("release").get("id")
     album_data = {}
+    
+    # Ambil data album (untuk cover/UPC)
     for client in available_clients:
         try:
             album_data = await client.get_release(album_id)
@@ -178,7 +193,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     title = track_data.get("name")
     if track_data.get("mix_name"):
-        title += f" ({track_data.get("mix_name")})"
+        title += f" ({track_data.get('mix_name')})"
     metadata['title'] = title
     
     artist_raw = ", ".join([a.get("name") for a in track_data.get("artists", [])])
@@ -191,7 +206,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['album'] = album_data.get("name", "Unknown Album")
     metadata['date'] = track_data.get("publish_date")
     
-    # --- PERBAIKAN: Format 2 Digit (01, 02) ---
     raw_track_number = str(track_data.get("number", 1))
     metadata['tracknumber'] = raw_track_number.zfill(2)
     
@@ -220,9 +234,13 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     bp_cover_url = ""
     if track_data.get("release", {}).get("image", {}).get("dynamic_uri"):
         bp_cover_url = await _generate_artwork_url(track_data.get("release").get("image").get("dynamic_uri"))
+    elif album_data.get("image", {}).get("dynamic_uri"):
+        bp_cover_url = await _generate_artwork_url(album_data.get("image").get("dynamic_uri"))
+        
     metadata['cover'] = await _process_cover(metadata, bp_cover_url)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
+    # --- QUALITY SELECTION ---
     user_id = user.get('user_id')
     if not user_id:
         preferred_quality = beatport_manager.quality
@@ -245,26 +263,37 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     stream_data = None
 
-    for idx, current_client in enumerate(available_clients):
-        for quality_key in quality_order:
-            try:
-                stream_data_json = await current_client.get_track_download(track_id, QUALITY_MAP[quality_key])
-                metadata['quality'], metadata['extension'] = quality_map_display[quality_key]
-                stream_data = stream_data_json 
-                LOGGER.info(f"Beatport: URL didapat! Akun #{idx+1}, Q: {quality_key}, ID: {track_id}")
-                break 
-            except Exception:
-                continue 
+    # --- DOWNLOAD LINK FETCHING (Just-in-Time Support) ---
+    if fetch_stream:
+        for idx, current_client in enumerate(available_clients):
+            for quality_key in quality_order:
+                try:
+                    stream_data_json = await current_client.get_track_download(track_id, QUALITY_MAP[quality_key])
+                    metadata['quality'], metadata['extension'] = quality_map_display[quality_key]
+                    stream_data = stream_data_json 
+                    LOGGER.info(f"Beatport: URL didapat! Akun #{idx+1}, Q: {quality_key}, ID: {track_id}")
+                    break 
+                except Exception:
+                    continue 
+            if stream_data:
+                break
 
-        if stream_data:
-            break
-
-    if not stream_data:
-        raise BeatportError(f"Gagal mendapatkan URL download track {track_id} di semua akun (Region Lock?).")
-        
-    metadata['download_url'] = stream_data.get("location")
-    if not metadata['download_url']:
-        raise BeatportError(f"Respons API valid tapi URL kosong (Track: {track_id}).")
+        if not stream_data:
+            # Jika semua gagal, berikan error spesifik
+            raise BeatportError(f"Gagal mendapatkan URL download track {track_id} di semua akun (Region Lock?).")
+            
+        metadata['download_url'] = stream_data.get("location")
+        if not metadata['download_url']:
+            raise BeatportError(f"Respons API valid tapi URL kosong (Track: {track_id}).")
+    else:
+        # Placeholder untuk playlist agar tidak expired
+        if preferred_quality == 'lossless':
+            metadata['quality'] = "FLAC"
+            metadata['extension'] = "flac"
+        else:
+            metadata['quality'] = "AAC 256"
+            metadata['extension'] = "m4a"
+        metadata['download_url'] = None
 
     return metadata
 
@@ -272,8 +301,12 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
     """Memproses metadata untuk satu album (release) dengan LOAD BALANCING."""
     
-    primary_client = user['beatport_api']
-    available_clients = [primary_client]
+    primary_client = user.get('beatport_api')
+    if not primary_client and beatport_manager.clients:
+        primary_client = beatport_manager.clients[0]
+        
+    available_clients = []
+    if primary_client: available_clients.append(primary_client)
     if beatport_manager and beatport_manager.clients:
         for c in beatport_manager.clients:
             if c != primary_client: available_clients.append(c)
@@ -366,7 +399,8 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
             total_duration_ms += track_data_full.get("length_ms", 0)
             
-            track_meta = await process_track_metadata(track_id_str, r_id, user, track_data_full)
+            # PENTING: fetch_stream=False agar URL tidak diambil sekarang (Just-in-Time)
+            track_meta = await process_track_metadata(str(track_id_str), r_id, user, track_data_full, fetch_stream=False)
             
             track_meta['totaltracks'] = str(total_tracks)
             track_meta['cover'] = metadata['cover'] 
@@ -388,8 +422,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
     """Memproses metadata untuk playlist/chart dengan LOAD BALANCING."""
     
-    primary_client = user['beatport_api']
-    available_clients = [primary_client]
+    primary_client = user.get('beatport_api')
+    if not primary_client and beatport_manager.clients:
+        primary_client = beatport_manager.clients[0]
+        
+    available_clients = []
+    if primary_client: available_clients.append(primary_client)
     if beatport_manager and beatport_manager.clients:
         for c in beatport_manager.clients:
             if c != primary_client: available_clients.append(c)
@@ -463,9 +501,9 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['tracks'] = []
     for i, track_data in enumerate(tracks):
         try:
-            track_meta = await process_track_metadata(track_data['id'], r_id, user, track_data)
+            # PENTING: fetch_stream=False agar URL tidak diambil sekarang
+            track_meta = await process_track_metadata(str(track_data['id']), r_id, user, track_data, fetch_stream=False)
             
-            # --- PERBAIKAN: Format 2 Digit untuk Playlist (01, 02) ---
             track_meta['tracknumber'] = str(i + 1).zfill(2)
             
             metadata['tracks'].append(track_meta)
