@@ -113,7 +113,7 @@ async def start_beatport(url: str, user: dict):
         raise e 
 
 
-# --- PERUBAHAN: Menambahkan parameter proxy ---
+# --- PERUBAHAN UTAMA: Download dengan Proxy Support + Fix Socks5h ---
 async def download_beatport_track(url: str, filepath: str, proxy: str = None):
     """Pengunduh HTTP async dengan proteksi User-Agent dan Proxy Opsional."""
     try:
@@ -123,14 +123,23 @@ async def download_beatport_track(url: str, filepath: str, proxy: str = None):
             "Referer": "https://www.beatport.com/"
         }
         
-        # --- LOGIKA KONEKTOR UNTUK DOWNLOAD ---
+        # --- LOGIKA KONEKTOR DENGAN FIX SOCKS5H ---
         connector = None
         if proxy and ProxyConnector:
             try:
-                connector = ProxyConnector.from_url(proxy)
-            except:
-                LOGGER.warning("Gagal membuat konektor proxy untuk download, mencoba direct.")
-        # --------------------------------------
+                proxy_url = proxy
+                use_rdns = False
+                
+                # FIX MANUAL: aiohttp-socks kadang menolak scheme 'socks5h://'
+                # Kita ubah jadi 'socks5://' dan aktifkan rdns=True
+                if proxy_url.startswith("socks5h://"):
+                    proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                    use_rdns = True
+                
+                connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+            except Exception as e:
+                LOGGER.warning(f"Gagal membuat konektor proxy untuk download ({e}), mencoba direct.")
+        # -----------------------------------------------------------
 
         timeout = aiohttp.ClientTimeout(total=600) 
         
@@ -159,7 +168,6 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         await asyncio.sleep(delay)
         
         # --- AMBIL PROXY DARI USER CLIENT ---
-        # Ini memastikan download file menggunakan proxy yang sama dengan akun yang mendapatkan link
         user_proxy = None
         if user.get('beatport_api') and hasattr(user['beatport_api'], 'proxy'):
             user_proxy = user['beatport_api'].proxy
@@ -226,9 +234,6 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
         return True
 
-# ... (Fungsi start_album dan start_playlist tetap sama, karena mereka memanggil start_track) ...
-# Cukup pastikan Anda menyalin sisa fungsi start_album dan start_playlist dari file asli ke sini.
-# Mereka tidak perlu perubahan langsung karena logika download ada di start_track.
 
 async def start_album(album_id: str, user: dict, upload=True):
     try:
@@ -275,8 +280,9 @@ async def start_album(album_id: str, user: dict, upload=True):
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    # Gunakan fungsi download dengan proxy jika perlu, atau biarkan standar
-                    await download_beatport_track(cover_src, target_cover) 
+                    # Opsional: Bisa pakai proxy juga untuk cover jika mau
+                    user_proxy = user.get('beatport_api').proxy if user.get('beatport_api') else None
+                    await download_beatport_track(cover_src, target_cover, proxy=user_proxy) 
         except Exception as e:
             LOGGER.warning(f"Gagal menyalin cover ke ZIP: {e}")
 
@@ -330,7 +336,8 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    await download_beatport_track(cover_src, target_cover)
+                    user_proxy = user.get('beatport_api').proxy if user.get('beatport_api') else None
+                    await download_beatport_track(cover_src, target_cover, proxy=user_proxy)
         except Exception as e:
             LOGGER.warning(f"Gagal menyalin cover ke ZIP: {e}")
 
