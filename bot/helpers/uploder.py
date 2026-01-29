@@ -39,7 +39,7 @@ def create_cloud_caption(metadata):
         total_tracks = metadata.get('totaltracks', 1)
 
     # --- LOGIC KHUSUS PLAYLIST ---
-    # Jika tipe adalah playlist, gunakan format pendek (Simple)
+    # Menampilkan format simpel sesuai permintaan
     if metadata.get('type') == 'playlist':
         text = (
             f"<b>ᴛɪᴛʟᴇ</b> : {title}\n"
@@ -144,6 +144,7 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                         uploader.path = os.path.dirname(file_path)
                         await uploader.upload(os.path.basename(file_path), 0, 'gofile', specific_folder_id=folder_id)
                     
+                    # Return 1 link folder
                     return f"https://gofile.io/d/{final_link}"
             
             # --- 2. BUZZHEAVIER (NATIVE FOLDER SUPPORT) ---
@@ -151,8 +152,7 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                 if 'bot_msg' in user: 
                     await edit_message(user['bot_msg'], f"📂 Uploading Folder to Buzzheavier...")
                 
-                # Buzzheavier support folder upload di direct_uploader, cukup kirim nama folder
-                # Pastikan uploader.path menunjuk ke parent dari folder tersebut
+                # Update path ke parent folder agar basename terambil benar
                 uploader.path = os.path.dirname(filepath.rstrip('/'))
                 res = await uploader.upload(os.path.basename(filepath), 0, upload_type)
                 
@@ -160,25 +160,21 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                     return list(res.values())[0]
 
             # --- 3. VIKINGFILES (AUTO-ZIP FORCE) ---
+            # Vikingfiles WAJIB zip jika ingin 1 link, karena tidak support folder online
             elif mode == 'Vikingfiles':
                 if 'bot_msg' in user:
                     await edit_message(user['bot_msg'], f"🤐 Vikingfiles doesn't support folders.\nZipping files...")
                 
-                # Buat ZIP sementara karena Vikingfiles tidak support folder
-                # make_archive akan membuat file .zip di lokasi filepath
                 zip_path = shutil.make_archive(filepath, 'zip', filepath)
                 zip_name = os.path.basename(zip_path)
                 
-                # Update path uploader ke lokasi zip berada
                 uploader.path = os.path.dirname(zip_path)
                 
                 if 'bot_msg' in user:
                      await edit_message(user['bot_msg'], f"🚀 Uploading Zip to Vikingfiles...")
 
-                # Upload Zip
                 res = await uploader.upload(zip_name, 0, upload_type)
                 
-                # Hapus Zip sementara
                 try:
                     if os.path.exists(zip_path):
                         os.remove(zip_path)
@@ -247,10 +243,7 @@ async def album_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
-        # Gunakan folder asli
         target = metadata.get('folderpath')
-        
-        # Kecuali jika user memang mengaktifkan "ALBUM ZIP: ON" di pengaturan, gunakan zip yg sudah dibuat
         if metadata.get('zip_path'):
              target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
 
@@ -258,8 +251,6 @@ async def album_upload(metadata, user):
         
         if link:
             caption = create_cloud_caption(metadata)
-            
-            # Formatting Link (Sekarang semua harusnya single link kecuali ada error)
             if '\n' in link:
                 caption += f"\n\n🔗 <b>{user_mode.upper()} LINKS:</b>\n{link}"
             else:
@@ -348,15 +339,21 @@ async def artist_upload(metadata, user):
 async def playlist_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
+    # --- BAGIAN INI MEMASTIKAN SATU LINK UNTUK CLOUD ---
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
+        # Force gunakan folder asli (kecuali user minta zip)
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
              target = metadata['zip_path'] if isinstance(metadata['zip_path'], str) else metadata['zip_path'][0]
 
+        # Upload FOLDER/ZIP, bukan tracks
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         
         if link:
+            # Gunakan format caption simpel
             caption = create_cloud_caption(metadata)
+            
+            # Format link tunggal
             if '\n' in link:
                 caption += f"\n\n🔗 <b>{user_mode.upper()} LINKS:</b>\n{link}"
             else:
@@ -370,7 +367,7 @@ async def playlist_upload(metadata, user):
             await cleanup(None, metadata, user)
             return
 
-    # Fallback
+    # Fallback (Local / Telegram / Rclone)
     if bot_set.upload_mode == 'Local':
         await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
@@ -384,6 +381,7 @@ async def playlist_upload(metadata, user):
             await batch_telegram_upload(metadata, user)
     else:
         playlist_zip, _, __, ___ = fetch_zip_settings(user)
+        # Jika sort aktif & bukan zip, rclone akan upload satu-satu (ini behavior rclone default)
         if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link:
                 await rclone_upload(user, f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
