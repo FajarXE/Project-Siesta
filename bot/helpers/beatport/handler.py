@@ -9,6 +9,13 @@ import asyncio
 import random 
 import math 
 
+# --- TAMBAHAN: ProxyConnector untuk download file ---
+try:
+    from aiohttp_socks import ProxyConnector
+except ImportError:
+    ProxyConnector = None
+# ---------------------------------------------------
+
 from pathvalidate import sanitize_filepath
 from config import Config
 
@@ -45,7 +52,6 @@ BEATPORT_SEMAPHORE = asyncio.Semaphore(2)
 
 # --- FUNGSI HELPER PROGRESS BAR ---
 def make_progress_bar(current, total):
-    """Membuat visual progress bar sederhana."""
     if total == 0: return "▱" * 10
     percentage = current / total
     finished_length = int(percentage * 10) 
@@ -53,31 +59,20 @@ def make_progress_bar(current, total):
     return prog_str
 
 async def update_progress_msg(msg, current, total, title, media_type):
-    """Memformat pesan progress agar {0}, {1} terisi."""
     try:
         bar = make_progress_bar(current, total)
         formatted_text = lang.s.DOWNLOAD_PROGRESS.format(
-            bar,      # {0}
-            current,  # {1}
-            total,    # {2}
-            title,    # {3}
-            media_type # {4}
+            bar, current, total, title, media_type
         )
         await edit_message(msg, formatted_text)
     except Exception as e:
         LOGGER.warning(f"Gagal update pesan progress: {e}")
 
 async def refresh_track_url(item_id: str, current_meta: dict, user: dict):
-    """
-    Fungsi darurat untuk mengambil URL baru jika URL lama expired (403).
-    """
     try:
         client = user.get('beatport_api')
         if not client: return None
 
-        # Mapping balik dari nama kualitas di Metadata ke Key API
-        # Metadata: "FLAC" -> API: "lossless"
-        # Metadata: "AAC 256" -> API: "high"
         quality_map = {
             "FLAC": "lossless",
             "AAC 256": "high",
@@ -85,11 +80,9 @@ async def refresh_track_url(item_id: str, current_meta: dict, user: dict):
         }
         
         display_quality = current_meta.get('quality', 'AAC 256')
-        api_quality = quality_map.get(display_quality, "high") # Default ke high jika bingung
+        api_quality = quality_map.get(display_quality, "high")
 
         LOGGER.info(f"Beatport: Refreshing URL for track {item_id} ({api_quality})...")
-        
-        # Request URL baru
         stream_data = await client.get_track_download(item_id, api_quality)
         new_url = stream_data.get("location")
         
@@ -101,21 +94,17 @@ async def refresh_track_url(item_id: str, current_meta: dict, user: dict):
 # ----------------------------------
 
 async def start_beatport(url: str, user: dict):
-    """Handler utama untuk link Beatport."""
     try:
         media_type, item_id, extra_kwargs = custom_url_parse(url)
 
         if media_type == 'artist':
             raise NotImplementedError("Unduhan Artis Beatport belum didukung.")
-        
         elif media_type == 'track':
             success = await start_track(item_id, user, None)
             if not success:
                 raise Exception("Gagal mengunduh atau memproses track.")
-        
         elif media_type == 'album':
             await start_album(item_id, user)
-        
         elif media_type == 'playlist':
             await start_playlist(item_id, user, extra_kwargs)
         
@@ -124,8 +113,9 @@ async def start_beatport(url: str, user: dict):
         raise e 
 
 
-async def download_beatport_track(url: str, filepath: str):
-    """Pengunduh HTTP async dengan proteksi User-Agent."""
+# --- PERUBAHAN: Menambahkan parameter proxy ---
+async def download_beatport_track(url: str, filepath: str, proxy: str = None):
+    """Pengunduh HTTP async dengan proteksi User-Agent dan Proxy Opsional."""
     try:
         headers = {
             "User-Agent": USER_AGENT,
@@ -133,11 +123,20 @@ async def download_beatport_track(url: str, filepath: str):
             "Referer": "https://www.beatport.com/"
         }
         
+        # --- LOGIKA KONEKTOR UNTUK DOWNLOAD ---
+        connector = None
+        if proxy and ProxyConnector:
+            try:
+                connector = ProxyConnector.from_url(proxy)
+            except:
+                LOGGER.warning("Gagal membuat konektor proxy untuk download, mencoba direct.")
+        # --------------------------------------
+
         timeout = aiohttp.ClientTimeout(total=600) 
         
-        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+        # Pass connector ke session
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
             async with session.get(url) as response:
-                # Tangkap 403 secara spesifik agar bisa diretry
                 if response.status == 403:
                     return "403_FORBIDDEN"
                 
@@ -159,6 +158,13 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         delay = random.uniform(2.0, 5.0)
         await asyncio.sleep(delay)
         
+        # --- AMBIL PROXY DARI USER CLIENT ---
+        # Ini memastikan download file menggunakan proxy yang sama dengan akun yang mendapatkan link
+        user_proxy = None
+        if user.get('beatport_api') and hasattr(user['beatport_api'], 'proxy'):
+            user_proxy = user['beatport_api'].proxy
+        # ------------------------------------
+
         if not track_meta:
             try:
                 track_meta = await process_track_metadata(item_id, user['r_id'], user)
@@ -182,24 +188,22 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         filepath += f"/{safe_filename}.{track_meta['extension']}"
         track_meta['filepath'] = filepath
 
-        # --- DOWNLOAD PERTAMA ---
-        err = await download_beatport_track(download_url, track_meta['filepath'])
+        # --- DOWNLOAD PERTAMA (PASS PROXY) ---
+        err = await download_beatport_track(download_url, track_meta['filepath'], proxy=user_proxy)
 
         # --- LOGIKA RETRY JIKA EXPIRED (403) ---
         if err == "403_FORBIDDEN":
             LOGGER.warning(f"URL Track {item_id} expired (403). Mencoba refresh URL...")
             
-            # Minta URL baru yang segar
             new_url = await refresh_track_url(item_id, track_meta, user)
             
             if new_url:
-                track_meta['download_url'] = new_url # Update metadata
-                # Coba download lagi dengan URL baru
-                err = await download_beatport_track(new_url, track_meta['filepath'])
+                track_meta['download_url'] = new_url 
+                # Coba download lagi dengan URL baru & proxy
+                err = await download_beatport_track(new_url, track_meta['filepath'], proxy=user_proxy)
             else:
                 err = "Gagal refresh URL (tetap 403 atau API error)."
 
-        # Cek hasil akhir
         if err:
             LOGGER.error(f"Beatport dl_track gagal untuk {item_id}: {err}")
             return False
@@ -222,6 +226,9 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
         return True
 
+# ... (Fungsi start_album dan start_playlist tetap sama, karena mereka memanggil start_track) ...
+# Cukup pastikan Anda menyalin sisa fungsi start_album dan start_playlist dari file asli ke sini.
+# Mereka tidak perlu perubahan langsung karena logika download ada di start_track.
 
 async def start_album(album_id: str, user: dict, upload=True):
     try:
@@ -243,8 +250,6 @@ async def start_album(album_id: str, user: dict, upload=True):
     await update_progress_msg(user['bot_msg'], 0, total, album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
-        # Kita passing metadata track apa adanya. Jika URL expired di tengah jalan, 
-        # start_track akan otomatis memperbaruinya.
         success = await start_track(track['itemid'], user, track, False, album_folder)
         
         if success:
@@ -270,7 +275,8 @@ async def start_album(album_id: str, user: dict, upload=True):
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    await download_beatport_track(cover_src, target_cover)
+                    # Gunakan fungsi download dengan proxy jika perlu, atau biarkan standar
+                    await download_beatport_track(cover_src, target_cover) 
         except Exception as e:
             LOGGER.warning(f"Gagal menyalin cover ke ZIP: {e}")
 
@@ -300,7 +306,6 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     await update_progress_msg(user['bot_msg'], 0, total, play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
-        # URL mungkin expired di sini untuk track2 terakhir, tapi start_track akan mengurusnya
         success = await start_track(track['itemid'], user, track, False, playlist_folder)
         if success:
             successful_tracks.append(track)
