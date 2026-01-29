@@ -912,7 +912,7 @@ def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text=f"Khinsider Quality", callback_data=f"uset_khinsider")])
 
     # --- BUTTON SWITCH UPLOAD MODE ---
-    buttons.append([InlineKeyboardButton(text="🔁 Switch Upload Mode (TG/Gofile)", callback_data="uset_upload_mode")])
+    buttons.append([InlineKeyboardButton(text="🔁 Switch Upload Mode", callback_data="uset_upload_mode")])
     # ---------------------------------
 
     buttons.append([InlineKeyboardButton(text="LYRICS SETTINGS", callback_data="uset_lyrics")])
