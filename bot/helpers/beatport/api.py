@@ -5,10 +5,17 @@ import asyncio
 from datetime import timedelta, datetime
 from bot.logger import LOGGER
 
-# Konstanta User-Agent agar terlihat seperti browser asli, bukan bot
+# --- TAMBAHAN: Import ProxyConnector ---
+try:
+    from aiohttp_socks import ProxyConnector
+except ImportError:
+    LOGGER.warning("Modul 'aiohttp_socks' tidak ditemukan. Proxy SOCKS/SOCKS5H tidak akan berjalan.")
+    ProxyConnector = None
+# ---------------------------------------
+
+# Konstanta User-Agent
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-# Ini adalah kelas Error kustom kita
 class BeatportError(Exception):
     def __init__(self, message):
         self.message = message
@@ -24,16 +31,34 @@ class BeatportAPI:
         self.refresh_token = None
         self.expires = None
         
-        # Simpan email untuk referensi database
         self.email = None
+        
+        # --- TAMBAHAN: Variabel Proxy ---
+        self.proxy = None
+        # --------------------------------
         
         self.session = None 
 
     async def _init_session(self):
-        """Membuat sesi aiohttp jika belum ada."""
+        """Membuat sesi aiohttp dengan dukungan Proxy jika ada."""
         if self.session is None or self.session.closed:
+            connector = None
+            
+            # --- LOGIKA KONEKTOR PROXY ---
+            if self.proxy:
+                if ProxyConnector:
+                    try:
+                        connector = ProxyConnector.from_url(self.proxy)
+                        LOGGER.debug(f"BeatportAPI: Menggunakan Proxy untuk {self.email}")
+                    except Exception as e:
+                        LOGGER.error(f"BeatportAPI: Gagal menginisialisasi Proxy Connector: {e}")
+                else:
+                    LOGGER.error("BeatportAPI: Proxy diset tapi 'aiohttp_socks' belum diinstall.")
+            # -----------------------------
+
             self.session = aiohttp.ClientSession(
-                headers={'user-agent': USER_AGENT}
+                headers={'user-agent': USER_AGENT},
+                connector=connector
             )
 
     async def close_session(self):
@@ -42,36 +67,26 @@ class BeatportAPI:
             await self.session.close()
 
     def _get_headers(self, use_access_token: bool = False):
-        """Mendapatkan header untuk permintaan."""
         headers = {'user-agent': USER_AGENT}
         if use_access_token and self.access_token:
             headers['authorization'] = f'Bearer {self.access_token}'
         return headers
 
     async def load_session(self, token_data: dict):
-        """
-        Memuat sesi dari data yang tersimpan di DB tanpa login ulang.
-        """
+        # Pastikan proxy diset sebelum init session jika ada di data (biasanya diset manual oleh manager)
         await self._init_session()
         self.access_token = token_data.get('access_token')
         self.refresh_token = token_data.get('refresh_token')
         self.email = token_data.get('email')
-        
-        # Set expires ke waktu lampau agar memaksa refresh saat request pertama
-        # Ini memastikan token divalidasi ulang
         self.expires = datetime.now() - timedelta(seconds=10)
         
         LOGGER.debug(f"BeatportAPI: Sesi dimuat untuk {self.email} (Pending Refresh)")
 
     async def login(self, email: str, password: str):
-        """Melakukan alur login OAuth lengkap secara async."""
         self.email = email
         await self._init_session()
         
-        # Header konsisten menggunakan konstanta USER_AGENT
-        acc_headers = {
-            "User-Agent": USER_AGENT,
-        }
+        acc_headers = {"User-Agent": USER_AGENT}
         
         # 1. Otorisasi
         params_auth = {
@@ -115,14 +130,12 @@ class BeatportAPI:
             LOGGER.info(f"Beatport: Login Password berhasil untuk {email}")
 
     async def refresh(self):
-        """Me-refresh access token."""
         await self._init_session()
         data = {
             'client_id': self.client_id,
             'refresh_token': self.refresh_token,
             'grant_type': 'refresh_token',
         }
-        # Gunakan header browser saat refresh juga
         headers = {'user-agent': USER_AGENT}
         
         async with self.session.post(f'{self.API_URL}auth/o/token/', data=data, headers=headers) as r:
@@ -137,7 +150,6 @@ class BeatportAPI:
             LOGGER.debug("Beatport: Token berhasil di-refresh.")
 
     async def _get(self, endpoint: str, params: dict = None):
-        """Fungsi pembantu GET yang aman untuk API."""
         await self._init_session()
         if not params:
             params = {}
@@ -165,7 +177,7 @@ class BeatportAPI:
 
             return await r.json()
 
-    # --- Endpoint Katalog ---
+    # --- Endpoint Katalog (Sama seperti sebelumnya) ---
 
     async def get_account(self):
         return await self._get('auth/o/introspect')
