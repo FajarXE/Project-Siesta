@@ -12,6 +12,13 @@ import math
 from pathvalidate import sanitize_filepath
 from config import Config
 
+# --- TAMBAHAN: Import ProxyConnector ---
+try:
+    from aiohttp_socks import ProxyConnector
+except ImportError:
+    ProxyConnector = None
+# ---------------------------------------
+
 from .metadata import (
     process_track_metadata, 
     process_album_metadata, 
@@ -65,13 +72,10 @@ async def update_progress_msg(msg, current, total, title, media_type):
 async def refresh_track_url(item_id: str, current_meta: dict):
     """
     Fungsi darurat: Meminta URL baru ke API jika URL lama expired (403).
-    PERBAIKAN: Mapping kualitas diperluas agar format file (FLAC/AAC) konsisten.
     """
     try:
-        # Mapping kualitas Metadata -> API Key
-        # Metadata dari metadata.py menggunakan capitalize() -> Lossless, High, Medium
         quality_map = {
-            "Lossless": "lossless", # Fix: Tambahkan ini agar FLAC tetap FLAC
+            "Lossless": "lossless",
             "FLAC": "lossless",
             "High": "high",
             "AAC 256": "high",
@@ -80,18 +84,15 @@ async def refresh_track_url(item_id: str, current_meta: dict):
         }
         
         display_quality = current_meta.get('quality', 'High')
-        # Default ke 'high' (AAC) hanya jika kualitas tidak dikenali
         api_quality = quality_map.get(display_quality, "high")
 
         LOGGER.info(f"Beatsource: Refreshing URL for track {item_id} ({api_quality})...")
         
-        # Ambil daftar klien yang aktif dari manager
         clients = list(beatsource_manager.clients)
         random.shuffle(clients) 
         
         for client in clients:
             try:
-                # Coba minta link download baru
                 stream_data = await client.get_track_download(item_id, api_quality)
                 new_url = stream_data.get("location")
                 if new_url:
@@ -130,9 +131,10 @@ async def start_beatsource(url: str, user: dict):
         raise e 
 
 
-async def download_beatsource_track(url: str, filepath: str):
+# --- PERBAIKAN: Download dengan Proxy Support + Fix Socks5h ---
+async def download_beatsource_track(url: str, filepath: str, proxy: str = None):
     """
-    Pengunduh HTTP async dengan Header Browser & Deteksi 403.
+    Pengunduh HTTP async dengan Header Browser & Deteksi 403 & Proxy.
     """
     try:
         headers = {
@@ -141,9 +143,26 @@ async def download_beatsource_track(url: str, filepath: str):
             "Referer": "https://www.beatsource.com/"
         }
 
+        # --- LOGIKA KONEKTOR DENGAN FIX SOCKS5H ---
+        connector = None
+        if proxy and ProxyConnector:
+            try:
+                proxy_url = proxy
+                use_rdns = False
+                
+                # FIX MANUAL: aiohttp-socks kadang menolak scheme 'socks5h://'
+                if proxy_url.startswith("socks5h://"):
+                    proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                    use_rdns = True
+                
+                connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+            except Exception as e:
+                LOGGER.warning(f"Gagal membuat konektor proxy untuk download ({e}), mencoba direct.")
+        # -----------------------------------------------------------
+
         timeout = aiohttp.ClientTimeout(total=600)
 
-        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
             async with session.get(url) as response:
                 if response.status == 403:
                     return "403_FORBIDDEN"
@@ -151,7 +170,6 @@ async def download_beatsource_track(url: str, filepath: str):
                 response.raise_for_status()
                 
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                # Mode "wb" akan menimpa file lama (truncate), jadi aman untuk retry
                 async with aiofiles.open(filepath, "wb") as f:
                     async for chunk in response.content.iter_chunked(8192):
                         await f.write(chunk)
@@ -166,6 +184,17 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     async with BEATSOURCE_SEMAPHORE:
         delay = random.uniform(3.0, 6.0)
         await asyncio.sleep(delay)
+        
+        # --- CARI PROXY DARI POOL MANAGER ---
+        # Karena Beatsource pakai load balancing, kita ambil sembarang proxy yang aktif
+        # agar download file juga lewat proxy tersebut.
+        user_proxy = None
+        if beatsource_manager.clients:
+            for c in beatsource_manager.clients:
+                if c.proxy:
+                    user_proxy = c.proxy
+                    break
+        # ------------------------------------
         
         if not track_meta:
             try:
@@ -190,20 +219,19 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         filepath += f"/{safe_filename}.{track_meta['extension']}"
         track_meta['filepath'] = filepath
 
-        # --- DOWNLOAD PERTAMA ---
-        err = await download_beatsource_track(download_url, track_meta['filepath'])
+        # --- DOWNLOAD PERTAMA (PAKAI PROXY) ---
+        err = await download_beatsource_track(download_url, track_meta['filepath'], proxy=user_proxy)
 
         # --- LOGIKA RETRY (AUTO REFRESH URL) ---
         if err == "403_FORBIDDEN":
             LOGGER.warning(f"URL Beatsource Track {item_id} expired (403). Mencoba refresh URL...")
             
-            # Minta URL baru dengan kualitas yang BENAR
             new_url = await refresh_track_url(item_id, track_meta)
             
             if new_url:
                 track_meta['download_url'] = new_url 
-                # Coba download lagi (akan menimpa file .flac dengan konten FLAC yang baru)
-                err = await download_beatsource_track(new_url, track_meta['filepath'])
+                # Coba download lagi (pakai proxy)
+                err = await download_beatsource_track(new_url, track_meta['filepath'], proxy=user_proxy)
             else:
                 err = "Gagal refresh URL Beatsource (tetap 403/Error API)."
 
@@ -219,7 +247,6 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         except Exception as e:
             LOGGER.error(f"Gagal memproses metadata Beatsource: {filepath} -> {e}")
             try:
-                # Hapus file korup agar tidak menuhin disk
                 os.remove(filepath)
             except:
                 pass
@@ -275,7 +302,11 @@ async def start_album(album_id: str, user: dict, upload=True):
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    await download_beatsource_track(cover_src, target_cover)
+                    # Gunakan proxy untuk cover juga jika ada
+                    proxy_for_cover = None
+                    if beatsource_manager.clients and beatsource_manager.clients[0].proxy:
+                         proxy_for_cover = beatsource_manager.clients[0].proxy
+                    await download_beatsource_track(cover_src, target_cover, proxy=proxy_for_cover)
         except Exception as e:
             LOGGER.warning(f"Gagal menyalin cover ZIP: {e}")
 
@@ -328,7 +359,10 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    await download_beatsource_track(cover_src, target_cover)
+                    proxy_for_cover = None
+                    if beatsource_manager.clients and beatsource_manager.clients[0].proxy:
+                         proxy_for_cover = beatsource_manager.clients[0].proxy
+                    await download_beatsource_track(cover_src, target_cover, proxy=proxy_for_cover)
         except: pass
 
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
