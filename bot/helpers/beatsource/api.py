@@ -6,9 +6,15 @@ from datetime import timedelta, datetime
 from urllib.parse import urlparse, parse_qs
 from bot.logger import LOGGER
 
+# --- TAMBAHAN: Import ProxyConnector ---
+try:
+    from aiohttp_socks import ProxyConnector
+except ImportError:
+    LOGGER.warning("Modul 'aiohttp_socks' tidak ditemukan. Proxy SOCKS/SOCKS5H tidak akan berjalan.")
+    ProxyConnector = None
+# ---------------------------------------
+
 # --- KONSTANTA ANTI-BAN ---
-# Gunakan User-Agent Browser Asli (Chrome pada Windows) secara konsisten
-# Jangan gunakan 'libbeatsource' agar tidak terdeteksi sebagai bot
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 class BeatsourceError(Exception):
@@ -27,17 +33,41 @@ class BeatsourceAPI:
         self.expires = None
         
         self.email = None
+        self.proxy = None # Variabel Proxy
         self.session = None 
 
     async def _init_session(self):
         """
-        Membuat sesi aiohttp dengan header browser dan cookie jar.
+        Membuat sesi aiohttp dengan header browser, cookie jar, dan PROXY.
         CookieJar(unsafe=True) PENTING untuk login Beatsource agar cookie sessionid tersimpan.
         """
         if self.session is None or self.session.closed:
+            connector = None
+            
+            # --- LOGIKA KONEKTOR PROXY (Auto-fix socks5h) ---
+            if self.proxy:
+                if ProxyConnector:
+                    try:
+                        # FIX: Handle socks5h manual jika library menolak skemanya
+                        proxy_url = self.proxy
+                        use_rdns = False
+                        
+                        if proxy_url.startswith("socks5h://"):
+                            proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                            use_rdns = True
+                        
+                        connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+                        LOGGER.debug(f"BeatsourceAPI: Menggunakan Proxy untuk {self.email} (RDNS: {use_rdns})")
+                    except Exception as e:
+                        LOGGER.error(f"BeatsourceAPI: Gagal menginisialisasi Proxy Connector: {e}")
+                else:
+                    LOGGER.error("BeatsourceAPI: Proxy diset tapi 'aiohttp_socks' belum diinstall.")
+            # ------------------------------------------------
+
             self.session = aiohttp.ClientSession(
                 headers={'user-agent': USER_AGENT},
-                cookie_jar=aiohttp.CookieJar(unsafe=True)
+                cookie_jar=aiohttp.CookieJar(unsafe=True),
+                connector=connector
             )
 
     async def close_session(self):
