@@ -75,6 +75,12 @@ class BeatsourceLoginManager:
     async def _login_task(self, account: dict, saved_token: dict = None):
         client = BeatsourceAPI()
         email, password = account['email'], account['password']
+        
+        # --- TAMBAHAN PROXY ---
+        proxy = account.get('proxy')
+        if proxy:
+            client.proxy = proxy
+        # ----------------------
 
         if saved_token and saved_token.get('refresh_token'):
             try:
@@ -104,8 +110,6 @@ class BeatsourceLoginManager:
                         'email': client.email
                     }
             
-            # --- PERBAIKAN DISINI ---
-            # Menggunakan format (KEY, VALUE) sesuai error log
             await database.set_variable('BEATSOURCE_TOKENS', tokens_map)
             LOGGER.info("Beatsource Manager: Tokens saved.")
             
