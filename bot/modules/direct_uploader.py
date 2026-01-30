@@ -23,33 +23,11 @@ class DirectUpload:
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
 
     # ============================
-    # DIAGNOSTIC HELPER
+    # CORE: CURL EXECUTOR
     # ============================
-    def _check_file_integrity(self, filepath):
-        """Mengecek ukuran file dan sisa disk space"""
-        try:
-            # 1. Cek Ukuran File
-            file_size = os.path.getsize(filepath)
-            gb_size = file_size / (1024 * 1024 * 1024)
-            LOGGER.info(f"[DIAGNOSTIC] File Size to Upload: {file_size} bytes ({gb_size:.2f} GB)")
-            
-            # 2. Cek Sisa Disk
-            total, used, free = shutil.disk_usage("/")
-            free_gb = free / (1024 * 1024 * 1024)
-            LOGGER.info(f"[DIAGNOSTIC] Disk Free Space: {free_gb:.2f} GB")
-
-            if file_size >= 2 * 1024 * 1024 * 1024:
-                LOGGER.info("[DIAGNOSTIC] File is LARGE (>2GB). Proceeding with CURL...")
-            
-            return True
-        except Exception as e:
-            LOGGER.error(f"[DIAGNOSTIC] Error checking file: {e}")
-            return False
-
     async def _run_curl_upload(self, cmd_args):
         temp_log = f"curl_log_{os.getpid()}.txt"
         try:
-            # Tambahkan flag HTTP/1.1 untuk stabilitas file besar
             final_cmd = cmd_args + ["--http1.1"] 
             
             with open(temp_log, "w") as outfile:
@@ -69,7 +47,7 @@ class DirectUpload:
             if process.returncode == 0:
                 return output
             else:
-                LOGGER.error(f"CURL Failed (Code {process.returncode}): {output[:500]}") # Log error curl
+                LOGGER.error(f"CURL Failed (Code {process.returncode}): {output[:500]}")
                 return None
         except Exception as e:
             LOGGER.error(f"CURL Ex Error: {e}")
@@ -77,7 +55,7 @@ class DirectUpload:
             return None
 
     # ============================
-    # HANDLERS
+    # GOFILE HANDLER
     # ============================
     def _get_gofile_server(self):
         try:
@@ -87,12 +65,43 @@ class DirectUpload:
         except: pass
         return "store1"
 
+    def _get_gofile_account(self, token):
+        try:
+            r = self.session.get(f"https://api.gofile.io/accounts/getid?token={token}", timeout=10)
+            if r.status_code == 200 and r.json()['status'] == 'ok':
+                return r.json()['data']['id']
+        except: pass
+        return None
+
+    def _gofile_create_folder(self, token, parent_id, name):
+        try:
+            data = {'token': token, 'parentFolderId': parent_id, 'folderName': name}
+            r = self.session.post("https://api.gofile.io/contents/createFolder", data=data, timeout=15)
+            if r.status_code == 200 and r.json()['status'] == 'ok':
+                return r.json()['data']
+        except Exception as e:
+            LOGGER.error(f"Gofile Create Folder Error: {e}")
+        return None
+
+    # --- PUBLIC METHODS UNTUK UPLODER.PY (YANG SEBELUMNYA HILANG) ---
+    async def gofile_get_root(self, token):
+        try:
+            acc_id = await asyncio.to_thread(self._get_gofile_account, token)
+            if acc_id:
+                r = await asyncio.to_thread(self.session.get, f"https://api.gofile.io/accounts/{acc_id}?token={token}")
+                data = r.json()['data']
+                return data['rootFolder']
+        except: pass
+        return None
+
+    async def gofile_create_folder_async(self, token, parent_id, name):
+        return await asyncio.to_thread(self._gofile_create_folder, token, parent_id, name)
+    # ---------------------------------------------------------------
+
     async def _upload_gofile_curl(self, filepath, token, folder_id):
         server = await asyncio.to_thread(self._get_gofile_server)
         url = f"https://{server}.gofile.io/uploadFile"
         
-        # Tambahkan --http1.1 (di _run_curl_upload) dan --ignore-content-length
-        # -F file=@... otomatis streaming di curl 64-bit
         cmd = [
             "curl", "-s", "--no-buffer",
             "-X", "POST", url,
@@ -106,7 +115,6 @@ class DirectUpload:
         output = await self._run_curl_upload(cmd)
         if output:
             try:
-                # Regex untuk menangkap JSON response
                 match = re.search(r'(\{.*\})', output)
                 if match:
                     res = json.loads(match.group(1))
@@ -115,6 +123,9 @@ class DirectUpload:
             except: pass
         return None
 
+    # ============================
+    # BUZZHEAVIER HANDLER
+    # ============================
     def _buzzheavier_get_root(self, token):
         try:
             headers = {"Authorization": f"Bearer {token}"}
@@ -122,6 +133,10 @@ class DirectUpload:
             if r.json().get('code') == 200: return r.json()['data']['id']
         except: pass
         return None
+    
+    # Public Wrapper
+    async def buzzheavier_get_root(self, token):
+         return await asyncio.to_thread(self._buzzheavier_get_root, token)
 
     async def _upload_buzzheavier_curl(self, filepath, token, folder_id=None):
         filename = os.path.basename(filepath)
@@ -145,6 +160,9 @@ class DirectUpload:
             except: pass
         return None
 
+    # ============================
+    # VIKINGFILES HANDLER
+    # ============================
     async def _upload_viking_curl(self, filepath, token):
         def get_srv():
             try: return self.session.get("https://vikingfile.com/api/get-server", timeout=10).json()['server']
@@ -175,29 +193,25 @@ class DirectUpload:
         filepath = os.path.join(self.path, file_name)
         if not os.path.exists(filepath): return None
         
-        # --- DIAGNOSTIC STEP ---
-        # Cek apakah file di disk benar-benar utuh
-        self._check_file_integrity(filepath)
-
         if upload_type in ['gf', 'gofile']:
             token = self.user_dict.get("gofile", {}).get("api")
             fid = specific_folder_id or self.user_dict.get("gofile", {}).get("folder_id")
             if token:
-                LOGGER.info(f"Uploading Gofile (CURL 1.1): {file_name}")
+                LOGGER.info(f"Uploading Gofile (CURL): {file_name}")
                 link = await self._upload_gofile_curl(filepath, token, fid)
                 return {'Gofile': link} if link else None
 
         elif upload_type in ['bh', 'buzzheavier']:
             token = self.user_dict.get("buzzheavier", {}).get("api")
             if token:
-                LOGGER.info(f"Uploading Buzzheavier (CURL 1.1): {file_name}")
+                LOGGER.info(f"Uploading Buzzheavier (CURL): {file_name}")
                 link = await self._upload_buzzheavier_curl(filepath, token)
                 return {'Buzzheavier': link} if link else None
 
         elif upload_type in ['vk', 'viking']:
             token = self.user_dict.get("vikingfiles", {}).get("api")
             if token:
-                LOGGER.info(f"Uploading Viking (CURL 1.1): {file_name}")
+                LOGGER.info(f"Uploading Viking (CURL): {file_name}")
                 link = await self._upload_viking_curl(filepath, token)
                 return {'Vikingfiles': link} if link else None
 
