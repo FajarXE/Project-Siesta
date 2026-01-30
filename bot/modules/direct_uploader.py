@@ -8,6 +8,8 @@ import re
 from urllib.parse import quote
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+# IMPORT BARU UNTUK MENGATASI LIMIT 2GB
+from requests_toolbelt.multipart.encoder import MultipartEncoder 
 from bot.logger import LOGGER
 
 class DirectUpload:
@@ -29,11 +31,11 @@ class DirectUpload:
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
 
     # ============================
-    # GOFILE HANDLER
+    # GOFILE HANDLER (FIXED FOR LARGE FILES)
     # ============================
     def _get_gofile_server(self):
         try:
-            resp = self.session.get("https://api.gofile.io/servers", timeout=10)
+            resp = self.session.get("https://api.gofile.io/servers", timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('status') == 'ok' and data['data'].get('servers'):
@@ -43,7 +45,7 @@ class DirectUpload:
 
     def _get_gofile_account(self, token):
         try:
-            r = self.session.get(f"https://api.gofile.io/accounts/getid?token={token}", timeout=10)
+            r = self.session.get(f"https://api.gofile.io/accounts/getid?token={token}", timeout=15)
             if r.status_code == 200 and r.json()['status'] == 'ok':
                 return r.json()['data']['id']
         except: pass
@@ -63,12 +65,21 @@ class DirectUpload:
         server = self._get_gofile_server()
         url = f"https://{server}.gofile.io/uploadFile"
         try:
+            # FIX: Menggunakan MultipartEncoder untuk file > 2GB
             with open(filepath, 'rb') as f:
-                files = {'file': (os.path.basename(filepath), f)}
-                data = {'token': token}
-                if folder_id: data['folderId'] = folder_id
+                fields = {
+                    'token': token,
+                    'file': (os.path.basename(filepath), f, 'application/octet-stream')
+                }
+                if folder_id:
+                    fields['folderId'] = folder_id
+
+                m = MultipartEncoder(fields=fields)
                 
-                r = self.session.post(url, files=files, data=data, timeout=3600)
+                # Timeout diset None agar tidak putus untuk file besar
+                headers = {'Content-Type': m.content_type}
+                r = self.session.post(url, data=m, headers=headers, timeout=None)
+                
                 res = r.json()
                 if res.get('status') == 'ok':
                     return res['data']['downloadPage']
@@ -101,25 +112,16 @@ class DirectUpload:
             r = self.session.post(url, headers=headers, json=data, timeout=15)
             res = r.json()
             
-            # 200 OK
             if res.get('code') == 200:
                 return res['data']['id']
-            
-            # 409 CONFLICT (Folder Exists) -> Auto Rename Logic
             elif res.get('code') == 409:
                 LOGGER.warning(f"Buzzheavier folder '{name}' conflict. Renaming...")
-                
-                # Cek apakah nama sudah berakhiran (angka), misal: Folder (1)
                 match = re.search(r"\((\d+)\)$", name)
                 if match:
-                    # Jika sudah ada angka, increment angkanya
                     num = int(match.group(1)) + 1
                     new_name = re.sub(r"\(\d+\)$", f"({num})", name)
                 else:
-                    # Jika belum ada, tambahkan (1)
                     new_name = f"{name} (1)"
-                
-                # Coba buat lagi dengan nama baru (Rekursif)
                 return self._buzzheavier_create_folder(token, parent_id, new_name)
                 
         except Exception as e:
@@ -129,7 +131,6 @@ class DirectUpload:
     def _upload_buzzheavier_file(self, filepath, token, folder_id=None):
         try:
             filename = os.path.basename(filepath)
-            # Jika ada folder_id, URL berubah formatnya
             if folder_id:
                 url = f"https://w.buzzheavier.com/{folder_id}/{quote(filename)}"
             else:
@@ -137,15 +138,15 @@ class DirectUpload:
             
             headers = {"Authorization": f"Bearer {token}"}
             
-            # PENTING: Cek jika ini direktori (guard clause)
             if os.path.isdir(filepath):
                 return None 
             
+            # Buzzheavier menggunakan PUT binary body, ini biasanya aman untuk large file
+            # Namun Timeout harus dimatikan (None)
             with open(filepath, 'rb') as f:
-                r = self.session.put(url, headers=headers, data=f, timeout=3600)
+                r = self.session.put(url, headers=headers, data=f, timeout=None)
                 res = r.json()
                 if res.get('code') == 201 and res.get('data'):
-                    # Jika upload ke folder, kita tidak butuh link per file, tapi sukses ID
                     return f"https://buzzheavier.com/{res['data']['id']}"
                 LOGGER.error(f"Buzzheavier Error: {res}")
         except Exception as e:
@@ -154,16 +155,13 @@ class DirectUpload:
 
     def _upload_buzzheavier_folder_recursive(self, folderpath, token):
         try:
-            # 1. Get Root
             root_id = self._buzzheavier_get_root(token)
             if not root_id: return None
             
-            # 2. Create Parent Folder
             folder_name = os.path.basename(folderpath)
             created_folder_id = self._buzzheavier_create_folder(token, root_id, folder_name)
             if not created_folder_id: return None
             
-            # 3. Walk and Upload
             for root, dirs, files in os.walk(folderpath):
                 for file in files:
                     full_path = os.path.join(root, file)
@@ -175,7 +173,7 @@ class DirectUpload:
         return None
 
     # ============================
-    # VIKINGFILES HANDLER
+    # VIKINGFILES HANDLER (FIXED FOR LARGE FILES)
     # ============================
     def _upload_viking(self, filepath, token):
         try:
@@ -188,10 +186,20 @@ class DirectUpload:
             if not server_url: raise Exception("No Viking server available")
 
             filename = os.path.basename(filepath)
+            
+            # FIX: Menggunakan MultipartEncoder untuk file > 2GB
             with open(filepath, 'rb') as f:
-                files = {'file': (filename, f)}
-                data = {'user': token} 
-                r = self.session.post(server_url, files=files, data=data, timeout=3600)
+                m = MultipartEncoder(
+                    fields={
+                        'user': token,
+                        'file': (filename, f, 'application/octet-stream')
+                    }
+                )
+                
+                headers = {'Content-Type': m.content_type}
+                # Timeout None agar tidak putus
+                r = self.session.post(server_url, data=m, headers=headers, timeout=None)
+                
                 res = r.json()
                 if res.get('url'): return res['url']
                 LOGGER.error(f"Vikingfiles Error: {res}")
