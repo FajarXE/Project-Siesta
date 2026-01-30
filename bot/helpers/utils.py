@@ -23,7 +23,8 @@ from ..settings import bot_set
 from .buttons.links import links_button
 from .message import send_message, edit_message
 
-# Limit Telegram (1.9GB) untuk safety margin
+# MAX_SIZE tidak lagi relevan karena kita tidak melakukan split, 
+# tapi dibiarkan untuk referensi internal saja.
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024 
 
 async def download_file(url, path, retries=3, timeout=30):
@@ -143,36 +144,33 @@ async def create_link(path, basepath):
     return rclone_link, index_link
 
 # =========================================================================
-#  SMART ZIP SYSTEM (TELEGRAM = SPLIT, CLOUD = SINGLE)
+#  SISTEM ZIP FORCE (SINGLE FILE ONLY)
 # =========================================================================
 
 async def zip_handler(folderpath):
     """
-    Menentukan metode ZIP berdasarkan Mode Upload Bot.
+    MODIFIKASI FINAL:
+    Memaksa penggunaan System Zip (Single File) untuk SEMUA kondisi.
+    Tidak ada lagi split file (.z01, .z02) untuk Telegram.
     """
-    loop = asyncio.get_running_loop()
-    
-    # 1. JIKA TELEGRAM: Wajib Split (Safety First)
-    if bot_set.upload_mode == 'Telegram':
-        LOGGER.info(f"Mode Telegram terdeteksi: Menggunakan Split Zip untuk {folderpath}")
-        with ThreadPoolExecutor() as pool:
-            zips = await loop.run_in_executor(pool, split_zip_folder, folderpath)
-        return zips
-        
-    # 2. JIKA CLOUD (Gofile/Buzz/dll): Wajib System Zip (Single File >2GB)
-    else:
-        LOGGER.info(f"Mode Cloud terdeteksi: Menggunakan System Zip (Single File) untuk {folderpath}")
-        zip_file = await create_zip_system(folderpath)
-        return zip_file
+    LOGGER.info(f"FORCE ZIP SYSTEM: Membuat Single Zip untuk {folderpath}")
+    zip_file = await create_zip_system(folderpath)
+    return zip_file
 
 async def create_zip_system(folderpath):
     """
     Menggunakan aplikasi 'zip' Linux via subprocess.
-    Hanya dipakai untuk Cloud Upload agar file 3GB++ tidak terpotong.
     """
     zip_path = f"{folderpath}.zip"
     
-    # Command: zip -r -0 "output.zip" "." (Tanpa kompresi agar cepat)
+    # Hapus file lama jika ada (untuk menghindari error zip update)
+    if os.path.exists(zip_path):
+        try: os.remove(zip_path)
+        except: pass
+
+    LOGGER.info(f"Mulai Zipping Sistem (Single File): {folderpath}")
+    
+    # Command: zip -r -0 "output.zip" "." (Tanpa kompresi agar cepat & CPU rendah)
     cmd = ["zip", "-r", "-0", zip_path, "."]
     
     try:
@@ -190,7 +188,7 @@ async def create_zip_system(folderpath):
             return zip_path
         else:
             LOGGER.error(f"System Zip Gagal: {stderr.decode()}")
-            # Fallback ke split/python zip jika gagal
+            # Fallback ke Python Zipfile (Single File, No Split)
             with ThreadPoolExecutor() as pool:
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(pool, zip_folder, folderpath)
@@ -204,44 +202,17 @@ async def create_zip_system(folderpath):
         LOGGER.error(f"Error System Zip: {e}")
         return None
 
-# Fungsi Split (Khusus Telegram - Menghasilkan .zip, .z01, .z02)
+# Fungsi Split (DIMATIKAN / DEAD CODE)
 def split_zip_folder(folderpath) -> list:
-    zip_paths = []
-    part_num = 1
-    current_size = 0
-    current_files = []
+    # Fungsi ini sengaja dibiarkan ada tapi tidak dipanggil
+    # agar tidak error jika ada referensi lain, tapi logic utamanya
+    # sudah dibypass oleh zip_handler di atas.
+    pass
 
-    def add_to_zip(zip_name, files_to_add):
-        if part_num == 1: zip_path = f"{zip_name}.zip"
-        else: zip_path = f"{zip_name}.z{part_num:02d}"
-
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
-            for file_path, arcname in files_to_add:
-                zipf.write(file_path, arcname)
-        return zip_path
-
-    for root, dirs, files in os.walk(folderpath):
-        for file in files:
-            file_path = os.path.join(root, file)
-            file_size = os.path.getsize(file_path)
-            arcname = os.path.relpath(file_path, folderpath)
-
-            if current_size + file_size > MAX_SIZE:
-                zip_paths.append(add_to_zip(folderpath, current_files))
-                part_num += 1
-                current_files = []
-                current_size = 0
-
-            current_files.append((file_path, arcname))
-            current_size += file_size
-
-    if current_files:
-        zip_paths.append(add_to_zip(folderpath, current_files))
-    return zip_paths
-
-# Fungsi Legacy (Fallback)
+# Fungsi Legacy (Fallback untuk Single File)
 def zip_folder(folderpath) -> str:
     zip_path = f"{folderpath}.zip"
+    # allowZip64=True WAJIB agar python bisa buat file >2GB
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED, allowZip64=True) as zipf:
         for root, dirs, files in os.walk(folderpath):
             for file in files:
