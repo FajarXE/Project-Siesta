@@ -83,7 +83,6 @@ class DirectUpload:
             LOGGER.error(f"Gofile Create Folder Error: {e}")
         return None
 
-    # --- PUBLIC METHODS UNTUK UPLODER.PY (YANG SEBELUMNYA HILANG) ---
     async def gofile_get_root(self, token):
         try:
             acc_id = await asyncio.to_thread(self._get_gofile_account, token)
@@ -96,7 +95,6 @@ class DirectUpload:
 
     async def gofile_create_folder_async(self, token, parent_id, name):
         return await asyncio.to_thread(self._gofile_create_folder, token, parent_id, name)
-    # ---------------------------------------------------------------
 
     async def _upload_gofile_curl(self, filepath, token, folder_id):
         server = await asyncio.to_thread(self._get_gofile_server)
@@ -134,9 +132,33 @@ class DirectUpload:
         except: pass
         return None
     
-    # Public Wrapper
+    def _buzzheavier_create_folder(self, token, parent_id, name):
+        try:
+            url = f"https://buzzheavier.com/api/fs/{parent_id}"
+            headers = {"Authorization": f"Bearer {token}"}
+            data = {"name": name, "parentId": parent_id}
+            
+            r = self.session.post(url, headers=headers, json=data, timeout=15)
+            res = r.json()
+            if res.get('code') == 200: return res['data']['id']
+            elif res.get('code') == 409: # Conflict
+                match = re.search(r"\((\d+)\)$", name)
+                if match:
+                    num = int(match.group(1)) + 1
+                    new_name = re.sub(r"\(\d+\)$", f"({num})", name)
+                else:
+                    new_name = f"{name} (1)"
+                return self._buzzheavier_create_folder(token, parent_id, new_name)
+        except: pass
+        return None
+
+    # --- PUBLIC WRAPPERS BUZZHEAVIER ---
     async def buzzheavier_get_root(self, token):
          return await asyncio.to_thread(self._buzzheavier_get_root, token)
+
+    async def buzzheavier_create_folder_async(self, token, parent_id, name):
+         return await asyncio.to_thread(self._buzzheavier_create_folder, token, parent_id, name)
+    # -----------------------------------
 
     async def _upload_buzzheavier_curl(self, filepath, token, folder_id=None):
         filename = os.path.basename(filepath)
@@ -205,7 +227,8 @@ class DirectUpload:
             token = self.user_dict.get("buzzheavier", {}).get("api")
             if token:
                 LOGGER.info(f"Uploading Buzzheavier (CURL): {file_name}")
-                link = await self._upload_buzzheavier_curl(filepath, token)
+                # FIX: Pass specific_folder_id ke Buzzheavier CURL
+                link = await self._upload_buzzheavier_curl(filepath, token, folder_id=specific_folder_id)
                 return {'Buzzheavier': link} if link else None
 
         elif upload_type in ['vk', 'viking']:
