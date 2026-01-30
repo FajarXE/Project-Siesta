@@ -7,7 +7,7 @@ import asyncio
 import shutil
 import zipfile
 import typing
-import re # Tambahan regex
+import re
 
 from pathlib import Path
 from urllib.parse import quote
@@ -24,7 +24,7 @@ from ..settings import bot_set
 from .buttons.links import links_button
 from .message import send_message, edit_message
 
-# Limit Telegram (1.9GB)
+# Batas aman Telegram (1.9GB)
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024 
 
 async def download_file(url, path, retries=3, timeout=30):
@@ -107,6 +107,7 @@ async def run_concurrent_tasks(tasks: list, update_details: dict, limit: int = 1
                 result = await task
         except Exception: result = None
         completed_tasks += 1
+        
         if update_details:
             try:
                 if completed_tasks % 5 == 0 or completed_tasks == total_tasks: 
@@ -143,49 +144,47 @@ async def create_link(path, basepath):
     return rclone_link, index_link
 
 # =========================================================================
-#  SMART ZIP SYSTEM & CUSTOM SPLIT
+#  SMART ZIP HANDLER (Auto Detect: Cloud=Single, Telegram=Split)
 # =========================================================================
 
 async def zip_handler(folderpath):
     loop = asyncio.get_running_loop()
     
-    # 1. Coba deteksi User ID dari path untuk mengetahui preferensi User
-    # Path biasanya: .../DOWNLOADS/{user_id}/...
-    user_mode = bot_set.upload_mode # Default Global
+    # 1. Deteksi Mode Upload User
+    user_mode = bot_set.upload_mode
     try:
-        # Regex mencari angka setelah DOWNLOAD_BASE_DIR atau di path
         parts = folderpath.split(os.sep)
         for part in parts:
-            if part.isdigit() and len(part) > 5: # Asumsi User ID > 5 digit
+            if part.isdigit() and len(part) > 5:
                 u_id = int(part)
-                # Cek settingan user spesifik
                 u_data = bot_set.user_data.get(u_id, {})
                 if u_data.get('upload_mode'):
                     user_mode = u_data['upload_mode']
-                    LOGGER.info(f"Detected User Preference ({u_id}): {user_mode}")
                 break
-    except Exception as e:
-        LOGGER.warning(f"Failed to detect user mode from path: {e}")
+    except: pass
 
     # 2. Logika Zip
     if user_mode == 'Telegram':
-        LOGGER.info(f"[ZIP] Mode {user_mode}: Menggunakan Split Zip (Custom Name)")
+        LOGGER.info(f"[ZIP] Mode Telegram: Menggunakan Split Zip (.zip, .part2.zip)")
         with ThreadPoolExecutor() as pool:
             zips = await loop.run_in_executor(pool, split_zip_folder, folderpath)
         return zips
     else:
-        LOGGER.info(f"[ZIP] Mode {user_mode}: Menggunakan System Zip (Single File)")
+        # Gofile/Buzzheavier/Vikingfiles -> Force System Zip (Single File > 2GB)
+        LOGGER.info(f"[ZIP] Mode {user_mode}: Menggunakan System Zip (Single File Utuh)")
         zip_file = await create_zip_system(folderpath)
         return zip_file
 
 async def create_zip_system(folderpath):
-    """System Zip (Single File) untuk Cloud"""
+    """Membuat Single Zip menggunakan aplikasi sistem 'zip' (Bypass limit Python)"""
     zip_path = f"{folderpath}.zip"
-    if os.path.exists(zip_path):
+    if os.path.exists(zip_path): 
         try: os.remove(zip_path)
         except: pass
 
+    # Command: zip -r -0 "output.zip" "."
     cmd = ["zip", "-r", "-0", zip_path, "."]
+    
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd, cwd=folderpath,
@@ -196,7 +195,7 @@ async def create_zip_system(folderpath):
         if process.returncode == 0:
             return zip_path
         else:
-            # Fallback ke Python Zip
+            # Fallback jika gagal
             with ThreadPoolExecutor() as pool:
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(pool, zip_folder, folderpath)
@@ -207,7 +206,7 @@ async def create_zip_system(folderpath):
 
 def split_zip_folder(folderpath) -> list:
     """
-    Custom Split Zip Naming:
+    Split Zip Logic dengan Penamaan Custom:
     - Part 1: file.zip
     - Part 2: file.part2.zip
     - Part 3: file.part3.zip
@@ -219,14 +218,10 @@ def split_zip_folder(folderpath) -> list:
 
     def add_to_zip(zip_name, files_to_add):
         nonlocal part_num
-        
-        # --- CUSTOM NAMING LOGIC ---
         if part_num == 1:
             zip_path = f"{zip_name}.zip"
         else:
-            # Sesuai request: nama.part2.zip
             zip_path = f"{zip_name}.part{part_num}.zip"
-        # ---------------------------
 
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
             for file_path, arcname in files_to_add:
@@ -250,10 +245,11 @@ def split_zip_folder(folderpath) -> list:
 
     if current_files:
         zip_paths.append(add_to_zip(folderpath, current_files))
-    
+
     return zip_paths
 
 def zip_folder(folderpath) -> str:
+    """Fallback Single Zip (Python)"""
     zip_path = f"{folderpath}.zip"
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED, allowZip64=True) as zipf:
         for root, dirs, files in os.walk(folderpath):
@@ -301,8 +297,7 @@ async def post_simple_message(user, meta, r_link=None, i_link=None):
 
 async def progress_message(done, total, details):
     progress_bar = "{0}{1}".format(''.join(["▰" for i in range(math.floor((done/total) * 10))]), ''.join(["▱" for i in range(10 - math.floor((done/total) * 10))]))
-    try:
-        await edit_message(details['msg'], details['text'].format(progress_bar, done, total, details['title'], details['type'].title()), None, False)
+    try: await edit_message(details['msg'], details['text'].format(progress_bar, done, total, details['title'], details['type'].title()), None, False)
     except FloodWait: pass
 
 async def cleanup(user=None, metadata=None, user_dict: dict=None):
