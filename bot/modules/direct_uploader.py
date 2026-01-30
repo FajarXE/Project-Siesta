@@ -10,13 +10,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bot.logger import LOGGER
 
-# --- IMPORT WAJIB UNTUK FILE BESAR (>2GB) ---
-try:
-    from requests_toolbelt.multipart.encoder import MultipartEncoder
-except ImportError:
-    LOGGER.error("Modul 'requests_toolbelt' belum terinstall! Jalankan: pip install requests-toolbelt")
-    MultipartEncoder = None
-
 class DirectUpload:
     def __init__(self, listener=None, name=None, path=None):
         self.name = name
@@ -25,7 +18,7 @@ class DirectUpload:
         self.user_dict = listener.user_dict if listener else {}
         self.is_cancelled = False
         
-        # Session Setup
+        # Session Setup (Hanya untuk Metadata/API kecil)
         self.session = requests.Session()
         retries = Retry(
             total=5,
@@ -36,7 +29,30 @@ class DirectUpload:
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
 
     # ============================
-    # GOFILE HANDLER (FIXED)
+    # CORE: CURL EXECUTOR (THE SOLVER)
+    # ============================
+    async def _run_curl_upload(self, cmd_args):
+        """Menjalankan CURL via Subprocess agar bypass limit 2GB Python"""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                err_msg = stderr.decode().strip()
+                LOGGER.error(f"CURL Failed: {err_msg}")
+                return None
+            
+            return stdout.decode().strip()
+        except Exception as e:
+            LOGGER.error(f"CURL Exception: {e}")
+            return None
+
+    # ============================
+    # GOFILE HANDLER
     # ============================
     def _get_gofile_server(self):
         try:
@@ -66,45 +82,38 @@ class DirectUpload:
             LOGGER.error(f"Gofile Create Folder Error: {e}")
         return None
 
-    def _upload_gofile(self, filepath, token, folder_id):
-        server = self._get_gofile_server()
+    async def _upload_gofile_curl(self, filepath, token, folder_id):
+        server = await asyncio.to_thread(self._get_gofile_server)
         url = f"https://{server}.gofile.io/uploadFile"
         
-        try:
-            if not MultipartEncoder:
-                raise Exception("requests-toolbelt not installed")
-
-            with open(filepath, 'rb') as f:
-                # Siapkan Fields untuk Multipart
-                fields = {
-                    'token': token,
-                    'file': (os.path.basename(filepath), f, 'application/octet-stream')
-                }
-                if folder_id:
-                    fields['folderId'] = folder_id
-                
-                # Gunakan MultipartEncoder untuk Streaming Upload
-                m = MultipartEncoder(fields=fields)
-                
-                # Timeout diset None agar tidak putus di tengah jalan untuk file besar
-                r = self.session.post(
-                    url, 
-                    data=m, 
-                    headers={'Content-Type': m.content_type}, 
-                    timeout=None
-                )
-                
-                res = r.json()
+        # Susun Command CURL
+        # -F untuk form-data, @ untuk file
+        cmd = [
+            "curl", "-s", 
+            "-X", "POST", url,
+            "-F", f"token={token}",
+            "-F", f"file=@{filepath}"
+        ]
+        
+        if folder_id:
+            cmd.extend(["-F", f"folderId={folder_id}"])
+            
+        # Eksekusi
+        output = await self._run_curl_upload(cmd)
+        
+        if output:
+            try:
+                res = json.loads(output)
                 if res.get('status') == 'ok':
                     return res['data']['downloadPage']
                 else:
-                    LOGGER.error(f"Gofile API Error: {res}")
-        except Exception as e:
-            LOGGER.error(f"Gofile Upload Error: {e}")
+                    LOGGER.error(f"Gofile API Error (CURL): {res}")
+            except json.JSONDecodeError:
+                LOGGER.error(f"Gofile Response Parse Error: {output}")
         return None
 
     # ============================
-    # BUZZHEAVIER HANDLER (FIXED)
+    # BUZZHEAVIER HANDLER
     # ============================
     def _buzzheavier_get_root(self, token):
         try:
@@ -126,13 +135,10 @@ class DirectUpload:
             r = self.session.post(url, headers=headers, json=data, timeout=15)
             res = r.json()
             
-            # 200 OK
             if res.get('code') == 200:
                 return res['data']['id']
-            
-            # 409 CONFLICT (Folder Exists) -> Auto Rename Logic
             elif res.get('code') == 409:
-                LOGGER.warning(f"Buzzheavier folder '{name}' conflict. Renaming...")
+                # Conflict logic (sama seperti sebelumnya)
                 match = re.search(r"\((\d+)\)$", name)
                 if match:
                     num = int(match.group(1)) + 1
@@ -140,120 +146,111 @@ class DirectUpload:
                 else:
                     new_name = f"{name} (1)"
                 return self._buzzheavier_create_folder(token, parent_id, new_name)
-                
         except Exception as e:
             LOGGER.error(f"Buzzheavier Create Folder Error: {e}")
         return None
 
-    def _upload_buzzheavier_file(self, filepath, token, folder_id=None):
-        try:
-            filename = os.path.basename(filepath)
-            # Jika ada folder_id, URL berubah formatnya
-            if folder_id:
-                url = f"https://w.buzzheavier.com/{folder_id}/{quote(filename)}"
-            else:
-                url = f"https://w.buzzheavier.com/{quote(filename)}"
+    async def _upload_buzzheavier_curl(self, filepath, token, folder_id=None):
+        filename = os.path.basename(filepath)
+        if folder_id:
+            url = f"https://w.buzzheavier.com/{folder_id}/{quote(filename)}"
+        else:
+            url = f"https://w.buzzheavier.com/{quote(filename)}"
             
-            headers = {"Authorization": f"Bearer {token}"}
-            
-            if os.path.isdir(filepath):
-                return None 
-            
-            with open(filepath, 'rb') as f:
-                # Timeout None agar file besar tidak putus
-                r = self.session.put(url, headers=headers, data=f, timeout=None)
-                res = r.json()
+        # Buzzheavier pakai PUT binary body
+        # curl -T filepath -H "Authorization..." url
+        cmd = [
+            "curl", "-s",
+            "-X", "PUT",
+            "-H", f"Authorization: Bearer {token}",
+            "-T", filepath,
+            url
+        ]
+        
+        output = await self._run_curl_upload(cmd)
+        if output:
+            try:
+                res = json.loads(output)
                 if res.get('code') == 201 and res.get('data'):
                     return f"https://buzzheavier.com/{res['data']['id']}"
-                LOGGER.error(f"Buzzheavier Error: {res}")
-        except Exception as e:
-            LOGGER.error(f"Buzzheavier Upload Error: {e}")
+                LOGGER.error(f"Buzzheavier Error (CURL): {res}")
+            except:
+                LOGGER.error(f"Buzzheavier Parse Error: {output}")
         return None
 
-    def _upload_buzzheavier_folder_recursive(self, folderpath, token):
-        try:
-            # 1. Get Root
-            root_id = self._buzzheavier_get_root(token)
-            if not root_id: return None
-            
-            # 2. Create Parent Folder
-            folder_name = os.path.basename(folderpath)
-            created_folder_id = self._buzzheavier_create_folder(token, root_id, folder_name)
-            if not created_folder_id: return None
-            
-            # 3. Walk and Upload
-            for root, dirs, files in os.walk(folderpath):
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    self._upload_buzzheavier_file(full_path, token, folder_id=created_folder_id)
-            
-            return f"https://buzzheavier.com/{created_folder_id}"
-        except Exception as e:
-            LOGGER.error(f"Buzzheavier Recursive Error: {e}")
-        return None
+    async def _upload_buzzheavier_folder_recursive(self, folderpath, token):
+        # Logic folder structure tetap pakai requests (cepat & kecil)
+        root_id = await asyncio.to_thread(self._buzzheavier_get_root, token)
+        if not root_id: return None
+        
+        folder_name = os.path.basename(folderpath)
+        created_folder_id = await asyncio.to_thread(self._buzzheavier_create_folder, token, root_id, folder_name)
+        if not created_folder_id: return None
+        
+        # Loop file upload pakai CURL
+        for root, dirs, files in os.walk(folderpath):
+            for file in files:
+                full_path = os.path.join(root, file)
+                # Panggil upload file curl secara langsung
+                await self._upload_buzzheavier_curl(full_path, token, folder_id=created_folder_id)
+        
+        return f"https://buzzheavier.com/{created_folder_id}"
 
     # ============================
-    # VIKINGFILES HANDLER (FIXED)
+    # VIKINGFILES HANDLER
     # ============================
-    def _upload_viking(self, filepath, token):
-        try:
-            if not MultipartEncoder:
-                raise Exception("requests-toolbelt not installed")
+    async def _upload_viking_curl(self, filepath, token):
+        if os.path.isdir(filepath): return None
 
-            if os.path.isdir(filepath):
-                LOGGER.error("Vikingfiles does not support folder upload directly.")
-                return None
-
-            r_srv = self.session.get("https://vikingfile.com/api/get-server", timeout=15)
-            server_url = r_srv.json().get('server')
-            if not server_url: raise Exception("No Viking server available")
-
-            filename = os.path.basename(filepath)
+        # 1. Get Server (Tetap requests)
+        def get_server():
+            try:
+                r = self.session.get("https://vikingfile.com/api/get-server", timeout=15)
+                return r.json().get('server')
+            except: return None
             
-            with open(filepath, 'rb') as f:
-                # Gunakan MultipartEncoder
-                m = MultipartEncoder(
-                    fields={
-                        'user': token,
-                        'file': (filename, f, 'application/octet-stream')
-                    }
-                )
-                
-                # Upload dengan Timeout None
-                r = self.session.post(
-                    server_url, 
-                    data=m, 
-                    headers={'Content-Type': m.content_type}, 
-                    timeout=None
-                )
-                
-                res = r.json()
+        server_url = await asyncio.to_thread(get_server)
+        if not server_url: 
+            LOGGER.error("No Viking server found")
+            return None
+
+        # 2. Upload via CURL
+        # Viking butuh field 'user' dan 'file'
+        cmd = [
+            "curl", "-s",
+            "-X", "POST", server_url,
+            "-F", f"user={token}",
+            "-F", f"file=@{filepath}"
+        ]
+        
+        output = await self._run_curl_upload(cmd)
+        if output:
+            try:
+                res = json.loads(output)
                 if res.get('url'): return res['url']
-                LOGGER.error(f"Vikingfiles Error: {res}")
-        except Exception as e:
-            LOGGER.error(f"Vikingfiles Upload Error: {e}")
+                LOGGER.error(f"Viking Error (CURL): {res}")
+            except:
+                LOGGER.error(f"Viking Parse Error: {output}")
         return None
 
     # ============================
     # PUBLIC METHODS
     # ============================
     async def gofile_create_folder_async(self, token, parent_id, name):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._gofile_create_folder, token, parent_id, name)
+        return await asyncio.to_thread(self._gofile_create_folder, token, parent_id, name)
 
     async def gofile_get_root(self, token):
-        loop = asyncio.get_running_loop()
         try:
-            acc_id = await loop.run_in_executor(None, self._get_gofile_account, token)
+            acc_id = await asyncio.to_thread(self._get_gofile_account, token)
             if acc_id:
-                r = await loop.run_in_executor(None, self.session.get, f"https://api.gofile.io/accounts/{acc_id}?token={token}")
+                r = await asyncio.to_thread(self.session.get, f"https://api.gofile.io/accounts/{acc_id}?token={token}")
                 data = r.json()['data']
                 return data['rootFolder']
         except: pass
         return None
 
     async def upload(self, file_name, size, upload_type, specific_folder_id=None):
-        loop = asyncio.get_running_loop()
+        # Tidak perlu loop.run_in_executor lagi karena method internal sudah async (subprocess)
         filepath = os.path.join(self.path, file_name)
         
         if not os.path.exists(filepath): return None
@@ -265,8 +262,9 @@ class DirectUpload:
             if not token: return None
             
             folder_target = specific_folder_id or self.user_dict.get("gofile", {}).get("folder_id")
-            LOGGER.info(f"Uploading Gofile: {file_name}")
-            link = await loop.run_in_executor(None, self._upload_gofile, filepath, token, folder_target)
+            LOGGER.info(f"Uploading Gofile (CURL): {file_name}")
+            
+            link = await self._upload_gofile_curl(filepath, token, folder_target)
             return {'Gofile': link} if link else None
 
         # 2. BUZZHEAVIER
@@ -275,11 +273,11 @@ class DirectUpload:
             if not token: return None
             
             if is_directory:
-                LOGGER.info(f"Uploading Buzzheavier Folder: {file_name}")
-                link = await loop.run_in_executor(None, self._upload_buzzheavier_folder_recursive, filepath, token)
+                LOGGER.info(f"Uploading Buzzheavier Folder (CURL): {file_name}")
+                link = await self._upload_buzzheavier_folder_recursive(filepath, token)
             else:
-                LOGGER.info(f"Uploading Buzzheavier File: {file_name}")
-                link = await loop.run_in_executor(None, self._upload_buzzheavier_file, filepath, token)
+                LOGGER.info(f"Uploading Buzzheavier File (CURL): {file_name}")
+                link = await self._upload_buzzheavier_curl(filepath, token)
             
             return {'Buzzheavier': link} if link else None
 
@@ -289,11 +287,11 @@ class DirectUpload:
             if not token: return None
             
             if is_directory:
-                LOGGER.error(f"Vikingfiles received a folder: {file_name}. Skipping.")
+                LOGGER.error(f"Vikingfiles skipping folder: {file_name}")
                 return None
             
-            LOGGER.info(f"Uploading Vikingfiles: {file_name}")
-            link = await loop.run_in_executor(None, self._upload_viking, filepath, token)
+            LOGGER.info(f"Uploading Vikingfiles (CURL): {file_name}")
+            link = await self._upload_viking_curl(filepath, token)
             return {'Vikingfiles': link} if link else None
 
         return None
