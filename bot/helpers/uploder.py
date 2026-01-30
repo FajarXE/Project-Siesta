@@ -66,8 +66,7 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
         "vikingfiles": {"api": user_data.get('viking_token')}
     }
     
-    # Menentukan base path
-    if isinstance(filepath, list): # Jika input list (split zips)
+    if isinstance(filepath, list): 
         base_path = os.path.dirname(filepath[0])
     elif os.path.isfile(filepath):
         base_path = os.path.dirname(filepath)
@@ -78,49 +77,48 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
     uploader = DirectUpload(listener=listener, path=base_path)
 
     try:
-        # A. KASUS LIST OF FILES (SPLIT ZIP) - FIX UNTUK CLOUD
+        # A. KASUS SPLIT FILES (LIST)
         if isinstance(filepath, list):
             if 'bot_msg' in user:
                 await edit_message(user['bot_msg'], f"📂 Detected Split Files. Uploading {len(filepath)} parts to {mode}...")
 
-            # Buat folder induk di Cloud
             folder_name = metadata.get('title', 'Unknown Album')
             
-            # --- GOFILE FOLDER LOGIC ---
+            # 1. GOFILE
             if mode == 'Gofile':
                 root_id = await uploader.gofile_get_root(token)
                 new_folder = await uploader.gofile_create_folder_async(token, root_id, folder_name)
                 if new_folder:
                     folder_id = new_folder['id']
                     final_link = new_folder['code']
-                    
                     for index, file_part in enumerate(filepath, 1):
                         await edit_message(user['bot_msg'], f"🚀 Uploading Part {index}/{len(filepath)}: `{os.path.basename(file_part)}`")
                         await uploader.upload(os.path.basename(file_part), 0, 'gofile', specific_folder_id=folder_id)
-                    
                     return f"https://gofile.io/d/{final_link}"
 
-            # --- BUZZHEAVIER FOLDER LOGIC ---
+            # 2. BUZZHEAVIER (LOGIKA BARU: CREATE FOLDER)
             elif mode == 'Buzzheavier':
-                # Buzzheavier support folder upload recursive, tapi ini file terpisah
-                # Kita upload satu per satu ke folder yang sama jika bisa, atau buat parent
-                # Tapi DirectUpload buzzheavier_recursive lebih enak kalau filenya dalam 1 folder
-                # Jadi kita upload per file saja
+                # Buat folder induk dulu
+                root_id = await uploader.buzzheavier_get_root(token)
+                created_folder_id = await uploader.buzzheavier_create_folder_async(token, root_id, folder_name)
                 
-                # Note: Implementasi Buzzheavier folder manual agak rumit di sini
-                # Kita upload file pertama saja jika user tidak mau ribet, TAPI user minta semua.
-                # Solusi: Upload part 1 dan beri linknya (Buzz biasanya 1 link per file)
-                # ATAU: Return List of Links?
-                
-                links = []
-                for index, file_part in enumerate(filepath, 1):
-                    await edit_message(user['bot_msg'], f"🚀 Uploading Part {index}/{len(filepath)} to Buzzheavier...")
-                    res = await uploader.upload(os.path.basename(file_part), 0, upload_type)
-                    if res: links.append(list(res.values())[0])
-                
-                return "\n".join(links) # Return semua link part
+                if created_folder_id:
+                    for index, file_part in enumerate(filepath, 1):
+                        await edit_message(user['bot_msg'], f"🚀 Uploading Part {index}/{len(filepath)} to Buzzheavier Folder...")
+                        # Pass folder ID
+                        await uploader.upload(os.path.basename(file_part), 0, 'buzzheavier', specific_folder_id=created_folder_id)
+                    
+                    # Return 1 link folder
+                    return f"https://buzzheavier.com/{created_folder_id}"
+                else:
+                    # Fallback jika gagal buat folder
+                    links = []
+                    for index, file_part in enumerate(filepath, 1):
+                        res = await uploader.upload(os.path.basename(file_part), 0, upload_type)
+                        if res: links.append(list(res.values())[0])
+                    return "\n".join(links)
 
-            # --- VIKINGFILES LOGIC ---
+            # 3. VIKINGFILES (NO FOLDER SUPPORT)
             elif mode == 'Vikingfiles':
                 links = []
                 for index, file_part in enumerate(filepath, 1):
@@ -153,8 +151,10 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                     return f"https://gofile.io/d/{final_link}"
             
             elif mode == 'Buzzheavier':
+                # Buzzheavier Folder Support
                 if 'bot_msg' in user: await edit_message(user['bot_msg'], f"📂 Uploading Folder to Buzzheavier...")
                 uploader.path = os.path.dirname(filepath.rstrip('/'))
+                # Upload folder recursive
                 res = await uploader.upload(os.path.basename(filepath), 0, upload_type)
                 if res: return list(res.values())[0]
 
@@ -214,11 +214,10 @@ async def album_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
-        # [FIX] Handle jika zip_path adalah LIST
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
              target = metadata['zip_path'] 
-             # Jangan ambil [0] di sini, biarkan list diteruskan ke handler
+             # JANGAN AMBIL [0] JIKA LIST
 
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         
@@ -249,18 +248,14 @@ async def album_upload(metadata, user):
         else: await post_simple_message(user, metadata, rclone_link, index_link)
     await cleanup(None, metadata, user_dict)
 
-# Sisa fungsi lainnya di uploder.py (artist_upload, playlist_upload, dll) biarkan apa adanya
-# karena album_upload adalah yang paling krusial untuk zip.
-# ... (Sisanya sama seperti file asli Anda) ...
 async def artist_upload(metadata, user):
-    # Sama seperti album_upload, pastikan tidak mengambil [0] dari zip_path
     user_dict = user.copy()
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
 
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
-             target = metadata['zip_path'] # Biarkan list
+             target = metadata['zip_path'] 
 
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         if link:
@@ -292,7 +287,7 @@ async def playlist_upload(metadata, user):
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'):
-             target = metadata['zip_path'] # Biarkan list
+             target = metadata['zip_path']
 
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         if link:
