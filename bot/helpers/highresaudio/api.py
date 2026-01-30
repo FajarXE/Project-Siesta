@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/highresaudio/api.py]
+# [GANTI SELURUH FILE: bot/helpers/highresaudio/api.py]
 
 import requests
 import json
@@ -9,41 +9,46 @@ from bot.logger import LOGGER
 
 class HighResAudioApi:
     
-    def __init__(self, exception):
+    def __init__(self, exception, proxy: str = None):
         self.API_URL = 'https://streaming.highresaudio.com:8182/vault3/'
         self.STORE_URL = 'https://www.highresaudio.com/'
         self.STREAM_REFERER_URL = 'https://stream-app.highresaudio.com/album/'
         
         self.exception = exception
+        self.proxy = proxy
         self.s = requests.Session()
         
-        # --- PERBAIKAN: Strategi Retry Otomatis ---
-        # Mengonfigurasi session untuk melakukan retry otomatis jika koneksi putus
+        # --- KONFIGURASI PROXY ---
+        if self.proxy:
+            # Requests mendukung format dict untuk proxies
+            # Format proxy harus valid (http://, https://, socks5://, socks5h://)
+            self.s.proxies = {
+                'http': self.proxy,
+                'https': self.proxy
+            }
+        # -------------------------
+        
+        # --- Strategi Retry Otomatis ---
         retries = Retry(
             total=5,
-            backoff_factor=1,  # Tunggu 1s, 2s, 4s...
+            backoff_factor=1,
             status_forcelist=[500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "OPTIONS", "POST"]
         )
         adapter = HTTPAdapter(max_retries=retries)
         self.s.mount("https://", adapter)
         self.s.mount("http://", adapter)
-        # ------------------------------------------
-
-        # Header User-Agent diambil dari HRA-DL.py
+        
         self.s.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:67.0) Gecko/20100101 Firefox/67.0"
         })
         
-        # Ini akan diisi dengan string JSON mentah setelah login berhasil
         self.user_data_string = None 
+        self.email = None # Simpan email untuk identifikasi
 
     def auth(self, username: str, password: str) -> dict:
-        """
-        Mencoba login dan menyimpan string JSON user_data mentah.
-        Logika dari HRA-DL.py
-        """
-        LOGGER.info(f"HighResAudio: Mencoba login untuk {username}...")
+        LOGGER.info(f"HighResAudio: Mencoba login untuk {username} (Proxy: {'Ya' if self.proxy else 'Tidak'})...")
+        self.email = username
         try:
             r = self.s.get(f'{self.API_URL}user/login', params={
                 'password': password,
@@ -56,30 +61,24 @@ class HighResAudioApi:
             if "has_subscription" not in data:
                 raise self.exception('Akun tidak memiliki langganan aktif.')
             
-            # HRA-DL.py menggunakan r.text (string JSON mentah) sebagai 'userData'
             self.user_data_string = r.text
             
             LOGGER.info(f"HighResAudio: Login berhasil untuk {username}.")
             return data
 
         except requests.exceptions.RequestException as e:
-            LOGGER.error(f"HighResAudio: Gagal login: {e}")
+            LOGGER.error(f"HighResAudio: Gagal login ({username}): {e}")
             raise self.exception(f"Gagal login HighResAudio: {e}")
         except Exception as e:
             LOGGER.error(f"HighResAudio: Error saat login: {e}")
             raise self.exception(f"Error login HighResAudio: {e}")
 
     def get_album_id_from_url(self, url: str) -> str:
-        """
-        Mengambil (scrape) halaman HTML toko untuk mendapatkan 'data-id' internal.
-        Logika dari HRA-DL.py fetchAlbumId()
-        """
         try:
             r = self.s.get(url, timeout=30)
             r.raise_for_status()
             
             soup = BeautifulSoup(r.text, "html.parser")
-            # Temukan tag yang memiliki atribut 'data-id'
             element = soup.find(attrs={"data-id": True})
             
             if not element or not element.get('data-id'):
@@ -92,10 +91,6 @@ class HighResAudioApi:
             raise self.exception(f'Gagal scraping ID album dari URL: {e}')
 
     def get_album_metadata(self, album_id: str) -> dict:
-        """
-        Mengambil metadata album dari API menggunakan album_id dan user_data.
-        Logika dari HRA-DL.py fetchMetadata()
-        """
         if not self.user_data_string:
             raise self.exception("Klien tidak login (user_data tidak ada).")
             
@@ -111,18 +106,14 @@ class HighResAudioApi:
             raise self.exception(f'Gagal mengambil metadata album: {e}')
 
     def get_track_stream(self, url: str, album_id_referer: str) -> requests.Response:
-        """
-        Menyiapkan dan mengembalikan stream unduhan (requests Response object).
-        Logika dari HRA-DL.py fetchTrack()
-        """
         headers = {
             "range": "bytes=0-",
             "referer": f"{self.STREAM_REFERER_URL}{album_id_referer}",
-            "Connection": "close" # --- PERBAIKAN: Paksa koneksi baru untuk mencegah RemoteDisconnected ---
+            "Connection": "close"
         }
         
         try:
-            # Timeout dinaikkan ke 30 detik
+            # Timeout dinaikkan
             r = self.s.get(url, headers=headers, stream=True, timeout=30)
             r.raise_for_status()
             return r
@@ -131,12 +122,7 @@ class HighResAudioApi:
             raise self.exception(f'Gagal memulai stream lagu: {e}')
             
     def get_booklet_stream(self, url: str) -> requests.Response:
-        """
-        Mengunduh booklet (tanpa header khusus).
-        Logika dari HRA-DL.py fetchBooklet()
-        """
         try:
-            # Tambahkan header close juga di sini untuk keamanan
             headers = {"Connection": "close"}
             r = self.s.get(url, headers=headers, stream=True, timeout=30)
             r.raise_for_status()
@@ -146,6 +132,5 @@ class HighResAudioApi:
             raise self.exception(f'Gagal memulai stream booklet: {e}')
 
     def close_session(self):
-        """Menutup sesi 'requests' internal."""
         if self.s:
             self.s.close()
