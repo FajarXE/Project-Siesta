@@ -8,9 +8,14 @@ import re
 from urllib.parse import quote
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-# IMPORT BARU UNTUK MENGATASI LIMIT 2GB
-from requests_toolbelt.multipart.encoder import MultipartEncoder 
 from bot.logger import LOGGER
+
+# --- IMPORT WAJIB UNTUK FILE BESAR (>2GB) ---
+try:
+    from requests_toolbelt.multipart.encoder import MultipartEncoder
+except ImportError:
+    LOGGER.error("Modul 'requests_toolbelt' belum terinstall! Jalankan: pip install requests-toolbelt")
+    MultipartEncoder = None
 
 class DirectUpload:
     def __init__(self, listener=None, name=None, path=None):
@@ -31,7 +36,7 @@ class DirectUpload:
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
 
     # ============================
-    # GOFILE HANDLER (FIXED FOR LARGE FILES)
+    # GOFILE HANDLER (FIXED)
     # ============================
     def _get_gofile_server(self):
         try:
@@ -64,21 +69,30 @@ class DirectUpload:
     def _upload_gofile(self, filepath, token, folder_id):
         server = self._get_gofile_server()
         url = f"https://{server}.gofile.io/uploadFile"
+        
         try:
-            # FIX: Menggunakan MultipartEncoder untuk file > 2GB
+            if not MultipartEncoder:
+                raise Exception("requests-toolbelt not installed")
+
             with open(filepath, 'rb') as f:
+                # Siapkan Fields untuk Multipart
                 fields = {
                     'token': token,
                     'file': (os.path.basename(filepath), f, 'application/octet-stream')
                 }
                 if folder_id:
                     fields['folderId'] = folder_id
-
+                
+                # Gunakan MultipartEncoder untuk Streaming Upload
                 m = MultipartEncoder(fields=fields)
                 
-                # Timeout diset None agar tidak putus untuk file besar
-                headers = {'Content-Type': m.content_type}
-                r = self.session.post(url, data=m, headers=headers, timeout=None)
+                # Timeout diset None agar tidak putus di tengah jalan untuk file besar
+                r = self.session.post(
+                    url, 
+                    data=m, 
+                    headers={'Content-Type': m.content_type}, 
+                    timeout=None
+                )
                 
                 res = r.json()
                 if res.get('status') == 'ok':
@@ -90,7 +104,7 @@ class DirectUpload:
         return None
 
     # ============================
-    # BUZZHEAVIER HANDLER
+    # BUZZHEAVIER HANDLER (FIXED)
     # ============================
     def _buzzheavier_get_root(self, token):
         try:
@@ -112,8 +126,11 @@ class DirectUpload:
             r = self.session.post(url, headers=headers, json=data, timeout=15)
             res = r.json()
             
+            # 200 OK
             if res.get('code') == 200:
                 return res['data']['id']
+            
+            # 409 CONFLICT (Folder Exists) -> Auto Rename Logic
             elif res.get('code') == 409:
                 LOGGER.warning(f"Buzzheavier folder '{name}' conflict. Renaming...")
                 match = re.search(r"\((\d+)\)$", name)
@@ -131,6 +148,7 @@ class DirectUpload:
     def _upload_buzzheavier_file(self, filepath, token, folder_id=None):
         try:
             filename = os.path.basename(filepath)
+            # Jika ada folder_id, URL berubah formatnya
             if folder_id:
                 url = f"https://w.buzzheavier.com/{folder_id}/{quote(filename)}"
             else:
@@ -141,9 +159,8 @@ class DirectUpload:
             if os.path.isdir(filepath):
                 return None 
             
-            # Buzzheavier menggunakan PUT binary body, ini biasanya aman untuk large file
-            # Namun Timeout harus dimatikan (None)
             with open(filepath, 'rb') as f:
+                # Timeout None agar file besar tidak putus
                 r = self.session.put(url, headers=headers, data=f, timeout=None)
                 res = r.json()
                 if res.get('code') == 201 and res.get('data'):
@@ -155,13 +172,16 @@ class DirectUpload:
 
     def _upload_buzzheavier_folder_recursive(self, folderpath, token):
         try:
+            # 1. Get Root
             root_id = self._buzzheavier_get_root(token)
             if not root_id: return None
             
+            # 2. Create Parent Folder
             folder_name = os.path.basename(folderpath)
             created_folder_id = self._buzzheavier_create_folder(token, root_id, folder_name)
             if not created_folder_id: return None
             
+            # 3. Walk and Upload
             for root, dirs, files in os.walk(folderpath):
                 for file in files:
                     full_path = os.path.join(root, file)
@@ -173,10 +193,13 @@ class DirectUpload:
         return None
 
     # ============================
-    # VIKINGFILES HANDLER (FIXED FOR LARGE FILES)
+    # VIKINGFILES HANDLER (FIXED)
     # ============================
     def _upload_viking(self, filepath, token):
         try:
+            if not MultipartEncoder:
+                raise Exception("requests-toolbelt not installed")
+
             if os.path.isdir(filepath):
                 LOGGER.error("Vikingfiles does not support folder upload directly.")
                 return None
@@ -187,8 +210,8 @@ class DirectUpload:
 
             filename = os.path.basename(filepath)
             
-            # FIX: Menggunakan MultipartEncoder untuk file > 2GB
             with open(filepath, 'rb') as f:
+                # Gunakan MultipartEncoder
                 m = MultipartEncoder(
                     fields={
                         'user': token,
@@ -196,9 +219,13 @@ class DirectUpload:
                     }
                 )
                 
-                headers = {'Content-Type': m.content_type}
-                # Timeout None agar tidak putus
-                r = self.session.post(server_url, data=m, headers=headers, timeout=None)
+                # Upload dengan Timeout None
+                r = self.session.post(
+                    server_url, 
+                    data=m, 
+                    headers={'Content-Type': m.content_type}, 
+                    timeout=None
+                )
                 
                 res = r.json()
                 if res.get('url'): return res['url']
