@@ -350,10 +350,18 @@ class Config:
     while True:
         email = getenv(f"HIGHRESAUDIO_EMAIL_{i}")
         password = getenv(f"HIGHRESAUDIO_PASSWORD_{i}")
+        proxy = getenv(f"HIGHRESAUDIO_PROXY_{i}") # Format: http://user:pass@host:port atau socks5://...
         
         if email and password:
             logging.info(f"Ditemukan HIGHRESAUDIO Akun #{i} (Email/Pass)")
             account_data = {"email": email, "password": password, "id": i}
+            
+            # --- LOGIKA PROXY ---
+            if proxy:
+                logging.info(f" -> Proxy ditemukan untuk HIGHRESAUDIO #{i}")
+                account_data["proxy"] = proxy
+            # --------------------
+
             HIGHRESAUDIO_ACCOUNTS.append(account_data)
             i += 1
         else:
