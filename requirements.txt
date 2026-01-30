@@ -21,3 +21,4 @@ bs4
 pycryptodome
 yt-dlp
 aiohttp-socks
+urllib3
