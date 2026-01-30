@@ -23,12 +23,11 @@ class DirectUpload:
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
 
     # ============================
-    # CORE: CURL EXECUTOR (ANTI-LIMIT)
+    # CORE: CURL EXECUTOR
     # ============================
     async def _run_curl_upload(self, cmd_args):
         temp_log = f"curl_log_{os.getpid()}.txt"
         try:
-            # Tambahkan flag --http1.1 untuk stabilitas upload besar
             final_cmd = cmd_args + ["--http1.1"] 
             
             with open(temp_log, "w") as outfile:
@@ -48,7 +47,6 @@ class DirectUpload:
             if process.returncode == 0:
                 return output
             else:
-                # Log error tapi jangan panik dulu, kadang output json ada di stderr
                 LOGGER.warning(f"CURL Code {process.returncode}: {output[:200]}")
                 return output if output else None
         except Exception as e:
@@ -103,15 +101,20 @@ class DirectUpload:
         server = await asyncio.to_thread(self._get_gofile_server)
         url = f"https://{server}.gofile.io/uploadFile"
         
+        # [FIX] SUSUNAN COMMAND: Token -> FolderID -> File (Paling Akhir)
         cmd = [
             "curl", "-s", "--no-buffer",
             "-X", "POST", url,
             "-H", "Connection: keep-alive", 
-            "-F", f"token={token}",
-            "-F", f"file=@{filepath}"
+            "-F", f"token={token}"
         ]
+        
+        # Masukkan Folder ID SEBELUM file agar server membacanya duluan
         if folder_id:
             cmd.extend(["-F", f"folderId={folder_id}"])
+            
+        # File ditaruh paling akhir
+        cmd.extend(["-F", f"file=@{filepath}"])
             
         output = await self._run_curl_upload(cmd)
         if output:
@@ -163,10 +166,8 @@ class DirectUpload:
 
     async def _upload_buzzheavier_curl(self, filepath, token, folder_id=None):
         filename = os.path.basename(filepath)
-        # Buzzheavier URL structure
         url = f"https://w.buzzheavier.com/{folder_id}/{quote(filename)}" if folder_id else f"https://w.buzzheavier.com/{quote(filename)}"
         
-        # GUNAKAN CURL PUT (PENTING!)
         cmd = [
             "curl", "-s", "--no-buffer",
             "-X", "PUT",
@@ -195,6 +196,7 @@ class DirectUpload:
         srv = await asyncio.to_thread(get_srv)
         if not srv: return None
 
+        # Viking juga lebih aman jika user token di depan
         cmd = [
             "curl", "-s", "--no-buffer",
             "-X", "POST", srv,
@@ -212,13 +214,12 @@ class DirectUpload:
         return None
 
     # ============================
-    # PUBLIC UPLOAD METHOD
+    # PUBLIC METHODS
     # ============================
     async def upload(self, file_name, size, upload_type, specific_folder_id=None):
         filepath = os.path.join(self.path, file_name)
         if not os.path.exists(filepath): return None
         
-        # GOFILE
         if upload_type in ['gf', 'gofile']:
             token = self.user_dict.get("gofile", {}).get("api")
             fid = specific_folder_id or self.user_dict.get("gofile", {}).get("folder_id")
@@ -227,7 +228,6 @@ class DirectUpload:
                 link = await self._upload_gofile_curl(filepath, token, fid)
                 return {'Gofile': link} if link else None
 
-        # BUZZHEAVIER
         elif upload_type in ['bh', 'buzzheavier']:
             token = self.user_dict.get("buzzheavier", {}).get("api")
             if token:
@@ -235,7 +235,6 @@ class DirectUpload:
                 link = await self._upload_buzzheavier_curl(filepath, token, folder_id=specific_folder_id)
                 return {'Buzzheavier': link} if link else None
 
-        # VIKINGFILES
         elif upload_type in ['vk', 'viking']:
             token = self.user_dict.get("vikingfiles", {}).get("api")
             if token:
