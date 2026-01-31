@@ -131,6 +131,7 @@ class BeatportLoginManager:
         except Exception as e:
             LOGGER.error(f"Beatport Login Failed {email}: {e}")
             await client.close_session()
+            return None
 
     # --- USER MANAGEMENT ---
 
