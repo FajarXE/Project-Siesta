@@ -1,4 +1,4 @@
-# [GANTI SELURUH FILE: bot/helpers/beatport/handler.py]
+# [FILE: bot/helpers/beatport/handler.py]
 
 import aiohttp
 import aiofiles
@@ -65,21 +65,23 @@ async def update_progress_msg(msg, current, total, title, media_type):
 async def refresh_track_url(item_id: str, current_meta: dict, user: dict):
     """
     Mengambil URL baru (JIT).
+    Mendukung Private Account: Menggunakan client milik user jika ada.
     Returns: (url, actual_quality)
     """
     try:
-        client = user.get('beatport_api')
-        if not client: 
-            # Fallback ke manager jika client user tidak attach
-            client = beatport_manager.get_client()
+        user_id = user.get('user_id')
         
-        if not client: return None, None
+        # [UPDATE] Ambil client spesifik user (Private) atau Fallback (Global)
+        client = beatport_manager.get_client(user_id)
+        
+        if not client: 
+            return None, None
 
         # User preference
         pref_qual = current_meta.get('quality', 'High').lower()
         if pref_qual not in ['lossless', 'high', 'medium']:
             # Cek db jika meta tidak punya info valid
-            pref_qual = beatport_manager.get_user_quality(user['user_id'])
+            pref_qual = beatport_manager.get_user_quality(user_id)
 
         quality_priority = []
         if pref_qual == "lossless":
@@ -89,7 +91,7 @@ async def refresh_track_url(item_id: str, current_meta: dict, user: dict):
         else:
             quality_priority = ["medium"]
         
-        LOGGER.info(f"Beatport: Fetching fresh URL for {item_id} (Pref: {pref_qual})...")
+        LOGGER.info(f"Beatport: Fetching fresh URL for {item_id} (Pref: {pref_qual}, User: {user_id})...")
         
         for qual in quality_priority:
             try:
@@ -169,18 +171,18 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         delay = random.uniform(2.0, 5.0)
         await asyncio.sleep(delay)
         
-        # Ambil proxy dari client yang sedang dipakai user
+        user_id = user.get('user_id')
+        
+        # [UPDATE] Dapatkan Proxy dari Akun Pribadi (jika ada)
+        client = beatport_manager.get_client(user_id)
         user_proxy = None
-        if user.get('beatport_api') and hasattr(user['beatport_api'], 'proxy'):
-            user_proxy = user['beatport_api'].proxy
-        elif beatport_manager.clients:
-            # Fallback ke client pertama
-            if beatport_manager.clients[0].proxy:
-                user_proxy = beatport_manager.clients[0].proxy
+        if client and hasattr(client, 'proxy'):
+            user_proxy = client.proxy
 
         if not track_meta:
             try:
                 # Single track -> fetch_stream=True
+                # Metadata processor juga akan menggunakan get_client(user_id) di dalamnya
                 track_meta = await process_track_metadata(item_id, user['r_id'], user, fetch_stream=True)
             except Exception as e:
                 LOGGER.warning(f"Beatport track {item_id} error: {e}")
@@ -252,6 +254,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
 
 async def start_album(album_id: str, user: dict, upload=True):
     try:
+        # process_album_metadata juga perlu diupdate agar pass user_id dengan benar (lihat metadata.py)
         album_meta = await process_album_metadata(album_id, user['r_id'], user)
     except Exception as e:
         raise Exception(f"Gagal metadata album Beatport: {e}")
@@ -291,8 +294,12 @@ async def start_album(album_id: str, user: dict, upload=True):
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    proxy = user.get('beatport_api').proxy if user.get('beatport_api') else None
-                    await download_beatport_track(cover_src, target_cover, proxy=proxy) 
+                    # Gunakan proxy user jika ada
+                    user_id = user.get('user_id')
+                    client = beatport_manager.get_client(user_id)
+                    user_proxy = client.proxy if client and hasattr(client, 'proxy') else None
+                    
+                    await download_beatport_track(cover_src, target_cover, proxy=user_proxy) 
         except: pass
 
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
@@ -343,8 +350,12 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    proxy = user.get('beatport_api').proxy if user.get('beatport_api') else None
-                    await download_beatport_track(cover_src, target_cover, proxy=proxy)
+                    # Gunakan proxy user jika ada
+                    user_id = user.get('user_id')
+                    client = beatport_manager.get_client(user_id)
+                    user_proxy = client.proxy if client and hasattr(client, 'proxy') else None
+                    
+                    await download_beatport_track(cover_src, target_cover, proxy=user_proxy)
         except: pass
 
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
