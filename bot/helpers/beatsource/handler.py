@@ -63,16 +63,18 @@ async def update_progress_msg(msg, current, total, title, media_type):
     except Exception as e:
         pass
 
-async def refresh_track_url(item_id: str, current_meta: dict):
+async def refresh_track_url(item_id: str, current_meta: dict, user_id: int):
     """
     Mengambil URL baru. Digunakan untuk Just-in-Time download & Retry 403.
+    [UPDATE] Menggunakan client spesifik user jika ada.
     Returns: (url, actual_quality)
     """
     try:
         # User preference dari metadata (atau default High)
         pref_qual = current_meta.get('quality', 'High').lower()
-        
-        # Pastikan urutan fallback selalu tersedia
+        if pref_qual not in ['lossless', 'high', 'medium']:
+            pref_qual = beatsource_manager.get_user_quality(user_id)
+
         quality_priority = []
         if pref_qual == "lossless":
             quality_priority = ["lossless", "high", "medium"]
@@ -81,34 +83,23 @@ async def refresh_track_url(item_id: str, current_meta: dict):
         else:
             quality_priority = ["medium"]
 
-        LOGGER.info(f"Beatsource: Fetching fresh URL for {item_id} (Pref: {pref_qual})...")
+        LOGGER.info(f"Beatsource: Fetching fresh URL for {item_id} (User: {user_id}, Pref: {pref_qual})...")
         
-        clients = list(beatsource_manager.clients)
-        if not clients:
+        # [PENTING] Ambil client user (Private) atau Global (Fallback)
+        client = beatsource_manager.get_client(user_id)
+        if not client:
             LOGGER.error("Beatsource: Tidak ada klien aktif untuk refresh URL.")
             return None, None
             
-        random.shuffle(clients) 
+        for qual in quality_priority:
+            try:
+                stream_data = await client.get_track_download(item_id, qual)
+                new_url = stream_data.get("location")
+                if new_url:
+                    return new_url, qual # Return URL dan Kualitas yang didapat
+            except Exception:
+                continue
         
-        last_error = None
-        
-        for client in clients:
-            for qual in quality_priority:
-                try:
-                    stream_data = await client.get_track_download(item_id, qual)
-                    new_url = stream_data.get("location")
-                    if new_url:
-                        return new_url, qual # Return URL dan Kualitas yang didapat
-                except Exception as e:
-                    # Simpan error terakhir untuk debug log jika semua gagal
-                    last_error = str(e)
-                    # Jangan spam log, tapi jika ini Client terakhir dan Kualitas terakhir, kita butuh info
-                    continue
-            
-            # Jika sudah dapat di satu client, break loop client (sudah return di atas)
-        
-        # Jika sampai sini berarti gagal total
-        LOGGER.warning(f"Beatsource: Gagal refresh URL {item_id} di semua akun/kualitas. Last Err: {last_error}")
         return None, None
     except Exception as e:
         LOGGER.error(f"Gagal get/refresh URL Beatsource {item_id}: {e}")
@@ -184,12 +175,13 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         delay = random.uniform(2.0, 5.0)
         await asyncio.sleep(delay)
         
+        user_id = user.get('user_id')
+        
+        # [UPDATE] Ambil Proxy dari client spesifik user
+        client = beatsource_manager.get_client(user_id)
         user_proxy = None
-        if beatsource_manager.clients:
-            for c in beatsource_manager.clients:
-                if c.proxy:
-                    user_proxy = c.proxy
-                    break
+        if client and getattr(client, 'proxy', None):
+            user_proxy = client.proxy
         
         if not track_meta:
             try:
@@ -205,7 +197,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         # --- JUST-IN-TIME URL FETCHING ---
         # Jika download_url kosong (karena dari Playlist), ambil SEKARANG agar fresh.
         if not track_meta.get('download_url'):
-            new_url, qual = await refresh_track_url(item_id, track_meta)
+            new_url, qual = await refresh_track_url(item_id, track_meta, user_id)
             if new_url:
                 track_meta['download_url'] = new_url
                 # Update kualitas dan ekstensi jika berubah
@@ -233,7 +225,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         # --- RETRY JIKA 403 (Double Safety) ---
         if err == "403_FORBIDDEN":
             LOGGER.warning(f"URL Beatsource Track {item_id} expired (403) saat dl. Mencoba refresh lagi...")
-            new_url, qual = await refresh_track_url(item_id, track_meta)
+            new_url, qual = await refresh_track_url(item_id, track_meta, user_id)
             
             if new_url:
                 track_meta['download_url'] = new_url
@@ -312,9 +304,10 @@ async def start_album(album_id: str, user: dict, upload=True):
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    proxy_for_cover = None
-                    if beatsource_manager.clients and beatsource_manager.clients[0].proxy:
-                         proxy_for_cover = beatsource_manager.clients[0].proxy
+                    # Gunakan proxy user
+                    user_id = user.get('user_id')
+                    client = beatsource_manager.get_client(user_id)
+                    proxy_for_cover = client.proxy if client else None
                     await download_beatsource_track(cover_src, target_cover, proxy=proxy_for_cover)
         except Exception as e:
             LOGGER.warning(f"Gagal menyalin cover ZIP: {e}")
@@ -368,9 +361,10 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
                 if os.path.exists(cover_src):
                     shutil.copy(cover_src, target_cover)
                 elif cover_src.startswith('http'):
-                    proxy_for_cover = None
-                    if beatsource_manager.clients and beatsource_manager.clients[0].proxy:
-                         proxy_for_cover = beatsource_manager.clients[0].proxy
+                    # Gunakan proxy user
+                    user_id = user.get('user_id')
+                    client = beatsource_manager.get_client(user_id)
+                    proxy_for_cover = client.proxy if client else None
                     await download_beatsource_track(cover_src, target_cover, proxy=proxy_for_cover)
         except: pass
 
