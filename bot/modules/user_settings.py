@@ -80,7 +80,7 @@ from ..helpers.buttons.settings import (
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
     bugs_button, lyrics_button, mv_button,
-    lp_button, khi_button, beatport_user_auth_buttons
+    lp_button, khi_button, beatport_user_auth_buttons, beatsource_user_auth_buttons
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -246,6 +246,106 @@ async def uset_bp_instr_handler(client, query):
     )
     # Tombol Back
     buttons = [[InlineKeyboardButton("🔙 Back", callback_data="uset_bp_auth")]]
+    await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
+
+
+# ==================================
+# BEATSOURCE PRIVATE AUTH
+# ==================================
+
+# 1. COMMAND LOGIN (/beatsource_login email password)
+@Client.on_message(filters.command("beatsource_login"))
+async def uset_bs_login_cmd(client, message):
+    if not await check_user(msg=message):
+        return
+
+    user_id = message.from_user.id
+    args = message.text.split()
+    
+    if len(args) < 3:
+        return await message.reply_text(
+            "❌ **Format Salah**\n"
+            "Gunakan: <code>/beatsource_login email password</code>\n\n"
+            "⚠️ Password Anda akan disimpan dengan aman untuk login otomatis."
+        )
+    
+    email = args[1]
+    password = args[2] 
+    
+    status_msg = await message.reply_text("🔄 **Verifying Account...**\nMencoba login ke Beatsource...")
+    
+    try:
+        # Memanggil fungsi add_user_account di manager yang baru
+        await beatsource_manager.add_user_account(user_id, email, password)
+        await status_msg.edit_text(
+            f"✅ **Login Berhasil!**\n\n"
+            f"Akun: <code>{email}</code>\n"
+            f"Mode: Private Session\n"
+            f"Sekarang bot akan menggunakan akun ini saat Anda mendownload dari Beatsource."
+        )
+    except Exception as e:
+        await status_msg.edit_text(f"❌ **Login Gagal:**\n{str(e)}")
+
+
+# 2. CALLBACK MENU AUTH (uset_bs_auth)
+@Client.on_callback_query(filters.regex("^uset_bs_auth"))
+async def uset_bs_auth_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    user_id = query.from_user.id
+    # Cek apakah user punya sesi
+    has_session = beatsource_manager.has_private_session(user_id)
+    
+    text = "🔐 **BEATSOURCE PRIVATE SESSION**\n\n"
+    
+    if has_session:
+        client_obj = beatsource_manager.get_client(user_id)
+        email_masked = client_obj.email
+        text += f"✅ **Status: LOGGED IN**\n"
+        text += f"👤 Akun: <code>{email_masked}</code>\n"
+        text += "Bot menggunakan akun ini khusus untuk Anda."
+    else:
+        text += "❌ **Status: NOT LOGGED IN**\n"
+        text += "Bot menggunakan akun Global (Shared) untuk Anda jika tersedia.\n\n"
+        text += "Login akun sendiri untuk akses region/konten yang lebih spesifik."
+
+    # Render tombol Auth Beatsource
+    await edit_message(query.message, text, markup=beatsource_user_auth_buttons(has_session))
+
+
+# 3. CALLBACK LOGOUT (uset_bs_logout)
+@Client.on_callback_query(filters.regex("^uset_bs_logout"))
+async def uset_bs_logout_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+        
+    user_id = query.from_user.id
+    if beatsource_manager.has_private_session(user_id):
+        # Hapus sesi user
+        await beatsource_manager.remove_user_account(user_id)
+        await query.answer("✅ Sesi Beatsource dihapus. Kembali ke mode Global.", True)
+    else:
+        await query.answer("Anda belum login.", True)
+    
+    # Refresh tampilan menu auth
+    await uset_bs_auth_handler(client, query)
+
+
+# 4. CALLBACK INSTRUKSI (uset_bs_instr)
+@Client.on_callback_query(filters.regex("^uset_bs_instr"))
+async def uset_bs_instr_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    text = (
+        "📝 **CARA LOGIN BEATSOURCE**\n\n"
+        "Kirim perintah ini di chat:\n"
+        "<code>/beatsource_login email password</code>\n\n"
+        "Contoh:\n"
+        "<code>/beatsource_login myemail@gmail.com rahasia123</code>"
+    )
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data="uset_bs_auth")]]
     await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
 
 
