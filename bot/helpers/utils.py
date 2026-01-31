@@ -6,8 +6,9 @@ import asyncio
 import shutil
 import zipfile
 import typing
-import requests # <--- [PENTING] Ganti aiohttp dengan requests untuk download file
+import requests
 import re
+import time 
 
 from pathlib import Path
 from urllib.parse import quote
@@ -35,7 +36,6 @@ async def download_file(url, path, retries=3, timeout=30):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     
     def _sync_download():
-        # Session requests lebih stabil menangani close connection dibanding aiohttp
         with requests.Session() as s:
             with s.get(url, stream=True, timeout=timeout) as r:
                 r.raise_for_status()
@@ -45,9 +45,7 @@ async def download_file(url, path, retries=3, timeout=30):
 
     for attempt in range(1, retries + 1):
         try:
-            # Jalankan requests di thread terpisah agar tidak memblokir bot
             await asyncio.to_thread(_sync_download)
-            
             if os.path.exists(path) and os.path.getsize(path) > 0:
                 return None
             else:
@@ -249,16 +247,40 @@ async def move_sorted_playlist(metadata, user) -> str:
     for folder in folders: shutil.move(folder, destination_folder)
     return destination_folder
 
+# --- [PERBAIKAN UTAMA: LOGIKA DOWNLOAD POSTER] ---
 async def post_art_poster(user:dict, meta:dict):
-    photo = meta['cover']
+    photo = meta.get('cover')
+    if not photo: return None
+
+    # Tentukan caption
     if meta['type'] == 'album': caption = await format_string(lang.s.ALBUM_TEMPLATE, meta, user)
     elif meta['type'] == 'artist': caption = await format_string(lang.s.ARTIST_TEMPLATE, meta, user)
     else: caption = await format_string(lang.s.PLAYLIST_TEMPLATE, meta, user)
     
     _, __, ___, art_poster = fetch_zip_settings(user)
     if art_poster:
-        msg = await send_message(user, photo, 'pic', caption)
+        # Cek apakah photo adalah URL
+        temp_thumb = None
+        if isinstance(photo, str) and photo.startswith('http'):
+            temp_thumb = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-poster.jpg"
+            # Download manual pakai requests (bypass aiohttp Pyrogram)
+            err = await download_file(photo, temp_thumb)
+            if not err:
+                photo = temp_thumb # Gunakan path lokal
+        
+        try:
+            msg = await send_message(user, photo, 'pic', caption)
+        except Exception as e:
+            LOGGER.error(f"Failed to send poster: {e}")
+            msg = None
+        
+        # Hapus file temp
+        if temp_thumb and os.path.exists(temp_thumb):
+            try: os.remove(temp_thumb)
+            except: pass
+            
         return msg
+# ------------------------------------------------
 
 async def create_simple_text(meta, user):
     name = meta.get('title', 'N/A')
