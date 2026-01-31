@@ -8,6 +8,7 @@ import logging
 import os 
 import traceback 
 import random 
+import asyncio
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -129,48 +130,41 @@ async def _process_cover(metadata: dict, beatport_url: str):
     return await create_cover_file(final_cover_path_or_url, metadata)
 
 
+# --- PROSES METADATA INTI ---
+
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, fetch_stream: bool = True):
     """
-    Memproses metadata untuk satu lagu dengan MULTI-ACCOUNT LOAD BALANCING.
-    Args:
-        fetch_stream: Jika False, melewati proses download URL (untuk playlist/album agar tidak expired).
+    Memproses metadata untuk satu lagu.
+    [MODIFIKASI] Menggunakan client spesifik user via manager.
     """
     
-    primary_client = user.get('beatport_api')
-    if not primary_client and beatport_manager.clients:
-        primary_client = beatport_manager.clients[0]
-        
-    available_clients = []
-    if primary_client:
-        available_clients.append(primary_client)
-        
-    if beatport_manager and beatport_manager.clients:
-        for other_client in beatport_manager.clients:
-            if other_client != primary_client:
-                available_clients.append(other_client)
-
-    # --- LOAD BALANCING: ACAK CLIENT ---
-    random.shuffle(available_clients)
+    # [PENTING] Ambil client aktif untuk user ini
+    user_id = user.get('user_id')
+    active_client = beatport_manager.get_client(user_id)
+    
+    if not active_client:
+        raise BeatportError("Tidak ada akun Beatport yang tersedia/login.")
     
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     track_data = pre_data
     if not track_data:
-        for client in available_clients:
+        # Retry logic sederhana
+        for attempt in range(2):
             try:
-                track_data = await client.get_track(track_id)
+                track_data = await active_client.get_track(track_id)
                 break
             except Exception:
+                await asyncio.sleep(0.5)
                 continue
     
     if not track_data:
-        raise BeatportError(f"Gagal mendapatkan metadata dasar track {track_id} (cek ID atau Region).")
+        raise BeatportError(f"Gagal mendapatkan metadata track {track_id} (Cek ID atau Region Akun).")
 
     try:
-        # Cek ketersediaan (kadang API tetap return data meski unavailable)
+        # Cek ketersediaan
         if track_data.get("is_available_for_streaming") is False:
-             # Kita log warning saja, karena kadang bisa didownload meski flag ini false di beberapa region
              LOGGER.warning(f"Track '{track_data.get('name')}' flag is_available_for_streaming = False.")
              
         if track_data.get("preorder"):
@@ -182,12 +176,10 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     album_id = track_data.get("release").get("id")
     album_data = {}
     
-    # Ambil data album (untuk cover/UPC)
-    for client in available_clients:
-        try:
-            album_data = await client.get_release(album_id)
-            break
-        except: pass
+    # Ambil data album (menggunakan client yang sama)
+    try:
+        album_data = await active_client.get_release(album_id)
+    except: pass
     
     metadata['itemid'] = track_id
     
@@ -241,11 +233,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover_url, 80), metadata, True)
 
     # --- QUALITY SELECTION ---
-    user_id = user.get('user_id')
-    if not user_id:
-        preferred_quality = beatport_manager.quality
-    else:
-        preferred_quality = beatport_manager.get_user_quality(user_id)
+    preferred_quality = beatport_manager.get_user_quality(user_id)
     
     quality_order = []
     if preferred_quality == "lossless":
@@ -265,22 +253,20 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     # --- DOWNLOAD LINK FETCHING (Just-in-Time Support) ---
     if fetch_stream:
-        for idx, current_client in enumerate(available_clients):
-            for quality_key in quality_order:
-                try:
-                    stream_data_json = await current_client.get_track_download(track_id, QUALITY_MAP[quality_key])
-                    metadata['quality'], metadata['extension'] = quality_map_display[quality_key]
-                    stream_data = stream_data_json 
-                    LOGGER.info(f"Beatport: URL didapat! Akun #{idx+1}, Q: {quality_key}, ID: {track_id}")
-                    break 
-                except Exception:
-                    continue 
-            if stream_data:
-                break
+        # Loop prioritas kualitas menggunakan active_client (User Account)
+        for quality_key in quality_order:
+            try:
+                stream_data_json = await active_client.get_track_download(track_id, QUALITY_MAP[quality_key])
+                metadata['quality'], metadata['extension'] = quality_map_display[quality_key]
+                stream_data = stream_data_json 
+                LOGGER.info(f"Beatport: URL didapat! Q: {quality_key}, ID: {track_id}")
+                break 
+            except Exception:
+                continue 
 
         if not stream_data:
-            # Jika semua gagal, berikan error spesifik
-            raise BeatportError(f"Gagal mendapatkan URL download track {track_id} di semua akun (Region Lock?).")
+            # Jika gagal, berarti akun user tidak bisa mengakses (Region/Subskripsi)
+            raise BeatportError(f"Gagal mendapatkan URL download track {track_id}. Cek langganan atau region akun Anda.")
             
         metadata['download_url'] = stream_data.get("location")
         if not metadata['download_url']:
@@ -299,44 +285,32 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
 
 async def process_album_metadata(album_id: str, r_id: str, user: dict):
-    """Memproses metadata untuk satu album (release) dengan LOAD BALANCING."""
+    """Memproses metadata untuk satu album (release) dengan Klien User."""
     
-    primary_client = user.get('beatport_api')
-    if not primary_client and beatport_manager.clients:
-        primary_client = beatport_manager.clients[0]
-        
-    available_clients = []
-    if primary_client: available_clients.append(primary_client)
-    if beatport_manager and beatport_manager.clients:
-        for c in beatport_manager.clients:
-            if c != primary_client: available_clients.append(c)
-            
-    # --- LOAD BALANCING ---
-    random.shuffle(available_clients)
+    # [MODIFIKASI] Ambil client user
+    user_id = user.get('user_id')
+    active_client = beatport_manager.get_client(user_id)
+    
+    if not active_client:
+        raise BeatportError("Tidak ada akun Beatport yang tersedia.")
 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
     album_data = None
-    active_client = None
     
-    for idx, client in enumerate(available_clients):
-        try:
-            LOGGER.debug(f"Beatport: Mencoba metadata album {album_id} dengan Akun #{idx+1}...")
-            album_data = await client.get_release(album_id)
-            active_client = client
-            LOGGER.info(f"Beatport: Metadata album {album_id} ditemukan di Akun #{idx+1}")
-            break
-        except Exception as e:
-            continue
+    try:
+        LOGGER.debug(f"Beatport: Mencoba metadata album {album_id}...")
+        album_data = await active_client.get_release(album_id)
+    except Exception as e:
+        raise BeatportError(f"Gagal mendapatkan metadata album {album_id}: {e}")
             
-    if not active_client or not album_data:
-        raise BeatportError(f"Gagal mendapatkan metadata album {album_id}. Mungkin tidak tersedia di SEMUA region akun Anda.")
+    if not album_data:
+        raise BeatportError(f"Album {album_id} tidak ditemukan.")
     
-    client = active_client
-
     track_links_or_dicts = album_data.get("tracks", [])
     
+    # Fallback jika tracks kosong di endpoint get_release
     if not track_links_or_dicts:
         LOGGER.warning(f"Beatport: Daftar track kosong di get_release. Mencoba fallback...")
         try:
@@ -344,7 +318,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
              page = 1
              per_page = 25 
              while True:
-                 tracks_data_page = await client.get_release_tracks(album_id, page=page, per_page=per_page)
+                 tracks_data_page = await active_client.get_release_tracks(album_id, page=page, per_page=per_page)
                  page_results = tracks_data_page.get("results", [])
                  if not page_results: break 
                  tracks_list_from_fallback.extend(page_results)
@@ -390,7 +364,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             if isinstance(track_item, str):
                 track_id_str = track_item.split('/')[-2]
                 if not track_id_str.isdigit(): continue 
-                track_data_full = await client.get_track(track_id_str)
+                track_data_full = await active_client.get_track(track_id_str)
             elif isinstance(track_item, dict):
                 track_data_full = track_item
                 track_id_str = track_data_full.get('id')
@@ -420,56 +394,45 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
-    """Memproses metadata untuk playlist/chart dengan LOAD BALANCING."""
+    """Memproses metadata untuk playlist/chart dengan Klien User."""
     
-    primary_client = user.get('beatport_api')
-    if not primary_client and beatport_manager.clients:
-        primary_client = beatport_manager.clients[0]
-        
-    available_clients = []
-    if primary_client: available_clients.append(primary_client)
-    if beatport_manager and beatport_manager.clients:
-        for c in beatport_manager.clients:
-            if c != primary_client: available_clients.append(c)
+    # [MODIFIKASI] Ambil client user
+    user_id = user.get('user_id')
+    active_client = beatport_manager.get_client(user_id)
+    
+    if not active_client:
+        raise BeatportError("Tidak ada akun Beatport yang tersedia.")
 
-    # --- LOAD BALANCING ---
-    random.shuffle(available_clients)
-
-    active_client = None
     playlist_data = None
     is_chart = extra.get("is_chart", False)
     
-    for idx, client in enumerate(available_clients):
-        try:
-            if is_chart:
-                playlist_data = await client.get_chart(playlist_id)
-            else:
-                playlist_data = await client.get_playlist(playlist_id)
-            active_client = client
-            LOGGER.info(f"Beatport: Playlist/Chart ditemukan di Akun #{idx+1}")
-            break
-        except Exception:
-            continue
+    try:
+        if is_chart:
+            playlist_data = await active_client.get_chart(playlist_id)
+        else:
+            playlist_data = await active_client.get_playlist(playlist_id)
+    except Exception as e:
+        raise BeatportError(f"Gagal mendapatkan metadata Playlist/Chart {playlist_id}: {e}")
             
-    if not active_client or not playlist_data:
-        raise BeatportError(f"Gagal mendapatkan metadata Playlist/Chart {playlist_id} di semua akun.")
-
-    client = active_client
+    if not playlist_data:
+        raise BeatportError(f"Playlist/Chart {playlist_id} tidak ditemukan.")
 
     if is_chart:
-        tracks_data = await client.get_chart_tracks(playlist_id, per_page=100)
+        tracks_data = await active_client.get_chart_tracks(playlist_id, per_page=100)
     else:
-        tracks_data = await client.get_playlist_tracks(playlist_id, per_page=100)
+        tracks_data = await active_client.get_playlist_tracks(playlist_id, per_page=100)
 
     tracks = tracks_data.get("results", [])
     total_tracks = tracks_data.get("count", len(tracks))
 
     for page in range(2, (total_tracks - 1) // 100 + 2):
-        if is_chart:
-            tracks_page = await client.get_chart_tracks(playlist_id, page=page, per_page=100)
-        else:
-            tracks_page = await client.get_playlist_tracks(playlist_id, page=page, per_page=100)
-        tracks.extend(tracks_page.get("results", []))
+        try:
+            if is_chart:
+                tracks_page = await active_client.get_chart_tracks(playlist_id, page=page, per_page=100)
+            else:
+                tracks_page = await active_client.get_playlist_tracks(playlist_id, page=page, per_page=100)
+            tracks.extend(tracks_page.get("results", []))
+        except: break
     
     if not tracks:
         raise BeatportError(f"Playlist/Chart {playlist_id} tidak memiliki track.")
