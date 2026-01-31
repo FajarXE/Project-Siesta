@@ -6,7 +6,7 @@ import asyncio
 import sys
 import logging
 import traceback
-from pyrogram import idle # PENTING: Gunakan idle resmi
+from pyrogram import idle 
 
 from bot import Config
 from .tgclient import aio
@@ -54,6 +54,24 @@ beatstars_manager = safe_import('bot.helpers.beatstars.manager', 'beatstars_mana
 khinsider_manager = safe_import('bot.helpers.khinsider.manager', 'khinsider_manager')
 
 
+# --- [DEBUG] EXCEPTION HANDLER ---
+def handle_exception(loop, context):
+    # Filter pesan error yang tidak perlu
+    msg = context.get("exception", context["message"])
+    
+    # Abaikan error SSL Shutdown yang umum, tapi log sebagai warning ringan
+    if "SSL shutdown timed out" in str(msg):
+        logging.warning(f"⚠️ SSL Shutdown Timeout terdeteksi (Ignored): {msg}")
+        return
+
+    logging.error(f"⚠️ EXCEPTION TIDAK TERTANGANI: {msg}")
+    logging.error(f"⚠️ SUMBER: {context.get('source_traceback', 'Tidak diketahui')}")
+    logging.error(f"⚠️ FUTURE: {context.get('future', 'Tidak diketahui')}")
+    
+    if "exception" in context:
+        traceback.print_exception(type(context["exception"]), context["exception"], context["exception"].__traceback__)
+# ---------------------------------
+
 async def load_all_user_settings_into_managers():
     logging.info("Main: Sinkronisasi pengaturan pengguna ke cache manajer...")
     try:
@@ -72,22 +90,17 @@ async def load_all_user_settings_into_managers():
             'khinsider_qual': khinsider_manager,
         }
 
-        # Pastikan user_data sudah terisi
         if not bot_set.user_data:
             logging.warning("Main: bot_set.user_data kosong/belum dimuat.")
             return
 
-        # --- FIX: Ambil Referensi Client Qobuz (Untuk Sinkronisasi) ---
         qobuz_interface = None
         if BOT_QOBUZ_CLIENTS:
-            # Ambil client pertama saja karena mereka berbagi database JSON yang sama (di qopy.py baru)
             qobuz_interface = list(BOT_QOBUZ_CLIENTS.values())[0]
-        # --------------------------------------------------------------
 
         for user_id, user_data in bot_set.user_data.items():
             if not user_id: continue
             
-            # 1. Sinkronisasi Manager Standar
             for key, manager in settings_map.items():
                 quality_val = user_data.get(key)
                 if quality_val and manager:
@@ -96,8 +109,6 @@ async def load_all_user_settings_into_managers():
                         count += 1
                     except Exception: pass
             
-            # 2. Sinkronisasi QOBUZ (Manual, karena tidak masuk settings_map)
-            # Ini akan menulis ulang setting dari Mongo ke file JSON qobuz saat startup
             if qobuz_interface and user_data.get('qobuz_qual'):
                 try:
                     await qobuz_interface.setup_quality(user_id, user_data['qobuz_qual'])
@@ -129,16 +140,12 @@ async def load_all_bot_qobuz_clients():
 
 
 async def start_services():
-    """Fungsi inisialisasi utama."""
     logging.info("------------------------------------------------")
     logging.info("Main: Memulai Inisialisasi Layanan...")
     
     await bot_set.set_language()
-    
-    # 1. Start Qobuz
     await load_all_bot_qobuz_clients()
 
-    # 2. Start Managers
     managers = [
         (deezer_manager, "Deezer"), (beatport_manager, "Beatport"), 
         (tidal_manager, "Tidal"), (kkbox_manager, "KKBox"),
@@ -155,7 +162,6 @@ async def start_services():
         if mgr:
             logging.info(f"Main: Menginisialisasi {name}...")
             try: 
-                # Gunakan timeout agar jika macet tidak selamanya
                 await asyncio.wait_for(mgr.initialize_clients(), timeout=45.0)
                 logging.info(f"Main: {name} OK.")
             except asyncio.TimeoutError:
@@ -163,16 +169,13 @@ async def start_services():
             except Exception as e: 
                 logging.error(f"Main: Gagal init {name}: {e}")
 
-    # Set flags
     if deezer_manager and deezer_manager.clients: bot_set.deezer = True 
     if beatport_manager and beatport_manager.clients: bot_set.beatport = True 
 
-    # 3. Load User Data
     logging.info("Main: Memuat Database Pengguna...")
     await bot_set.initialize_users()
     await load_all_user_settings_into_managers()
 
-    # 4. Start Telegram Client
     logging.info("Main: Menghubungkan ke Telegram...")
     await aio.start()
     
@@ -181,10 +184,8 @@ async def start_services():
     logging.info(f"BOT BERHASIL START SEBAGAI: @{me.username}")
     logging.info(f"------------------------------------------------")
     
-    # 5. Keep Alive dengan IDLE
     await idle()
     
-    # 6. Stop Sequence (After Idle breaks)
     logging.info("Main: Menerima sinyal stop, mematikan layanan...")
     await aio.stop()
     await shutdown_all_services()
@@ -192,12 +193,10 @@ async def start_services():
 
 async def shutdown_all_services():
     tasks = []
-    # Close Qobuz
     for client in BOT_QOBUZ_CLIENTS.values():
         if client and hasattr(client, 'close_session'):
             tasks.append(client.close_session())
     
-    # Close Managers
     managers_list = [
         deezer_manager, beatport_manager, tidal_manager, kkbox_manager,
         beatsource_manager, soundcloud_manager, napster_manager, idagio_manager,
@@ -216,8 +215,12 @@ if __name__ == "__main__":
     if not os.path.isdir(Config.DOWNLOAD_BASE_DIR):
         os.makedirs(Config.DOWNLOAD_BASE_DIR)
     
-    # Gunakan get_event_loop agar konsisten dengan environment Pyrogram
+    # Ambil event loop
     loop = asyncio.get_event_loop()
+    
+    # [PENTING] Pasang Exception Handler untuk Debugging
+    loop.set_debug(True)
+    loop.set_exception_handler(handle_exception)
     
     try:
         loop.run_until_complete(start_services())
