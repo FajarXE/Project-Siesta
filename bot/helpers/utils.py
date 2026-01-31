@@ -240,12 +240,17 @@ def zip_folder(folderpath) -> str:
     return zip_path
 
 async def move_sorted_playlist(metadata, user) -> str:
-    source_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}"
-    destination_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}/{metadata['title']}"
-    os.makedirs(destination_folder, exist_ok=True)
-    folders = [os.path.join(source_folder, name) for name in os.listdir(source_folder) if os.path.isdir(os.path.join(source_folder, name))]
-    for folder in folders: shutil.move(folder, destination_folder)
-    return destination_folder
+    def _sync_move():
+        source_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}"
+        destination_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}/{metadata['title']}"
+        os.makedirs(destination_folder, exist_ok=True)
+        folders = [os.path.join(source_folder, name) for name in os.listdir(source_folder) if os.path.isdir(os.path.join(source_folder, name))]
+        for folder in folders: 
+            shutil.move(folder, destination_folder)
+        return destination_folder
+
+    # Jalankan di thread terpisah agar tidak lag
+    return await asyncio.to_thread(_sync_move)
 
 # --- [PERBAIKAN UTAMA: LOGIKA DOWNLOAD POSTER] ---
 async def post_art_poster(user:dict, meta:dict):
@@ -304,24 +309,29 @@ async def progress_message(done, total, details):
     except FloodWait: pass
 
 async def cleanup(user=None, metadata=None, user_dict: dict=None):
-    if metadata:
-        try:
-            folder_path = metadata.get('folderpath')
-            if isinstance(folder_path, str) and os.path.isdir(folder_path): shutil.rmtree(folder_path)
-            elif isinstance(folder_path, list):
-                for i in folder_path: 
-                    if os.path.exists(i): os.remove(i)
-            if metadata.get('zip_path'):
-                zip_files = metadata['zip_path']
-                if isinstance(zip_files, str): zip_files = [zip_files]
-                for zp in zip_files: 
-                    if os.path.exists(zp): os.remove(zp)
-        except: pass
-    if user:
-        try: shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
-        except: pass
-        try: shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/")
-        except: pass
+    def _sync_cleanup():
+        if metadata:
+            try:
+                folder_path = metadata.get('folderpath')
+                if isinstance(folder_path, str) and os.path.isdir(folder_path): 
+                    shutil.rmtree(folder_path)
+                elif isinstance(folder_path, list):
+                    for i in folder_path: 
+                        if os.path.exists(i): os.remove(i)
+                if metadata.get('zip_path'):
+                    zip_files = metadata['zip_path']
+                    if isinstance(zip_files, str): zip_files = [zip_files]
+                    for zp in zip_files: 
+                        if os.path.exists(zp): os.remove(zp)
+            except: pass
+        if user:
+            try: shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
+            except: pass
+            try: shutil.rmtree(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/")
+            except: pass
+
+    # Jalankan cleanup di thread background
+    await asyncio.to_thread(_sync_cleanup)
 
 def fetch_zip_settings(users: typing.Dict) -> typing.Tuple[bool, bool, bool, bool]:
     user_dict = bot_set.user_data.get(users.get("user_id", 0), {})
