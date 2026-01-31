@@ -2,16 +2,15 @@
 
 import os
 import math
-import aiohttp
 import asyncio
 import shutil
 import zipfile
 import typing
+import requests # <--- [PENTING] Ganti aiohttp dengan requests untuk download file
 import re
 
 from pathlib import Path
 from urllib.parse import quote
-from aiohttp import ClientTimeout, TCPConnector # <--- [UPDATE 1] Tambahkan TCPConnector
 from pyrogram.errors import MessageNotModified
 from concurrent.futures import ThreadPoolExecutor
 from pyrogram.errors import FloodWait
@@ -28,36 +27,37 @@ from .message import send_message, edit_message
 MAX_SIZE = 1.9 * 1024 * 1024 * 1024 
 
 async def download_file(url, path, retries=3, timeout=30):
+    """
+    Mengunduh file menggunakan requests (sync) yang dibungkus to_thread
+    untuk menghindari bug SSL shutdown pada aiohttp.
+    """
+    if not url: return "URL is empty"
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    def _sync_download():
+        # Session requests lebih stabil menangani close connection dibanding aiohttp
+        with requests.Session() as s:
+            with s.get(url, stream=True, timeout=timeout) as r:
+                r.raise_for_status()
+                with open(path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk: f.write(chunk)
+
     for attempt in range(1, retries + 1):
         try:
-            # [UPDATE 2] Tambahkan connector dengan force_close=True
-            async with aiohttp.ClientSession(
-                connector=TCPConnector(force_close=True), 
-                timeout=ClientTimeout(total=timeout)
-            ) as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        with open(path, 'wb') as f:
-                            while True:
-                                chunk = await response.content.read(1024 * 4)
-                                if not chunk: break
-                                f.write(chunk)
-                        if os.path.exists(path) and os.path.getsize(path) > 0:
-                            return None
-                        else:
-                            if attempt == retries: return f"Download finished but file is missing: {path}"
-                            await asyncio.sleep(2 ** attempt)
-                            continue 
-                    else:
-                        if attempt == retries: return f"HTTP Status: {response.status}"
-                        await asyncio.sleep(2 ** attempt)
+            # Jalankan requests di thread terpisah agar tidak memblokir bot
+            await asyncio.to_thread(_sync_download)
+            
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                return None
+            else:
+                if attempt == retries: return f"Download finished but file is missing: {path}"
+                await asyncio.sleep(1)
         except Exception as e:
             if attempt == retries: return str(e)
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(1)
 
 async def format_string(text:str, data:dict, user=None):
-    # ... (SISA KODE KE BAWAH TETAP SAMA SEPERTI SEBELUMNYA) ...
     def safe_get(key):
         val = data.get(key)
         if val is None: return ''
