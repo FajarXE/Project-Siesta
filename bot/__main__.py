@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/__main__.py]
+# [FILE: bot/__main__.py]
 
 import os
 import signal
@@ -54,16 +54,21 @@ beatstars_manager = safe_import('bot.helpers.beatstars.manager', 'beatstars_mana
 khinsider_manager = safe_import('bot.helpers.khinsider.manager', 'khinsider_manager')
 
 
-# --- [DEBUG] EXCEPTION HANDLER ---
+# --- [DEBUG] EXCEPTION HANDLER (DIPERBAIKI) ---
 def handle_exception(loop, context):
-    # Filter pesan error yang tidak perlu
+    # Ambil pesan error
     msg = context.get("exception", context["message"])
+    msg_str = str(msg)
     
-    # Abaikan error SSL Shutdown yang umum, tapi log sebagai warning ringan
-    if "SSL shutdown timed out" in str(msg):
-        logging.warning(f"⚠️ SSL Shutdown Timeout terdeteksi (Ignored): {msg}")
+    # 1. Heningkan Error SSL Shutdown (Tidak berbahaya)
+    if "SSL shutdown timed out" in msg_str:
+        return 
+
+    # 2. Heningkan Error Connection Lost biasa
+    if "Connection lost" in msg_str and "RemoteDisconnected" in msg_str:
         return
 
+    # Log error lain yang benar-benar penting
     logging.error(f"⚠️ EXCEPTION TIDAK TERTANGANI: {msg}")
     logging.error(f"⚠️ SUMBER: {context.get('source_traceback', 'Tidak diketahui')}")
     logging.error(f"⚠️ FUTURE: {context.get('future', 'Tidak diketahui')}")
@@ -123,14 +128,18 @@ async def load_all_user_settings_into_managers():
 async def login_single_client(creds: dict):
     creds_copy = creds.copy()
     account_id = creds_copy.pop("id", "Unknown")
-    client = QoClient(**creds_copy) 
+    
+    # Jalankan inisialisasi client di thread agar tidak memblokir loop jika berat
     try:
+        client = await asyncio.to_thread(QoClient, **creds_copy)
         await client.login()
         BOT_QOBUZ_CLIENTS[account_id] = client
         logging.info(f"Main: Qobuz #{account_id} LOGIN SUKSES.")
     except Exception as e:
         logging.error(f"Main: Qobuz #{account_id} GAGAL: {e}")
-        await client.close_session()
+        # Coba close session jika client sempat terbentuk
+        if 'client' in locals() and hasattr(client, 'close_session'):
+            await client.close_session()
 
 async def load_all_bot_qobuz_clients():
     if not Config.QOBUZ_ACCOUNTS: return
@@ -218,9 +227,13 @@ if __name__ == "__main__":
     # Ambil event loop
     loop = asyncio.get_event_loop()
     
-    # [PENTING] Pasang Exception Handler untuk Debugging
+    # [PENTING] Pengaturan Debugging
     loop.set_debug(True)
     loop.set_exception_handler(handle_exception)
+    
+    # [FIX] Naikkan batas toleransi 'slow callback' menjadi 0.5 detik
+    # Ini akan menghilangkan warning jika startup memakan waktu 0.2 - 0.4 detik (normal)
+    loop.slow_callback_duration = 0.5 
     
     try:
         loop.run_until_complete(start_services())
