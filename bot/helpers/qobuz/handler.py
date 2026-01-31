@@ -11,8 +11,10 @@ from ..utils import *
 from ..metadata import set_metadata
 from ..message import edit_message
 from bot.logger import LOGGER
-from ..settings import bot_set # Perlu import bot_set untuk cek mode user
 import traceback
+
+# [FIX IMPORT] Gunakan Absolute Import agar tidak Error ModuleNotFoundError
+from bot.settings import bot_set 
 
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
 
@@ -347,7 +349,7 @@ async def start_playlist(tracks, playlist, user):
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
     # CEK JIKA USER PAKAI MODE CLOUD (GOFILE/BUZZ/VIKING)
-    # Jika iya, KITA PAKSA MATIKAN UPLOAD PER-TRACK!
+    # Gunakan bot_set yang sudah diimport dengan benar
     user_id = user.get('user_id')
     user_mode = bot_set.user_data.get(user_id, {}).get('upload_mode', 'Telegram')
     
