@@ -191,7 +191,7 @@ class BeatsourceAPI:
             LOGGER.debug("Beatsource: Token berhasil di-refresh.")
 
     async def _get(self, endpoint: str, params: dict = None):
-        """Fungsi pembantu GET request yang aman."""
+        """Fungsi pembantu GET request dengan Auto-Retry untuk Error 5xx."""
         await self._init_session()
         if not params:
             params = {}
@@ -203,27 +203,51 @@ class BeatsourceAPI:
             except Exception as e:
                 raise BeatsourceError(f"Token kedaluwarsa dan gagal di-refresh: {e}")
 
-        async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(use_access_token=True)) as r:
-            if r.status == 401:
-                raise BeatsourceError("Token tidak valid atau kedaluwarsa (401).")
-            
-            if r.status == 403:
-                # Cek detail pesan untuk mengetahui apakah karena Region Lock
-                try:
-                    detail = (await r.json()).get("detail", "")
-                    if "Territory" in detail:
-                        raise BeatsourceError("Gagal: Region Locked (Territory Restricted)")
-                except:
-                    pass
-                raise BeatsourceError(f"Akses ditolak (403): {await r.text()}")
-            
-            if r.status == 404:
-                raise BeatsourceError(f"Item tidak ditemukan (404)")
-            
-            if r.status != 200:
-                raise ConnectionError(f"Beatsource API Error {r.status}: {await r.text()}")
+        # [MODIFIKASI] RETRY LOGIC (Mencoba maks 3 kali)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(use_access_token=True)) as r:
+                    
+                    # Jika sukses (200), langsung return
+                    if r.status == 200:
+                        return await r.json()
 
-            return await r.json()
+                    # [BARU] Jika Error Server (502/503/504), tunggu dan coba lagi
+                    if r.status in [500, 502, 503, 504]:
+                        if attempt < max_retries - 1:
+                            LOGGER.warning(f"Beatsource API {r.status} (Percobaan {attempt+1}/{max_retries}). Mengulang dalam 2 detik...")
+                            await asyncio.sleep(2)
+                            continue
+                        else:
+                            # Jika sudah 3x gagal, baru raise error
+                            raise ConnectionError(f"Beatsource API Error {r.status}: {await r.text()}")
+
+                    # Error Klien (4xx) tidak perlu retry (salah password/region/dll)
+                    if r.status == 401:
+                        raise BeatsourceError("Token tidak valid atau kedaluwarsa (401).")
+                    
+                    if r.status == 403:
+                        try:
+                            detail = (await r.json()).get("detail", "")
+                            if "Territory" in detail:
+                                raise BeatsourceError("Gagal: Region Locked (Territory Restricted)")
+                        except: pass
+                        raise BeatsourceError(f"Akses ditolak (403): {await r.text()}")
+                    
+                    if r.status == 404:
+                        raise BeatsourceError(f"Item tidak ditemukan (404)")
+                    
+                    # Error lainnya yang tidak tertangani
+                    raise ConnectionError(f"Beatsource API Error {r.status}: {await r.text()}")
+
+            except aiohttp.ClientConnectorError as e:
+                # [BARU] Retry juga jika koneksi internet/proxy putus total
+                if attempt < max_retries - 1:
+                    LOGGER.warning(f"Koneksi error: {e}. Mengulang...")
+                    await asyncio.sleep(2)
+                    continue
+                raise e
 
     # --- Endpoint Katalog ---
 
