@@ -95,25 +95,18 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
 
             # 2. BUZZHEAVIER (Folder)
             elif mode == 'Buzzheavier':
-                # Buat Folder Induk
                 root_id = await uploader.buzzheavier_get_root(token)
                 parent_id = await uploader.buzzheavier_create_folder_async(token, root_id, folder_name)
-                
-                # Jika folder gagal dibuat, fallback ke upload biasa
                 target_folder = parent_id if parent_id else None
                 
-                # Upload semua part
                 uploaded_links = []
                 for index, file_part in enumerate(filepath, 1):
                     await edit_message(user['bot_msg'], f"🚀 Uploading Part {index}/{len(filepath)} to Buzzheavier...")
                     res = await uploader.upload(os.path.basename(file_part), 0, 'buzzheavier', specific_folder_id=target_folder)
                     if res: uploaded_links.append(list(res.values())[0])
                 
-                # Jika pakai folder, return link folder. Jika tidak, return list links.
-                if target_folder:
-                    return f"https://buzzheavier.com/{target_folder}"
-                else:
-                    return "\n".join(uploaded_links)
+                if target_folder: return f"https://buzzheavier.com/{target_folder}"
+                else: return "\n".join(uploaded_links)
 
             # 3. VIKINGFILES (List Links)
             elif mode == 'Vikingfiles':
@@ -130,30 +123,68 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
         elif os.path.isfile(filepath):
             if 'bot_msg' in user: await edit_message(user['bot_msg'], f"🚀 Uploading to {mode}...")
             
-            # Buzzheavier: Buat Folder dulu biar rapi (meski cuma 1 file)
             if mode == 'Buzzheavier':
                 root_id = await uploader.buzzheavier_get_root(token)
                 parent_id = await uploader.buzzheavier_create_folder_async(token, root_id, folder_name)
                 res = await uploader.upload(os.path.basename(filepath), 0, 'buzzheavier', specific_folder_id=parent_id)
                 if res and parent_id: return f"https://buzzheavier.com/{parent_id}"
-                elif res: return list(res.values())[0] # Fallback
+                elif res: return list(res.values())[0]
             
             else:
                 res = await uploader.upload(os.path.basename(filepath), 0, mode.lower())
                 if res: return list(res.values())[0]
 
         # ==========================================
-        # KASUS C: FOLDER ASLI (Belum Zip)
+        # KASUS C: FOLDER ASLI (Belum Zip) - [FIXED]
         # ==========================================
         elif os.path.isdir(filepath):
-            # ... (Logika Gofile/Buzz/Viking Folder sama seperti sebelumnya) ...
+            files = [f for f in os.listdir(filepath) if os.path.isfile(os.path.join(filepath, f))]
+            
+            # 1. BUZZHEAVIER (Folder)
             if mode == 'Buzzheavier':
                 if 'bot_msg' in user: await edit_message(user['bot_msg'], f"📂 Uploading Folder to Buzzheavier...")
-                uploader.path = os.path.dirname(filepath.rstrip('/'))
-                res = await uploader.upload(os.path.basename(filepath), 0, 'buzzheavier')
-                if res: return list(res.values())[0]
-            # ... (Kode Gofile & Viking folder di sini bisa copy dari sebelumnya) ...
-            pass
+                uploader.path = filepath # Update path ke dalam folder
+                
+                root_id = await uploader.buzzheavier_get_root(token)
+                parent_id = await uploader.buzzheavier_create_folder_async(token, root_id, folder_name)
+                target_folder = parent_id if parent_id else None
+
+                links = []
+                for index, filename in enumerate(files, 1):
+                    await edit_message(user['bot_msg'], f"🚀 Uploading {index}/{len(files)}: `{filename}`")
+                    res = await uploader.upload(filename, 0, 'buzzheavier', specific_folder_id=target_folder)
+                    if res: links.append(list(res.values())[0])
+                
+                if target_folder: return f"https://buzzheavier.com/{target_folder}"
+                return "\n".join(links)
+
+            # 2. GOFILE (Folder)
+            elif mode == 'Gofile':
+                if 'bot_msg' in user: await edit_message(user['bot_msg'], f"📂 Creating Gofile Folder...")
+                uploader.path = filepath # Update path ke dalam folder
+
+                root_id = await uploader.gofile_get_root(token)
+                new_folder = await uploader.gofile_create_folder_async(token, root_id, folder_name)
+                
+                if new_folder:
+                    folder_id = new_folder['id']
+                    final_link = new_folder['code']
+                    for index, filename in enumerate(files, 1):
+                        await edit_message(user['bot_msg'], f"🚀 Uploading {index}/{len(files)}: `{filename}`")
+                        await uploader.upload(filename, 0, 'gofile', specific_folder_id=folder_id)
+                    return f"https://gofile.io/d/{final_link}"
+                else:
+                    return None
+
+            # 3. VIKINGFILES (List Links)
+            elif mode == 'Vikingfiles':
+                uploader.path = filepath # Update path ke dalam folder
+                links = []
+                for index, filename in enumerate(files, 1):
+                    await edit_message(user['bot_msg'], f"🚀 Uploading {index}/{len(files)} to Vikingfiles...")
+                    res = await uploader.upload(filename, 0, 'viking')
+                    if res: links.append(list(res.values())[0])
+                return "\n".join(links)
 
     except Exception as e:
         LOGGER.error(f"Cloud Upload Error ({mode}): {e}")
@@ -161,20 +192,17 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
     
     return None
 
-# --- TASK HANDLERS (DIPERBAIKI) ---
+# --- TASK HANDLERS (DIPERBAIKI DENGAN LOGIC STOP) ---
 
 async def album_upload(metadata, user):
     user_dict = user.copy()
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
+    # --- CLOUD MODE BLOCK ---
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
-        if metadata.get('zip_path'):
-             target = metadata['zip_path'] 
-             # [FIX UTAMA]: JANGAN PAKSA target[0] DI SINI!
-             # Biarkan 'target' berupa LIST jika memang hasil split zip.
-             # 'upload_to_cloud_handler' akan menangani list tersebut.
-
+        if metadata.get('zip_path'): target = metadata['zip_path'] 
+        
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
         
         if link:
@@ -183,11 +211,13 @@ async def album_upload(metadata, user):
             
             if metadata.get('poster_msg'): await edit_message(metadata['poster_msg'], caption)
             else: await send_message(user, caption, 'text')
+        else:
+             await send_message(user, f"❌ <b>Upload Failed!</b>\nCould not upload to {user_mode}.", 'text')
             
-            await cleanup(None, metadata, user_dict)
-            return 
+        await cleanup(None, metadata, user_dict)
+        return # STOP PROCESS HERE
+    # ------------------------
 
-    # ... (Sisa kode Fallback Telegram/Local sama seperti sebelumnya) ...
     if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'):
@@ -204,22 +234,29 @@ async def album_upload(metadata, user):
         else: await post_simple_message(user, metadata, rclone_link, index_link)
     await cleanup(None, metadata, user_dict)
 
-# ... (Pastikan track_upload, artist_upload, playlist_upload juga diperbaiki logic target-nya sama seperti album_upload) ...
 async def artist_upload(metadata, user):
     user_dict = user.copy()
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+    
+    # --- CLOUD MODE BLOCK ---
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
-        if metadata.get('zip_path'): target = metadata['zip_path'] # No [0]
+        if metadata.get('zip_path'): target = metadata['zip_path']
+        
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
+        
         if link:
             caption = create_cloud_caption(metadata)
             caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
             if metadata.get('poster_msg'): await edit_message(metadata['poster_msg'], caption)
             else: await send_message(user, caption, 'text')
-            await cleanup(None, metadata, user_dict)
-            return
-    # Fallback...
+        else:
+             await send_message(user, f"❌ <b>Upload Failed!</b>\nCould not upload to {user_mode}.", 'text')
+            
+        await cleanup(None, metadata, user_dict)
+        return # STOP PROCESS HERE
+    # ------------------------
+
     if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
@@ -237,18 +274,26 @@ async def artist_upload(metadata, user):
 
 async def playlist_upload(metadata, user):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+    
+    # --- CLOUD MODE BLOCK ---
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
-        if metadata.get('zip_path'): target = metadata['zip_path'] # No [0]
+        if metadata.get('zip_path'): target = metadata['zip_path'] 
+        
         link = await upload_to_cloud_handler(target, user, metadata, user_mode)
+        
         if link:
             caption = create_cloud_caption(metadata)
             caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
             if metadata.get('poster_msg'): await edit_message(metadata['poster_msg'], caption)
             else: await send_message(user, caption, 'text')
-            await cleanup(None, metadata, user)
-            return
-    # Fallback...
+        else:
+             await send_message(user, f"❌ <b>Upload Failed!</b>\nCould not upload to {user_mode}.", 'text')
+
+        await cleanup(None, metadata, user)
+        return # STOP PROCESS HERE
+    # ------------------------
+
     if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
@@ -274,10 +319,11 @@ async def playlist_upload(metadata, user):
             else: await post_simple_message(user, metadata, rclone_link, index_link)
     await cleanup(None, metadata, user)
 
-# ... (Sisanya: track_upload, rclone_upload, local_upload, telegram_upload, batch_telegram_upload SAMA) ...
 async def track_upload(metadata, user, disable_link=False):
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     upload_success = False
+    
+    # --- CLOUD MODE BLOCK ---
     if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         link = await upload_to_cloud_handler(metadata['filepath'], user, metadata, user_mode)
         if link:
@@ -288,7 +334,9 @@ async def track_upload(metadata, user, disable_link=False):
             try:
                 if os.path.exists(metadata['filepath']): os.remove(metadata['filepath'])
             except: pass
-            return 
+            return # STOP PROCESS HERE
+    # ------------------------
+
     if not upload_success:
         if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
         elif bot_set.upload_mode == 'Telegram' or user_mode == 'Telegram': await telegram_upload(metadata, user)
