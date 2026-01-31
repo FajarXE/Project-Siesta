@@ -38,6 +38,15 @@ class BeatportLoginManager:
         self.quality = "lossless" 
         self.user_data = {} 
 
+    # --- PROPERTY BARU (UNTUK FIX ERROR ATTRIBUTE ERROR) ---
+    @property
+    def clients(self):
+        """
+        Properti kompatibilitas untuk kode lama yang memanggil .clients
+        Menggabungkan akun Global dan Akun User aktif.
+        """
+        return self.global_clients + list(self.user_clients.values())
+
     async def initialize_clients(self):
         """Memuat akun Global (.env) dan Akun User (DB)."""
         saved_tokens = {}
@@ -171,7 +180,6 @@ class BeatportLoginManager:
         """
         # Cek Akun Pribadi
         if user_id and user_id in self.user_clients:
-            # Cek sesi masih hidup/valid? (Opsional: implementasi cek expire sederhana)
             return self.user_clients[user_id]
             
         # Fallback ke Global
