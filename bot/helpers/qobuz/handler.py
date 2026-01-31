@@ -11,6 +11,7 @@ from ..utils import *
 from ..metadata import set_metadata
 from ..message import edit_message
 from bot.logger import LOGGER
+from ..settings import bot_set # Perlu import bot_set untuk cek mode user
 import traceback
 
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
@@ -61,16 +62,11 @@ async def force_custom_tags(filepath, metadata):
                 try:
                     audio = FLAC(filepath)
                     for k, v in tags_to_write.items():
-                        # Untuk FLAC, kita tulis sebagai Vorbis Comments
-                        # Kita pertahankan casing sesuai request (huruf kecil/besar)
                         audio[k] = v
                     audio.save()
                     LOGGER.info(f"Custom tags FLAC berhasil ditulis: {tags_to_write}")
                 except Exception as e:
                     LOGGER.warning(f"Error menulis tag FLAC: {e}")
-            else:
-                LOGGER.warning("Module mutagen.flac tidak ditemukan.")
-                
         elif ext == 'mp3':
             if ID3:
                 try:
@@ -81,21 +77,16 @@ async def force_custom_tags(filepath, metadata):
                         audio.save(filepath)
                     
                     for k, v in tags_to_write.items():
-                        # Untuk MP3, gunakan TXXX frame (User Defined Text)
                         audio.add(TXXX(encoding=3, desc=k, text=v))
                     audio.save()
                     LOGGER.info(f"Custom tags MP3 berhasil ditulis: {tags_to_write}")
                 except Exception as e:
                     LOGGER.warning(f"Error menulis tag MP3: {e}")
-            else:
-                 LOGGER.warning("Module mutagen.id3 tidak ditemukan.")
-
     except Exception as e:
         LOGGER.warning(f"Gagal umum dalam force_custom_tags: {e}")
 
 
 async def start_qobuz(url:str, user:dict):
-    
     clients_list = user.get('qobuz_clients_list', [])
     if not clients_list:
         return await edit_message(user['bot_msg'], "Kesalahan: Tidak ada daftar klien Qobuz yang ditemukan.")
@@ -119,7 +110,6 @@ async def start_qobuz(url:str, user:dict):
                     artist_name = "N/A"
                     if content and isinstance(content, list) and len(content) > 0:
                         artist_name = content[0].get('name', item_id)
-                    
                     await edit_message(user['bot_msg'], f"Sukses, tapi artis/playlist '{artist_name}' tidak memiliki item (album/trek) untuk diunduh.")
                     return 
 
@@ -128,7 +118,6 @@ async def start_qobuz(url:str, user:dict):
                 else:
                     await start_playlist(items, content, user)
             else:
-                # Jika items adalah None, berarti itu adalah Album atau Track tunggal
                 if type_dict.get("album") is True:
                     await start_album(item_id, user)
                 elif type_dict.get("album") is False:
@@ -143,9 +132,7 @@ async def start_qobuz(url:str, user:dict):
             last_error = f"Akun {client_label}: Konten tidak tersedia. ({e})"
             LOGGER.info(last_error) 
             continue 
-
         except Exception as e:
-            # Ini menangkap KeyError atau error fatal lain
             last_error = f"Error fatal di Akun {client_label}: {e}"
             LOGGER.error(f"{last_error}\n{traceback.format_exc()}")
             break 
@@ -185,9 +172,9 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     
     tasks = []
     for track in album_meta['tracks']:
+        # Untuk album, upload selalu False di sini karena akan diupload batch di akhir
         tasks.append(start_track(track['itemid'], user, track, False, album_folder))
         
-    
     update_details = {
         'text': lang.s.DOWNLOAD_PROGRESS,
         'msg': user['bot_msg'],
@@ -215,25 +202,17 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
 
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
-    # --- LOGIKA DOWNLOAD BOOKLET ---
+    # Booklet Logic
     booklet_path = None
     if album_meta.get('booklet_url'):
         try:
             await edit_message(user['bot_msg'], f"Mengunduh Booklet...")
-            LOGGER.info(f"Booklet URL ditemukan: {album_meta['booklet_url']}")
-            
             temp_path = os.path.join(album_meta['folderpath'], "Booklet.pdf")
             err_booklet = await download_file(album_meta['booklet_url'], temp_path)
-            
-            if err_booklet:
-                LOGGER.warning(f"Gagal mengunduh booklet: {err_booklet}")
-            else:
+            if not err_booklet:
                 booklet_path = temp_path
-                LOGGER.info(f"Booklet berhasil disimpan di: {booklet_path}")
-                
         except Exception as e:
             LOGGER.warning(f"Error saat memproses booklet: {e}")
-    # -------------------------------
 
     if album_meta.get('cover') and os.path.exists(album_meta['cover']):
         try:
@@ -246,22 +225,15 @@ async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     if album_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan {album_meta['totaltracks']} lagu menjadi .zip...")
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
-    
-    # --- LOGIKA KIRIM BOOKLET JIKA TIDAK ZIP (BARU) ---
     elif booklet_path and os.path.exists(booklet_path):
         try:
             await edit_message(user['bot_msg'], "Mengunggah Booklet...")
-            # Menggunakan fitur reply_document dari pesan bot (asumsi Pyrogram)
             await user['bot_msg'].reply_document(
                 document=booklet_path,
                 caption=f"Booklet: {album_meta['title']} - {album_meta['artist']}",
                 file_name=f"Booklet - {album_meta['title']}.pdf"
             )
-        except AttributeError:
-             LOGGER.error("Gagal mengirim booklet: Objek pesan tidak mendukung reply_document.")
-        except Exception as e:
-            LOGGER.error(f"Gagal mengunggah booklet: {e}")
-    # --------------------------------------------------
+        except Exception: pass
 
     if upload:
         await album_upload(album_meta, user)
@@ -302,10 +274,7 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
     
     try:
         await set_metadata(track_meta, user['user_id'])
-        
-        # --- PAKSA TULIS TAG CUSTOM (Fix untuk creation_time, RELEASETIME, dll) ---
         await force_custom_tags(full_path, track_meta)
-        # --------------------------------------------------------------------------
 
         if upload:
             await track_upload(track_meta, user, disable_link)
@@ -313,11 +282,10 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         return True
 
     except FileNotFoundError:
-        LOGGER.error(f"[Errno 2] File not found setelah download (download_file gagal diam-diam?): {full_path}")
+        LOGGER.error(f"[Errno 2] File not found: {full_path}")
         return False
-
     except Exception as e:
-        LOGGER.error(f"Gagal memproses (metadata/upload) untuk {full_path}: {e}\n{traceback.format_exc()}")
+        LOGGER.error(f"Gagal memproses (metadata/upload) untuk {full_path}: {e}")
         return False
 
 
@@ -327,7 +295,6 @@ async def start_artist(albums, user, artist):
     artist_meta['folderpath'] = sanitize_filepath(artist_meta['folderpath'])
 
     upload_album = True
-    
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
     if bot_set.artist_batch:
@@ -375,11 +342,21 @@ async def start_playlist(tracks, playlist, user):
 
     play_meta['poster_msg'] = await post_art_poster(user, play_meta)
 
+    # --- [FIX UTAMA] LOGIKA UPLOAD ---
     upload = True
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
-    if bot_set.playlist_conc:
+    # CEK JIKA USER PAKAI MODE CLOUD (GOFILE/BUZZ/VIKING)
+    # Jika iya, KITA PAKSA MATIKAN UPLOAD PER-TRACK!
+    user_id = user.get('user_id')
+    user_mode = bot_set.user_data.get(user_id, {}).get('upload_mode', 'Telegram')
+    
+    if user_mode in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         upload = False
+        LOGGER.info(f"Mode Cloud ({user_mode}) terdeteksi: Upload per-track dimatikan. Menunggu batch upload.")
+
+    if bot_set.playlist_conc:
+        upload = False # Concurrent selalu download dulu semua
         tasks = []
         for track in play_meta['tracks']:
             tasks.append(start_track(track['itemid'], user, track, upload, playlist_folder))
@@ -391,18 +368,21 @@ async def start_playlist(tracks, playlist, user):
             if i < len(task_results) and task_results[i]:
                 successful_tracks.append(original_tracks[i])
             else:
-                LOGGER.info(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} di playlist karena gagal diunduh (ditangani).")
+                LOGGER.info(f"Melewatkan track {original_tracks[i].get('title', 'N/A')} di playlist karena gagal.")
                 
         play_meta['tracks'] = successful_tracks
         play_meta['totaltracks'] = len(successful_tracks)
 
     else:
         i = 0
+        # Jika Zip aktif, upload per track juga harus mati
         if playlist_zip:
             upload = False
+            
         successful_tracks_non_conc = []
         for track in play_meta['tracks']:
             await progress_message(i, len(play_meta['tracks']), update_details)
+            # start_track akan menerima nilai 'upload' yang sudah difilter di atas
             success = await start_track(track['itemid'], user, track, upload, playlist_folder, bot_set.disable_sort_link, True)
             if success:
                 successful_tracks_non_conc.append(track)
@@ -424,6 +404,7 @@ async def start_playlist(tracks, playlist, user):
             play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
        
+    # JIKA upload dimatikan (karena Zip atau Cloud Mode), panggil playlist_upload di sini
     if not upload:
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
         await playlist_upload(play_meta, user)
