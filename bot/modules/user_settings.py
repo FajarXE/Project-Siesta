@@ -5,7 +5,7 @@ import logging, asyncio
 from traceback import format_exc
 
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery, Message
+from pyrogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import Config
 from bot import cmd
@@ -74,12 +74,13 @@ except ImportError:
     khinsider_manager = None
 
 # --- IMPORT BUTTONS ---
+# Pastikan Anda sudah menambahkan 'beatport_user_auth_buttons' di bot/helpers/buttons/settings.py
 from ..helpers.buttons.settings import (
     usetting_button, tidal_quality_button, 
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
     bugs_button, lyrics_button, mv_button,
-    lp_button, khi_button
+    lp_button, khi_button, beatport_user_auth_buttons
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -150,6 +151,102 @@ async def set_vk_cmd(client, message):
 async def del_vk_cmd(client, message):
     if await check_user(msg=message):
         await _del_token(message, 'viking_token', 'Vikingfiles')
+
+
+# ==================================
+# BEATPORT PRIVATE AUTH (USER SETTINGS)
+# ==================================
+
+# 1. COMMAND LOGIN
+@Client.on_message(filters.command("beatport_login"))
+async def uset_bp_login_cmd(client, message):
+    if not await check_user(msg=message):
+        return
+
+    user_id = message.from_user.id
+    args = message.text.split()
+    
+    if len(args) < 3:
+        return await message.reply_text(
+            "❌ **Format Salah**\n"
+            "Gunakan: <code>/beatport_login email password</code>\n\n"
+            "⚠️ Password Anda akan disimpan dengan aman untuk login otomatis."
+        )
+    
+    email = args[1]
+    password = args[2] 
+    
+    status_msg = await message.reply_text("🔄 **Verifying Account...**\nMencoba login ke Beatport...")
+    
+    try:
+        # Panggil fungsi add_user_account yang baru di manager.py
+        await beatport_manager.add_user_account(user_id, email, password)
+        await status_msg.edit_text(
+            f"✅ **Login Berhasil!**\n\n"
+            f"Akun: <code>{email}</code>\n"
+            f"Mode: Private Session\n"
+            f"Sekarang bot akan menggunakan akun ini saat Anda mendownload dari Beatport."
+        )
+    except Exception as e:
+        await status_msg.edit_text(f"❌ **Login Gagal:**\n{str(e)}")
+
+
+# 2. CALLBACK HANDLERS (MENU)
+@Client.on_callback_query(filters.regex("^uset_bp_auth"))
+async def uset_bp_auth_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    user_id = query.from_user.id
+    has_session = beatport_manager.has_private_session(user_id)
+    
+    text = "🔐 **BEATPORT PRIVATE SESSION**\n\n"
+    
+    if has_session:
+        client_obj = beatport_manager.get_client(user_id)
+        email_masked = client_obj.email
+        text += f"✅ **Status: LOGGED IN**\n"
+        text += f"👤 Akun: <code>{email_masked}</code>\n"
+        text += "Bot menggunakan akun ini khusus untuk Anda."
+    else:
+        text += "❌ **Status: NOT LOGGED IN**\n"
+        text += "Bot menggunakan akun Global (Shared) untuk Anda jika tersedia.\n\n"
+        text += "Login akun sendiri untuk akses region/konten yang lebih spesifik."
+
+    await edit_message(query.message, text, markup=beatport_user_auth_buttons(has_session))
+
+
+@Client.on_callback_query(filters.regex("^uset_bp_logout"))
+async def uset_bp_logout_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+        
+    user_id = query.from_user.id
+    if beatport_manager.has_private_session(user_id):
+        await beatport_manager.remove_user_account(user_id)
+        await query.answer("✅ Sesi Beatport dihapus. Kembali ke mode Global.", True)
+    else:
+        await query.answer("Anda belum login.", True)
+    
+    # Refresh menu
+    await uset_bp_auth_handler(client, query)
+
+
+@Client.on_callback_query(filters.regex("^uset_bp_instr"))
+async def uset_bp_instr_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    text = (
+        "📝 **CARA LOGIN BEATPORT**\n\n"
+        "Kirim perintah ini di chat:\n"
+        "<code>/beatport_login email password</code>\n\n"
+        "Contoh:\n"
+        "<code>/beatport_login myemail@gmail.com rahasia123</code>"
+    )
+    # Tombol Back
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data="uset_bp_auth")]]
+    await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
 
 
 # ==================================
@@ -301,7 +398,12 @@ async def uset_cb(client, query, datatype=""):
             "high": "High (AAC 256)",
             "medium": "Medium (AAC 128)"
         }
-        if not beatport_manager or not beatport_manager.clients:
+        # Cek apakah ada klien (Global ATAU User)
+        has_client = False
+        if beatport_manager and (beatport_manager.global_clients or beatport_manager.has_private_session(user_id)):
+             has_client = True
+             
+        if not has_client:
             return await edit_message(query.message, "Layanan Beatport tidak aktif (tidak ada klien yang login).")
 
         main_user_dict = bot_set.user_data.get(user_id, {})
@@ -310,6 +412,8 @@ async def uset_cb(client, query, datatype=""):
         
         if current in quality:
             quality[current] = quality[current] + '✅'
+            
+        # Tombol bp_button sekarang akan menyertakan tombol "PRIVATE ACCOUNT"
         return await edit_message(query.message, text, markup=bp_button(quality, user_id))
 
     # --- BEATSOURCE MENU ---
@@ -628,7 +732,12 @@ async def uset_beatport(client, query):
     to_set = qual_map_display.get(to_set_display)
     if not to_set:
         return await query.answer("Kualitas tidak valid.", True)
-    if not beatport_manager or not beatport_manager.clients:
+    
+    has_client = False
+    if beatport_manager and (beatport_manager.global_clients or beatport_manager.has_private_session(query.from_user.id)):
+         has_client = True
+
+    if not has_client:
         await query.answer("Layanan Beatport tidak aktif!", show_alert=True)
         return
     user_id = query.from_user.id
@@ -1029,12 +1138,12 @@ async def debug(c, m):
 
     # BEATPORT DEBUG
     dt_bp = "\n\nBEATPORT:\n"
-    if beatport_manager and beatport_manager.clients:
-        dt_bp += f"{len(beatport_manager.clients)} klien Beatport aktif.\n"
-        dt_bp += f"Kualitas Default: {beatport_manager.quality}\n"
-        dt_bp += f"Cache User (Global): {len([u for u in bot_set.user_data if 'beatport_qual' in bot_set.user_data[u]])} pengguna"
+    if beatport_manager:
+        dt_bp += f"Global Clients: {len(beatport_manager.global_clients)}\n"
+        dt_bp += f"Private User Clients: {len(beatport_manager.user_clients)}\n"
+        dt_bp += f"Global Default Quality: {beatport_manager.quality}\n"
     else:
-        dt_bp += "Tidak ada klien Beatport yang aktif."
+        dt_bp += "Beatport Manager tidak aktif."
 
     # BEATSOURCE DEBUG
     dt_bs = "\n\nBEATSOURCE:\n"
