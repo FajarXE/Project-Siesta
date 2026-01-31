@@ -5,6 +5,7 @@ import asyncio
 import time
 import math
 import traceback 
+import aiohttp # Perlu import ini untuk catch error
 
 from pyrogram.types import Message
 from pyrogram.errors import MessageNotModified, FloodWait, MessageIdInvalid, RPCError
@@ -129,7 +130,6 @@ async def send_message(user, item, itype='text',
                         f"`{os.path.basename(item)}`\n\n"
                         f"{progress_bar} {percentage}%"
                     )
-                    # Gunakan create_task agar tidak memblokir upload
                     asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
                 except Exception:
                     pass
@@ -186,6 +186,7 @@ async def send_message(user, item, itype='text',
                             f"`{title}`\n\n"
                             f"{progress_bar} {percentage}%"
                         )
+                        # Gunakan create_task agar tidak memblokir proses upload utama
                         asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
                     except Exception:
                         pass
@@ -222,18 +223,16 @@ async def send_message(user, item, itype='text',
     return msg
 
 
-# --- FUNGSI UTAMA YANG DIPERBAIKI ---
+# --- FUNGSI EDIT MESSAGE (VERSI ANTI-CRASH) ---
 async def edit_message(msg: Message, text: str, markup=None, antiflood=True):
     """
-    Mengedit pesan dengan fallback ke 'aio.edit_message_text' 
-    jika 'msg.edit_text' gagal karena masalah koneksi.
+    Mengedit pesan dengan penanganan khusus untuk error SSL Shutdown.
     """
     if not msg:
         return None
 
     try:
-        # METODE 1: Coba edit langsung dari objek pesan (Standard)
-        # Cek msg._client agar tidak error "Client has not been started yet"
+        # Coba edit langsung dari objek pesan
         if msg._client and msg._client.is_connected:
             return await msg.edit_text(
                 text=text,
@@ -241,8 +240,7 @@ async def edit_message(msg: Message, text: str, markup=None, antiflood=True):
                 disable_web_page_preview=True
             )
         
-        # METODE 2: Fallback ke Klien Global (aio)
-        # Jika metode 1 gagal atau klien terputus, gunakan ini.
+        # Fallback ke Klien Global (aio)
         elif aio.is_connected:
             return await aio.edit_message_text(
                 chat_id=msg.chat.id,
@@ -251,21 +249,25 @@ async def edit_message(msg: Message, text: str, markup=None, antiflood=True):
                 reply_markup=markup,
                 disable_web_page_preview=True
             )
-        else:
-            LOGGER.warning("Edit Message: Gagal, kedua klien (msg & aio) tidak terhubung.")
-            return None
 
     except MessageNotModified:
-        pass # Isi pesan sama, abaikan
+        pass # Pesan sama, abaikan
     except FloodWait as e:
         if antiflood:
             await asyncio.sleep(e.value)
             return await edit_message(msg, text, markup, antiflood)
     except MessageIdInvalid:
-        pass # Pesan sudah dihapus
+        pass # Pesan sudah hilang
     except RPCError as e:
-        LOGGER.error(f"RPCError Edit Message: {e}")
+        # Error umum Telegram
+        LOGGER.warning(f"RPCError Edit: {e}")
+    except (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError, TimeoutError) as e:
+        # [DEBUG] Tangkap Error SSL di sini agar tidak jadi 'Future exception'
+        if "SSL shutdown" in str(e):
+            # LOGGER.debug("SSL Shutdown ignored during edit_message")
+            pass
+        else:
+            LOGGER.error(f"Connection Error Edit: {e}")
     except Exception as e:
-        # Log error generik, tapi jangan crash
         LOGGER.error(f"Error Edit Message: {e}")
         return None
