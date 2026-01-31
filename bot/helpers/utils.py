@@ -11,7 +11,7 @@ import re
 
 from pathlib import Path
 from urllib.parse import quote
-from aiohttp import ClientTimeout
+from aiohttp import ClientTimeout, TCPConnector # <--- [UPDATE 1] Tambahkan TCPConnector
 from pyrogram.errors import MessageNotModified
 from concurrent.futures import ThreadPoolExecutor
 from pyrogram.errors import FloodWait
@@ -31,7 +31,11 @@ async def download_file(url, path, retries=3, timeout=30):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     for attempt in range(1, retries + 1):
         try:
-            async with aiohttp.ClientSession(timeout=ClientTimeout(total=timeout)) as session:
+            # [UPDATE 2] Tambahkan connector dengan force_close=True
+            async with aiohttp.ClientSession(
+                connector=TCPConnector(force_close=True), 
+                timeout=ClientTimeout(total=timeout)
+            ) as session:
                 async with session.get(url) as response:
                     if response.status == 200:
                         with open(path, 'wb') as f:
@@ -53,6 +57,7 @@ async def download_file(url, path, retries=3, timeout=30):
             await asyncio.sleep(2 ** attempt)
 
 async def format_string(text:str, data:dict, user=None):
+    # ... (SISA KODE KE BAWAH TETAP SAMA SEPERTI SEBELUMNYA) ...
     def safe_get(key):
         val = data.get(key)
         if val is None: return ''
@@ -143,14 +148,8 @@ async def create_link(path, basepath):
 
     return rclone_link, index_link
 
-# =========================================================================
-#  SMART ZIP HANDLER (Auto Detect: Cloud=Single, Telegram=Split)
-# =========================================================================
-
 async def zip_handler(folderpath):
     loop = asyncio.get_running_loop()
-    
-    # 1. Deteksi Mode Upload User
     user_mode = bot_set.upload_mode
     try:
         parts = folderpath.split(os.sep)
@@ -163,39 +162,30 @@ async def zip_handler(folderpath):
                 break
     except: pass
 
-    # 2. Logika Zip
     if user_mode == 'Telegram':
         LOGGER.info(f"[ZIP] Mode Telegram: Menggunakan Split Zip (.zip, .part2.zip)")
         with ThreadPoolExecutor() as pool:
             zips = await loop.run_in_executor(pool, split_zip_folder, folderpath)
         return zips
     else:
-        # Gofile/Buzzheavier/Vikingfiles -> Force System Zip (Single File > 2GB)
         LOGGER.info(f"[ZIP] Mode {user_mode}: Menggunakan System Zip (Single File Utuh)")
         zip_file = await create_zip_system(folderpath)
         return zip_file
 
 async def create_zip_system(folderpath):
-    """Membuat Single Zip menggunakan aplikasi sistem 'zip' (Bypass limit Python)"""
     zip_path = f"{folderpath}.zip"
     if os.path.exists(zip_path): 
         try: os.remove(zip_path)
         except: pass
-
-    # Command: zip -r -0 "output.zip" "."
     cmd = ["zip", "-r", "-0", zip_path, "."]
-    
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd, cwd=folderpath,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         await process.communicate()
-        
-        if process.returncode == 0:
-            return zip_path
+        if process.returncode == 0: return zip_path
         else:
-            # Fallback jika gagal
             with ThreadPoolExecutor() as pool:
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(pool, zip_folder, folderpath)
@@ -205,12 +195,6 @@ async def create_zip_system(folderpath):
             return await loop.run_in_executor(pool, zip_folder, folderpath)
 
 def split_zip_folder(folderpath) -> list:
-    """
-    Split Zip Logic dengan Penamaan Custom:
-    - Part 1: file.zip
-    - Part 2: file.part2.zip
-    - Part 3: file.part3.zip
-    """
     zip_paths = []
     part_num = 1
     current_size = 0
@@ -249,7 +233,6 @@ def split_zip_folder(folderpath) -> list:
     return zip_paths
 
 def zip_folder(folderpath) -> str:
-    """Fallback Single Zip (Python)"""
     zip_path = f"{folderpath}.zip"
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED, allowZip64=True) as zipf:
         for root, dirs, files in os.walk(folderpath):
@@ -257,8 +240,6 @@ def zip_folder(folderpath) -> str:
                 file_path = os.path.join(root, file)
                 zipf.write(file_path, os.path.relpath(file_path, folderpath))
     return zip_path
-
-# =========================================================================
 
 async def move_sorted_playlist(metadata, user) -> str:
     source_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{metadata['provider']}"
