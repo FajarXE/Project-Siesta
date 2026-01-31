@@ -153,6 +153,7 @@ class BeatportAPI:
             LOGGER.debug("Beatport: Token berhasil di-refresh.")
 
     async def _get(self, endpoint: str, params: dict = None):
+        """Fungsi pembantu GET request dengan Auto-Retry (Updated)."""
         await self._init_session()
         if not params:
             params = {}
@@ -163,22 +164,50 @@ class BeatportAPI:
             except Exception as e:
                 raise BeatportError(f"Token kedaluwarsa dan gagal di-refresh: {e}")
 
-        async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(use_access_token=True)) as r:
-            if r.status == 401:
-                raise BeatportError("Token tidak valid atau kedaluwarsa.")
-            if r.status == 403:
-                try:
-                    detail = (await r.json()).get("detail", "")
-                    if "Territory" in detail:
-                        raise BeatportError("Region locked (Territory Restricted)")
-                except:
-                    pass
-                raise BeatportError(f"Akses ditolak (403): {await r.text()}")
-            
-            if r.status != 200:
-                raise ConnectionError(f"Beatport API Error {r.status}: {await r.text()}")
+        # [MODIFIKASI] Tambahkan logika Retry Loop
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(use_access_token=True)) as r:
+                    
+                    # 1. Sukses
+                    if r.status == 200:
+                        return await r.json()
 
-            return await r.json()
+                    # 2. Server Error / Gateway Timeout (502, 503, 504) -> Coba Lagi
+                    if r.status in [500, 502, 503, 504]:
+                        if attempt < max_retries - 1:
+                            LOGGER.warning(f"Beatport API {r.status} (Percobaan {attempt+1}/{max_retries}). Mengulang dalam 2 detik...")
+                            await asyncio.sleep(2)
+                            continue
+                        else:
+                            raise ConnectionError(f"Beatport API Error {r.status}: {await r.text()}")
+
+                    # 3. Client Error (4xx) -> Jangan Retry
+                    if r.status == 401:
+                        raise BeatportError("Token tidak valid atau kedaluwarsa.")
+                    
+                    if r.status == 403:
+                        try:
+                            detail = (await r.json()).get("detail", "")
+                            if "Territory" in detail:
+                                raise BeatportError("Region locked (Territory Restricted)")
+                        except: pass
+                        raise BeatportError(f"Akses ditolak (403): {await r.text()}")
+                    
+                    if r.status == 404:
+                        raise BeatportError(f"Item tidak ditemukan (404)")
+                    
+                    # Error lainnya
+                    raise ConnectionError(f"Beatport API Error {r.status}: {await r.text()}")
+
+            except aiohttp.ClientConnectorError as e:
+                # 4. Koneksi Putus (Proxy/Internet) -> Coba Lagi
+                if attempt < max_retries - 1:
+                    LOGGER.warning(f"Koneksi Beatport error: {e}. Mengulang...")
+                    await asyncio.sleep(2)
+                    continue
+                raise e
 
     # --- Endpoint Katalog ---
 
