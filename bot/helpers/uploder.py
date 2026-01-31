@@ -1,4 +1,4 @@
-# [FILE: bot/helpers/uploder.py]
+# [FILE: bot/helpers/uploder.py] - VERSI DEBUG KHUSUS
 
 import os
 import asyncio
@@ -43,10 +43,10 @@ def create_cloud_caption(metadata):
     return f"<b>ᴛɪᴛʟᴇ</b> : {title}\n<b>ᴀʀᴛɪsᴛ</b> : {artist}\n<b>ʀᴇʟᴇᴀsᴇ ᴅᴀᴛᴇ</b> : {date}\n<b>ᴛᴏᴛᴀʟ ᴛʀᴀᴄᴋs</b> : {total_tracks}\n<b>ᴛᴏᴛᴀʟ ᴠᴏʟᴜᴍᴇs</b> : {total_volumes}\n<b>ǫᴜᴀʟɪᴛʏ</b> : {quality}\n<b>ᴘʀᴏᴠɪᴅᴇʀ</b> : {provider}\n<b>ᴇxᴘʟɪᴄɪᴛ</b> : {explicit}"
 
 async def upload_to_cloud_handler(filepath, user, metadata, mode):
+    LOGGER.info(f"[DEBUG UPLOADER] Memulai Handler Cloud. Mode: {mode}, Path: {filepath}")
     user_id = user['user_id']
     user_data = bot_set.user_data.get(user_id, {})
     
-    # Normalisasi mode string (Gofile, gofile -> Gofile)
     mode = mode.title() if mode else 'Telegram'
 
     if mode == 'Gofile': token = user_data.get('gofile_token')
@@ -55,6 +55,7 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
     else: token = None
     
     if not token:
+        LOGGER.warning(f"[DEBUG UPLOADER] Token Kosong untuk {mode}!")
         await send_message(user, f"⚠️ <b>{mode} Token Missing!</b>", 'text')
         return None
 
@@ -64,13 +65,15 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
         "vikingfiles": {"api": user_data.get('viking_token')}
     }
     
-    # Tentukan base path yang aman
     if isinstance(filepath, list): 
         base_path = os.path.dirname(filepath[0])
+        LOGGER.info(f"[DEBUG UPLOADER] Base Path (List): {base_path}")
     elif os.path.isfile(filepath):
         base_path = os.path.dirname(filepath)
+        LOGGER.info(f"[DEBUG UPLOADER] Base Path (File): {base_path}")
     else:
         base_path = os.path.dirname(filepath.rstrip('/'))
+        LOGGER.info(f"[DEBUG UPLOADER] Base Path (Dir): {base_path}")
         
     listener = FakeListener(server_dict)
     uploader = DirectUpload(listener=listener, path=base_path)
@@ -78,14 +81,12 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
     try:
         folder_name = metadata.get('title', 'Unknown Album')
 
-        # ==========================================
-        # KASUS A: LIST FILES (SPLIT ZIP: .zip, .part2.zip)
-        # ==========================================
+        # KASUS A: LIST FILES
         if isinstance(filepath, list):
+            LOGGER.info("[DEBUG UPLOADER] Terdeteksi LIST FILES (Split Zip)")
             if 'bot_msg' in user:
                 await edit_message(user['bot_msg'], f"📂 Detected {len(filepath)} Split Files. Uploading to {mode}...")
 
-            # 1. GOFILE (Folder)
             if mode == 'Gofile':
                 root_id = await uploader.gofile_get_root(token)
                 new_folder = await uploader.gofile_create_folder_async(token, root_id, folder_name)
@@ -97,7 +98,6 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                         await uploader.upload(os.path.basename(file_part), 0, 'gofile', specific_folder_id=folder_id)
                     return f"https://gofile.io/d/{final_link}"
 
-            # 2. BUZZHEAVIER (Folder)
             elif mode == 'Buzzheavier':
                 root_id = await uploader.buzzheavier_get_root(token)
                 parent_id = await uploader.buzzheavier_create_folder_async(token, root_id, folder_name)
@@ -112,7 +112,6 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                 if target_folder: return f"https://buzzheavier.com/{target_folder}"
                 else: return "\n".join(uploaded_links)
 
-            # 3. VIKINGFILES (List Links)
             elif mode == 'Vikingfiles':
                 links = []
                 for index, file_part in enumerate(filepath, 1):
@@ -121,10 +120,9 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                     if res: links.append(list(res.values())[0])
                 return "\n".join(links)
 
-        # ==========================================
-        # KASUS B: SINGLE FILE (ZIP UTUH)
-        # ==========================================
+        # KASUS B: SINGLE FILE
         elif os.path.isfile(filepath):
+            LOGGER.info("[DEBUG UPLOADER] Terdeteksi SINGLE FILE")
             if 'bot_msg' in user: await edit_message(user['bot_msg'], f"🚀 Uploading to {mode}...")
             
             if mode == 'Buzzheavier':
@@ -138,17 +136,14 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                 res = await uploader.upload(os.path.basename(filepath), 0, mode.lower())
                 if res: return list(res.values())[0]
 
-        # ==========================================
-        # KASUS C: FOLDER ASLI (Belum Zip)
-        # ==========================================
+        # KASUS C: FOLDER ASLI
         elif os.path.isdir(filepath):
+            LOGGER.info("[DEBUG UPLOADER] Terdeteksi FOLDER (Non-Zip)")
             files = [f for f in os.listdir(filepath) if os.path.isfile(os.path.join(filepath, f))]
             
-            # 1. BUZZHEAVIER (Folder)
             if mode == 'Buzzheavier':
                 if 'bot_msg' in user: await edit_message(user['bot_msg'], f"📂 Uploading Folder to Buzzheavier...")
-                uploader.path = filepath # Update path ke dalam folder
-                
+                uploader.path = filepath 
                 root_id = await uploader.buzzheavier_get_root(token)
                 parent_id = await uploader.buzzheavier_create_folder_async(token, root_id, folder_name)
                 target_folder = parent_id if parent_id else None
@@ -162,10 +157,9 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                 if target_folder: return f"https://buzzheavier.com/{target_folder}"
                 return "\n".join(links)
 
-            # 2. GOFILE (Folder)
             elif mode == 'Gofile':
                 if 'bot_msg' in user: await edit_message(user['bot_msg'], f"📂 Creating Gofile Folder...")
-                uploader.path = filepath # Update path ke dalam folder
+                uploader.path = filepath 
 
                 root_id = await uploader.gofile_get_root(token)
                 new_folder = await uploader.gofile_create_folder_async(token, root_id, folder_name)
@@ -180,9 +174,8 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                 else:
                     return None
 
-            # 3. VIKINGFILES (List Links)
             elif mode == 'Vikingfiles':
-                uploader.path = filepath # Update path ke dalam folder
+                uploader.path = filepath 
                 links = []
                 for index, filename in enumerate(files, 1):
                     await edit_message(user['bot_msg'], f"🚀 Uploading {index}/{len(files)} to Vikingfiles...")
@@ -191,38 +184,31 @@ async def upload_to_cloud_handler(filepath, user, metadata, mode):
                 return "\n".join(links)
 
     except Exception as e:
-        LOGGER.error(f"Cloud Upload Error ({mode}): {e}")
+        LOGGER.error(f"[DEBUG UPLOADER] Exception di Handler: {e}")
         await send_message(user, f"⚠️ {mode} Error: {e}", 'text')
     
     return None
 
-# --- TASK HANDLERS (DIPERBAIKI DENGAN LOGIC STOP) ---
+# --- TASK HANDLERS (DEBUGGED) ---
 
 async def album_upload(metadata, user):
     user_dict = user.copy()
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
-    # [FIX] Pastikan mode check case-insensitive
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'): target = metadata['zip_path'] 
-        
         link = await upload_to_cloud_handler(target, user, metadata, user_mode.title())
-        
         if link:
             caption = create_cloud_caption(metadata)
             caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
-            
             if metadata.get('poster_msg'): await edit_message(metadata['poster_msg'], caption)
             else: await send_message(user, caption, 'text')
         else:
-             # Pesan error JIKA gagal
              await send_message(user, f"❌ <b>Upload Failed!</b>\nCould not upload to {user_mode}.", 'text')
-            
         await cleanup(None, metadata, user_dict)
-        return # [PENTING] STOP PROCESS DI SINI (Jangan Lanjut ke Bawah)
+        return 
 
-    # --- FALLBACK (Hanya dijalankan jika user mode = Telegram/Local) ---
     if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'):
@@ -246,9 +232,7 @@ async def artist_upload(metadata, user):
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'): target = metadata['zip_path']
-        
         link = await upload_to_cloud_handler(target, user, metadata, user_mode.title())
-        
         if link:
             caption = create_cloud_caption(metadata)
             caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
@@ -256,11 +240,9 @@ async def artist_upload(metadata, user):
             else: await send_message(user, caption, 'text')
         else:
              await send_message(user, f"❌ <b>Upload Failed!</b>\nCould not upload to {user_mode}.", 'text')
-            
         await cleanup(None, metadata, user_dict)
-        return # [PENTING] STOP PROCESS
+        return
     
-    # Fallback...
     if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
@@ -276,30 +258,51 @@ async def artist_upload(metadata, user):
         else: await post_simple_message(user, metadata, rclone_link, index_link)
     await cleanup(None, metadata, user_dict)
 
+# --- [BAGIAN INI YANG KITA DEBUG HABIS-HABISAN] ---
 async def playlist_upload(metadata, user):
-    user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
+    user_id = user['user_id']
+    user_data = bot_set.user_data.get(user_id, {})
+    user_mode = user_data.get('upload_mode', 'Telegram')
     
-    # [FIX] Cek mode dengan .title() agar 'gofile' dan 'Gofile' sama-sama terbaca
+    LOGGER.info(f"------------------------------------------------")
+    LOGGER.info(f"[DEBUG UPLOADER] PLAYLIST UPLOAD DIPANGGIL")
+    LOGGER.info(f"[DEBUG UPLOADER] User ID: {user_id}")
+    LOGGER.info(f"[DEBUG UPLOADER] Raw Mode dari DB: '{user_mode}'")
+    LOGGER.info(f"[DEBUG UPLOADER] Title Mode: '{user_mode.title()}'")
+    LOGGER.info(f"------------------------------------------------")
+
+    # [LOGIC CHECK]
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
+        LOGGER.info(f"[DEBUG UPLOADER] >>> MASUK BLOK CLOUD ({user_mode})")
+        
         target = metadata.get('folderpath')
-        if metadata.get('zip_path'): target = metadata['zip_path'] 
+        if metadata.get('zip_path'): 
+            target = metadata['zip_path'] 
+            LOGGER.info(f"[DEBUG UPLOADER] Target = Zip: {target}")
+        else:
+            LOGGER.info(f"[DEBUG UPLOADER] Target = Folder: {target}")
         
         link = await upload_to_cloud_handler(target, user, metadata, user_mode.title())
         
         if link:
+            LOGGER.info(f"[DEBUG UPLOADER] Upload SUKSES. Link: {link}")
             caption = create_cloud_caption(metadata)
             caption += f"\n\n🔗 <b>{user_mode.upper()} LINK:</b>\n{link}"
             if metadata.get('poster_msg'): await edit_message(metadata['poster_msg'], caption)
             else: await send_message(user, caption, 'text')
         else:
-             # JIKA GAGAL: Stop di sini, jangan lanjut ke bawah
-             await send_message(user, f"❌ <b>Upload Failed!</b>\nCould not upload to {user_mode}.", 'text')
+            LOGGER.error(f"[DEBUG UPLOADER] Upload GAGAL (Link None).")
+            await send_message(user, f"❌ <b>Upload Failed!</b>\nCould not upload to {user_mode}.", 'text')
 
         await cleanup(None, metadata, user)
-        return # [PENTING] STOP PROCESS DI SINI. INI YANG MENCEGAH BANJIR POSTER.
+        LOGGER.info(f"[DEBUG UPLOADER] STOPPING PROCESS (RETURN)")
+        return # HARUS STOP DI SINI
+
+    LOGGER.info(f"[DEBUG UPLOADER] >>> MASUK BLOK FALLBACK (Default/Telegram)")
 
     # --- FALLBACK ---
-    if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
+    if bot_set.upload_mode == 'Local': 
+        await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
             zip_files = metadata['zip_path']
@@ -307,7 +310,8 @@ async def playlist_upload(metadata, user):
             for item in zip_files: await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
         else: await batch_telegram_upload(metadata, user)
     else:
-        # INI BAGIAN YANG MENYEBABKAN BANJIR JIKA KELEWATAN
+        # BAGIAN BANJIR POSTER
+        LOGGER.info(f"[DEBUG UPLOADER] Masuk logika Rclone/Sort...")
         playlist_zip, _, __, ___ = fetch_zip_settings(user)
         if bot_set.playlist_sort and not playlist_zip:
             if bot_set.disable_sort_link: await rclone_upload(user, f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/")
@@ -339,7 +343,7 @@ async def track_upload(metadata, user, disable_link=False):
             try:
                 if os.path.exists(metadata['filepath']): os.remove(metadata['filepath'])
             except: pass
-            return # STOP PROCESS HERE
+            return 
 
     if not upload_success:
         if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
