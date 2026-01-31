@@ -11,17 +11,15 @@ class _DummyManager:
     def __init__(self):
         self.clients = []
         self.quality = None
-        self.global_clients = [] # Fallback atribut untuk beatport baru
-        self.user_clients = {}   # Fallback atribut untuk beatport baru
+        self.global_clients = []
+        self.user_clients = {}
     
-    # Tambahkan method 'get_client' agar pemeriksaan 'if' berfungsi
     def get_client(self, *args, **kwargs):
         return None
     
     def has_private_session(self, *args):
         return False
         
-    # Dummy setup quality agar tidak error jika dipanggil
     async def setup_quality(self, *args, **kwargs):
         pass
 
@@ -161,7 +159,6 @@ def providers_button():
         )
     
     # Cek Beatport (Global OR Private)
-    # Kita cek global_clients untuk admin panel, atau clients standard
     if beatport_manager and (getattr(beatport_manager, 'global_clients', []) or getattr(beatport_manager, 'clients', [])):
         inline_keyboard.append(
             [
@@ -171,8 +168,9 @@ def providers_button():
                 )
             ]
         )
-        
-    if beatsource_manager and beatsource_manager.clients:
+    
+    # Cek Beatsource (Global OR Private)
+    if beatsource_manager and (getattr(beatsource_manager, 'global_clients', []) or getattr(beatsource_manager, 'clients', [])):
         inline_keyboard.append(
             [
                 InlineKeyboardButton(
@@ -521,10 +519,9 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
 
 
 # ==========================================
-# BEATPORT BUTTONS (UPDATED FOR PRIVATE ACC)
+# BEATPORT BUTTONS (PRIVATE ACCOUNT)
 # ==========================================
 
-# 1. Tombol Menu Auth (Private)
 def beatport_user_auth_buttons(is_logged_in: bool):
     buttons = []
     
@@ -536,7 +533,6 @@ def beatport_user_auth_buttons(is_logged_in: bool):
     buttons.append([InlineKeyboardButton("🔙 Back to Quality", callback_data="uset_beatport")])
     return InlineKeyboardMarkup(buttons)
 
-# 2. Beatport Quality Button (Modified)
 def bp_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -555,7 +551,7 @@ def bp_button(quality: dict, user_id: int = None):
             buttons.append(row)
             row = []
     if usetting:
-        # --- TAMBAHAN: Tombol Private Account ---
+        # Tombol Private Account Beatport
         buttons.append([InlineKeyboardButton("🔐 PRIVATE ACCOUNT", callback_data="uset_bp_auth")])
         buttons.append(
             [
@@ -568,7 +564,21 @@ def bp_button(quality: dict, user_id: int = None):
     return InlineKeyboardMarkup(buttons)
 
 
-# Beatsource Button
+# ==========================================
+# BEATSOURCE BUTTONS (PRIVATE ACCOUNT)
+# ==========================================
+
+def beatsource_user_auth_buttons(is_logged_in: bool):
+    buttons = []
+    
+    if is_logged_in:
+        buttons.append([InlineKeyboardButton("🚪 LOGOUT SESSION", callback_data="uset_bs_logout")])
+    else:
+        buttons.append([InlineKeyboardButton("➕ LOGIN ACCOUNT", callback_data="uset_bs_instr")])
+        
+    buttons.append([InlineKeyboardButton("🔙 Back to Quality", callback_data="uset_beatsource")])
+    return InlineKeyboardMarkup(buttons)
+
 def bs_button(quality: dict, user_id: int = None):
     buttons = []
     usetting = user_id is not None
@@ -587,6 +597,8 @@ def bs_button(quality: dict, user_id: int = None):
             buttons.append(row)
             row = []
     if usetting:
+        # Tombol Private Account Beatsource
+        buttons.append([InlineKeyboardButton("🔐 PRIVATE ACCOUNT", callback_data="uset_bs_auth")])
         buttons.append(
             [
                 InlineKeyboardButton(text="Back", callback_data="uset_back")
@@ -596,6 +608,7 @@ def bs_button(quality: dict, user_id: int = None):
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
+
 
 # Soundcloud Button
 def sc_button(quality: dict, user_id: int = None):
@@ -905,17 +918,14 @@ def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text=f"Qobuz Quality", callback_data=f"uset_qobuz")])
     
     # Cek Beatport (Global OR Private Session)
-    # Jika Global clients ada OR User sudah punya sesi privat
-    beatport_available = False
     if beatport_manager:
         if getattr(beatport_manager, 'global_clients', []) or beatport_manager.has_private_session(user_id):
-            beatport_available = True
-            
-    if beatport_available:
-        buttons.append([InlineKeyboardButton(text=f"Beatport Quality", callback_data=f"uset_beatport")])
+            buttons.append([InlineKeyboardButton(text=f"Beatport Quality", callback_data=f"uset_beatport")])
 
-    if beatsource_manager and beatsource_manager.clients:
-        buttons.append([InlineKeyboardButton(text=f"Beatsource Quality", callback_data=f"uset_beatsource")])
+    # Cek Beatsource (Global OR Private Session)
+    if beatsource_manager:
+        if getattr(beatsource_manager, 'global_clients', []) or beatsource_manager.has_private_session(user_id):
+            buttons.append([InlineKeyboardButton(text=f"Beatsource Quality", callback_data=f"uset_beatsource")])
     
     if soundcloud_manager and soundcloud_manager.get_client():
         buttons.append([InlineKeyboardButton(text=f"Soundcloud Quality", callback_data=f"uset_soundcloud")])
