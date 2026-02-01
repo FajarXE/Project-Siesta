@@ -5,6 +5,7 @@ import aiofiles
 import os
 import traceback
 import asyncio
+import shutil # <--- TAMBAHAN PENTING
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -30,27 +31,20 @@ from ..utils import fetch_zip_settings
 from ...settings import bot_set
 import bot.helpers.translations as lang
 
-# --- TAMBAHAN BARU: IMPOR MANAGER LIRIK ---
 try:
     from bot.helpers.lyrics.manager import lyrics_manager
 except ImportError:
     lyrics_manager = None
-# --- BATAS TAMBAHAN ---
 
 
 async def download_soundcloud_track(download_url: str, download_type: str, filepath: str):
     """
     Pengunduh file Soundcloud.
-    Menangani 3 kasus:
-    1. 'original': File asli (wav, flac, mp3) -> Unduh langsung.
-    2. 'progressive': Stream MP3/OGG -> Unduh langsung.
-    3. 'hls': Stream M3U8 (AAC) -> Gunakan ffmpeg.
     """
     try:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         if download_type == 'original' or download_type == 'progressive':
-            # Ini adalah URL unduhan langsung
             LOGGER.debug(f"Soundcloud: Mengunduh (progresif/asli) dari {download_url}")
             async with aiohttp.ClientSession() as session:
                 async with session.get(download_url) as response:
@@ -58,20 +52,18 @@ async def download_soundcloud_track(download_url: str, download_type: str, filep
                     async with aiofiles.open(filepath, "wb") as f:
                         async for chunk in response.content.iter_chunked(8192):
                             await f.write(chunk)
-            return None # Sukses
+            return None 
 
         elif download_type == 'hls':
-            # Ini adalah stream M3U8, perlu ffmpeg
-            # Logika dari interface.py: '-c copy' dan '-bsf:a aac_adtstoasc'
             LOGGER.debug(f"Soundcloud: Menggunakan ffmpeg (HLS) untuk {download_url}")
             
             args = [
                 'ffmpeg',
-                '-y',               # Timpa file output jika ada
-                '-i', download_url,   # Input: URL m3u8
-                '-c', 'copy',       # Salin codec (tidak re-encode)
-                '-bsf:a', 'aac_adtstoasc', # Perbaikan untuk stream AAC
-                filepath            # File output (harus .m4a)
+                '-y',               
+                '-i', download_url,   
+                '-c', 'copy',       
+                '-bsf:a', 'aac_adtstoasc', 
+                filepath            
             ]
             
             process = await asyncio.create_subprocess_exec(
@@ -85,13 +77,12 @@ async def download_soundcloud_track(download_url: str, download_type: str, filep
             if process.returncode != 0:
                 error_msg = stderr.decode()
                 LOGGER.error(f"Soundcloud: ffmpeg gagal!\n{error_msg}")
-                # Hapus file yang mungkin rusak
                 if os.path.exists(filepath):
                     os.remove(filepath)
                 return f"ffmpeg gagal: {error_msg}"
             
             LOGGER.debug("Soundcloud: ffmpeg HLS berhasil digabungkan.")
-            return None # Sukses
+            return None 
 
         else:
             return f"Tipe unduhan tidak dikenal: {download_type}"
@@ -102,34 +93,23 @@ async def download_soundcloud_track(download_url: str, download_type: str, filep
 
 async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=True, \
     filepath=None, disable_link=False):
-    """
-    Memulai alur kerja untuk satu track Soundcloud.
-    (Versi ini memunculkan Exception, bukan 'return False')
-    """
+    """Memulai alur kerja untuk satu track Soundcloud."""
     
     track_meta = None
     try:
-        # ----- PERBAIKAN LOGIKA DIMULAI -----
-        # Cek apakah pre_data adalah metadata yang sudah diproses (dari album/playlist)
-        # atau data API mentah (dari resolve URL tunggal).
         if pre_data and pre_data.get('provider') == 'Soundcloud':
-            # Ini adalah metadata yang sudah diproses dari start_album_or_playlist
             LOGGER.debug(f"SC start_track: Menggunakan pre_data yang sudah diproses.")
             track_meta = pre_data
         else:
-            # Ini adalah data API mentah dari resolve (atau tidak ada pre_data)
-            # Kita HARUS memanggil process_track_metadata untuk mem-parsingnya.
             LOGGER.debug(f"SC start_track: Memanggil process_track_metadata.")
             track_meta = await process_track_metadata(
                 item_id, 
                 user['r_id'], 
                 user, 
-                pre_data=pre_data # Berikan data mentah (jika ada) untuk di-parse
+                pre_data=pre_data 
             )
-        # ----- PERBAIKAN LOGIKA SELESAI -----
 
         if not filepath:
-            # Sekarang track_meta dijamin memiliki key 'provider'
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album'] or track_meta['title']}"
             filepath = sanitize_filepath(filepath)
             
@@ -151,7 +131,6 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
     filepath += f"/{safe_filename}.{track_meta['extension']}"
     track_meta['filepath'] = filepath
 
-    # Memanggil pengunduh HTTP/FFMPEG kita
     err = await download_soundcloud_track(
         download_url, 
         download_type, 
@@ -162,9 +141,7 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
         raise SoundcloudError(f"Gagal mengunduh track: {err}")
 
     try:
-        # --- MODIFIKASI PENTING: Kirim user_id ke set_metadata agar lirik diambil ---
         await set_metadata(track_meta, user['user_id'])
-        # --- BATAS MODIFIKASI ---
     except FileNotFoundError:
         LOGGER.error(f"[Errno 2] File not found setelah download SC: {filepath}")
         raise SoundcloudError(f"File tidak ditemukan setelah diunduh (path: {filepath})")
@@ -177,15 +154,12 @@ async def start_track(item_id: str, user: dict, pre_data: dict = None, upload=Tr
     if upload:
         await track_upload(track_meta, user, disable_link)
 
-    # --- PERBAIKAN: Kembalikan True jika sukses (untuk run_concurrent_tasks) ---
     return True
-    # --- AKHIR PERBAIKAN ---
 
 
 async def start_album_or_playlist(item_id: str, user: dict, pre_data: dict, media_type: str, upload=True):
     """Memulai alur kerja untuk album atau playlist Soundcloud."""
     try:
-        # 'pre_data' dari resolve sudah ada, tapi kita proses lagi untuk dapat list track
         multi_meta = await process_playlist_or_album(
             item_id, 
             user['r_id'], 
@@ -200,19 +174,34 @@ async def start_album_or_playlist(item_id: str, user: dict, pre_data: dict, medi
     item_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{multi_meta['provider']}/{folder_name}"
     
     item_folder = sanitize_filepath(item_folder)
+    os.makedirs(item_folder, exist_ok=True) # Pastikan folder dibuat
     multi_meta['folderpath'] = item_folder
+
+    # --- TAMBAHAN BARU: Salin Cover ke Folder Album ---
+    # Ini penting agar file cover masuk ke dalam ZIP
+    if multi_meta.get('cover') and os.path.exists(multi_meta['cover']):
+        try:
+            # Ambil ekstensi file asli (jpg/png)
+            ext = os.path.splitext(multi_meta['cover'])[1] or ".jpg"
+            # Nama tujuan 'cover.jpg' agar dikenali pemutar musik
+            dest_cover = os.path.join(item_folder, f"cover{ext}")
+            
+            LOGGER.debug(f"Soundcloud: Menyalin cover ke {dest_cover}")
+            shutil.copy2(multi_meta['cover'], dest_cover)
+        except Exception as e:
+            LOGGER.warning(f"Soundcloud: Gagal menyalin file cover ke folder album: {e}")
+    # --- AKHIR TAMBAHAN ---
 
     if upload:
         multi_meta['poster_msg'] = await post_art_poster(user, multi_meta)
 
     tasks = []
-    # 'multi_meta['tracks']' sudah berisi metadata track LENGKAP
     for track_meta in multi_meta['tracks']:
         tasks.append(start_track(
             track_meta['itemid'], 
             user, 
-            track_meta, # Berikan metadata yang sudah diproses
-            False, # Jangan upload satu per satu
+            track_meta, 
+            False, 
             item_folder
         ))
 
@@ -232,9 +221,7 @@ async def start_album_or_playlist(item_id: str, user: dict, pre_data: dict, medi
     if not successful_tracks:
         raise Exception(f"Tidak ada lagu SC yang berhasil diunduh untuk {multi_meta['title']}.")
 
-    # --- PERBAIKAN: Unpack 4 nilai (urutan baru) ---
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
-    # --- AKHIR PERBAIKAN ---
 
     is_zip = (media_type == 'album' and album_zip) or (media_type == 'playlist' and playlist_zip)
 
@@ -259,7 +246,6 @@ async def start_soundcloud(link: str, user: dict):
         
     user['soundcloud_api'] = client
     
-    # --- PERBAIKAN: Buka link pendek (on.soundcloud.com) ---
     if "on.soundcloud.com" in link:
         LOGGER.debug(f"Soundcloud: Link pendek terdeteksi: {link}. Mengambil URL asli...")
         try:
@@ -271,29 +257,25 @@ async def start_soundcloud(link: str, user: dict):
                             original_link = "https://soundcloud.com" + original_link
                             
                         LOGGER.debug(f"Soundcloud: URL asli ditemukan: {original_link}")
-                        link = original_link # Ganti link lama dengan link asli
+                        link = original_link 
                     else:
                         raise SoundcloudError(f"Gagal me-resolve link pendek (status: {r.status})")
         except Exception as e:
             LOGGER.error(f"Gagal un-shorten link Soundcloud: {e}")
             raise SoundcloudError(f"Gagal me-resolve link pendek: {e}")
     
-    # --- TAMBAHAN BARU: Normalisasi link mobile (m.soundcloud.com) ---
     elif "m.soundcloud.com" in link:
         LOGGER.debug(f"Soundcloud: Link mobile terdeteksi: {link}. Normalisasi...")
         link = link.replace("m.soundcloud.com", "soundcloud.com")
         LOGGER.debug(f"Soundcloud: URL dinormalisasi: {link}")
-    # --- AKHIR TAMBAHAN ---
 
     try:
-        # custom_url_parse sekarang menerima link yang 'panjang' dan 'normal'
         media_type, item_id, extra = await custom_url_parse(link, client)
 
         if media_type == 'artist':
             raise NotImplementedError("Unduhan Artis Soundcloud (semua track) belum didukung.")
         
         elif media_type == 'track':
-            # 'extra' berisi 'pre_data' dari resolve
             await start_track(item_id, user, extra.get('pre_data'))
         
         elif media_type == 'album' or media_type == 'playlist':
