@@ -1003,9 +1003,8 @@ def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
     if livephish_manager and livephish_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"LivePhish Quality", callback_data=f"uset_livephish")])
 
-    if highresaudio_manager and highresaudio_manager.clients:
-        if getattr(highresaudio_manager, 'clients', []) or highresaudio_manager.get_client(user_id):
-            buttons.append([InlineKeyboardButton(text=f"HighResAudio Quality", callback_data=f"uset_highresaudio")])
+    if highresaudio_manager:
+        buttons.append([InlineKeyboardButton(text=f"HighResAudio Quality", callback_data=f"uset_highresaudio")])
     
     if khinsider_manager:
         buttons.append([InlineKeyboardButton(text=f"Khinsider Quality", callback_data=f"uset_khinsider")])
