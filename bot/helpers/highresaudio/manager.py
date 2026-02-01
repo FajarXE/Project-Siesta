@@ -4,6 +4,7 @@ import asyncio
 import itertools
 from bot.logger import LOGGER
 from config import Config
+from bot.helpers.database.mongo_async import database # Import Database
 
 try:
     from .api import HighResAudioApi
@@ -19,16 +20,13 @@ class HighResAudioLoginManager:
     def __init__(self, account_configs: list):
         self.account_configs = account_configs
         self.clients = [] 
-        # [BARU] Dictionary untuk menyimpan sesi akun milik pengguna
-        # Format: {user_id: HighResAudioApi_Object}
+        # Dictionary untuk menyimpan sesi akun milik pengguna
         self.user_clients = {}
         self._client_cycler = None
         
     async def initialize_clients(self):
-        if not self.account_configs:
-            LOGGER.warning("HighResAudio Manager: Tidak ada akun global (Bot) yang dikonfigurasi.")
-            # Jangan return dulu, karena mungkin nanti ada user yang login akun sendiri
-        else:
+        # 1. INISIALISASI AKUN GLOBAL (BOT)
+        if self.account_configs:
             LOGGER.info(f"HighResAudio Manager: Menginisialisasi {len(self.account_configs)} akun global...")
             tasks = []
             for account in self.account_configs:
@@ -42,6 +40,34 @@ class HighResAudioLoginManager:
                 self._client_cycler = itertools.cycle(self.clients)
             else:
                 LOGGER.error("HighResAudio Manager: Gagal login ke SEMUA akun global.")
+        else:
+            LOGGER.warning("HighResAudio Manager: Tidak ada akun global (Bot) yang dikonfigurasi.")
+
+        # 2. [BARU] MUAT AKUN PENGGUNA DARI DATABASE
+        LOGGER.info("HighResAudio Manager: Memuat sesi pengguna dari database...")
+        # Ambil semua data user yang punya 'highresaudio_auth'
+        # Asumsi: Anda menyimpan kredensial di field 'highresaudio_auth' dalam format 'email:password'
+        # Atau kita iterasi semua user untuk cek
+        all_users = await database.get_all_users() # Pastikan fungsi ini ada di helper database Anda
+        
+        count_relogin = 0
+        for user_doc in all_users:
+            user_id = user_doc.get('user_id')
+            # Cek apakah user ini punya data login HRA yang tersimpan
+            hra_data = user_doc.get('highresaudio_auth') # Format: "email:password"
+            
+            if hra_data and ":" in hra_data:
+                try:
+                    email, password = hra_data.split(":", 1)
+                    # Login diam-diam (Silent Login)
+                    success, _ = await self.add_user_account(user_id, email, password, save_db=False)
+                    if success:
+                        count_relogin += 1
+                except Exception as e:
+                    LOGGER.warning(f"Gagal restore sesi HRA untuk user {user_id}: {e}")
+
+        if count_relogin > 0:
+            LOGGER.info(f"HighResAudio Manager: Berhasil memulihkan {count_relogin} sesi pengguna.")
 
     async def _login_task(self, account: dict):
         proxy = account.get('proxy')
@@ -49,9 +75,7 @@ class HighResAudioLoginManager:
             exception=HighResAudioError,
             proxy=proxy 
         )
-        
         try:
-            # Menggunakan to_thread karena requests bersifat blocking
             await asyncio.to_thread(
                 client.auth,
                 username=account['email'], 
@@ -59,19 +83,18 @@ class HighResAudioLoginManager:
             )
             return client
         except Exception as e:
-            LOGGER.error(f"HighResAudio Manager: Gagal login ke Akun {account['email']}. Error: {e}")
+            LOGGER.error(f"HighResAudio Manager: Gagal login ke Akun Global {account['email']}. Error: {e}")
             if hasattr(client, 'close_session'):
                 client.close_session()
             return None
 
-    # [BARU] Fungsi untuk pengguna menambahkan akun mereka sendiri
-    async def add_user_account(self, user_id: int, email, password):
+    # [MODIFIKASI] Tambahkan parameter save_db
+    async def add_user_account(self, user_id: int, email, password, save_db=True):
         LOGGER.info(f"HighResAudio: User {user_id} mencoba login akun {email}...")
         
-        # Buat client baru khusus untuk user ini
         client = HighResAudioApi(
             exception=HighResAudioError,
-            proxy=None # User biasa biasanya direct connection (atau bisa tambah logika proxy user nanti)
+            proxy=None 
         )
         
         try:
@@ -81,14 +104,17 @@ class HighResAudioLoginManager:
                 password=password
             )
             
-            # Jika user sebelumnya sudah punya akun, tutup sesi lama
             if user_id in self.user_clients:
-                try:
-                    self.user_clients[user_id].close_session()
+                try: self.user_clients[user_id].close_session()
                 except: pass
             
-            # Simpan sesi baru
             self.user_clients[user_id] = client
+            
+            # [BARU] Simpan ke Database agar awet
+            if save_db:
+                auth_str = f"{email}:{password}"
+                await database.save_user_settings(user_id, {'highresaudio_auth': auth_str})
+            
             LOGGER.info(f"HighResAudio: User {user_id} berhasil login.")
             return True, "Login Berhasil!"
             
@@ -98,32 +124,35 @@ class HighResAudioLoginManager:
                 client.close_session()
             return False, str(e)
 
-    # [MODIFIKASI] Ambil client berdasarkan User ID
+    async def remove_user_account(self, user_id: int):
+        # 1. Hapus Sesi Memory
+        if user_id in self.user_clients:
+            try: self.user_clients[user_id].close_session()
+            except: pass
+            del self.user_clients[user_id]
+            
+        # 2. Hapus dari Database
+        await database.save_user_settings(user_id, {'highresaudio_auth': None})
+
     def get_client(self, user_id: int = None) -> HighResAudioApi | None:
-        # 1. Cek apakah user punya akun pribadi
         if user_id and user_id in self.user_clients:
             return self.user_clients[user_id]
         
-        # 2. Jika tidak, gunakan akun global (Load Balanced)
         if self._client_cycler:
             try:
                 return next(self._client_cycler)
             except StopIteration:
                 pass
                 
-        LOGGER.error("HighResAudio Manager: Tidak ada klien yang tersedia (User maupun Global).")
+        # Fallback jika tidak ada client sama sekali
         return None
 
     async def shutdown(self):
         LOGGER.info("HighResAudio Manager: Memulai shutdown...")
-        
-        # Tutup akun global
         for client in self.clients:
             if hasattr(client, 'close_session'):
                 try: client.close_session()
                 except: pass
-                
-        # Tutup akun user
         for uid, client in self.user_clients.items():
             if hasattr(client, 'close_session'):
                 try: client.close_session()
@@ -132,6 +161,5 @@ class HighResAudioLoginManager:
         self.clients = []
         self.user_clients = {}
         self._client_cycler = None
-        LOGGER.info("HighResAudio Manager: Semua sesi ditutup.")
 
 highresaudio_manager = HighResAudioLoginManager(Config.HIGHRESAUDIO_ACCOUNTS)
