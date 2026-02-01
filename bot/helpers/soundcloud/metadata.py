@@ -187,50 +187,42 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['date'] = (track_data.get('created_at') or '').split('T')[0]
     metadata['year'] = get_release_year(track_data)
     
-    # 5. Track Number & Total Tracks
-    metadata['tracknumber'] = str(track_data.get('track_number') or 1)
-    # Coba hitung total track dari durasi (logika kasar) atau default 1
+    # 5. Track Number & Total Tracks (PERBAIKAN UTAMA DI SINI)
+    # Menggunakan zfill(2) agar formatnya menjadi 01, 02, dst.
+    raw_tn = track_data.get('track_number') or 1
+    metadata['tracknumber'] = str(raw_tn).zfill(2)
+    
     metadata['totaltracks'] = str(track_data.get('full_duration', 0) // track_data.get('duration', 1) or 1)
     
-    # 6. Disc Number / Part (Soundcloud tidak punya konsep disc, jadi default 1/1)
+    # 6. Disc Number / Part
     metadata['discnumber'] = "1"
     metadata['totaldiscs'] = "1"
+    metadata['totalvolumes'] = "1" 
     
     # 7. Genre
     metadata['genre'] = track_data.get('genre') or ''
     
-    # --- TAG TAMBAHAN (YANG ANDA MINTA) ---
-    
-    # Composer (Komposer)
+    # --- TAG TAMBAHAN ---
     metadata['composer'] = publisher_meta.get('writer_composer') or publisher_meta.get('composer') or ''
-    
-    # Producer (Produser) - Jarang ada di API SC, kita coba ambil dari description jika perlu, 
-    # tapi lebih aman dikosongkan atau disamakan dengan artist jika tidak ada.
     metadata['producer'] = publisher_meta.get('producer') or '' 
     
     # Label / Publisher
     metadata['label'] = publisher_meta.get('publisher') or ''
-    metadata['publisher'] = metadata['label'] # Redundansi untuk kompatibilitas
+    metadata['publisher'] = metadata['label'] 
     
     # Copyright
-    # Prioritas: c_line -> p_line -> default string
     c_line = publisher_meta.get('c_line')
     p_line = publisher_meta.get('p_line')
-    
     if c_line:
         metadata['copyright'] = c_line
     elif p_line:
         metadata['copyright'] = p_line
     else:
-        # Fallback copyright ke tahun dan artis
         yr = metadata['year'] or '2026'
         metadata['copyright'] = f"© {yr} {metadata['artist']}"
 
-    # ISRC
+    # ISRC / UPC
     metadata['isrc'] = publisher_meta.get('isrc') or ''
-    
-    # UPC / BARCODE / EAN
-    # Soundcloud biasanya menyimpannya di 'upc_or_ean'
     upc_code = publisher_meta.get('upc_or_ean') or ''
     metadata['upc'] = upc_code
     metadata['barcode'] = upc_code
@@ -240,10 +232,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['duration'] = track_data.get('duration', 0) // 1000
     metadata['provider'] = 'Soundcloud'
     metadata['type'] = 'track'
-    
     metadata['explicit'] = track_data.get('explicit', False)
-    # Total Volumes (sama dengan Total Discs)
-    metadata['totalvolumes'] = "1" 
 
     # --- Sampul ---
     art_url_base = track_data.get('artwork_url') or track_data.get('user', {}).get('avatar_url')
@@ -351,8 +340,6 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
     metadata['provider'] = 'Soundcloud'
     
     metadata['explicit'] = data.get('explicit', False)
-    
-    # Atur Disc total 1 untuk album
     metadata['totalvolumes'] = "1"
     metadata['totaldiscs'] = "1"
     metadata['discnumber'] = "1"
@@ -364,12 +351,10 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
     metadata['date'] = (data.get('created_at') or '').split('T')[0]
     metadata['year'] = get_release_year(data)
     
-    # Ambil UPC/EAN untuk Album
     metadata['upc'] = data.get('upc_or_ean') or ''
     metadata['barcode'] = metadata['upc']
     metadata['ean'] = metadata['upc']
     
-    # Ambil Label untuk Album
     metadata['label'] = data.get('label_name') or ''
     metadata['publisher'] = metadata['label']
     
@@ -408,12 +393,10 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
             
-            # Warisi data album ke track jika track tidak punya
             if not track_meta.get('album'): track_meta['album'] = metadata['title']
             if not track_meta.get('label'): track_meta['label'] = metadata['label']
             if not track_meta.get('publisher'): track_meta['publisher'] = metadata['publisher']
             
-            # Set Total Tracks
             track_meta['totaltracks'] = str(len(tracks_list))
             
             metadata['tracks'].append(track_meta)
