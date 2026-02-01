@@ -112,6 +112,8 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['release_date'] = metadata['release_date'] 
             track_meta['explicit'] = metadata['explicit']
             track_meta['genre'] = metadata['genre']
+            track_meta['subgenre'] = metadata['subgenre']
+            track_meta['composer'] = metadata['composer']
             track_meta['publisher'] = metadata['publisher']
             track_meta['upc'] = metadata['upc']
 
