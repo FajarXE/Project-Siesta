@@ -26,11 +26,6 @@ from ...settings import bot_set
 import bot.helpers.translations as lang
 from bot.logger import LOGGER
 
-try:
-    from bot.helpers.lyrics.manager import lyrics_manager
-except ImportError:
-    lyrics_manager = None
-
 
 async def start_highresaudio(url: str, user: dict):
     try:
@@ -46,20 +41,12 @@ async def start_highresaudio(url: str, user: dict):
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
     
-    # --- LOAD BALANCING UNTUK DOWNLOAD ---
-    # Coba ambil klien acak dari manager untuk meratakan beban bandwidth
-    # (HighResAudio sepertinya tidak mengikat URL download ke IP/Sesi secara ketat)
-    clients = highresaudio_manager.clients
-    if clients:
-        client = random.choice(clients)
-    else:
-        # Fallback ke klien user
-        client = user.get('highresaudio_api')
+    # [MODIFIKASI] Ambil client via Manager (User Aware)
+    client = highresaudio_manager.get_client(user.get('user_id'))
         
     if not client:
          raise HighResAudioError("Tidak ada klien HighResAudio yang tersedia untuk download.")
-    # -------------------------------------
-
+    
     if not track_meta:
         raise HighResAudioError("start_track dipanggil tanpa track_meta.")
             
@@ -83,6 +70,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     try:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
+        # Download menggunakan client yang didapat
         await asyncio.to_thread(
             download_track_unencrypted,
             client, 
@@ -141,8 +129,6 @@ def download_booklet(client, url, temp_location):
 
 
 async def start_album(album_url: str, user: dict, upload=True):
-    # Untuk metadata awal, kita bisa pakai klien user dulu, 
-    # load balancing internal metadata.py akan menangani rotasinya.
     try:
         album_meta = await process_album_metadata(album_url, user['r_id'], user)
     except Exception as e:
@@ -202,9 +188,11 @@ async def start_album(album_url: str, user: dict, upload=True):
     if 'booklet_url' in album_meta:
         LOGGER.info("HighResAudio: Mengunduh booklet...")
         booklet_path = os.path.join(album_folder, "booklet.pdf")
-        # Gunakan klien acak untuk booklet juga
-        dl_client = random.choice(highresaudio_manager.clients) if highresaudio_manager.clients else user['highresaudio_api']
-        await asyncio.to_thread(download_booklet, dl_client, album_meta['booklet_url'], booklet_path)
+        
+        # [MODIFIKASI] Gunakan klien user juga untuk booklet
+        dl_client = highresaudio_manager.get_client(user.get('user_id'))
+        if dl_client:
+            await asyncio.to_thread(download_booklet, dl_client, album_meta['booklet_url'], booklet_path)
     
     if album_meta.get('cover') and os.path.exists(album_meta['cover']):
         try:
