@@ -41,12 +41,11 @@ async def start_highresaudio(url: str, user: dict):
 async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=True, \
     filepath=None, disable_link=False):
     
-    # [MODIFIKASI] Ambil client via Manager (User Aware)
     client = highresaudio_manager.get_client(user.get('user_id'))
-        
-    if not client:
-         raise HighResAudioError("Tidak ada klien HighResAudio yang tersedia untuk download.")
     
+    if not client:
+         raise HighResAudioError("Tidak ada klien HighResAudio yang tersedia (Silakan login akun sendiri atau hubungi Admin).")
+
     if not track_meta:
         raise HighResAudioError("start_track dipanggil tanpa track_meta.")
             
@@ -70,7 +69,6 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
     try:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
-        # Download menggunakan client yang didapat
         await asyncio.to_thread(
             download_track_unencrypted,
             client, 
