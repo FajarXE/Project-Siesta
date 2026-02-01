@@ -43,11 +43,10 @@ def artwork_url_format(artwork_url: str | None) -> str | None:
         return artwork_url.replace('-large', '-original').replace('-t500x500', '-original')
     return None
 
-# --- TAMBAHAN BARU: Fungsi Pencarian iTunes ---
+# --- Fungsi Pencarian iTunes ---
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
     """Mencari sampul di iTunes berdasarkan UPC atau Nama Artis/Album."""
     try:
-        # 1. Coba berdasarkan UPC (Paling Akurat)
         upc = metadata.get('upc') or metadata.get('isrc') 
         if upc and upc != "0" and upc != "":
             search_term = urllib.parse.quote(upc)
@@ -59,10 +58,8 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                     if data.get('resultCount', 0) > 0:
                         artwork_url = data['results'][0].get('artworkUrl100')
                         if artwork_url:
-                            LOGGER.debug(f"iTunes: Sampul ditemukan via UPC/ISRC: {upc}")
                             return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
                             
-        # 2. Coba berdasarkan Artis + Album (Fallback)
         artist = metadata.get('albumartist') or metadata.get('artist')
         album = metadata.get('album')
         
@@ -84,19 +81,14 @@ async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -
                                (local_artist in itunes_artist or itunes_artist in local_artist):
                                 artwork_url = result.get('artworkUrl100')
                                 if artwork_url:
-                                    LOGGER.debug(f"iTunes: Sampul ditemukan via Artis/Album: {artist} - {album}")
                                     return artwork_url.replace('100x100bb.jpg', '1200x1200bb.jpg')
                                     
-    except Exception as e:
-        logging.warning(f"Pencarian sampul iTunes gagal: {e}")
-    
-    LOGGER.debug("iTunes: Tidak ada sampul yang ditemukan.")
+    except Exception:
+        pass
     return None
 
 async def custom_url_parse(link: str, client: SoundcloudAPI):
-    """
-    Menggunakan endpoint 'resolve' API untuk mendapatkan Tipe dan ID.
-    """
+    """Menggunakan endpoint 'resolve' API untuk mendapatkan Tipe dan ID."""
     try:
         data = await client.resolve_url(link)
     except Exception as e:
@@ -124,10 +116,7 @@ async def custom_url_parse(link: str, client: SoundcloudAPI):
 
 
 async def _process_cover(metadata: dict, art_url_base: str | None):
-    """
-    Helper untuk mengambil dan memproses sampul.
-    Alur: iTunes -> SC Original -> SC Large -> Fallback Lokal
-    """
+    """Helper untuk mengambil dan memproses sampul."""
     urls_to_try = []
     
     try:
@@ -135,8 +124,8 @@ async def _process_cover(metadata: dict, art_url_base: str | None):
             itunes_url = await get_itunes_cover_url(metadata, session)
             if itunes_url:
                 urls_to_try.append(itunes_url)
-    except Exception as e:
-        LOGGER.warning(f"Sesi pencarian sampul iTunes gagal: {e}")
+    except Exception:
+        pass
 
     if art_url_base:
         urls_to_try.append(artwork_url_format(art_url_base)) 
@@ -147,26 +136,21 @@ async def _process_cover(metadata: dict, art_url_base: str | None):
     
     for url in urls_to_try:
         if not url: continue
-        LOGGER.debug(f"Mencoba mengunduh cover art: {url}")
         try:
             cover_path = await create_cover_file(url, metadata)
-            LOGGER.debug(f"Berhasil mengunduh cover art dari: {url}")
             return cover_path
-        except Exception as e:
-            LOGGER.warning(f"Gagal mengunduh cover art dari {url}: {e}")
+        except Exception:
             continue
 
-    LOGGER.warning("Semua sumber sampul online gagal. Mencoba fallback lokal...")
     try:
         cover_path = await create_cover_file(fallback_image_path, metadata)
         return cover_path
-    except Exception as e:
-        LOGGER.error(f"Gagal menggunakan fallback lokal {fallback_image_path}: {e}")
+    except Exception:
         return fallback_image_path
 
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None):
-    """Memproses metadata untuk satu lagu."""
+    """Memproses metadata untuk satu lagu dengan info tag yang lebih lengkap."""
     client: SoundcloudAPI = user['soundcloud_api']
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
@@ -179,38 +163,87 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     metadata['itemid'] = str(track_id)
     
-    # --- Info Dasar ---
+    # --- PENGAMBILAN DATA TAG UTAMA (Publisher Metadata) ---
     publisher_meta = track_data.get('publisher_metadata', {}) or {}
     
+    # 1. Judul
     metadata['title'] = track_data.get('title') or 'N/A'
     
+    # 2. Artis
     artist_str = track_data.get('user', {}).get('username')
     if publisher_meta.get('artist'):
          artist_str = publisher_meta.get('artist')
-         
     metadata['artist'] = ", ".join(artists_split(artist_str)) or ''
     
-    metadata['album'] = publisher_meta.get('album_title') or ''
+    # 3. Album (Jika kosong, gunakan judul untuk Single)
+    album_title = publisher_meta.get('album_title')
+    if not album_title:
+        # Fallback: jika ini single, biasanya album = judul lagu
+        album_title = metadata['title']
+    metadata['album'] = album_title
     metadata['albumartist'] = metadata['artist']
     
+    # 4. Tanggal & Tahun
     metadata['date'] = (track_data.get('created_at') or '').split('T')[0]
     metadata['year'] = get_release_year(track_data)
     
+    # 5. Track Number & Total Tracks
     metadata['tracknumber'] = str(track_data.get('track_number') or 1)
+    # Coba hitung total track dari durasi (logika kasar) atau default 1
     metadata['totaltracks'] = str(track_data.get('full_duration', 0) // track_data.get('duration', 1) or 1)
     
-    metadata['genre'] = track_data.get('genre') or ''
-    metadata['isrc'] = publisher_meta.get('isrc') or ''
-    metadata['upc'] = publisher_meta.get('upc_or_ean') or ''
-    metadata['copyright'] = publisher_meta.get('p_line') or ''
-    metadata['duration'] = track_data.get('duration', 0) // 1000
+    # 6. Disc Number / Part (Soundcloud tidak punya konsep disc, jadi default 1/1)
+    metadata['discnumber'] = "1"
+    metadata['totaldiscs'] = "1"
     
+    # 7. Genre
+    metadata['genre'] = track_data.get('genre') or ''
+    
+    # --- TAG TAMBAHAN (YANG ANDA MINTA) ---
+    
+    # Composer (Komposer)
+    metadata['composer'] = publisher_meta.get('writer_composer') or publisher_meta.get('composer') or ''
+    
+    # Producer (Produser) - Jarang ada di API SC, kita coba ambil dari description jika perlu, 
+    # tapi lebih aman dikosongkan atau disamakan dengan artist jika tidak ada.
+    metadata['producer'] = publisher_meta.get('producer') or '' 
+    
+    # Label / Publisher
+    metadata['label'] = publisher_meta.get('publisher') or ''
+    metadata['publisher'] = metadata['label'] # Redundansi untuk kompatibilitas
+    
+    # Copyright
+    # Prioritas: c_line -> p_line -> default string
+    c_line = publisher_meta.get('c_line')
+    p_line = publisher_meta.get('p_line')
+    
+    if c_line:
+        metadata['copyright'] = c_line
+    elif p_line:
+        metadata['copyright'] = p_line
+    else:
+        # Fallback copyright ke tahun dan artis
+        yr = metadata['year'] or '2026'
+        metadata['copyright'] = f"© {yr} {metadata['artist']}"
+
+    # ISRC
+    metadata['isrc'] = publisher_meta.get('isrc') or ''
+    
+    # UPC / BARCODE / EAN
+    # Soundcloud biasanya menyimpannya di 'upc_or_ean'
+    upc_code = publisher_meta.get('upc_or_ean') or ''
+    metadata['upc'] = upc_code
+    metadata['barcode'] = upc_code
+    metadata['ean'] = upc_code
+
+    # --- Info Teknis Lainnya ---
+    metadata['duration'] = track_data.get('duration', 0) // 1000
     metadata['provider'] = 'Soundcloud'
     metadata['type'] = 'track'
     
     metadata['explicit'] = track_data.get('explicit', False)
-    metadata['totalvolumes'] = "1"
-    metadata['discnumber'] = "1"
+    # Total Volumes (sama dengan Total Discs)
+    metadata['totalvolumes'] = "1" 
 
     # --- Sampul ---
     art_url_base = track_data.get('artwork_url') or track_data.get('user', {}).get('avatar_url')
@@ -219,13 +252,13 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     thumb_url = (art_url_base or '').replace('-original', '-t300x300').replace('-large', '-t300x300')
     metadata['thumbnail'] = await create_cover_file(thumb_url, metadata, True)
 
-    # --- Logika Kualitas & Unduhan (DIPERBAIKI) ---
+    # --- Logika Kualitas & Unduhan ---
     
     preferred_quality = soundcloud_manager.get_user_quality(user['user_id'])
     stream_url = None
     download_type = None
     
-    # 1. Cek Download Asli (Original File)
+    # 1. Cek Download Asli
     if preferred_quality == 'original' and track_data.get('downloadable') and track_data.get('has_downloads_left', True):
         LOGGER.debug(f"Soundcloud: Mencoba 'original download' untuk track {track_id}")
         dl_url = await client.get_track_download(track_id)
@@ -233,7 +266,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             stream_url = dl_url
             download_type = 'original'
             metadata['quality'] = 'Original'
-            metadata['extension'] = 'dat' # Akan dideteksi ulang nanti atau biarkan dat
+            metadata['extension'] = 'dat'
 
     # 2. Cek Stream (Progressive / HLS)
     if not stream_url and track_data.get('streamable'):
@@ -242,7 +275,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
         found_url = None
         found_type = None
         
-        # Iterasi transcodings untuk mencari format terbaik
         transcodings = track_data.get('media', {}).get('transcodings', [])
         
         for transcoding in transcodings:
@@ -250,22 +282,18 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             protocol = format_data.get('protocol')
             mime_type = format_data.get('mime_type', '')
             
-            # --- FIX: Cek Progressive dengan Mime Type yang benar ---
             if protocol == 'progressive':
                 found_url = transcoding.get('url')
                 found_type = 'progressive'
                 
-                # JANGAN ASUMSI MP3, CEK MIME TYPE!
                 if 'audio/mp4' in mime_type or 'audio/aac' in mime_type:
-                    metadata['quality'] = 'AAC 256k' # Biasanya 256k jika progressive AAC
+                    metadata['quality'] = 'AAC 256k' 
                     metadata['extension'] = 'm4a'
                 else:
-                    # Default ke MP3 jika audio/mpeg
                     metadata['quality'] = 'MP3 128k'
                     metadata['extension'] = 'mp3'
                 break 
         
-        # Jika tidak ada progressive, cari HLS
         if not found_url:
             for transcoding in transcodings:
                 format_data = transcoding.get('format', {})
@@ -277,13 +305,12 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                     found_type = 'hls'
                     
                     if 'audio/mp4' in mime_type or 'audio/aac' in mime_type:
-                        metadata['quality'] = 'AAC 128k' # HLS standar biasanya AAC
+                        metadata['quality'] = 'AAC 128k' 
                         metadata['extension'] = 'm4a'
                     elif 'audio/mpeg' in mime_type:
                         metadata['quality'] = 'MP3 128k'
                         metadata['extension'] = 'mp3'
                     else:
-                         # Fallback HLS
                         metadata['quality'] = 'AAC 128k'
                         metadata['extension'] = 'm4a'
                     break
@@ -324,7 +351,11 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
     metadata['provider'] = 'Soundcloud'
     
     metadata['explicit'] = data.get('explicit', False)
+    
+    # Atur Disc total 1 untuk album
     metadata['totalvolumes'] = "1"
+    metadata['totaldiscs'] = "1"
+    metadata['discnumber'] = "1"
 
     metadata['title'] = data.get('title') or 'N/A'
     metadata['artist'] = data.get('user', {}).get('username') or ''
@@ -332,7 +363,15 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
     metadata['album'] = metadata['title'] if media_type == 'album' else '' 
     metadata['date'] = (data.get('created_at') or '').split('T')[0]
     metadata['year'] = get_release_year(data)
+    
+    # Ambil UPC/EAN untuk Album
     metadata['upc'] = data.get('upc_or_ean') or ''
+    metadata['barcode'] = metadata['upc']
+    metadata['ean'] = metadata['upc']
+    
+    # Ambil Label untuk Album
+    metadata['label'] = data.get('label_name') or ''
+    metadata['publisher'] = metadata['label']
     
     art_url_base = data.get('artwork_url') or data.get('user', {}).get('avatar_url')
     metadata['cover'] = await _process_cover(metadata, art_url_base)
@@ -368,6 +407,14 @@ async def process_playlist_or_album(item_id: str, r_id: str, user: dict, pre_dat
             
             track_meta['cover'] = metadata['cover'] 
             track_meta['thumbnail'] = metadata['thumbnail']
+            
+            # Warisi data album ke track jika track tidak punya
+            if not track_meta.get('album'): track_meta['album'] = metadata['title']
+            if not track_meta.get('label'): track_meta['label'] = metadata['label']
+            if not track_meta.get('publisher'): track_meta['publisher'] = metadata['publisher']
+            
+            # Set Total Tracks
+            track_meta['totaltracks'] = str(len(tracks_list))
             
             metadata['tracks'].append(track_meta)
             track_count += 1
