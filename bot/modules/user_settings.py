@@ -1462,6 +1462,16 @@ async def debug(c, m):
     else:
         dt_lp += "Tidak ada klien LivePhish yang aktif."
 
+    # HIGHRESAUDIO DEBUG
+    dt_hra = "\n\nHIGHRESAUDIO:\n"
+    if highresaudio_manager and (highresaudio_manager.clients or getattr(highresaudio_manager, 'user_clients', {})):
+        dt_hra += f"{len(highresaudio_manager.clients)} klien Global HRA aktif.\n"
+        # Cek jumlah private account
+        pv_count = len(highresaudio_manager.user_clients) if hasattr(highresaudio_manager, 'user_clients') else 0
+        dt_hra += f"Private User Clients: {pv_count}\n"
+    else:
+        dt_hra += "Tidak ada klien HighResAudio yang aktif."
+
     # KHINSIDER DEBUG
     dt_khi = "\n\nKHINSIDER:\n"
     if khinsider_manager:
@@ -1475,7 +1485,7 @@ async def debug(c, m):
     zips = f"\n\nAlbum Zip (Global): {bot_set.album_zip}"
     
     # Combine all debug texts
-    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + dt_mv + dt_lp + dt_khi + zips
+    final_debug_text = dt_qb + dt_bp + dt_bs + dt_sc + dt_dz + dt_td + dt_kk + dt_np + dt_id + dt_bg + dt_mv + dt_lp + dt_hra + dt_khi + zips
     
     # Reply safely
     await m.reply(final_debug_text, True)
