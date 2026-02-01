@@ -15,7 +15,7 @@ except ImportError:
 # ---------------------------------------
 
 # --- KONSTANTA ANTI-BAN ---
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 
 class BeatsourceError(Exception):
     def __init__(self, message):
