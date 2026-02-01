@@ -25,7 +25,6 @@ class BeatsourceError(Exception):
 class BeatsourceAPI:
     def __init__(self):
         self.API_URL = "https://api.beatsource.com/v4/"
-        # Client ID publik untuk Beatsource Link
         self.client_id = "ryZ8LuyQVPqbK2mBX2Hwt4qSMtnWuTYSqBPO92yQ"
 
         self.access_token = None
