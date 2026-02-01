@@ -5,7 +5,7 @@ import aiofiles
 import os
 import traceback
 import asyncio
-import shutil # <--- TAMBAHAN PENTING
+import shutil
 
 from pathvalidate import sanitize_filepath
 from config import Config
