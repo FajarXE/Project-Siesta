@@ -33,7 +33,8 @@ class BeatsourceAPI:
         self.expires = None
         
         self.email = None
-        self.proxy = None # Variabel Proxy
+        self.password_cache = None
+        self.proxy = None
         self.session = None 
 
     async def _init_session(self):
@@ -98,6 +99,7 @@ class BeatsourceAPI:
     async def login(self, email: str, password: str):
         """Melakukan login OAuth 3 langkah penuh."""
         self.email = email
+        self.password_cache = password
         await self._init_session()
         
         # Pastikan header login juga menggunakan User-Agent browser
@@ -199,9 +201,21 @@ class BeatsourceAPI:
         # Cek apakah token sudah kedaluwarsa
         if self.expires and datetime.now() > self.expires:
             try:
+                LOGGER.info(f"Token expired untuk {self.email}, mencoba refresh...")
                 await self.refresh()
             except Exception as e:
-                raise BeatsourceError(f"Token kedaluwarsa dan gagal di-refresh: {e}")
+                LOGGER.warning(f"Refresh token gagal: {e}. Mencoba Login Ulang Otomatis...")
+                
+                # [BARU] Logika Auto Re-Login
+                if self.email and hasattr(self, 'password_cache') and self.password_cache:
+                    try:
+                        # Login ulang menggunakan password yang disimpan
+                        await self.login(self.email, self.password_cache)
+                        LOGGER.info("Auto Re-Login Berhasil!")
+                    except Exception as login_err:
+                        raise BeatsourceError(f"Sesi habis dan Login Ulang gagal: {login_err}")
+                else:
+                    raise BeatsourceError(f"Token expired dan tidak ada password tersimpan: {e}")
 
         # [MODIFIKASI] RETRY LOGIC (Mencoba maks 3 kali)
         max_retries = 3
