@@ -256,6 +256,16 @@ def providers_button():
             ]
         )
 
+    if highresaudio_manager and highresaudio_manager.clients:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="HIGHRESAUDIO", 
+                    callback_data='hraP'
+                )
+            ]
+        )
+
     if khinsider_manager:
         inline_keyboard.append(
             [
