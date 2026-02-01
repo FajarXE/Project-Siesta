@@ -89,11 +89,17 @@ try:
 except ImportError:
     livephish_manager = _DummyManager()
 
+# Impor Manajer HighResAudio
+try:
+    from bot.helpers.highresaudio.manager import highresaudio_manager
+except ImportError:
+    highresaudio_manager = _DummyManager()
+
 # Impor Manajer Khinsider
 try:
     from bot.helpers.khinsider.manager import khinsider_manager
 except ImportError:
-    khinsider_manager = None 
+    khinsider_manager = None
 
 
 def fetch_base_buttons():
@@ -853,6 +859,42 @@ def lp_button(quality: dict, user_id: int = None):
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
 
+# ==========================================
+# HIGHRESAUDIO BUTTONS (PRIVATE ACCOUNT)
+# ==========================================
+
+def highresaudio_user_auth_buttons(is_logged_in: bool):
+    buttons = []
+    
+    if is_logged_in:
+        buttons.append([InlineKeyboardButton("🚪 LOGOUT SESSION", callback_data="uset_hra_logout")])
+    else:
+        buttons.append([InlineKeyboardButton("➕ LOGIN ACCOUNT", callback_data="uset_hra_instr")])
+        
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data="uset_highresaudio")])
+    return InlineKeyboardMarkup(buttons)
+
+def hra_button(user_id: int = None):
+    buttons = []
+    usetting = user_id is not None
+    
+    # HRA Kualitasnya Statis (FLAC), jadi kita buat info saja
+    buttons.append([InlineKeyboardButton("FLAC (Lossless) ✅", callback_data="ignore")])
+    
+    if usetting:
+        # Tombol Private Account HRA
+        buttons.append([InlineKeyboardButton("🔐 PRIVATE ACCOUNT", callback_data="uset_hra_auth")])
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Back", callback_data="uset_back")
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+    
+    main_button, close_button = fetch_base_buttons()
+    buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+
 # Khinsider Button
 def khi_button(quality: dict, user_id: int = None):
     buttons = []
@@ -951,6 +993,10 @@ def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
     if livephish_manager and livephish_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"LivePhish Quality", callback_data=f"uset_livephish")])
 
+    if highresaudio_manager and highresaudio_manager.clients:
+        if getattr(highresaudio_manager, 'clients', []) or highresaudio_manager.get_client(user_id):
+            buttons.append([InlineKeyboardButton(text=f"HighResAudio Quality", callback_data=f"uset_highresaudio")])
+    
     if khinsider_manager:
         buttons.append([InlineKeyboardButton(text=f"Khinsider Quality", callback_data=f"uset_khinsider")])
 
