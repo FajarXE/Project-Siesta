@@ -20,7 +20,6 @@ class HighResAudioLoginManager:
     def __init__(self, account_configs: list):
         self.account_configs = account_configs
         self.clients = [] 
-        # Dictionary untuk menyimpan sesi akun milik pengguna
         self.user_clients = {}
         self._client_cycler = None
         
@@ -43,31 +42,35 @@ class HighResAudioLoginManager:
         else:
             LOGGER.warning("HighResAudio Manager: Tidak ada akun global (Bot) yang dikonfigurasi.")
 
-        # 2. [BARU] MUAT AKUN PENGGUNA DARI DATABASE
+        # 2. MUAT AKUN PENGGUNA DARI DATABASE
+        # Kita menggunakan database.initialize_users() yang ada di mongo_async.py Anda
         LOGGER.info("HighResAudio Manager: Memuat sesi pengguna dari database...")
-        # Ambil semua data user yang punya 'highresaudio_auth'
-        # Asumsi: Anda menyimpan kredensial di field 'highresaudio_auth' dalam format 'email:password'
-        # Atau kita iterasi semua user untuk cek
-        all_users = await database.get_all_users() # Pastikan fungsi ini ada di helper database Anda
         
-        count_relogin = 0
-        for user_doc in all_users:
-            user_id = user_doc.get('user_id')
-            # Cek apakah user ini punya data login HRA yang tersimpan
-            hra_data = user_doc.get('highresaudio_auth') # Format: "email:password"
+        try:
+            # initialize_users mengembalikan dict: {user_id: {data_dict}, ...}
+            users_dict = await database.initialize_users()
             
-            if hra_data and ":" in hra_data:
-                try:
-                    email, password = hra_data.split(":", 1)
-                    # Login diam-diam (Silent Login)
-                    success, _ = await self.add_user_account(user_id, email, password, save_db=False)
-                    if success:
-                        count_relogin += 1
-                except Exception as e:
-                    LOGGER.warning(f"Gagal restore sesi HRA untuk user {user_id}: {e}")
+            count_relogin = 0
+            for user_id, user_data in users_dict.items():
+                # Ambil string auth 'email:password'
+                hra_data = user_data.get('highresaudio_auth')
+                
+                if hra_data and ":" in hra_data:
+                    try:
+                        email, password = hra_data.split(":", 1)
+                        # Login diam-diam (Silent Login)
+                        # save_db=False karena data sudah ada di DB
+                        success, _ = await self.add_user_account(user_id, email, password, save_db=False)
+                        if success:
+                            count_relogin += 1
+                    except Exception as e:
+                        LOGGER.warning(f"Gagal restore sesi HRA untuk user {user_id}: {e}")
 
-        if count_relogin > 0:
-            LOGGER.info(f"HighResAudio Manager: Berhasil memulihkan {count_relogin} sesi pengguna.")
+            if count_relogin > 0:
+                LOGGER.info(f"HighResAudio Manager: Berhasil memulihkan {count_relogin} sesi pengguna.")
+                
+        except Exception as e:
+            LOGGER.error(f"HighResAudio Manager: Error saat memuat database: {e}")
 
     async def _login_task(self, account: dict):
         proxy = account.get('proxy')
@@ -88,7 +91,7 @@ class HighResAudioLoginManager:
                 client.close_session()
             return None
 
-    # [MODIFIKASI] Tambahkan parameter save_db
+    # Tambahkan parameter save_db agar fleksibel
     async def add_user_account(self, user_id: int, email, password, save_db=True):
         LOGGER.info(f"HighResAudio: User {user_id} mencoba login akun {email}...")
         
@@ -110,7 +113,8 @@ class HighResAudioLoginManager:
             
             self.user_clients[user_id] = client
             
-            # [BARU] Simpan ke Database agar awet
+            # Simpan ke Database (Hanya jika save_db=True)
+            # Ini akan memanggil save_user_settings di mongo_async.py Anda
             if save_db:
                 auth_str = f"{email}:{password}"
                 await database.save_user_settings(user_id, {'highresaudio_auth': auth_str})
@@ -144,7 +148,6 @@ class HighResAudioLoginManager:
             except StopIteration:
                 pass
                 
-        # Fallback jika tidak ada client sama sekali
         return None
 
     async def shutdown(self):
