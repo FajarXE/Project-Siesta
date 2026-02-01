@@ -4,8 +4,6 @@ import copy
 import re
 import asyncio
 import traceback 
-import random
-from urllib.parse import urlparse
 from config import Config 
 
 from ..metadata import metadata as base_meta
@@ -23,63 +21,39 @@ def custom_url_parse(link: str):
 
 async def _process_cover(metadata: dict, url: str):
     if not url:
-        LOGGER.warning("HighResAudio: Tidak ada URL sampul valid yang ditemukan.")
         return metadata['tempfolder'] + "cover.jpg"
     return await create_cover_file(url, metadata)
 
 async def process_album_metadata(album_url: str, r_id: str, user: dict):
-    """
-    Memproses metadata album dengan Load Balancing Multi-Akun.
-    """
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # --- LOAD BALANCING LOGIC ---
-    # Kumpulkan semua klien yang tersedia
-    primary_client = user.get('highresaudio_api')
-    if not primary_client and highresaudio_manager.clients:
-        primary_client = highresaudio_manager.clients[0]
-        
-    available_clients = []
-    if primary_client: available_clients.append(primary_client)
+    # [MODIFIKASI] Ambil Client via Manager (User Specific / Global)
+    user_id = user.get('user_id')
+    client = highresaudio_manager.get_client(user_id)
     
-    # Tambahkan klien lain dari manager
-    if highresaudio_manager.clients:
-        for c in highresaudio_manager.clients:
-            if c != primary_client:
-                available_clients.append(c)
+    if not client:
+        raise HighResAudioError("Tidak ada akun HighResAudio yang tersedia (Login akun sendiri atau hubungi admin).")
 
-    # Acak urutan klien untuk membagi beban
-    random.shuffle(available_clients)
-    
     api_data = None
-    active_client = None
     album_id = None
     
-    # Coba loop setiap klien sampai berhasil
-    last_error = None
-    for client in available_clients:
-        try:
-            # LANGKAH 1: Scrape halaman HTML
-            LOGGER.debug(f"HighResAudio: Scraping ID dari {album_url} dengan akun {client.email}")
-            album_id = await asyncio.to_thread(client.get_album_id_from_url, album_url)
+    try:
+        # LANGKAH 1: Scrape ID
+        LOGGER.debug(f"HighResAudio: Scraping ID dari {album_url}...")
+        album_id = await asyncio.to_thread(client.get_album_id_from_url, album_url)
 
-            # LANGKAH 2: Panggil API
-            api_data = await asyncio.to_thread(client.get_album_metadata, album_id)
+        # LANGKAH 2: API Metadata
+        api_data = await asyncio.to_thread(client.get_album_metadata, album_id)
+        
+        data = api_data.get('data', {}).get('results', {})
+        if not data:
+            raise HighResAudioError("Data metadata kosong dari API.")
             
-            data = api_data.get('data', {}).get('results', {})
-            if data:
-                active_client = client
-                LOGGER.info(f"HighResAudio: Metadata didapat menggunakan akun {client.email}")
-                break
-        except Exception as e:
-            last_error = e
-            continue
-            
-    if not api_data or not data:
-        raise HighResAudioError(f"Gagal mendapatkan metadata album di semua akun. Error terakhir: {last_error}")
+    except Exception as e:
+        raise HighResAudioError(f"Gagal mengambil metadata album: {e}")
 
-    # Memetakan Metadata Album
+    # --- Mapping Metadata ---
     metadata['itemid'] = album_id
     metadata['title'] = data.get('title')
     metadata['album'] = data.get('title')
@@ -94,10 +68,8 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
     release_date_raw = data.get('releaseDate', '') 
     if 'T' in release_date_raw:
         metadata['release_date'] = release_date_raw.split('T')[0]
-    elif ' ' in release_date_raw:
-        metadata['release_date'] = release_date_raw.split(' ')[0] 
     else:
-        metadata['release_date'] = release_date_raw
+        metadata['release_date'] = release_date_raw.split(' ')[0] if release_date_raw else ''
 
     metadata['date'] = str(data.get('productionYear', '')) 
     metadata['totalvolumes'] = str(data.get('discCount', 1))
@@ -140,8 +112,6 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             track_meta['release_date'] = metadata['release_date'] 
             track_meta['explicit'] = metadata['explicit']
             track_meta['genre'] = metadata['genre']
-            track_meta['subgenre'] = metadata['subgenre']
-            track_meta['composer'] = metadata['composer']
             track_meta['publisher'] = metadata['publisher']
             track_meta['upc'] = metadata['upc']
 
@@ -158,6 +128,7 @@ async def process_album_metadata(album_url: str, r_id: str, user: dict):
             raw_url = track.get('url')
             if raw_url:
                 new_url = raw_url.replace('cdn.highresaudio.com', 'streaming.highresaudio.com')
+                # Perbaikan URL replace agar lebih aman
                 new_url = new_url.replace('highresaudio.com//', 'highresaudio.com/')
                 track_meta['download_url'] = new_url
             else:
