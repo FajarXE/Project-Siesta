@@ -68,6 +68,11 @@ except ImportError:
     logging.warning("UserSettings: Gagal mengimpor livephish_manager.")
     livephish_manager = None
 try:
+    from ..helpers.highresaudio.manager import highresaudio_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor highresaudio_manager.")
+    highresaudio_manager = None
+try:
     from ..helpers.khinsider.manager import khinsider_manager
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor khinsider_manager.")
@@ -80,7 +85,7 @@ from ..helpers.buttons.settings import (
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
     bugs_button, lyrics_button, mv_button,
-    lp_button, khi_button, beatport_user_auth_buttons, beatsource_user_auth_buttons
+    lp_button, khi_button, beatport_user_auth_buttons, beatsource_user_auth_buttons, highresaudio_user_auth_buttons, hra_button
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -346,6 +351,115 @@ async def uset_bs_instr_handler(client, query):
         "<code>/beatsource_login myemail@gmail.com rahasia123</code>"
     )
     buttons = [[InlineKeyboardButton("🔙 Back", callback_data="uset_bs_auth")]]
+    await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
+
+
+# ==================================
+# HIGHRESAUDIO PRIVATE AUTH
+# ==================================
+
+# 1. COMMAND LOGIN (/highresaudio_login email password)
+@Client.on_message(filters.command("highresaudio_login"))
+async def uset_hra_login_cmd(client, message):
+    if not await check_user(msg=message):
+        return
+
+    user_id = message.from_user.id
+    args = message.text.split()
+    
+    if len(args) < 3:
+        return await message.reply_text(
+            "❌ **Format Salah**\n"
+            "Gunakan: <code>/highresaudio_login email password</code>\n\n"
+            "⚠️ Password Anda akan disimpan dengan aman untuk login otomatis."
+        )
+    
+    email = args[1]
+    password = args[2] 
+    
+    status_msg = await message.reply_text("🔄 **Verifying Account...**\nMencoba login ke HighResAudio...")
+    
+    try:
+        # Memanggil fungsi add_user_account di manager
+        # Pastikan Anda sudah menambahkan fungsi add_user_account di HRA manager.py (seperti kode saya sebelumnya)
+        success, info = await highresaudio_manager.add_user_account(user_id, email, password)
+        
+        if success:
+            await status_msg.edit_text(
+                f"✅ **Login Berhasil!**\n\n"
+                f"Akun: <code>{email}</code>\n"
+                f"Mode: Private Session\n"
+                f"Sekarang bot akan menggunakan akun ini saat Anda mendownload dari HighResAudio."
+            )
+        else:
+            await status_msg.edit_text(f"❌ **Login Gagal:**\n{info}")
+            
+    except Exception as e:
+        await status_msg.edit_text(f"❌ **Error:**\n{str(e)}")
+
+
+# 2. CALLBACK MENU AUTH (uset_hra_auth)
+@Client.on_callback_query(filters.regex("^uset_hra_auth"))
+async def uset_hra_auth_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    user_id = query.from_user.id
+    # Cek apakah user punya sesi (Logika manual karena get_client HRA mengembalikan objek/None)
+    client_obj = highresaudio_manager.get_client(user_id)
+    # Pastikan client yang didapat benar-benar milik user (ada di dict user_clients)
+    has_session = user_id in highresaudio_manager.user_clients
+    
+    text = "🔐 **HIGHRESAUDIO PRIVATE SESSION**\n\n"
+    
+    if has_session and client_obj:
+        email_masked = client_obj.email
+        text += f"✅ **Status: LOGGED IN**\n"
+        text += f"👤 Akun: <code>{email_masked}</code>\n"
+        text += "Bot menggunakan akun ini khusus untuk Anda."
+    else:
+        text += "❌ **Status: NOT LOGGED IN**\n"
+        text += "Bot menggunakan akun Global (Shared) untuk Anda jika tersedia.\n\n"
+        text += "Login akun sendiri untuk akses region/konten yang lebih spesifik."
+
+    await edit_message(query.message, text, markup=highresaudio_user_auth_buttons(has_session))
+
+
+# 3. CALLBACK LOGOUT (uset_hra_logout)
+@Client.on_callback_query(filters.regex("^uset_hra_logout"))
+async def uset_hra_logout_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+        
+    user_id = query.from_user.id
+    if user_id in highresaudio_manager.user_clients:
+        try:
+            highresaudio_manager.user_clients[user_id].close_session()
+        except: pass
+        del highresaudio_manager.user_clients[user_id]
+        
+        await query.answer("✅ Sesi HighResAudio dihapus. Kembali ke mode Global.", True)
+    else:
+        await query.answer("Anda belum login.", True)
+    
+    # Refresh tampilan menu auth
+    await uset_hra_auth_handler(client, query)
+
+
+# 4. CALLBACK INSTRUKSI (uset_hra_instr)
+@Client.on_callback_query(filters.regex("^uset_hra_instr"))
+async def uset_hra_instr_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    text = (
+        "📝 **CARA LOGIN HIGHRESAUDIO**\n\n"
+        "Kirim perintah ini di chat:\n"
+        "<code>/highresaudio_login email password</code>\n\n"
+        "Contoh:\n"
+        "<code>/highresaudio_login myemail@gmail.com rahasia123</code>"
+    )
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data="uset_hra_auth")]]
     await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
 
 
@@ -703,6 +817,15 @@ async def uset_cb(client, query, datatype=""):
             quality[current] += '✅'
         
         return await edit_message(query.message, text, markup=lp_button(quality, user_id))
+
+    # --- HIGHRESAUDIO SPECIFIC ---
+    if data[1] == "highresaudio" or datatype == "highresaudio":
+        text = f"HighResAudio Settings:"
+        if not highresaudio_manager:
+            return await edit_message(query.message, "Layanan HighResAudio tidak aktif.")
+        
+        # Tampilkan tombol HRA
+        return await edit_message(query.message, text, markup=hra_button(user_id))
 
     # --- KHINSIDER MENU ---
     if data[1] == "khinsider" or datatype == "khinsider":
