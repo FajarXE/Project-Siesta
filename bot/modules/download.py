@@ -772,17 +772,21 @@ async def start_link(link: str, user: dict) -> None:
     elif link.startswith(tuple(highresaudio)):
         user['provider'] = 'HIGHRESAUDIO'
         
-        if not highresaudio_manager or not highresaudio_manager.clients:
-            raise Exception("Maaf, tidak ada akun HIGHRESAUDIO bot yang aktif saat ini.")
+        # [MODIFIKASI] Matikan pengecekan akun global di sini agar Akun Private bisa lewat
+        # if not highresaudio_manager or not highresaudio_manager.clients:
+        #    raise Exception("Maaf, tidak ada akun HIGHRESAUDIO bot yang aktif saat ini.")
 
-        client = highresaudio_manager.get_client()
-        if not client:
-             raise Exception("Tidak ada klien HIGHRESAUDIO yang tersedia (semua gagal login?).")
+        # client = highresaudio_manager.get_client()
+        # if not client:
+        #      raise Exception("Tidak ada klien HIGHRESAUDIO yang tersedia (semua gagal login?).")
 
         try:
-            user['highresaudio_api'] = client
+            # user['highresaudio_api'] = client  <-- Jangan set ini, biarkan handler mengambilnya sendiri
+            
+            # Langsung panggil handler
             await start_highresaudio(link, user)
-            LOGGER.info(f"HIGHRESAUDIO: Unduhan berhasil menggunakan akun.")
+            
+            LOGGER.info(f"HIGHRESAUDIO: Unduhan berhasil.")
             return
         except Exception as e:
             if isinstance(e, HighResAudioError):
