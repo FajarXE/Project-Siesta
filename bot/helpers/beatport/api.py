@@ -32,8 +32,8 @@ class BeatportAPI:
         self.expires = None
         
         self.email = None
-        self.proxy = None # Variabel proxy
-        
+        self.password_cache = None
+        self.proxy = None
         self.session = None 
 
     async def _init_session(self):
@@ -87,6 +87,7 @@ class BeatportAPI:
 
     async def login(self, email: str, password: str):
         self.email = email
+        self.password_cache = password
         await self._init_session()
         
         acc_headers = {"User-Agent": USER_AGENT}
@@ -160,9 +161,20 @@ class BeatportAPI:
 
         if self.expires and datetime.now() > self.expires:
             try:
+                LOGGER.info(f"Token expired untuk {self.email}, mencoba refresh...")
                 await self.refresh()
             except Exception as e:
-                raise BeatportError(f"Token kedaluwarsa dan gagal di-refresh: {e}")
+                LOGGER.warning(f"Refresh token gagal: {e}. Mencoba Login Ulang Otomatis...")
+                
+                # [LOGIKA BARU] Coba Login Ulang Pakai Password Tersimpan
+                if self.email and hasattr(self, 'password_cache') and self.password_cache:
+                    try:
+                        await self.login(self.email, self.password_cache)
+                        LOGGER.info("Auto Re-Login Berhasil!")
+                    except Exception as login_err:
+                        raise BeatportError(f"Sesi habis dan Login Ulang gagal: {login_err}")
+                else:
+                    raise BeatportError(f"Token expired dan tidak ada password tersimpan: {e}")
 
         # [MODIFIKASI] Tambahkan logika Retry Loop
         max_retries = 3
