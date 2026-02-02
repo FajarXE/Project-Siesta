@@ -885,8 +885,8 @@ async def uset_cb(client, query, datatype=""):
         text = f"Choose Deezer Audio Quality bellow:"
         quality = {
             "FLAC": "FLAC",
-            "MP3 320": "MP3 320",
-            "MP3 128": "MP3 128"
+            "MP3_320": "MP3 320",
+            "MP3_128": "MP3 128"
         }
         if not deezer_manager or not deezer_manager.clients:
             return await edit_message(query.message, "Layanan Deezer tidak aktif (tidak ada klien yang login).")
