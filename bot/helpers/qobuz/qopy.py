@@ -6,11 +6,14 @@ import aiohttp
 import aiolimiter
 import asyncio
 import traceback
+import json
+import os
 
 from config import Config
 from .bundle import Bundle
 from bot.logger import LOGGER
 
+# [BARU] Import Database & Settings untuk persistensi MongoDB
 from bot.helpers.database.mongo_async import database
 from bot.settings import bot_set
 
@@ -18,7 +21,7 @@ class QoClient:
     def __init__(self, email=None, password=None, user_id=None, user_token=None):
         self.email = email
         self.password = password
-        self.user_id = user_id
+        self.user_id = str(user_id) if user_id else None
         self.user_token = user_token
         self.uat = None
         self.label = None
@@ -192,10 +195,9 @@ class QoClient:
         
         # Override user_id jika login via email, untuk referensi
         if not self.user_id:
-            self.user_id = usr_info["user"]["id"]
+            self.user_id = str(usr_info["user"]["id"])
 
-        user_identifier = self.email or self.user_id
-        LOGGER.info(f"QOBUZ : Login sebagai {user_identifier}. Status: {self.label}")
+        LOGGER.info(f"QOBUZ : Login sebagai {self.user_id}. Status: {self.label}")
 
     async def test_secret(self, sec):
         test_epoint = "track/getFileUrl"
@@ -256,6 +258,7 @@ class QoClient:
         quality = self.quality
         
         if tg_user_id:
+            # Baca langsung dari RAM (Memory yang disinkronkan)
             user_settings = bot_set.user_data.get(int(tg_user_id), {})
             quality = user_settings.get("qobuz_qual", self.quality)
 
@@ -285,150 +288,6 @@ class QoClient:
             res.append(data)
         return res
 
-    async def close_session(self):
-        if self.session and not self.session.closed:
-            await self.session.close()
-
-
-# ==========================================
-# QOBUZ MANAGER (MULTI-USER AUTHENTICATION)
-# ==========================================
-
-class QobuzManager:
-    def __init__(self):
-        self.user_clients = {} 
-
-    def _read_db(self):
-        return {}
-
-    async def add_user_account(self, tg_user_id, q_user_id, q_token):
-        temp_client = QoClient(user_id=q_user_id, user_token=q_token)
-        try:
-            await temp_client.login()
-            label = temp_client.label
-        except Exception as e:
-            await temp_client.close_session()
-            return False, f"Login Gagal: {str(e)}"
-        
-        await temp_client.close_session()
-
-        tg_user_id = int(tg_user_id)
-        
-        if tg_user_id not in bot_set.user_data:
-            bot_set.user_data[tg_user_id] = {}
-            
-        current_accounts = bot_set.user_data[tg_user_id].get('qobuz_accounts', [])
-        
-        new_list = [acc for acc in current_accounts if str(acc['user_id']) != str(q_user_id)]
-        
-        new_account = {
-            "user_id": str(q_user_id),
-            "token": q_token,
-            "label": label
-        }
-        new_list.append(new_account)
-        
-        bot_set.user_data[tg_user_id]['qobuz_accounts'] = new_list
-        await database.save_user_settings(tg_user_id, {'qobuz_accounts': new_list})
-        
-        if tg_user_id in self.user_clients:
-            for c in self.user_clients[tg_user_id]:
-                await c.close_session()
-            del self.user_clients[tg_user_id]
-            
-        return True, f"Akun {label} berhasil disimpan permanen!"
-    
-    async def remove_specific_account(self, tg_user_id, target_q_uid):
-        """Menghapus SATU akun spesifik dari list user."""
-        tg_user_id = str(tg_user_id)
-        target_q_uid = str(target_q_uid)
-        
-        db_data = self._read_db()
-        
-        if tg_user_id in db_data and 'accounts' in db_data[tg_user_id]:
-            original_list = db_data[tg_user_id]['accounts']
-            
-            # Filter: Ambil semua akun KECUALI yang target_q_uid
-            new_list = [acc for acc in original_list if str(acc['user_id']) != target_q_uid]
-            
-            # Jika ada perubahan (artinya ada yang dihapus)
-            if len(new_list) < len(original_list):
-                db_data[tg_user_id]['accounts'] = new_list
-                self._write_db(db_data)
-                
-                # Update Cache: Tutup sesi klien spesifik tersebut jika aktif di memori
-                if tg_user_id in self.user_clients:
-                    active_clients = self.user_clients[tg_user_id]
-                    remaining_clients = []
-                    for client in active_clients:
-                        if str(client.user_id) == target_q_uid:
-                            await client.close_session()
-                        else:
-                            remaining_clients.append(client)
-                    self.user_clients[tg_user_id] = remaining_clients
-                
-                return True
-                
-        return False
-
-    async def remove_all_accounts(self, tg_user_id):
-        """Menghapus SEMUA akun milik user tersebut."""
-        tg_user_id = str(tg_user_id)
-        
-        # Tutup sesi aktif jika ada
-        if tg_user_id in self.user_clients:
-            for client in self.user_clients[tg_user_id]:
-                await client.close_session()
-            del self.user_clients[tg_user_id]
-        
-        # Hapus dari DB
-        db_data = self._read_db()
-        if tg_user_id in db_data and 'accounts' in db_data[tg_user_id]:
-            del db_data[tg_user_id]['accounts']
-            self._write_db(db_data)
-            return True
-        return False
-
-    def has_private_session(self, tg_user_id):
-        tg_user_id = str(tg_user_id)
-        db_data = self._read_db()
-        # True jika list 'accounts' ada dan tidak kosong
-        return tg_user_id in db_data and db_data[tg_user_id].get('accounts')
-
-    async def get_user_clients(self, tg_user_id):
-        """Mengambil SEMUA klien aktif milik user."""
-        tg_user_id = str(tg_user_id)
-        
-        # 1. Cek Cache Memory
-        if tg_user_id in self.user_clients:
-            # Pastikan sesi belum closed
-            active_clients = [c for c in self.user_clients[tg_user_id] if c.session and not c.session.closed]
-            if active_clients:
-                return active_clients
-        
-        # 2. Cek Database
-        db_data = self._read_db()
-        loaded_clients = []
-        
-        if tg_user_id in db_data and 'accounts' in db_data[tg_user_id]:
-            account_list = db_data[tg_user_id]['accounts']
-            
-            for acc in account_list:
-                client = QoClient(user_id=acc['user_id'], user_token=acc['token'])
-                try:
-                    await client.login()
-                    # Override label agar terlihat di log bot
-                    client.label = f"{client.label} (Pribadi)"
-                    loaded_clients.append(client)
-                except Exception as e:
-                    LOGGER.error(f"Gagal login akun user {tg_user_id} (ID: {acc['user_id']}): {e}")
-            
-            if loaded_clients:
-                self.user_clients[tg_user_id] = loaded_clients
-                return loaded_clients
-        
-        return []
-
     async def setup_quality(self, user_id: int=0, qual: int=0) -> None:
         try:
             user_id = int(user_id)
@@ -443,6 +302,133 @@ class QobuzManager:
             await database.save_user_settings(user_id, {'qobuz_qual': qual})
         except Exception as e:
             LOGGER.error(f"QOBUZ: Gagal setup quality: {e}")
+
+    async def close_session(self):
+        if self.session and not self.session.closed:
+            await self.session.close()
+
+
+# ==========================================
+# QOBUZ MANAGER (MONGODB PERSISTENCE)
+# ==========================================
+
+class QobuzManager:
+    def __init__(self):
+        self.user_clients = {} # Cache Sesi Aktif
+
+    def _read_db(self):
+        return {} 
+
+    async def add_user_account(self, tg_user_id, q_user_id, q_token):
+        """Menambahkan akun ke MongoDB dan Memory."""
+        temp_client = QoClient(user_id=q_user_id, user_token=q_token)
+        try:
+            await temp_client.login()
+            label = temp_client.label
+        except Exception as e:
+            await temp_client.close_session()
+            return False, f"Login Gagal: {str(e)}"
+        
+        await temp_client.close_session()
+
+        tg_user_id = int(tg_user_id)
+        
+        # 1. Pastikan dictionary user ada di Memory
+        if tg_user_id not in bot_set.user_data:
+            bot_set.user_data[tg_user_id] = {}
+            
+        current_accounts = bot_set.user_data[tg_user_id].get('qobuz_accounts', [])
+        
+        # 2. Update List (Hapus jika ada yang sama, lalu tambahkan yang baru)
+        new_list = [acc for acc in current_accounts if str(acc['user_id']) != str(q_user_id)]
+        
+        new_account = {
+            "user_id": str(q_user_id),
+            "token": q_token,
+            "label": label
+        }
+        new_list.append(new_account)
+        
+        # 3. Simpan ke Memory & MongoDB
+        bot_set.user_data[tg_user_id]['qobuz_accounts'] = new_list
+        await database.save_user_settings(tg_user_id, {'qobuz_accounts': new_list})
+        
+        # 4. Reset Cache
+        if tg_user_id in self.user_clients:
+            for c in self.user_clients[tg_user_id]:
+                await c.close_session()
+            del self.user_clients[tg_user_id]
+            
+        return True, f"Akun {label} berhasil disimpan permanen!"
+
+    async def remove_specific_account(self, tg_user_id, target_q_uid):
+        tg_user_id = int(tg_user_id)
+        target_q_uid = str(target_q_uid)
+        
+        if tg_user_id not in bot_set.user_data:
+            return False
+            
+        current_accounts = bot_set.user_data[tg_user_id].get('qobuz_accounts', [])
+        
+        # Filter: Ambil semua KECUALI yang target_q_uid
+        new_list = [acc for acc in current_accounts if str(acc['user_id']) != target_q_uid]
+        
+        # Jika panjang list berubah, berarti ada yang dihapus
+        if len(new_list) < len(current_accounts):
+            bot_set.user_data[tg_user_id]['qobuz_accounts'] = new_list
+            await database.save_user_settings(tg_user_id, {'qobuz_accounts': new_list})
+            
+            # Reset cache agar sesi yang dihapus benar-benar hilang dari memori
+            if tg_user_id in self.user_clients:
+                for c in self.user_clients[tg_user_id]:
+                    await c.close_session()
+                del self.user_clients[tg_user_id]
+            return True
+            
+        return False
+
+    def has_private_session(self, tg_user_id):
+        # Cek langsung dari Memory bot_set
+        tg_user_id = int(tg_user_id)
+        if tg_user_id in bot_set.user_data:
+            accounts = bot_set.user_data[tg_user_id].get('qobuz_accounts', [])
+            return len(accounts) > 0
+        return False
+
+    async def get_user_clients(self, tg_user_id):
+        tg_user_id = int(tg_user_id)
+        
+        # 1. Cek Cache Memory (Sesi yang sedang aktif)
+        if tg_user_id in self.user_clients:
+            active_clients = [c for c in self.user_clients[tg_user_id] if c.session and not c.session.closed]
+            if active_clients:
+                return active_clients
+        
+        # 2. Jika tidak ada di cache, buat instance baru dari data MongoDB (via bot_set)
+        loaded_clients = []
+        if tg_user_id in bot_set.user_data:
+            accounts = bot_set.user_data[tg_user_id].get('qobuz_accounts', [])
+            
+            for acc in accounts:
+                client = QoClient(user_id=acc['user_id'], user_token=acc['token'])
+                try:
+                    await client.login()
+                    client.label = f"{client.label} (Pribadi)"
+                    loaded_clients.append(client)
+                except Exception as e:
+                    LOGGER.error(f"Gagal login ulang akun user {tg_user_id} (ID: {acc['user_id']}): {e}")
+            
+            if loaded_clients:
+                self.user_clients[tg_user_id] = loaded_clients
+                
+        return loaded_clients
+
+    async def setup_quality(self, user_id, quality):
+        user_id = int(user_id)
+        if user_id not in bot_set.user_data:
+            bot_set.user_data[user_id] = {}
+        bot_set.user_data[user_id]['qobuz_qual'] = int(quality)
+        await database.save_user_settings(user_id, {'qobuz_qual': int(quality)})
 
 # Instance Global
 qobuz_manager = QobuzManager()
