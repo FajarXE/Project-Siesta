@@ -1061,9 +1061,11 @@ def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
     
     show_deezer = False
     if deezer_manager:
-        if deezer_manager.clients or deezer_manager.has_private_session(user_id):
+        if deezer_manager.clients:
             show_deezer = True
-            
+        elif deezer_manager.has_private_session(user_id):
+            show_deezer = True
+    
     if show_deezer:
         buttons.append([InlineKeyboardButton(text=f"Deezer Quality", callback_data=f"uset_deezer")])
     
