@@ -9,15 +9,16 @@ from pathvalidate import sanitize_filepath
 
 from ..utils import *
 from ..metadata import set_metadata
-from ..message import edit_message
+from ..message import edit_message, send_message
 from bot.logger import LOGGER
 
-# [FIX] Import bot_set dengan benar (Absolute Import)
+# [IMPORT PENTING] Manager Qobuz Baru & Settings
 from bot.settings import bot_set 
+from bot.helpers.qobuz.qopy import qobuz_manager
 
 from ..uploder import track_upload, album_upload, artist_upload, playlist_upload
 
-# --- IMPORTS BARU UNTUK CUSTOM TAGS ---
+# --- IMPORTS UTILS FOR CUSTOM TAGS ---
 try:
     from mutagen.flac import FLAC
     from mutagen.id3 import ID3, TXXX
@@ -58,18 +59,37 @@ async def force_custom_tags(filepath, metadata):
     except: pass
 
 async def start_qobuz(url:str, user:dict):
-    clients_list = user.get('qobuz_clients_list', [])
-    if not clients_list:
-        return await edit_message(user['bot_msg'], "Kesalahan: Tidak ada daftar klien Qobuz.")
+    # 1. Ambil daftar klien global (dari config)
+    global_clients_list = user.get('qobuz_clients_list', [])
+    
+    # 2. Ambil daftar klien PRIBADI (Multi-Akun dari Database)
+    tg_user_id = user.get('user_id')
+    private_clients = await qobuz_manager.get_user_clients(tg_user_id)
+    
+    # 3. Gabungkan: Private (Prioritas) -> Global
+    # Bot akan mencoba akun pribadi user urut dari akun ke-1, ke-2, dst.
+    final_clients_list = []
+    
+    if private_clients:
+        LOGGER.info(f"User {tg_user_id} menggunakan {len(private_clients)} akun pribadi Qobuz.")
+        final_clients_list.extend(private_clients)
+        
+    final_clients_list.extend(global_clients_list)
+
+    if not final_clients_list:
+        return await edit_message(user['bot_msg'], "Kesalahan: Tidak ada klien Qobuz aktif (Global/Private).")
 
     last_error = "Tidak ada error"
     
-    # Loop Akun hanya jika GAGAL TOTAL mengambil info awal.
-    for i, client in enumerate(clients_list):
+    # 4. Loop Semua Akun yang tersedia
+    for i, client in enumerate(final_clients_list):
         user['qobuz_api'] = client
-        client_label = client.label or client.user_id 
+        
+        # Labeling agar user tahu akun mana yang dipakai
+        c_label = getattr(client, 'label', str(client.user_id))
+        
         try:
-            await edit_message(user['bot_msg'], f"Mencoba Akun #{i+1}/{len(clients_list)} ({client_label})...")
+            await edit_message(user['bot_msg'], f"Mencoba Akun #{i+1} ({c_label})...")
             
             items, item_id, type_dict, content = await check_type(url, user)
             
@@ -91,13 +111,13 @@ async def start_qobuz(url:str, user:dict):
                 else: raise Exception(f"Tipe konten tidak diketahui.")
             
             # [PENTING] Jika sampai sini, berarti sukses. Return agar tidak loop ke akun lain.
-            await edit_message(user['bot_msg'], f"Selesai memproses dengan Akun {client_label}.")
+            await edit_message(user['bot_msg'], f"Selesai memproses dengan Akun {c_label}.")
             return 
 
         except QobuzContentUnavailableError as e:
-            # Error spesifik konten (misal region lock), coba akun lain
+            # Error spesifik konten (misal region lock), coba akun berikutnya
             last_error = f"{e}"
-            LOGGER.warning(f"Akun {client_label} gagal mengambil metadata: {e}")
+            LOGGER.warning(f"Akun {c_label} gagal mengambil metadata (Mungkin Region Lock): {e}")
             continue 
         except Exception as e:
             # Error coding/fatal lainnya
@@ -105,27 +125,24 @@ async def start_qobuz(url:str, user:dict):
             LOGGER.error(f"Fatal Error Qobuz (Start): {e}\n{traceback.format_exc()}")
             break 
 
-    try: await edit_message(user['bot_msg'], f"Gagal: {last_error}")
+    try: await edit_message(user['bot_msg'], f"Gagal Semua Akun: {last_error}")
     except: pass
 
 async def start_album(item_id:int, user:dict, upload=True, basefolder=None):
     client = user['qobuz_api']
     
-    # Ambil metadata. Jika gagal, JANGAN kirim pesan, tapi RAISE Error
-    # agar start_qobuz bisa menangkapnya dan pindah ke akun berikutnya.
+    # Ambil metadata. Jika gagal, RAISE Error untuk trigger retry akun lain
     album_meta, err = await get_album_metadata(item_id, user['r_id'], user)
     if err:
-        # [FIX] Raise Error untuk memicu retry akun
         raise QobuzContentUnavailableError(f"Album tidak tersedia di akun ini ({err}).")
     
-    # Coba ambil sampel track (bisa error jika region lock)
+    # Coba ambil sampel track
     try: 
         track_meta = await client.get_track_url(album_meta['tracks'][0]['itemid'], user)
     except: 
         try: 
             track_meta = await client.get_track_url(album_meta['tracks'][1]['itemid'], user)
         except: 
-            # [FIX] Raise Error juga di sini
             raise QobuzContentUnavailableError(f"Gagal mendapatkan URL track sampel album.")
             
     _, album_meta['quality'] = await get_quality(track_meta, user)
@@ -183,13 +200,12 @@ async def start_track(item_id:int, user:dict, track_meta:dict | None, upload=Tru
         filepath = sanitize_filepath(filepath)
     else: filepath = basefolder
     
-    # [FIX] Anti-Crash: Tangkap error URL di sini
     try:
         raw_data = await client.get_track_url(item_id, user)
         url = raw_data['url']
     except Exception as e:
         LOGGER.warning(f"Gagal mendapatkan URL Track ID {item_id}: {e}. Skipping...")
-        return False # Return False agar loop playlist lanjut ke lagu berikutnya
+        return False 
         
     try:
         track_meta['extension'], track_meta['quality'] = await get_quality(raw_data, user)
@@ -241,7 +257,7 @@ async def start_playlist(tracks, playlist, user):
         playlist_folder = sanitize_filepath(f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Qobuz/{play_meta['title']}")
     play_meta['folderpath'] = playlist_folder
     
-    # Coba ambil sampel kualitas, jika gagal jangan crash playlist
+    # Coba ambil sampel kualitas
     try:
         track_meta = await client.get_track_url(tracks[0]['id'], user)
         _, play_meta['quality'] = await get_quality(track_meta, user)
@@ -251,21 +267,18 @@ async def start_playlist(tracks, playlist, user):
     update_details = {'text': lang.s.DOWNLOAD_PROGRESS, 'msg': user['bot_msg'], 'title': play_meta['title'], 'type': play_meta['type']}
     play_meta['poster_msg'] = await post_art_poster(user, play_meta)
 
-    # --- [FIX DETEKSI MODE] ---
+    # --- DETEKSI MODE UPLOAD ---
     upload = True
     playlist_zip, album_zip, artist_zip, art_poster = fetch_zip_settings(user)
     
-    # Cek Mode User dengan Aman
     user_id = user.get('user_id')
     raw_user_data = bot_set.user_data.get(user_id) or bot_set.user_data.get(str(user_id)) or {}
     user_mode = raw_user_data.get('upload_mode', 'Telegram')
     
-    # Jika mode Cloud, matikan upload per track
+    # Jika mode Cloud (Gofile/Buzz/Viking), matikan upload per track
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         upload = False
-        LOGGER.info(f"Mode Cloud ({user_mode}) terdeteksi. Mematikan upload per-track.")
 
-    # Logic Concurrent vs Serial
     if bot_set.playlist_conc:
         upload = False # Concurrent selalu batch upload
         tasks = []
@@ -282,7 +295,6 @@ async def start_playlist(tracks, playlist, user):
         successful_tracks_non_conc = []
         for track in play_meta['tracks']:
             await progress_message(i, len(play_meta['tracks']), update_details)
-            # start_track sekarang aman, tidak akan raise Exception jika gagal
             success = await start_track(track['itemid'], user, track, upload, playlist_folder, bot_set.disable_sort_link, True)
             if success: 
                 successful_tracks_non_conc.append(track)
@@ -301,12 +313,11 @@ async def start_playlist(tracks, playlist, user):
         if playlist_sort: play_meta['folderpath'] = await move_sorted_playlist(play_meta, user)
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
        
-    # --- [FIX FINAL] Panggil Upload Batch jika mode upload per track mati ---
+    # Upload Batch (Jika upload per track dimatikan)
     if not upload:
         if not play_meta['tracks']:
             await edit_message(user['bot_msg'], "Gagal: Tidak ada lagu yang berhasil diunduh.")
             return
             
         await edit_message(user['bot_msg'], lang.s.UPLOADING)
-        # Ini akan memanggil playlist_upload di uploder.py (yang sudah support Gofile Folder)
         await playlist_upload(play_meta, user)
