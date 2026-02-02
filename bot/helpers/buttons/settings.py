@@ -6,7 +6,11 @@ from bot.settings import bot_set
 from bot import BOT_QOBUZ_CLIENTS
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# Definisikan kelas fallback *sekali*
+try:
+    from bot.helpers.qobuz.qopy import qobuz_manager
+except ImportError:
+    qobuz_manager = None
+
 class _DummyManager:
     def __init__(self):
         self.clients = []
@@ -1014,7 +1018,13 @@ def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
     if tidal_manager and tidal_manager.clients:
         buttons.append([InlineKeyboardButton(text=f"Tidal Quality", callback_data=f"uset_tidal")])
         
+    show_qobuz = False
     if BOT_QOBUZ_CLIENTS:
+        show_qobuz = True
+    elif qobuz_manager and qobuz_manager.has_private_session(user_id):
+        show_qobuz = True
+        
+    if show_qobuz:
         buttons.append([InlineKeyboardButton(text=f"Qobuz Quality", callback_data=f"uset_qobuz")])
     
     # Cek Beatport (Global OR Private Session)
