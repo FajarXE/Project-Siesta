@@ -12,7 +12,13 @@ from bot.logger import LOGGER
 import bot.helpers.translations as lang
 
 from bot import BOT_QOBUZ_CLIENTS
-from bot.tgclient import aio 
+from bot.tgclient import aio
+
+# [TAMBAHAN] Import manager untuk cek akun private
+try:
+    from bot.helpers.qobuz.qopy import qobuz_manager
+except ImportError:
+    qobuz_manager = None
 
 # --- IMPOR MANAJER LAYANAN ---
 
@@ -528,11 +534,20 @@ async def start_link(link: str, user: dict) -> None:
     elif link.startswith(tuple(qobuz)):
         user['provider'] = 'Qobuz'
 
-        if not BOT_QOBUZ_CLIENTS:
+        # Cek apakah ada akun Global ATAU akun Private User
+        has_private = False
+        if qobuz_manager and qobuz_manager.has_private_session(user['user_id']):
+            has_private = True
+            
+        if not BOT_QOBUZ_CLIENTS and not has_private:
             raise Exception("Maaf, tidak ada akun Qobuz bot yang aktif saat ini.")
         
-        clients_list = list(BOT_QOBUZ_CLIENTS.values())
-        random.shuffle(clients_list)
+        # Kumpulkan akun global (jika ada) untuk dikirim ke handler
+        clients_list = []
+        if BOT_QOBUZ_CLIENTS:
+            clients_list = list(BOT_QOBUZ_CLIENTS.values())
+            random.shuffle(clients_list)
+            
         user['qobuz_clients_list'] = clients_list
         await start_qobuz(link, user)
 
