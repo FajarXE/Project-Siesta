@@ -520,19 +520,13 @@ async def uset_qb_auth_handler(client, query):
     
     user_id = query.from_user.id
     
-    db = qobuz_manager._read_db()
-    user_data = db.get(str(user_id), {})
-    accounts_list = user_data.get('accounts', [])
+    user_data_mem = bot_set.user_data.get(user_id, {})
+    accounts_list = user_data_mem.get('qobuz_accounts', [])
     
     text = "🔐 **QOBUZ PRIVATE SESSION**\n\n"
     
     if accounts_list:
         text += f"✅ **Status: {len(accounts_list)} Akun Tersimpan**\n"
-        text += "Daftar Akun:\n"
-        for idx, acc in enumerate(accounts_list):
-            label = acc.get('label', 'Unknown')
-            uid = acc.get('user_id', '?')
-            text += f"{idx+1}. <b>{label}</b> (ID: {uid})\n"
             
         text += "\nBot akan mencoba akun secara berurutan. Klik tombol 🗑️ di bawah untuk menghapus akun yang spesifik (misal expired)."
     else:
