@@ -90,7 +90,7 @@ from ..helpers.buttons.settings import (
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
     bugs_button, lyrics_button, mv_button,
-    lp_button, khi_button, beatport_user_auth_buttons, beatsource_user_auth_buttons, highresaudio_user_auth_buttons, hra_button, qb_user_auth_buttons
+    lp_button, khi_button, beatport_user_auth_buttons, beatsource_user_auth_buttons, highresaudio_user_auth_buttons, hra_button, qb_user_auth_buttons, deezer_user_auth_buttons
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -571,6 +571,85 @@ async def uset_qb_instr_handler(client, query):
         "<code>/qobuz_login 123456 r5T6y7U8...</code>"
     )
     buttons = [[InlineKeyboardButton("🔙 Kembali", callback_data="uset_qb_auth")]]
+    await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
+
+
+# ==================================
+# DEEZER PRIVATE AUTH (MULTI-ACCOUNT)
+# ==================================
+
+# 1. COMMAND LOGIN
+@Client.on_message(filters.command("deezer_login"))
+async def uset_dz_login_cmd(client, message):
+    if not await check_user(msg=message):
+        return
+
+    user_id = message.from_user.id
+    args = message.text.split()
+    
+    if len(args) < 2:
+        return await message.reply_text(
+            "❌ **Format Salah**\n"
+            "Gunakan: <code>/deezer_login arl_anda</code>\n\n"
+            "Cara mendapatkan ARL:\n"
+            "1. Buka deezer.com -> Login\n"
+            "2. F12 (Dev Tools) -> Application -> Cookies -> deezer.com\n"
+            "3. Salin value dari cookie bernama `arl`."
+        )
+    
+    arl = args[1].strip()
+    status_msg = await message.reply_text("🔄 **Verifying Deezer Account...**")
+    
+    try:
+        success, info = await deezer_manager.add_user_account(user_id, arl)
+        if success:
+            await status_msg.edit_text(f"✅ **{info}**")
+        else:
+            await status_msg.edit_text(f"❌ **Login Gagal:**\n{info}")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ **Error:**\n{str(e)}")
+
+# 2. MENU AUTH
+@Client.on_callback_query(filters.regex("^uset_dz_auth"))
+async def uset_dz_auth_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    user_id = query.from_user.id
+    user_data_mem = bot_set.user_data.get(user_id, {})
+    accounts_list = user_data_mem.get('deezer_accounts', [])
+    
+    text = "🔐 **DEEZER PRIVATE SESSION**\n\n"
+    if accounts_list:
+        text += f"✅ **Status: {len(accounts_list)} Akun Tersimpan**\n"
+        for idx, acc in enumerate(accounts_list):
+            label = acc.get('label', 'Unknown')
+            text += f"{idx+1}. <b>{label}</b>\n"
+    else:
+        text += "❌ **Status: TIDAK ADA AKUN**\n"
+        text += "Bot menggunakan akun Global jika tersedia.\n"
+
+    # Pastikan Anda import 'deezer_user_auth_buttons' dari settings.py di bagian atas file ini!
+    await edit_message(query.message, text, markup=deezer_user_auth_buttons(accounts_list))
+
+# 3. HAPUS AKUN
+@Client.on_callback_query(filters.regex(r"^uset_dz_rm_(.+)"))
+async def uset_dz_remove_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    user_id = query.from_user.id
+    target = query.matches[0].group(1) 
+    if await deezer_manager.remove_specific_account(user_id, target):
+        await query.answer("✅ Akun dihapus.", True)
+    else:
+        await query.answer("❌ Gagal.", True)
+    await uset_dz_auth_handler(client, query)
+
+# 4. INSTRUKSI
+@Client.on_callback_query(filters.regex("^uset_dz_instr"))
+async def uset_dz_instr_handler(client, query):
+    text = "Ketik: <code>/deezer_login arl_anda_disini</code>"
+    buttons = [[InlineKeyboardButton("🔙 Kembali", callback_data="uset_dz_auth")]]
     await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
 
 
