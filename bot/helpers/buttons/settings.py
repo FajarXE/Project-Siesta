@@ -706,6 +706,24 @@ def qb_user_auth_buttons(accounts_list: list):
     return InlineKeyboardMarkup(buttons)
 
 
+# [TAMBAHKAN DI bot/helpers/buttons/settings.py]
+
+def deezer_user_auth_buttons(accounts_list: list):
+    buttons = []
+    if accounts_list:
+        buttons.append([InlineKeyboardButton("🔻 KLIK UNTUK MENGHAPUS 🔻", callback_data="ignore")])
+        for acc in accounts_list:
+            label = acc.get('label', 'Unknown')
+            uid = acc.get('user_id', '0')
+            btn_text = f"🗑️ {label} ({uid})"
+            callback = f"uset_dz_rm_{uid}"
+            buttons.append([InlineKeyboardButton(btn_text, callback_data=callback)])
+            
+    buttons.append([InlineKeyboardButton("➕ TAMBAH AKUN LAIN", callback_data="uset_dz_instr")])
+    buttons.append([InlineKeyboardButton("🔙 KEMBALI", callback_data="uset_deezer")])
+    return InlineKeyboardMarkup(buttons)
+
+
 # Deezer Button
 def dz_button(quality: dict, user_id: int = None):
     buttons = []
@@ -724,13 +742,14 @@ def dz_button(quality: dict, user_id: int = None):
         if (i + 1) % 2 == 0 or i == len(quality) - 1:
             buttons.append(row)
             row = []
+    
+    # --- MODIFIKASI: Tombol Private Account ---
     if usetting:
-        buttons.append(
-            [
-                InlineKeyboardButton(text="Back", callback_data="uset_back")
-            ]
-        )
+        buttons.append([InlineKeyboardButton("🔐 PRIVATE ACCOUNT (Multi-Login)", callback_data="uset_dz_auth")])
+        buttons.append([InlineKeyboardButton(text="Back", callback_data="uset_back")])
         return InlineKeyboardMarkup(buttons)
+    # ------------------------------------------
+
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
     return InlineKeyboardMarkup(buttons)
