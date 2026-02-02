@@ -77,6 +77,11 @@ try:
 except ImportError:
     logging.warning("UserSettings: Gagal mengimpor khinsider_manager.")
     khinsider_manager = None
+try:
+    from ..helpers.qobuz.qopy import qobuz_manager
+except ImportError:
+    logging.warning("UserSettings: Gagal mengimpor qobuz_manager.")
+    qobuz_manager = None
 
 # --- IMPORT BUTTONS ---
 # Pastikan Anda sudah menambahkan 'beatport_user_auth_buttons' di bot/helpers/buttons/settings.py
@@ -85,7 +90,7 @@ from ..helpers.buttons.settings import (
     qb_button, bp_button, dz_button, kk_button,
     bs_button, sc_button, np_button, id_button,
     bugs_button, lyrics_button, mv_button,
-    lp_button, khi_button, beatport_user_auth_buttons, beatsource_user_auth_buttons, highresaudio_user_auth_buttons, hra_button
+    lp_button, khi_button, beatport_user_auth_buttons, beatsource_user_auth_buttons, highresaudio_user_auth_buttons, hra_button, qb_user_auth_buttons
 )
 from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
@@ -464,6 +469,118 @@ async def uset_hra_instr_handler(client, query):
 
 
 # ==================================
+# QOBUZ PRIVATE AUTH (MULTI-ACCOUNT)
+# ==================================
+
+# 1. COMMAND LOGIN (/qobuz_login user_id token)
+@Client.on_message(filters.command("qobuz_login"))
+async def uset_qb_login_cmd(client, message):
+    if not await check_user(msg=message):
+        return
+
+    user_id = message.from_user.id
+    args = message.text.split()
+    
+    if len(args) < 3:
+        return await message.reply_text(
+            "❌ **Format Salah**\n"
+            "Gunakan: <code>/qobuz_login user_id user_token</code>\n\n"
+            "Cara mendapatkan User ID & Token:\n"
+            "1. Buka player.qobuz.com -> Login\n"
+            "2. Buka Console (F12) -> Application -> Local Storage\n"
+            "3. Cari key `current_user`\n"
+            "   - user_id: angka di `id`\n"
+            "   - user_token: string di `credential.parameters.user_auth_token`"
+        )
+    
+    q_user_id = args[1]
+    q_token = args[2] 
+    
+    status_msg = await message.reply_text("🔄 **Verifying Qobuz Account...**")
+    
+    try:
+        success, info = await qobuz_manager.add_user_account(user_id, q_user_id, q_token)
+        if success:
+            await status_msg.edit_text(
+                f"✅ **{info}**\n\n"
+                f"Akun ID: <code>{q_user_id}</code>\n"
+                f"Bot akan mencoba akun ini secara otomatis jika akun lain gagal/region lock."
+            )
+        else:
+            await status_msg.edit_text(f"❌ **Login Gagal:**\n{info}")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ **Error:**\n{str(e)}")
+
+
+# 2. HANDLER MENU AUTH (Menampilkan Daftar Akun)
+@Client.on_callback_query(filters.regex("^uset_qb_auth"))
+async def uset_qb_auth_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    user_id = query.from_user.id
+    
+    db = qobuz_manager._read_db()
+    user_data = db.get(str(user_id), {})
+    accounts_list = user_data.get('accounts', [])
+    
+    text = "🔐 **QOBUZ PRIVATE SESSION**\n\n"
+    
+    if accounts_list:
+        text += f"✅ **Status: {len(accounts_list)} Akun Tersimpan**\n"
+        text += "Daftar Akun:\n"
+        for idx, acc in enumerate(accounts_list):
+            label = acc.get('label', 'Unknown')
+            uid = acc.get('user_id', '?')
+            text += f"{idx+1}. <b>{label}</b> (ID: {uid})\n"
+            
+        text += "\nBot akan mencoba akun secara berurutan. Klik tombol 🗑️ di bawah untuk menghapus akun yang spesifik (misal expired)."
+    else:
+        text += "❌ **Status: TIDAK ADA AKUN**\n"
+        text += "Bot saat ini menggunakan akun Global (Shared).\n\n"
+        text += "Anda bisa menambahkan banyak akun pribadi (misal: beda region) untuk melewati batasan geo-restriction."
+
+    await edit_message(query.message, text, markup=qb_user_auth_buttons(accounts_list))
+
+
+# 3. HANDLER HAPUS AKUN SPESIFIK
+@Client.on_callback_query(filters.regex(r"^uset_qb_rm_(.+)"))
+async def uset_qb_remove_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+
+    user_id = query.from_user.id
+    target_q_uid = query.matches[0].group(1) 
+    
+    result = await qobuz_manager.remove_specific_account(user_id, target_q_uid)
+    
+    if result:
+        await query.answer(f"✅ Akun {target_q_uid} berhasil dihapus.", True)
+    else:
+        await query.answer("❌ Gagal menghapus (Akun tidak ditemukan).", True)
+    
+    await uset_qb_auth_handler(client, query)
+
+
+# 4. HANDLER INSTRUKSI
+@Client.on_callback_query(filters.regex("^uset_qb_instr"))
+async def uset_qb_instr_handler(client, query):
+    if not await check_user(msg=query.message):
+        return
+    
+    text = (
+        "📝 **CARA LOGIN QOBUZ (MULTI-AKUN)**\n\n"
+        "Anda bisa menambahkan lebih dari satu akun.\n"
+        "Kirim perintah ini di chat:\n"
+        "<code>/qobuz_login user_id user_token</code>\n\n"
+        "Contoh:\n"
+        "<code>/qobuz_login 123456 r5T6y7U8...</code>"
+    )
+    buttons = [[InlineKeyboardButton("🔙 Kembali", callback_data="uset_qb_auth")]]
+    await edit_message(query.message, text, markup=InlineKeyboardMarkup(buttons))
+
+
+# ==================================
 # MENU PENGATURAN UTAMA
 # ==================================
 
@@ -584,16 +701,27 @@ async def uset_cb(client, query, datatype=""):
     if data[1] == "qobuz" or datatype == "qobuz":
         text = f"Choose Qobuz Audio Quality bellow:"
         quality = {5:'MP3 320', 6:'Lossless', 7:'24B<=96KHZ',27:'24B>96KHZ'}
-        if not BOT_QOBUZ_CLIENTS:
-            return await edit_message(query.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
-        client_to_check = BOT_QOBUZ_CLIENTS.get(1) or list(BOT_QOBUZ_CLIENTS.values())[0]
-
-        main_user_dict = bot_set.user_data.get(user_id, {})
-        current = main_user_dict.get("qobuz_qual", client_to_check.quality) 
         
-        if "qobuz_qual" in main_user_dict:
-            for qc in BOT_QOBUZ_CLIENTS.values():
-                await qc.setup_quality(int(user_id), int(current))
+        # [MODIFIKASI] Cek apakah ada klien (Global ATAU Private Session)
+        has_client = False
+        
+        # 1. Cek Klien Global (Bot)
+        if BOT_QOBUZ_CLIENTS:
+            has_client = True
+        # 2. Cek Klien Private (User) via Manager
+        elif qobuz_manager and qobuz_manager.has_private_session(user_id):
+            has_client = True
+            
+        if not has_client:
+            return await edit_message(query.message, "Layanan Qobuz tidak aktif (tidak ada klien yang login).")
+
+        # Ambil setting user (Default ke 6/Lossless jika belum diatur)
+        main_user_dict = bot_set.user_data.get(user_id, {})
+        current = main_user_dict.get("qobuz_qual", 6) 
+        
+        # [MODIFIKASI] Simpan setting kualitas ke DB Manager agar terbaca oleh qopy.py
+        if qobuz_manager:
+            await qobuz_manager.setup_quality(user_id, current)
         
         try:
             current = int(current)
@@ -602,6 +730,8 @@ async def uset_cb(client, query, datatype=""):
 
         if current in quality:
             quality[current] = quality[current] + '✅'
+            
+        # Tombol qb_button (yang sudah dimodifikasi di settings.py) akan menampilkan opsi "Private Account"
         return await edit_message(query.message, text, markup=qb_button(quality, user_id))
 
     # --- BEATPORT MENU ---
