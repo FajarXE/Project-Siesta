@@ -438,6 +438,8 @@ def tidal_auth_buttons():
 def qb_button(qualities: dict, user_id: int = 0):
     inline_keyboard = []
     usetting = user_id != 0
+    
+    # Loop tombol kualitas (biarkan kode ini tetap ada)
     for quality in qualities.values():
         inline_keyboard.append(
             [
@@ -447,17 +449,29 @@ def qb_button(qualities: dict, user_id: int = 0):
                 )
             ]
         )
+        
+    # --- MODIFIKASI DIMULAI DARI SINI ---
     if usetting:
+        # Tambahkan tombol masuk ke menu Private Account
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(text="🔐 PRIVATE ACCOUNT (Multi-Login)", callback_data="uset_qb_auth")
+            ]
+        )
+        
+        # Tombol Back
         inline_keyboard.append(
             [
                 InlineKeyboardButton(text="Back", callback_data="uset_back")
             ]
         )
-    if usetting:
         return InlineKeyboardMarkup(inline_keyboard)
+    # ------------------------------------
+    
     main_button, close_button = fetch_base_buttons()
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
+    
 
 def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'):
     inline_keyboard = []
@@ -651,6 +665,40 @@ def sc_button(quality: dict, user_id: int = None):
         
     main_button, close_button = fetch_base_buttons()
     buttons += main_button + close_button
+    return InlineKeyboardMarkup(buttons)
+
+
+# [TAMBAHKAN FUNGSI INI DI bot/helpers/buttons/settings.py]
+def qb_user_auth_buttons(accounts_list: list):
+    """
+    Menampilkan daftar tombol akun yang tersimpan.
+    Setiap akun memiliki tombol hapus (Trash Icon).
+    """
+    buttons = []
+    
+    # Header Statis jika ada akun
+    if accounts_list:
+        buttons.append([InlineKeyboardButton("🔻 KLIK UNTUK MENGHAPUS 🔻", callback_data="ignore")])
+        
+        # Loop daftar akun dan buat tombol HAPUS untuk masing-masing
+        for acc in accounts_list:
+            label = acc.get('label', 'Unknown')
+            q_uid = acc.get('user_id', '0')
+            
+            # Teks tombol: "🗑️ Label (ID)"
+            btn_text = f"🗑️ {label} ({q_uid})"
+            
+            # Callback: "uset_qb_rm_" + ID Akun (sesuai regex di user_settings.py)
+            callback = f"uset_qb_rm_{q_uid}"
+            
+            buttons.append([InlineKeyboardButton(btn_text, callback_data=callback)])
+            
+    # Tombol Tambah Akun (Selalu muncul)
+    buttons.append([InlineKeyboardButton("➕ TAMBAH AKUN LAIN", callback_data="uset_qb_instr")])
+        
+    # Tombol Kembali ke menu kualitas
+    buttons.append([InlineKeyboardButton("🔙 KEMBALI", callback_data="uset_qobuz")])
+    
     return InlineKeyboardMarkup(buttons)
 
 
