@@ -888,7 +888,14 @@ async def uset_cb(client, query, datatype=""):
             "MP3_320": "MP3 320",
             "MP3_128": "MP3 128"
         }
-        if not deezer_manager or not deezer_manager.clients:
+        
+        # [MODIFIKASI] Cek Akun Global ATAU Akun Private
+        has_client = False
+        if deezer_manager:
+            if deezer_manager.clients or deezer_manager.has_private_session(user_id):
+                has_client = True
+
+        if not has_client:
             return await edit_message(query.message, "Layanan Deezer tidak aktif (tidak ada klien yang login).")
 
         main_user_dict = bot_set.user_data.get(user_id, {})
