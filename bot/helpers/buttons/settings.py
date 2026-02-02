@@ -1059,7 +1059,12 @@ def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
     if soundcloud_manager and soundcloud_manager.get_client():
         buttons.append([InlineKeyboardButton(text=f"Soundcloud Quality", callback_data=f"uset_soundcloud")])
     
-    if deezer_manager and deezer_manager.clients:
+    show_deezer = False
+    if deezer_manager:
+        if deezer_manager.clients or deezer_manager.has_private_session(user_id):
+            show_deezer = True
+            
+    if show_deezer:
         buttons.append([InlineKeyboardButton(text=f"Deezer Quality", callback_data=f"uset_deezer")])
     
     if kkbox_manager and kkbox_manager.clients:
