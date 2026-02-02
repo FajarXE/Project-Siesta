@@ -4,17 +4,15 @@ import time
 import hashlib
 import aiohttp
 import aiolimiter
-import json
-import os
-import traceback
 import asyncio
+import traceback
 
 from config import Config
 from .bundle import Bundle
 from bot.logger import LOGGER
 
-# File Database JSON untuk menyimpan Quality + Kredensial User
-QOBUZ_USER_DB = "qobuz_user_data.json"
+from bot.helpers.database.mongo_async import database
+from bot.settings import bot_set
 
 class QoClient:
     def __init__(self, email=None, password=None, user_id=None, user_token=None):
@@ -254,23 +252,13 @@ class QoClient:
             raise Exception("QOBUZ : Can't find any valid app secret") 
 
     async def get_track_url(self, id, user: dict):
-        try:
-            u_id = str(user.get("user_id", 0))
-        except:
-            u_id = "0"
-
-        # Cek kualitas di Manager
+        tg_user_id = user.get("user_id")
         quality = self.quality
-        try:
-            # Akses instance manager global
-            db_data = qobuz_manager._read_db()
-            user_data = db_data.get(u_id, {})
-            # Prioritas: Setting user > Default Client
-            quality = user_data.get("quality", self.quality)
-        except Exception as e:
-            LOGGER.warning(f"Gagal membaca kualitas dari DB: {e}")
+        
+        if tg_user_id:
+            user_settings = bot_set.user_data.get(int(tg_user_id), {})
+            quality = user_settings.get("qobuz_qual", self.quality)
 
-        LOGGER.info(f"QOBUZ: Get URL Track {id} | User {u_id} | Qual {quality}")
         return await self.api_call("track/getFileUrl", id=id, fmt_id=quality)
 
     async def get_album_meta(self, id):
@@ -308,79 +296,48 @@ class QoClient:
 
 class QobuzManager:
     def __init__(self):
-        self.db_file = QOBUZ_USER_DB
-        # Cache sesi aktif: {tg_user_id: [QoClient1, QoClient2, ...]}
         self.user_clients = {} 
 
     def _read_db(self):
-        if os.path.exists(self.db_file):
-            try:
-                with open(self.db_file, 'r') as f:
-                    return json.load(f)
-            except:
-                return {}
         return {}
 
-    def _write_db(self, data):
-        try:
-            with open(self.db_file, 'w') as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            LOGGER.error(f"QOBUZ DB Error: {e}")
-
     async def add_user_account(self, tg_user_id, q_user_id, q_token):
-        """Menambahkan akun ke daftar akun user (Mendukung Multi-Akun)."""
         temp_client = QoClient(user_id=q_user_id, user_token=q_token)
         try:
-            # 1. Cek Validitas Login
             await temp_client.login()
-            
-            tg_user_id = str(tg_user_id)
-            db_data = self._read_db()
-            
-            if tg_user_id not in db_data:
-                db_data[tg_user_id] = {}
-            
-            # Pastikan kunci 'accounts' ada dan berupa list
-            if 'accounts' not in db_data[tg_user_id]:
-                db_data[tg_user_id]['accounts'] = []
-            
-            # 2. Cek Duplikasi (Agar tidak menyimpan akun yang sama berkali-kali)
-            existing_accounts = db_data[tg_user_id]['accounts']
-            for acc in existing_accounts:
-                if acc['user_id'] == str(q_user_id):
-                    # Jika ada, update token-nya saja
-                    acc['token'] = q_token
-                    acc['label'] = temp_client.label
-                    self._write_db(db_data)
-                    # Tutup temp client karena kita hanya butuh verifikasi
-                    await temp_client.close_session()
-                    return True, f"Akun {temp_client.label} berhasil diperbarui!"
-
-            # 3. Jika baru, tambahkan ke list
-            new_account = {
-                "user_id": str(q_user_id),
-                "token": q_token,
-                "label": temp_client.label
-            }
-            db_data[tg_user_id]['accounts'].append(new_account)
-            
-            self._write_db(db_data)
-            await temp_client.close_session()
-            
-            # Reset cache user ini agar dimuat ulang saat request berikutnya
-            if tg_user_id in self.user_clients:
-                # Tutup sesi lama di cache sebelum dihapus dari memori
-                for c in self.user_clients[tg_user_id]:
-                    await c.close_session()
-                del self.user_clients[tg_user_id]
-            
-            return True, f"Akun ditambahkan! Total akun Anda: {len(db_data[tg_user_id]['accounts'])}"
+            label = temp_client.label
         except Exception as e:
-            if temp_client.session:
-                await temp_client.close_session()
+            await temp_client.close_session()
             return False, f"Login Gagal: {str(e)}"
+        
+        await temp_client.close_session()
 
+        tg_user_id = int(tg_user_id)
+        
+        if tg_user_id not in bot_set.user_data:
+            bot_set.user_data[tg_user_id] = {}
+            
+        current_accounts = bot_set.user_data[tg_user_id].get('qobuz_accounts', [])
+        
+        new_list = [acc for acc in current_accounts if str(acc['user_id']) != str(q_user_id)]
+        
+        new_account = {
+            "user_id": str(q_user_id),
+            "token": q_token,
+            "label": label
+        }
+        new_list.append(new_account)
+        
+        bot_set.user_data[tg_user_id]['qobuz_accounts'] = new_list
+        await database.save_user_settings(tg_user_id, {'qobuz_accounts': new_list})
+        
+        if tg_user_id in self.user_clients:
+            for c in self.user_clients[tg_user_id]:
+                await c.close_session()
+            del self.user_clients[tg_user_id]
+            
+        return True, f"Akun {label} berhasil disimpan permanen!"
+    
     async def remove_specific_account(self, tg_user_id, target_q_uid):
         """Menghapus SATU akun spesifik dari list user."""
         tg_user_id = str(tg_user_id)
@@ -472,13 +429,20 @@ class QobuzManager:
         
         return []
 
-    async def setup_quality(self, tg_user_id, quality):
-        tg_user_id = str(tg_user_id)
-        db_data = self._read_db()
-        if tg_user_id not in db_data:
-            db_data[tg_user_id] = {}
-        db_data[tg_user_id]['quality'] = int(quality)
-        self._write_db(db_data)
+    async def setup_quality(self, user_id: int=0, qual: int=0) -> None:
+        try:
+            user_id = int(user_id)
+            qual = int(qual)
+            
+            # 1. Simpan ke Memory (agar akses cepat)
+            if user_id not in bot_set.user_data:
+                bot_set.user_data[user_id] = {}
+            bot_set.user_data[user_id]['qobuz_qual'] = qual
+            
+            # 2. Simpan ke MongoDB (Permanen)
+            await database.save_user_settings(user_id, {'qobuz_qual': qual})
+        except Exception as e:
+            LOGGER.error(f"QOBUZ: Gagal setup quality: {e}")
 
 # Instance Global
 qobuz_manager = QobuzManager()
