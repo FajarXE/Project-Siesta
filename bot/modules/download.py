@@ -497,36 +497,57 @@ async def start_link(link: str, user: dict) -> None:
     elif link.startswith(tuple(deezer)):
         user['provider'] = 'Deezer'
         
-        if not deezer_manager.clients:
-            raise Exception("Maaf, tidak ada akun Deezer bot yang aktif saat ini.")
+        # 1. Ambil Akun User (Prioritas)
+        user_clients = []
+        if deezer_manager.has_private_session(user['user_id']):
+            try:
+                user_clients = await deezer_manager.get_user_clients(user['user_id'])
+            except Exception as e:
+                LOGGER.error(f"Gagal memuat akun user Deezer: {e}")
+
+        # 2. Ambil Akun Global
+        global_clients = deezer_manager.clients or []
         
-        clients_list = random.sample(deezer_manager.clients, len(deezer_manager.clients))
+        # Gabungkan (User dulu, baru Global)
+        all_clients = user_clients + list(global_clients) # Convert ke list jika perlu
+        
+        if not all_clients:
+            raise Exception("Maaf, tidak ada akun Deezer (Bot/Pribadi) yang aktif.")
+        
+        # Jika hanya global, acak. Jika ada user, biarkan urut (User 1, User 2, Global...)
+        if not user_clients and len(global_clients) > 1:
+            random.shuffle(all_clients)
+
         last_error = None
-        for client in clients_list:
+        for client in all_clients:
             try:
                 user['deezer_api'] = client 
                 await start_deezer(link, user)
-                LOGGER.info(f"Deezer: Unduhan berhasil menggunakan ARL ID {client.user['USER']['USER_ID']}")
+                
+                # Info Log
+                u_label = client.user.get('USER', {}).get('BLOG_NAME', 'Unknown')
+                LOGGER.info(f"Deezer: Unduhan berhasil menggunakan akun {u_label}")
                 return 
             except Exception as e:
                 error_str = str(e).lower()
                 is_retryable = False
                 
                 if isinstance(e, DeezerError) or \
-                   "not available in your country" in error_str or \
-                   "not available by your subscription" in error_str or \
-                   "track not available" in error_str:
+                   "not available" in error_str or \
+                   "country" in error_str or \
+                   "track token" in error_str: # Region lock usually
                     is_retryable = True
 
                 if is_retryable:
-                    LOGGER.warning(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Region/Sub Lock): {e}. Mencoba ARL berikutnya...")
+                    LOGGER.warning(f"Deezer: Akun gagal (Region/Lock): {e}. Mencoba akun berikutnya...")
                     last_error = e
                     continue 
                 else:
-                    LOGGER.error(f"Deezer: ARL ID {client.user['USER']['USER_ID']} gagal (Fatal): {e}")
+                    LOGGER.error(f"Deezer: Akun gagal (Fatal): {e}")
                     raise e 
+                    
         if last_error:
-            raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Deezer yang dicoba. Error terakhir: {last_error}")
+            raise Exception(f"Item tidak tersedia di semua ({len(all_clients)}) akun Deezer. Error terakhir: {last_error}")
         else:
             raise Exception("Gagal mengunduh Deezer karena alasan yang tidak diketahui setelah mencoba semua akun.")
         
