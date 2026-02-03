@@ -160,23 +160,31 @@ async def tidal_quality_cb(c, cb:CallbackQuery):
             'LOSSLESS': 'LOSSLESS'
         }
         
-        if any(c.mobile_hires for c in tidal_manager.clients):
+        # 1. Cek kemampuan Hi-Res pada Akun Admin
+        # Pastikan tidal_manager.clients tidak kosong dan ada yang support HiRes
+        if tidal_manager.clients and any(c.mobile_hires for c in tidal_manager.clients):
             qualities['HI_RES'] = 'MAX'
             
         current_q = tidal_manager.quality
         
+        # 2. Safety Check: Paksa munculkan tombol MAX jika sedang terpilih
+        # (Mengantisipasi jika kualitas tersimpan HI_RES tapi deteksi akun gagal/logout)
         if current_q == 'HI_RES' and 'HI_RES' not in qualities:
              qualities['HI_RES'] = 'MAX'
         
+        # 3. Beri tanda centang
         if current_q in qualities:
             qualities[current_q] += '✅'
         else:
             if 'LOSSLESS' in qualities:
                 qualities['LOSSLESS'] += '✅'
 
+        # 4. Teks Judul Menu (Diubah agar lebih jelas)
+        panel_text = "Choose Tidal Audio Quality below:"
+
         await edit_message(
             cb.message,
-            lang.s.TIDAL_PANEL,
+            panel_text, # Gunakan teks baru, bukan lang.s.TIDAL_PANEL
             tidal_quality_button(qualities, spatial=tidal_manager.spatial) 
         )
 
