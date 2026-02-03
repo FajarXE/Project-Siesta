@@ -654,6 +654,151 @@ async def uset_dz_instr_handler(client, query):
 
 
 # ==================================
+# TIDAL USER PRIVATE AUTH
+# ==================================
+
+# 1. Tombol Menu Auth di Panel Tidal (Callback)
+@Client.on_callback_query(filters.regex("^utd_auth_menu"))
+async def uset_tidal_auth_menu(client, query):
+    if not await check_user(msg=query.message): return
+    
+    user_id = query.from_user.id
+    
+    # Cek apakah user sudah login
+    user_client = await tidal_manager.get_user_client(user_id)
+    
+    text = "**🔐 TIDAL PRIVATE SESSION**\n\n"
+    buttons = []
+
+    if user_client:
+        sub = user_client.sub_type or "Unknown"
+        country = user_client.country_code or "??"
+        text += f"✅ **Status: LOGGED IN**\n"
+        text += f"👤 User ID: `{user_client.user_id}`\n"
+        text += f"🏳️ Region: {country} | 💎 Plan: {sub}\n\n"
+        text += "Bot akan menggunakan akun ini KHUSUS untuk Anda."
+        
+        # Tombol Logout
+        buttons.append([InlineKeyboardButton("🚪 LOGOUT SESSION", callback_data="utd_logout")])
+    else:
+        text += "❌ **Status: NOT LOGGED IN**\n"
+        text += "Bot menggunakan akun Global (Shared) untuk Anda.\n"
+        text += "Login akun sendiri untuk akses region/konten khusus dan kualitas HiRes pribadi."
+        
+        # Tombol Login
+        buttons.append([InlineKeyboardButton("➕ LOGIN ACCOUNT (TV CODE)", callback_data="utd_login_start")])
+
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data="uset_tidal")])
+    await edit_message(query.message, text, InlineKeyboardMarkup(buttons))
+
+
+# 2. Proses Login (Generate Code)
+@Client.on_callback_query(filters.regex("^utd_login_start"))
+async def uset_tidal_login_start(client, query):
+    if not await check_user(msg=query.message): return
+    
+    temp_client = TidalApi()
+    try:
+        auth_url, err = await temp_client.get_tv_login_url()
+        if err:
+            await temp_client.close()
+            return await query.answer(f"Error: {err}", True)
+        
+        text = (
+            "**TIDAL TV LOGIN**\n\n"
+            f"1. Buka link ini: [LOGIN LINK]({auth_url})\n"
+            "2. Login dan izinkan akses.\n"
+            "3. Setelah sukses di browser, klik tombol **'✅ I HAVE LOGGED IN'** di bawah."
+        )
+        
+        # Simpan temp_client di memory sementara bot (bukan manager) agar bisa diakses saat verify
+        # Kita gunakan bot_set.user_data untuk simpan object sementara
+        bot_set.user_data.setdefault(query.from_user.id, {})['temp_tidal_auth'] = temp_client
+        
+        buttons = [
+            [InlineKeyboardButton("✅ I HAVE LOGGED IN", callback_data="utd_login_verify")],
+            [InlineKeyboardButton("🔙 Cancel", callback_data="utd_auth_menu")]
+        ]
+        await edit_message(query.message, text, InlineKeyboardMarkup(buttons))
+        
+    except Exception as e:
+        await temp_client.close()
+        await query.answer(f"Error: {e}", True)
+
+
+# 3. Proses Verifikasi Login
+@Client.on_callback_query(filters.regex("^utd_login_verify"))
+async def uset_tidal_login_verify(client, query):
+    if not await check_user(msg=query.message): return
+    
+    user_id = query.from_user.id
+    temp_client = bot_set.user_data.get(user_id, {}).get('temp_tidal_auth')
+    
+    if not temp_client:
+        return await query.answer("Sesi kadaluarsa. Silakan ulangi login.", True)
+    
+    await edit_message(query.message, "🔄 **Verifying...**")
+    
+    try:
+        sub, err = await temp_client.login_tv()
+        if err:
+            await temp_client.close()
+            # Kembali ke menu awal dengan error
+            return await edit_message(
+                query.message, 
+                f"❌ **Login Gagal:** {err}\nSilakan coba lagi.",
+                InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="utd_auth_menu")]])
+            )
+        
+        # Sukses -> Simpan ke Manager & DB
+        auth_data = {
+            'refresh_token': temp_client.tv_session.refresh_token,
+            'country_code': temp_client.tv_session.country_code,
+            'user_id': temp_client.tv_session.user_id
+        }
+        
+        await tidal_manager.add_user_account(user_id, auth_data)
+        
+        # Bersihkan temp
+        await temp_client.close()
+        bot_set.user_data[user_id].pop('temp_tidal_auth', None)
+        
+        await query.answer("✅ Login Berhasil!", True)
+        await uset_tidal_auth_menu(client, query)
+        
+    except Exception as e:
+        if temp_client: await temp_client.close()
+        await edit_message(query.message, f"Error Fatal: {e}")
+
+
+# 4. Logout
+@Client.on_callback_query(filters.regex("^utd_logout"))
+async def uset_tidal_logout(client, query):
+    if not await check_user(msg=query.message): return
+    
+    user_id = query.from_user.id
+    await tidal_manager.remove_user_account(user_id)
+    
+    await query.answer("✅ Sesi dihapus. Kembali ke mode Global.", True)
+    await uset_tidal_auth_menu(client, query)
+
+
+# 5. INTEGRASI KE MENU UTAMA TIDAL
+# Cari Handler: @Client.on_callback_query(filters.regex("^utdqs")) ...
+# Tambahkan tombol ke 'tidal_quality_button' di 'bot/helpers/buttons/settings.py'
+# Atau modifikasi manual handler `uset_cb` bagian Tidal:
+
+@Client.on_callback_query(filters.regex("^uset_(tidal|back|...)")) 
+# ... inside handler ...
+    if data[1] == "tidal":
+        # ... logic lama ...
+        
+        # MODIFIKASI: Tambahkan tombol Private Account ke output
+        # (Sebaiknya edit fungsi `tidal_quality_button` di settings.py seperti langkah 3 di bawah)
+        pass 
+
+
+# ==================================
 # MENU PENGATURAN UTAMA
 # ==================================
 
