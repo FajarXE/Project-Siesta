@@ -447,7 +447,7 @@ def tidal_auth_buttons(active_clients: list = None):
     )
     
     # --- TOMBOL KEMBALI ---
-    inline_keyboard.append([InlineKeyboardButton(text="🔙 Back", callback_data="tidal")])
+    inline_keyboard.append([InlineKeyboardButton(text="🔙 Back", callback_data="tdP")])
     
     return InlineKeyboardMarkup(inline_keyboard)
     
