@@ -813,7 +813,7 @@ async def start_user_setting(client: Client, m: Message, edit=False, users_: dic
 <blockquote>
 <b>📦 ZIP SETTINGS</b>
 PLAYLIST : {PLAYLIST_ZIP} | ALBUM : {ALBUM_ZIP}
-ARTIST   : {ARTIST_ZIP}   | POSTER : {ART_POSTER}
+ARTIST : {ARTIST_ZIP} | POSTER : {ART_POSTER}
 
 <b>☁️ UPLOAD MODE: {upload_mode}</b>
 Gofile: {t_gf} | Buzz: {t_bh} | Viking: {t_vk}
@@ -876,8 +876,9 @@ async def uset_cb(client, query, datatype=""):
         
     # --- TIDAL MENU ---
     if data[1] == "tidal" or datatype == "tidal":
-        if not tidal_manager or not tidal_manager.clients:
-            return await edit_message(query.message, "Layanan Tidal tidak aktif (tidak ada klien yang login).")
+        if not tidal_manager:
+            return await edit_message(query.message, "Layanan Tidal tidak aktif.")
+            
         text = f"Choose Tidal Audio Quality bellow:"
         qualities = {
               'LOW': 'LOW',
@@ -895,8 +896,9 @@ async def uset_cb(client, query, datatype=""):
         )
         user_qual, user_spatial, _, __ = tidal_manager.get_user_quality_settings(user_id)
         
-        if any(c.mobile_hires for c in tidal_manager.clients):
+        if tidal_manager.clients and any(c.mobile_hires for c in tidal_manager.clients):
             qualities['HI_RES'] = 'MAX'
+            
         qualities[user_qual] += '✅'
         return await edit_message(query.message, text, tidal_quality_button(qualities, user_id, spatial=user_spatial))
     
