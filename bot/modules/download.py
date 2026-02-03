@@ -461,7 +461,7 @@ async def start_link(link: str, user: dict) -> None:
     khinsider = ["https://downloads.khinsider.com", "downloads.khinsider.com", "http://downloads.khinsider.com"]
     
     # Blok TIDAL
-    elif link.startswith(tuple(tidal)):
+    if link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
         
         user_client = await tidal_manager.get_user_client(user['user_id'])
