@@ -66,4 +66,19 @@ class MongoDB:
         except Exception:
             logging.info(traceback.format_exc())
 
+    # --- PENAMBAHAN FUNGSI BARU DI SINI ---
+    async def get_user_settings(self, user_id: int) -> dict:
+        """
+        Mengambil pengaturan user dari database.
+        """
+        user_id = int(user_id) if isinstance(user_id, str) else user_id
+        try:
+            # Mencari data user berdasarkan _id (user_id)
+            data = await self.db[Config.BOT_USERNAME].users.find_one({"_id": user_id})
+            return data if data else {}
+        except Exception:
+            logging.info(traceback.format_exc())
+            return {}
+    # --------------------------------------
+
 database = MongoDB()
