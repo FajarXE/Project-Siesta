@@ -1053,7 +1053,7 @@ def lyrics_button(user_settings: dict, user_id):
 def usetting_button(user_id: int = None) -> InlineKeyboardMarkup:
     buttons = []
     
-    if tidal_manager and tidal_manager.clients:
+    if tidal_manager:
         buttons.append([InlineKeyboardButton(text=f"Tidal Quality", callback_data=f"uset_tidal")])
         
     show_qobuz = False
