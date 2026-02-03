@@ -1215,7 +1215,9 @@ async def uset_tidal(client, query):
     data = query.data 
     user_id = query.from_user.id
     
-    if not tidal_manager or not tidal_manager.clients:
+    # [PERBAIKAN 1] Hapus 'or not tidal_manager.clients'
+    # Ini memungkinkan user Private mengubah setting walau Admin logout
+    if not tidal_manager:
         await query.answer("Layanan Tidal tidak aktif!", show_alert=True)
         return
         
@@ -1237,9 +1239,11 @@ async def uset_tidal(client, query):
         # Handle Spatial Audio
         elif data == "utdqs_spatial":
             options = ['OFF', 'ATMOS AC3 JOC']
-            if any(c.mobile_atmos for c in tidal_manager.clients):
+            
+            # [PERBAIKAN 2] Cek dulu apakah tidal_manager.clients ada isinya sebelum loop
+            if tidal_manager.clients and any(c.mobile_atmos for c in tidal_manager.clients):
                 options.append('ATMOS AC4')
-            if any(c.mobile_atmos or c.mobile_hires for c in tidal_manager.clients):
+            if tidal_manager.clients and any(c.mobile_atmos or c.mobile_hires for c in tidal_manager.clients):
                 options.append('Sony 360RA')
                 
             main_user_dict = bot_set.user_data.get(user_id, {})
@@ -1260,7 +1264,13 @@ async def uset_tidal(client, query):
         else:
             to_set = data.split('_')[1]
             qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
-            to_set_qual = list(filter(lambda x: qualities[x] == to_set, qualities))[0]
+            
+            # [PERBAIKAN 3] Logika lookup yang lebih aman daripada list(filter(...))[0]
+            to_set_qual = "LOSSLESS" # Default fallback
+            for k, v in qualities.items():
+                if v == to_set:
+                    to_set_qual = k
+                    break
 
             bot_set.user_data.setdefault(user_id, {})["tidal_qual"] = to_set_qual
             await database.save_user_settings(user_id, {"tidal_qual": to_set_qual})
@@ -1270,7 +1280,7 @@ async def uset_tidal(client, query):
 
     except Exception:
         logging.error(format_exc())
-
+        
 
 # --- HANDLER SETTING QOBUZ SPECIFIC ---
 @Client.on_callback_query(filters.regex("^uqbs"))
