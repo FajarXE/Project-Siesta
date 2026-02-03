@@ -783,21 +783,6 @@ async def uset_tidal_logout(client, query):
     await uset_tidal_auth_menu(client, query)
 
 
-# 5. INTEGRASI KE MENU UTAMA TIDAL
-# Cari Handler: @Client.on_callback_query(filters.regex("^utdqs")) ...
-# Tambahkan tombol ke 'tidal_quality_button' di 'bot/helpers/buttons/settings.py'
-# Atau modifikasi manual handler `uset_cb` bagian Tidal:
-
-@Client.on_callback_query(filters.regex("^uset_(tidal|back|...)")) 
-# ... inside handler ...
-    if data[1] == "tidal":
-        # ... logic lama ...
-        
-        # MODIFIKASI: Tambahkan tombol Private Account ke output
-        # (Sebaiknya edit fungsi `tidal_quality_button` di settings.py seperti langkah 3 di bawah)
-        pass 
-
-
 # ==================================
 # MENU PENGATURAN UTAMA
 # ==================================
