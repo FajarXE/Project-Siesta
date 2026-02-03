@@ -461,37 +461,53 @@ async def start_link(link: str, user: dict) -> None:
     khinsider = ["https://downloads.khinsider.com", "downloads.khinsider.com", "http://downloads.khinsider.com"]
     
     # Blok TIDAL
-    if link.startswith(tuple(tidal)):
+    elif link.startswith(tuple(tidal)):
         user['provider'] = 'Tidal'
         
+        user_client = await tidal_manager.get_user_client(user['user_id'])
+        
+        if user_client:
+            LOGGER.info(f"Tidal: Menggunakan akun PRIVATE untuk User {user['user_id']}")
+            try:
+                user['tidal_api'] = user_client
+                await start_tidal(link, user)
+                return 
+            except Exception as e:
+                LOGGER.warning(f"Tidal Private User {user['user_id']} gagal: {e}. Mencoba fallback ke Akun Global.")
+
         if not tidal_manager.clients:
-            raise Exception("Maaf, tidak ada akun Tidal bot yang aktif saat ini.")
+            raise Exception("Maaf, tidak ada akun Tidal Global yang aktif dan Anda tidak memiliki akun Private.")
 
         clients_list = list(tidal_manager.clients)
         if len(clients_list) > 1:
             random.shuffle(clients_list)
+            
         last_error = None
+        
         for client in clients_list:
             try:
                 user['tidal_api'] = client
                 await start_tidal(link, user)
-                LOGGER.info(f"Tidal: Unduhan berhasil menggunakan akun User ID {client.user_id}")
-                return
+                LOGGER.info(f"Tidal: Unduhan berhasil menggunakan akun Global User ID {client.user_id}")
+                return 
             except Exception as e:
                 error_str = str(e).lower()
+                
                 if 'asset is not ready' in error_str or \
                    'not available in your region' in error_str or \
                    'region-locked' in error_str:
-                    LOGGER.warning(f"Tidal: Akun {client.user_id} gagal (Region Lock): {e}. Mencoba akun berikutnya...")
+                    
+                    LOGGER.warning(f"Tidal: Akun Global {client.user_id} gagal (Region Lock): {e}. Mencoba akun berikutnya...")
                     last_error = e
-                    continue
+                    continue 
                 else:
-                    LOGGER.error(f"Tidal: Akun {client.user_id} gagal (Fatal): {e}")
+                    LOGGER.error(f"Tidal: Akun Global {client.user_id} gagal (Fatal): {e}")
                     raise e
+
         if last_error:
-            raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Tidal yang dicoba. Error terakhir: {last_error}")
+            raise Exception(f"Item tidak tersedia di semua ({len(clients_list)}) akun Tidal Global yang dicoba (Region Lock). Error terakhir: {last_error}")
         else:
-            raise Exception("Gagal mengunduh Tidal karena alasan yang tidak diketahui setelah mencoba semua akun.")
+            raise Exception("Gagal mengunduh Tidal karena alasan yang tidak diketahui.")
         
     # Blok DEEZER
     elif link.startswith(tuple(deezer)):
