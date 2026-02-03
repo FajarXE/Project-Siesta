@@ -159,9 +159,20 @@ async def tidal_quality_cb(c, cb:CallbackQuery):
             'HIGH': 'HIGH',
             'LOSSLESS': 'LOSSLESS'
         }
+        
         if any(c.mobile_hires for c in tidal_manager.clients):
             qualities['HI_RES'] = 'MAX'
-        qualities[tidal_manager.quality] += '✅'
+            
+        current_q = tidal_manager.quality
+        
+        if current_q == 'HI_RES' and 'HI_RES' not in qualities:
+             qualities['HI_RES'] = 'MAX'
+        
+        if current_q in qualities:
+            qualities[current_q] += '✅'
+        else:
+            if 'LOSSLESS' in qualities:
+                qualities['LOSSLESS'] += '✅'
 
         await edit_message(
             cb.message,
