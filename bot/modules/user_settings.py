@@ -896,10 +896,24 @@ async def uset_cb(client, query, datatype=""):
         )
         user_qual, user_spatial, _, __ = tidal_manager.get_user_quality_settings(user_id)
         
+        # Cek jika ada akun Global yang support HiRes
         if tidal_manager.clients and any(c.mobile_hires for c in tidal_manager.clients):
             qualities['HI_RES'] = 'MAX'
             
-        qualities[user_qual] += '✅'
+        # --- [PERBAIKAN UTAMA] ---
+        # Jika user terpilih 'HI_RES' tapi tombolnya belum ada (misal karena Admin logout),
+        # kita PAKSA tambahkan tombolnya agar tidak crash (KeyError).
+        if user_qual == 'HI_RES' and 'HI_RES' not in qualities:
+            qualities['HI_RES'] = 'MAX'
+        # -------------------------
+
+        # Sekarang aman untuk menambah centang
+        if user_qual in qualities:
+            qualities[user_qual] += '✅'
+        else:
+            # Fallback jika ada value aneh dari DB
+            qualities['LOSSLESS'] += '✅'
+            
         return await edit_message(query.message, text, tidal_quality_button(qualities, user_id, spatial=user_spatial))
     
     # --- QOBUZ MENU ---
