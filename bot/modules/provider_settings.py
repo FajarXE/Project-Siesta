@@ -196,58 +196,117 @@ async def tidal_set_quality_cb(c, cb:CallbackQuery):
 @Client.on_callback_query(filters.regex(pattern=r"^tdAuth"))
 async def tidal_auth_cb(c, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        text = f"{len(tidal_manager.clients)} akun Tidal terhubung.\n\n"
-        for i, client in enumerate(tidal_manager.clients):
-            sub_type = client.sub_type or "Unknown"
-            text += f"  **Akun {i+1} (User {client.user_id})**\n"
-            text += f"  > Tipe: {sub_type}\n"
-            text += f"  > Hires: {bool(client.mobile_hires)}, Atmos: {bool(client.mobile_atmos)}\n"
-        text += "\nGunakan tombol di bawah untuk menambah akun baru (via TV) atau menghapus *semua* akun."
-        await edit_message(cb.message, text, tidal_auth_buttons())
+        # Ambil daftar klien aktif dari manager
+        clients = tidal_manager.clients
+        
+        text = f"🔐 **PENGATURAN AKUN TIDAL (GLOBAL)**\n\n"
+        
+        if not clients:
+            text += "❌ **Tidak ada akun aktif.**\nSilakan login menggunakan tombol di bawah agar bot bisa digunakan oleh semua user."
+        else:
+            text += f"✅ **{len(clients)} Akun Aktif**\n"
+            text += "Bot akan menggunakan akun-akun ini secara bergantian (Load Balancing).\n\n"
+            
+            # Loop untuk menampilkan detail setiap akun di pesan teks
+            for i, client in enumerate(clients):
+                sub_type = client.sub_type or "Unknown"
+                country = client.country_code or "??"
+                uid = client.user_id or "N/A"
+                hires = "✅" if client.mobile_hires else "❌"
+                atmos = "✅" if client.mobile_atmos else "❌"
+                
+                text += f"**{i+1}. User ID:** `{uid}`\n"
+                text += f"   🏳️ Region: `{country}` | 💎 Plan: `{sub_type}`\n"
+                text += f"   🔊 Hires: {hires} | 🎧 Atmos: {atmos}\n\n"
+                
+            text += "👇 **Klik tombol sampah (🗑️) di bawah untuk menghapus akun tertentu.**"
+
+        # PENTING: Pass 'clients' ke fungsi buttons agar tombol hapus muncul
+        await edit_message(cb.message, text, tidal_auth_buttons(clients))
 
 @Client.on_callback_query(filters.regex(pattern=r"^tdLogin"))
 async def tidal_login_cb(c:Client, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
         temp_client = TidalApi() 
         try:
+            # Simpan list klien saat ini agar tombol 'Back' & list hapus tidak hilang saat proses login
+            current_clients = tidal_manager.clients
+            
             auth_url, err = await temp_client.get_tv_login_url()
             if err:
-                return await c.answer_callback_query(cb.id, err, True)
-            await edit_message(cb.message, lang.s.TIDAL_AUTH_URL.format(auth_url), tidal_auth_buttons())
+                # Tutup sesi temp jika error
+                if hasattr(temp_client, 'close'): await temp_client.close()
+                elif hasattr(temp_client, 'session') and temp_client.session: await temp_client.session.close()
+                return await c.answer_callback_query(cb.id, str(err), True)
+            
+            await edit_message(
+                cb.message, 
+                lang.s.TIDAL_AUTH_URL.format(auth_url), 
+                tidal_auth_buttons(current_clients) 
+            )
+            
             sub, err = await temp_client.login_tv()
             if err:
-                return await edit_message(cb.message, lang.s.ERR_LOGIN_TIDAL_TV_FAILED.format(err), tidal_auth_buttons())
+                if hasattr(temp_client, 'close'): await temp_client.close()
+                elif hasattr(temp_client, 'session') and temp_client.session: await temp_client.session.close()
+                return await edit_message(cb.message, lang.s.ERR_LOGIN_TIDAL_TV_FAILED.format(err), tidal_auth_buttons(current_clients))
+            
             if sub:
                 auth_data = {
                     'refresh_token': temp_client.tv_session.refresh_token,
                     'country_code': temp_client.tv_session.country_code,
                     'user_id': temp_client.tv_session.user_id
                 }
+                
+                # Load settings lama
                 all_settings = await database.get_variable()
                 if not all_settings:
                     all_settings = {}
                 accounts_list = all_settings.get("TIDAL_ACCOUNTS_LIST", [])
-                accounts_list.append(auth_data)
-                await database.set_variable('TIDAL_ACCOUNTS_LIST', accounts_list)
-                await tidal_manager.initialize_clients()
-                await temp_client.session.close() 
-                await edit_message(cb.message, f"Akun {sub} (User {auth_data['user_id']}) berhasil ditambahkan.\n"
-                                f"Total akun: {len(tidal_manager.clients)}", tidal_auth_buttons())
+                
+                # --- LOGIKA BARU: Cek Duplikasi ---
+                # Jangan tambah jika ID sudah ada di database
+                if not any(str(acc.get('user_id')) == str(auth_data['user_id']) for acc in accounts_list):
+                    accounts_list.append(auth_data)
+                    await database.set_variable('TIDAL_ACCOUNTS_LIST', accounts_list)
+                    
+                    # Reload Manager agar akun baru langsung aktif
+                    await tidal_manager.initialize_clients()
+                    
+                    # Bersihkan sesi temp
+                    if hasattr(temp_client, 'close'): await temp_client.close()
+                    elif hasattr(temp_client, 'session') and temp_client.session: await temp_client.session.close()
+                    
+                    await c.answer_callback_query(cb.id, f"✅ Login Berhasil! Akun {sub} ditambahkan.", True)
+                    # Refresh Menu Auth
+                    await tidal_auth_cb(c, cb)
+                else:
+                    await c.answer_callback_query(cb.id, "⚠️ Akun ini sudah ada di database.", True)
+                    if hasattr(temp_client, 'close'): await temp_client.close()
+                    elif hasattr(temp_client, 'session') and temp_client.session: await temp_client.session.close()
+                    await tidal_auth_cb(c, cb)
+
         except Exception as e:
             LOGGER.error(f"Gagal login Tidal: {traceback.format_exc()}")
-            if temp_client.session:
-                await temp_client.session.close() 
+            if hasattr(temp_client, 'close'): await temp_client.close()
+            elif hasattr(temp_client, 'session') and temp_client.session: await temp_client.session.close()
             await c.answer_callback_query(cb.id, f"Error: {e}", True)
 
-@Client.on_callback_query(filters.regex(pattern=r"^tdRemove"))
-async def tidal_remove_login_cb(c: Client, cb: CallbackQuery):
+@Client.on_callback_query(filters.regex(pattern=r"^tdRemove_(.+)"))
+async def tidal_remove_specific_cb(c: Client, cb: CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
-        for client in tidal_manager.clients:
-            if hasattr(client, "session") and client.session:
-                await client.session.close()
-        await database.set_variable("TIDAL_ACCOUNTS_LIST", [])
-        await tidal_manager.initialize_clients()
-        await c.answer_callback_query(cb.id, "Semua akun Tidal telah dihapus.", True)
+        # Ambil User ID target dari regex (contoh: tdRemove_12345 -> 12345)
+        target_uid = cb.matches[0].group(1) 
+        
+        # Panggil fungsi remove spesifik di manager (yang sudah kita buat sebelumnya)
+        success = await tidal_manager.remove_specific_account(target_uid)
+        
+        if success:
+            await c.answer_callback_query(cb.id, f"✅ Akun {target_uid} berhasil dihapus.", True)
+        else:
+            await c.answer_callback_query(cb.id, f"❌ Gagal: Akun {target_uid} tidak ditemukan.", True)
+        
+        # Refresh tampilan menu untuk update daftar
         await tidal_auth_cb(c, cb)
 
 
