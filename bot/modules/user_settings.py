@@ -897,23 +897,35 @@ async def uset_cb(client, query, datatype=""):
         )
         user_qual, user_spatial, _, __ = tidal_manager.get_user_quality_settings(user_id)
         
-        # Cek jika ada akun Global yang support HiRes
+        # --- [LOGIKA BARU: CEK GLOBAL + PRIVATE] ---
+        has_hires = False
+        
+        # 1. Cek Admin/Global
         if tidal_manager.clients and any(c.mobile_hires for c in tidal_manager.clients):
+            has_hires = True
+            
+        # 2. Cek Akun Private User
+        # (Kita panggil get_user_client agar status hires akun user terbaca)
+        user_client = await tidal_manager.get_user_client(user_id)
+        if user_client and getattr(user_client, 'mobile_hires', False):
+            has_hires = True
+
+        # Jika salah satu support HiRes, tampilkan tombol MAX
+        if has_hires:
             qualities['HI_RES'] = 'MAX'
             
-        # --- [PERBAIKAN UTAMA] ---
-        # Jika user terpilih 'HI_RES' tapi tombolnya belum ada (misal karena Admin logout),
-        # kita PAKSA tambahkan tombolnya agar tidak crash (KeyError).
+        # Safety Fallback: Jika user terlanjur set HI_RES tapi terdeteksi false
+        # (misal error sesaat), tetap paksa munculkan agar tidak Crash (KeyError)
         if user_qual == 'HI_RES' and 'HI_RES' not in qualities:
             qualities['HI_RES'] = 'MAX'
-        # -------------------------
+        # -------------------------------------------
 
-        # Sekarang aman untuk menambah centang
         if user_qual in qualities:
             qualities[user_qual] += '✅'
         else:
             # Fallback jika ada value aneh dari DB
-            qualities['LOSSLESS'] += '✅'
+            if 'LOSSLESS' in qualities:
+                qualities['LOSSLESS'] += '✅'
             
         return await edit_message(query.message, text, tidal_quality_button(qualities, user_id, spatial=user_spatial))
     
@@ -1215,35 +1227,41 @@ async def uset_tidal(client, query):
     data = query.data 
     user_id = query.from_user.id
     
-    # [PERBAIKAN 1] Hapus 'or not tidal_manager.clients'
-    # Ini memungkinkan user Private mengubah setting walau Admin logout
     if not tidal_manager:
         await query.answer("Layanan Tidal tidak aktif!", show_alert=True)
         return
         
     try:
-        # Handle MQA Fix
         if data.startswith("utdqs_mqa_"):
             new_state = data.split("_")[-1]
             bot_set.user_data.setdefault(user_id, {})["tidal_mqa_fix"] = new_state
             await database.save_user_settings(user_id, {"tidal_mqa_fix": new_state})
             await tidal_manager.setup_user_settings(user_id, mqa_fix=new_state)
 
-        # Handle Convert M4A
         elif data.startswith("utdqs_convert_"):
             new_state = data.split("_")[-1]
             bot_set.user_data.setdefault(user_id, {})["tidal_convert_m4a"] = new_state
             await database.save_user_settings(user_id, {"tidal_convert_m4a": new_state})
             await tidal_manager.setup_user_settings(user_id, convert_m4a=new_state)
 
-        # Handle Spatial Audio
         elif data == "utdqs_spatial":
-            options = ['OFF', 'ATMOS AC3 JOC']
+            user_client = await tidal_manager.get_user_client(user_id)
             
-            # [PERBAIKAN 2] Cek dulu apakah tidal_manager.clients ada isinya sebelum loop
-            if tidal_manager.clients and any(c.mobile_atmos for c in tidal_manager.clients):
+            has_atmos = False
+            has_360 = False
+            
+            if tidal_manager.clients:
+                if any(c.mobile_atmos for c in tidal_manager.clients): has_atmos = True
+                if any(c.mobile_atmos or c.mobile_hires for c in tidal_manager.clients): has_360 = True
+            
+            if user_client:
+                if getattr(user_client, 'mobile_atmos', False): has_atmos = True
+                if getattr(user_client, 'mobile_atmos', False) or getattr(user_client, 'mobile_hires', False): has_360 = True
+
+            options = ['OFF', 'ATMOS AC3 JOC']
+            if has_atmos:
                 options.append('ATMOS AC4')
-            if tidal_manager.clients and any(c.mobile_atmos or c.mobile_hires for c in tidal_manager.clients):
+            if has_360:
                 options.append('Sony 360RA')
                 
             main_user_dict = bot_set.user_data.get(user_id, {})
@@ -1260,13 +1278,11 @@ async def uset_tidal(client, query):
             await database.save_user_settings(user_id, {"tidal_spatial": new_spatial})
             await tidal_manager.setup_user_settings(user_id, spatial=new_spatial)
         
-        # Handle Quality
         else:
             to_set = data.split('_')[1]
             qualities = {'LOW':'LOW','HIGH':'HIGH','LOSSLESS':'LOSSLESS','HI_RES':'MAX'}
             
-            # [PERBAIKAN 3] Logika lookup yang lebih aman daripada list(filter(...))[0]
-            to_set_qual = "LOSSLESS" # Default fallback
+            to_set_qual = "LOSSLESS"
             for k, v in qualities.items():
                 if v == to_set:
                     to_set_qual = k
