@@ -496,10 +496,20 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
     usetting = user_id != 0
     spatial_to_show = spatial
     
-    if usetting:
-        _, spatial_to_show, user_mqa_fix, user_convert_m4a = tidal_manager.get_user_quality_settings(user_id)
+    # --- VAR UNTUK USER SETTING ---
+    user_mqa_fix = "OFF"
+    user_convert_m4a = "OFF"
 
-    # 1. Tombol Kualitas
+    # Jika User Mode, coba ambil setting tambahan
+    if usetting:
+        try:
+            # Import lokal untuk mencegah circular import
+            from ..tidal.manager import tidal_manager
+            _, spatial_to_show, user_mqa_fix, user_convert_m4a = tidal_manager.get_user_quality_settings(user_id)
+        except Exception:
+            pass
+
+    # 1. Tombol Kualitas (Muncul di Admin & User)
     for quality in qualities.values():
         inline_keyboard.append(
             [
@@ -510,18 +520,19 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
             ]
         )
         
-    # 2. Tombol Spatial
+    # 2. Tombol Spatial (Muncul di Admin & User)
     inline_keyboard.append(
         [
             InlineKeyboardButton(
-                    text=F'SPATIAL : {spatial_to_show}',
+                    text=f'SPATIAL : {spatial_to_show}',
                     callback_data=f"tdSQ_spatial" if not user_id else "utdqs_spatial"
                 )
         ]
     )
     
-    # 3. Tombol MQA & Convert (HANYA untuk panel pengguna)
+    # 3. KONTEN KHUSUS USER (Private Settings)
     if usetting:
+        # Tombol MQA Fix
         if user_mqa_fix == "ON":
             mqa_text = "✅ MQA Fix: ON"
             mqa_callback = "utdqs_mqa_OFF"
@@ -529,6 +540,7 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
             mqa_text = "❌ MQA Fix: OFF"
             mqa_callback = "utdqs_mqa_ON"
         
+        # Tombol Convert M4A
         if user_convert_m4a == "ON":
             convert_text = "✅ Convert M4A: ON"
             convert_callback = "utdqs_convert_OFF"
@@ -536,39 +548,23 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
             convert_text = "❌ Convert M4A: OFF"
             convert_callback = "utdqs_convert_ON"
             
-        inline_keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=mqa_text,
-                    callback_data=mqa_callback
-                )
-            ]
-        )
-        inline_keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=convert_text,
-                    callback_data=convert_callback
-                )
-            ]
-        )
-    
-    if usetting:
-        # --- [TAMBAHAN BARU: TOMBOL PRIVATE ACCOUNT] ---
-        # Tombol ini akan membuka menu login khusus user (utd_auth_menu)
-        inline_keyboard.append(
-            [
-                InlineKeyboardButton(text="🔐 PRIVATE ACCOUNT", callback_data="utd_auth_menu")
-            ]
-        )
-        # --- [BATAS TAMBAHAN] ---
-
-        inline_keyboard.append(
-            [
-                InlineKeyboardButton(text="Back", callback_data="uset_back")
-            ]
-        )
+        inline_keyboard.append([InlineKeyboardButton(text=mqa_text, callback_data=mqa_callback)])
+        inline_keyboard.append([InlineKeyboardButton(text=convert_text, callback_data=convert_callback)])
+        
+        # Tombol Navigasi User
+        inline_keyboard.append([InlineKeyboardButton(text="🔐 PRIVATE ACCOUNT", callback_data="utd_auth_menu")])
+        inline_keyboard.append([InlineKeyboardButton(text="Back", callback_data="uset_back")])
+        
         return InlineKeyboardMarkup(inline_keyboard)
+
+    # 4. KONTEN KHUSUS ADMIN (Global Settings)
+    # [PENTING] Bagian ini yang HILANG di kode lama Anda.
+    # Kita tambahkan tombol standar (Back/Close) untuk Admin.
+    
+    main_button, close_button = fetch_base_buttons()
+    inline_keyboard += main_button + close_button
+    
+    return InlineKeyboardMarkup(inline_keyboard)
 
 
 # ==========================================
