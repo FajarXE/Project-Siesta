@@ -96,6 +96,7 @@ from ..helpers.database.mongo_async import database
 from ..helpers.utils import fetch_zip_settings
 from ..settings import bot_set
 from ..helpers.message import send_message, edit_message, check_user, fetch_user_details
+from ..helpers.tidal.tidal_api import TidalApi
 
 
 # ==================================
