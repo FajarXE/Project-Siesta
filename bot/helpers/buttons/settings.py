@@ -414,27 +414,41 @@ def tidal_buttons():
     inline_keyboard += main_button + close_button
     return InlineKeyboardMarkup(inline_keyboard)
 
-def tidal_auth_buttons():
+def tidal_auth_buttons(active_clients: list = None):
     inline_keyboard = []
-    if tidal_manager and tidal_manager.clients:
-        inline_keyboard += [
-            [
-                InlineKeyboardButton(
-                    text=lang.s.TIDAL_REMOVE_LOGIN,
-                    callback_data=f'tdRemove'
-                )
-            ],
-        ]
+    
+    # --- LOGIKA BARU: LOOPING AKUN AKTIF ---
+    if active_clients:
+        # Header Info
+        inline_keyboard.append([InlineKeyboardButton("🔻 HAPUS AKUN (KLIK DI BAWAH) 🔻", callback_data="ignore")])
+        
+        for client in active_clients:
+            # Ambil detail akun agar Admin tahu mana yang mau dihapus
+            uid = client.user_id
+            sub = client.sub_type or "UNK"
+            country = client.country_code or "??"
+            
+            # Label Tombol: "🗑️ HIFI (US) - 12345"
+            btn_text = f"🗑️ {sub} ({country}) - {uid}"
+            
+            # Callback unik: tdRemove_12345
+            inline_keyboard.append([
+                InlineKeyboardButton(text=btn_text, callback_data=f"tdRemove_{uid}")
+            ])
+            
+    # --- TOMBOL LOGIN ---
     inline_keyboard.append(
         [
             InlineKeyboardButton(
-                text=lang.s.TIDAL_LOGIN_TV,
-                callback_data=f'tdLogin'
+                text="➕ TAMBAH AKUN BARU (TV LOGIN)",
+                callback_data='tdLogin'
             )
         ]
     )
-    main_button, close_button = fetch_base_buttons()
-    inline_keyboard += main_button + close_button
+    
+    # --- TOMBOL KEMBALI ---
+    inline_keyboard.append([InlineKeyboardButton(text="🔙 Back", callback_data="tidal")])
+    
     return InlineKeyboardMarkup(inline_keyboard)
     
 
@@ -540,16 +554,21 @@ def tidal_quality_button(qualities: dict, user_id: int = 0, spatial: str = 'OFF'
         )
     
     if usetting:
+        # --- [TAMBAHAN BARU: TOMBOL PRIVATE ACCOUNT] ---
+        # Tombol ini akan membuka menu login khusus user (utd_auth_menu)
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(text="🔐 PRIVATE ACCOUNT", callback_data="utd_auth_menu")
+            ]
+        )
+        # --- [BATAS TAMBAHAN] ---
+
         inline_keyboard.append(
             [
                 InlineKeyboardButton(text="Back", callback_data="uset_back")
             ]
         )
         return InlineKeyboardMarkup(inline_keyboard)
-        
-    main_button, close_button = fetch_base_buttons()
-    inline_keyboard += main_button + close_button
-    return InlineKeyboardMarkup(inline_keyboard)
 
 
 # ==========================================
