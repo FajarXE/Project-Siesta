@@ -624,28 +624,17 @@ async def get_quality(meta: dict, user: dict):
     client = user['qobuz_api'] 
     
     try:
-        u_id = str(user.get("user_id", 0))
+        u_id = int(user.get("user_id", 0))
     except:
-        u_id = "0"
+        u_id = 0
         
-    # --- PERBAIKAN: ADAPTASI UNTUK QOBUZ STATELESS CLIENT ---
     quality = client.quality
-    if hasattr(client, "_read_db"):
-        # Jika menggunakan qopy.py baru (Stateless)
-        db_data = client._read_db()
-        quality = db_data.get(u_id, client.quality)
-    elif hasattr(client, "user_data"):
-        # Jika menggunakan qopy.py lama (In-Memory)
-        # Handle kemungkinan key berupa int atau string
-        try:
-            u_id_int = int(u_id)
-        except:
-            u_id_int = 0
-        user_dict = client.user_data.get(u_id_int, {})
-        quality = user_dict.get("qobuz_qual", client.quality)
-    # --------------------------------------------------------
     
-    if quality == 5:
+    if u_id in bot_set.user_data:
+        user_settings = bot_set.user_data[u_id]
+        quality = user_settings.get("qobuz_qual", client.quality)
+    
+    if int(quality) == 5:
         return 'mp3', '320K'
     else:
         bit_depth = meta.get("bit_depth", 16)
