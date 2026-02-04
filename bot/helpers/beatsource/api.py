@@ -2,20 +2,23 @@
 
 import aiohttp
 import asyncio
+import random
 from datetime import timedelta, datetime
 from urllib.parse import urlparse, parse_qs
 from bot.logger import LOGGER
 
-# --- TAMBAHAN: Import ProxyConnector ---
+# --- Cek Library Proxy ---
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
     LOGGER.warning("Modul 'aiohttp_socks' tidak ditemukan. Proxy SOCKS/SOCKS5H tidak akan berjalan.")
     ProxyConnector = None
-# ---------------------------------------
+# -------------------------
 
-# --- KONSTANTA ANTI-BAN ---
-USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+# [FIX 1] Gunakan User-Agent 'orpheusdl' untuk API Calls agar sesuai dengan Client ID
+# Gunakan Browser UA HANYA untuk Auth Flow
+API_USER_AGENT = "orpheusdl/beatsource-module"
+BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
 
 class BeatsourceError(Exception):
     def __init__(self, message):
@@ -25,6 +28,7 @@ class BeatsourceError(Exception):
 class BeatsourceAPI:
     def __init__(self):
         self.API_URL = "https://api.beatsource.com/v4/"
+        # Client ID dari referensi (Orpheus/BeatportDL Go)
         self.client_id = "ryZ8LuyQVPqbK2mBX2Hwt4qSMtnWuTYSqBPO92yQ"
 
         self.access_token = None
@@ -38,261 +42,204 @@ class BeatsourceAPI:
 
     async def _init_session(self):
         """
-        Membuat sesi aiohttp dengan header browser, cookie jar, dan PROXY.
-        CookieJar(unsafe=True) PENTING untuk login Beatsource agar cookie sessionid tersimpan.
+        Membuat sesi aiohttp dengan dukungan Proxy (Auto-fix socks5h).
         """
         if self.session is None or self.session.closed:
             connector = None
-            
-            # --- LOGIKA KONEKTOR PROXY (Auto-fix socks5h) ---
-            if self.proxy:
-                if ProxyConnector:
-                    try:
-                        # FIX: Handle socks5h manual jika library menolak skemanya
-                        proxy_url = self.proxy
-                        use_rdns = False
-                        
-                        if proxy_url.startswith("socks5h://"):
-                            proxy_url = proxy_url.replace("socks5h://", "socks5://")
-                            use_rdns = True
-                        
-                        connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
-                        LOGGER.debug(f"BeatsourceAPI: Menggunakan Proxy untuk {self.email} (RDNS: {use_rdns})")
-                    except Exception as e:
-                        LOGGER.error(f"BeatsourceAPI: Gagal menginisialisasi Proxy Connector: {e}")
-                else:
-                    LOGGER.error("BeatsourceAPI: Proxy diset tapi 'aiohttp_socks' belum diinstall.")
-            # ------------------------------------------------
+            if self.proxy and ProxyConnector:
+                try:
+                    proxy_url = self.proxy
+                    use_rdns = False
+                    if proxy_url.startswith("socks5h://"):
+                        proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                        use_rdns = True
+                    
+                    connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+                except Exception as e:
+                    LOGGER.error(f"BeatsourceAPI: Gagal Proxy: {e}")
 
+            # Gunakan cookie jar unsafe=True untuk menyimpan sessionid
             self.session = aiohttp.ClientSession(
-                headers={'user-agent': USER_AGENT},
+                headers={'user-agent': API_USER_AGENT},
                 cookie_jar=aiohttp.CookieJar(unsafe=True),
                 connector=connector
             )
 
     async def close_session(self):
-        """Menutup sesi aiohttp dengan aman."""
         if self.session and not self.session.closed:
             await self.session.close()
-            self.session = None
 
     def _get_headers(self, use_access_token: bool = False):
-        """Mendapatkan header standar dengan User-Agent yang konsisten."""
-        headers = {'user-agent': USER_AGENT}
+        headers = {'user-agent': API_USER_AGENT}
         if use_access_token and self.access_token:
             headers['authorization'] = f'Bearer {self.access_token}'
         return headers
 
     async def load_session(self, token_data: dict):
-        """Memuat sesi dari database."""
         await self._init_session()
         self.access_token = token_data.get('access_token')
         self.refresh_token = token_data.get('refresh_token')
         self.email = token_data.get('email')
-        
-        # Paksa refresh token saat request pertama kali untuk validasi
-        self.expires = datetime.now() - timedelta(seconds=10)
-        
-        LOGGER.debug(f"BeatsourceAPI: Sesi dimuat untuk {self.email} (Pending Refresh)")
+        self.expires = datetime.now() - timedelta(seconds=10) # Force refresh check
 
     async def login(self, email: str, password: str):
-        """Melakukan login OAuth 3 langkah penuh."""
+        """
+        Login Flow yang diperbaiki meniru referensi interface.py
+        """
         self.email = email
         self.password_cache = password
         await self._init_session()
         
-        # Pastikan header login juga menggunakan User-Agent browser
-        login_headers = {"User-Agent": USER_AGENT}
+        # [FIX 2] Gunakan Browser User-Agent hanya untuk Login Step
+        login_headers = {"User-Agent": BROWSER_USER_AGENT}
         
         try:
-            # --- Langkah 1: POST Login (Mendapatkan cookie sessionid) ---
+            # 1. Login POST (Get sessionid cookie)
             login_url = f"{self.API_URL}auth/login/"
             login_payload = {"username": email, "password": password}
             
             async with self.session.post(login_url, json=login_payload, headers=login_headers) as r_login:
                 if r_login.status != 200:
                     try:
-                        resp_json = await r_login.json()
-                        if "non_field_errors" in resp_json:
-                            raise BeatsourceError(f"Login gagal: {resp_json['non_field_errors'][0]}")
-                    except Exception:
-                        pass 
-                    raise BeatsourceError(f"Login Langkah 1 gagal (Status {r_login.status})")
+                        err = await r_login.json()
+                        if "non_field_errors" in err:
+                            raise BeatsourceError(f"Login gagal: {err['non_field_errors'][0]}")
+                    except: pass
+                    raise BeatsourceError(f"Login step 1 gagal: {r_login.status}")
 
-            # --- Langkah 2: GET Authorize (Redirect untuk mendapatkan Code) ---
+            # Validasi Session ID cookie (Sesuai referensi)
+            cookies = self.session.cookie_jar.filter_cookies(self.API_URL)
+            if 'sessionid' not in cookies:
+                raise BeatsourceError("Login gagal: Cookie sessionid tidak ditemukan.")
+
+            # 2. Authorize GET (Get Code)
             auth_url = f"{self.API_URL}auth/o/authorize/"
             auth_params = {
                 "client_id": self.client_id,
                 "response_type": "code",
             }
-            
-            # allow_redirects=False agar kita bisa menangkap header Location
+            # allow_redirects=False penting untuk tangkap header Location
             async with self.session.get(auth_url, params=auth_params, headers=login_headers, allow_redirects=False) as r_auth:
-                if r_auth.status != 302: 
-                    raise BeatsourceError(f"Otorisasi Langkah 2 gagal (Status {r_auth.status}).")
-
-                redirect_location = r_auth.headers.get('Location')
-                if not redirect_location:
-                    raise BeatsourceError("Otorisasi Langkah 2 tidak mengembalikan header Lokasi.")
+                if r_auth.status != 302:
+                    raise BeatsourceError(f"Auth step 2 gagal (No redirect): {r_auth.status}")
+                
+                location = r_auth.headers.get('Location')
+                if not location:
+                    raise BeatsourceError("Auth step 2 gagal: Header Location hilang.")
                 
                 try:
-                    parsed_url = urlparse(redirect_location)
-                    query_params = parse_qs(parsed_url.query)
-                    code = query_params.get('code', [None])[0]
-                except Exception as e:
-                    raise BeatsourceError(f"Gagal mem-parse code otorisasi: {e}")
+                    parsed = urlparse(location)
+                    code = parse_qs(parsed.query).get('code', [None])[0]
+                except: code = None
                 
                 if not code:
-                    raise BeatsourceError(f"Tidak dapat mengekstrak 'code' otorisasi.")
+                    raise BeatsourceError("Gagal mengambil auth code.")
 
-            # --- Langkah 3: POST Token (Tukar Code dengan Token) ---
+            # 3. Token POST (Get Tokens)
             token_url = f"{self.API_URL}auth/o/token/"
             token_payload = {
                 "client_id": self.client_id,
                 "code": code,
                 "grant_type": "authorization_code",
             }
-            
+            # Content-Type form-urlencoded otomatis handled by 'data=' param aiohttp
+            # Gunakan Browser UA disini juga sesuai referensi
             async with self.session.post(token_url, data=token_payload, headers=login_headers) as r_token:
                 if r_token.status != 200:
-                    raise BeatsourceError(f"Penukaran Token Langkah 3 gagal (Status {r_token.status})")
+                    raise BeatsourceError(f"Token exchange gagal: {await r_token.text()}")
                 
-                resp_json = await r_token.json()
-                self.access_token = resp_json['access_token']
-                self.refresh_token = resp_json['refresh_token']
-                self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
-                LOGGER.info(f"Beatsource: Login Password berhasil untuk {email}")
+                js = await r_token.json()
+                self.access_token = js['access_token']
+                self.refresh_token = js['refresh_token']
+                self.expires = datetime.now() + timedelta(seconds=js['expires_in'])
+                LOGGER.info(f"Beatsource: Login berhasil untuk {email}")
 
         except Exception as e:
             await self.close_session()
             raise e
 
     async def refresh(self):
-        """Me-refresh access token menggunakan refresh token."""
         await self._init_session()
         data = {
             'client_id': self.client_id,
             'refresh_token': self.refresh_token,
             'grant_type': 'refresh_token',
         }
+        # Gunakan Browser UA untuk refresh (sesuai referensi)
+        headers = {"User-Agent": BROWSER_USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"}
         
-        # Header user-agent tetap konsisten
-        headers = self._get_headers(use_access_token=False)
-
         async with self.session.post(f'{self.API_URL}auth/o/token/', data=data, headers=headers) as r:
             if r.status != 200:
-                LOGGER.error("Beatsource: Gagal me-refresh token, perlu login ulang.")
-                raise BeatsourceError("Gagal me-refresh token")
+                raise BeatsourceError("Gagal refresh token.")
             
-            resp_json = await r.json()
-            self.access_token = resp_json['access_token']
-            # Kadang refresh token juga diperbarui (rotating refresh tokens)
-            self.refresh_token = resp_json.get('refresh_token', self.refresh_token)
-            self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
-            LOGGER.debug("Beatsource: Token berhasil di-refresh.")
+            js = await r.json()
+            self.access_token = js['access_token']
+            self.refresh_token = js.get('refresh_token', self.refresh_token)
+            self.expires = datetime.now() + timedelta(seconds=js['expires_in'])
 
     async def _get(self, endpoint: str, params: dict = None):
-        """Fungsi pembantu GET request dengan Auto-Retry untuk Error 5xx."""
+        """Helper GET dengan Auto-Retry dan Delay."""
         await self._init_session()
-        if not params:
-            params = {}
+        if not params: params = {}
 
-        # Cek apakah token sudah kedaluwarsa
+        # Cek Expired
         if self.expires and datetime.now() > self.expires:
             try:
-                LOGGER.info(f"Token expired untuk {self.email}, mencoba refresh...")
                 await self.refresh()
-            except Exception as e:
-                LOGGER.warning(f"Refresh token gagal: {e}. Mencoba Login Ulang Otomatis...")
-                
-                # [BARU] Logika Auto Re-Login
-                if self.email and hasattr(self, 'password_cache') and self.password_cache:
-                    try:
-                        # Login ulang menggunakan password yang disimpan
-                        await self.login(self.email, self.password_cache)
-                        LOGGER.info("Auto Re-Login Berhasil!")
-                    except Exception as login_err:
-                        raise BeatsourceError(f"Sesi habis dan Login Ulang gagal: {login_err}")
+            except:
+                if self.email and self.password_cache:
+                    await self.login(self.email, self.password_cache)
                 else:
-                    raise BeatsourceError(f"Token expired dan tidak ada password tersimpan: {e}")
+                    raise BeatsourceError("Sesi habis, gagal login ulang.")
 
-        # [MODIFIKASI] RETRY LOGIC (Mencoba maks 3 kali)
-        max_retries = 3
-        for attempt in range(max_retries):
+        # [FIX 3] Tambahkan Random Sleep untuk Human-Like behavior
+        await asyncio.sleep(random.uniform(0.2, 0.5))
+
+        for attempt in range(3):
             try:
-                async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(use_access_token=True)) as r:
+                # Gunakan API User Agent (Orpheus) untuk request data
+                async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(True)) as r:
                     
-                    # Jika sukses (200), langsung return
                     if r.status == 200:
                         return await r.json()
 
-                    # [BARU] Jika Error Server (502/503/504), tunggu dan coba lagi
                     if r.status in [500, 502, 503, 504]:
-                        if attempt < max_retries - 1:
-                            LOGGER.warning(f"Beatsource API {r.status} (Percobaan {attempt+1}/{max_retries}). Mengulang dalam 2 detik...")
-                            await asyncio.sleep(2)
-                            continue
-                        else:
-                            # Jika sudah 3x gagal, baru raise error
-                            raise ConnectionError(f"Beatsource API Error {r.status}: {await r.text()}")
-
-                    # Error Klien (4xx) tidak perlu retry (salah password/region/dll)
+                        await asyncio.sleep(2)
+                        continue
+                    
                     if r.status == 401:
-                        raise BeatsourceError("Token tidak valid atau kedaluwarsa (401).")
+                        raise BeatsourceError("Unauthorized (401)")
                     
                     if r.status == 403:
                         try:
-                            detail = (await r.json()).get("detail", "")
-                            if "Territory" in detail:
-                                raise BeatsourceError("Gagal: Region Locked (Territory Restricted)")
+                            d = await r.json()
+                            if "Territory" in str(d): raise BeatsourceError("Region Locked")
                         except: pass
-                        raise BeatsourceError(f"Akses ditolak (403): {await r.text()}")
+                        raise BeatsourceError(f"Forbidden (403): {await r.text()}")
                     
                     if r.status == 404:
-                        raise BeatsourceError(f"Item tidak ditemukan (404)")
+                        raise BeatsourceError(f"Not Found (404): {endpoint}")
                     
-                    # Error lainnya yang tidak tertangani
-                    raise ConnectionError(f"Beatsource API Error {r.status}: {await r.text()}")
-
-            except aiohttp.ClientConnectorError as e:
-                # [BARU] Retry juga jika koneksi internet/proxy putus total
-                if attempt < max_retries - 1:
-                    LOGGER.warning(f"Koneksi error: {e}. Mengulang...")
-                    await asyncio.sleep(2)
-                    continue
-                raise e
-
-    # --- Endpoint Katalog ---
-
-    async def get_account(self):
-        return await self._get('auth/o/introspect')
-
-    async def get_track(self, track_id: str):
-        return await self._get(f'catalog/tracks/{track_id}')
-
-    async def get_release(self, release_id: str):
-        return await self._get(f'catalog/releases/{release_id}')
-
+                    raise ConnectionError(f"API Error {r.status}")
+            except aiohttp.ClientConnectorError:
+                await asyncio.sleep(2)
+                continue
+                
+    # --- Endpoints ---
+    async def get_account(self): return await self._get('auth/o/introspect')
+    async def get_track(self, track_id: str): return await self._get(f'catalog/tracks/{track_id}')
+    async def get_release(self, release_id: str): return await self._get(f'catalog/releases/{release_id}')
+    
     async def get_release_tracks(self, release_id: str, page: int = 1, per_page: int = 100):
         return await self._get(f'catalog/releases/{release_id}/tracks', params={'page': page, 'per_page': per_page})
 
-    async def get_playlist(self, playlist_id: str):
-        return await self._get(f'catalog/playlists/{playlist_id}')
-
+    async def get_playlist(self, playlist_id: str): return await self._get(f'catalog/playlists/{playlist_id}')
     async def get_playlist_tracks(self, playlist_id: str, page: int = 1, per_page: int = 100):
         return await self._get(f'catalog/playlists/{playlist_id}/tracks', params={'page': page, 'per_page': per_page})
 
-    async def get_chart(self, chart_id: str):
-        return await self._get(f'catalog/charts/{chart_id}')
-
+    async def get_chart(self, chart_id: str): return await self._get(f'catalog/charts/{chart_id}')
     async def get_chart_tracks(self, chart_id: str, page: int = 1, per_page: int = 100):
         return await self._get(f'catalog/charts/{chart_id}/tracks', params={'page': page, 'per_page': per_page})
-
-    async def get_artist(self, artist_id: str):
-        return await self._get(f'catalog/artists/{artist_id}')
-
-    async def get_artist_tracks(self, artist_id: str, page: int = 1, per_page: int = 100):
-        return await self._get(f'catalog/artists/{artist_id}/tracks', params={'page': page, 'per_page': per_page})
 
     async def get_track_download(self, track_id: str, quality: str):
         return await self._get(f'catalog/tracks/{track_id}/download', params={'quality': quality})
