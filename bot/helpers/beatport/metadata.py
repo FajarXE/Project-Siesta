@@ -32,6 +32,18 @@ def truncate_artist_list(artist_str: str, max_len: int = 200) -> str:
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
     return None 
 
+# [FIX] Fungsi ini dikembalikan karena dibutuhkan handler.py
+def custom_url_parse(link: str):
+    match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/.+?/(?P<id>\d+)", link)
+    if not match: match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/(?P<id>\d+)", link)
+    if not match: raise BeatportError(f"URL tidak valid: {link}")
+    
+    m_type = match.group("type")
+    if m_type == "release": m_type = "album"
+    elif m_type in ["playlists", "chart"]: m_type = "playlist"
+    
+    return m_type, match.group("id"), {"is_chart": match.group("type") == "chart"}
+
 async def _generate_artwork_url(dynamic_uri: str, size: int = 1400):
     if not dynamic_uri: return None
     res_pattern = re.compile(r"\d{3,4}x\d{3,4}")
@@ -108,7 +120,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover, 80), metadata, True)
 
     # 3. Stream & Quality Logic
-    # [FIX] Set Quality Placeholder dari User Pref jika tidak fetch stream (agar caption tidak kosong)
     pref_qual = beatport_manager.get_user_quality(user_id)
     metadata['quality'] = pref_qual.capitalize()
     metadata['extension'] = "flac" if pref_qual == "lossless" else "m4a"
@@ -171,13 +182,11 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['type'] = 'album'
     metadata['provider'] = 'Beatport'
 
-    # [FIX] ISI METADATA UTAMA YANG HILANG DI SCREENSHOT
     metadata['date'] = album_data.get("publish_date", "")[:10]
     metadata['year'] = metadata['date'][:4]
     metadata['totaltracks'] = str(len(tracks_raw))
     metadata['totalvolume'] = "1"
     
-    # Quality Placeholder (Ambil dari user pref)
     pref_qual = beatport_manager.get_user_quality(user_id)
     metadata['quality'] = pref_qual.capitalize()
 
@@ -187,8 +196,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
     metadata['tracks'] = []
     
-    # [FIX] FORCE TRACK NUMBERING (01, 02, 03...)
-    # Menggunakan 'enumerate' agar urutan track sesuai list API, bukan property 'number' yang sering hilang.
+    # FORCE TRACK NUMBERING
     album_explicit = False
     
     for i, track_item in enumerate(tracks_raw):
@@ -212,7 +220,7 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                                                 fetch_stream=False, 
                                                 album_pre_data=album_data)
             
-            # [FIX] PAKSA NOMOR TRACK
+            # PAKSA NOMOR TRACK
             t_meta['tracknumber'] = str(i + 1).zfill(2)
             t_meta['totaltracks'] = metadata['totaltracks']
             
@@ -234,7 +242,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     return metadata
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
-    # Logic Playlist (Tidak berubah banyak, hanya penyesuaian kecil)
     user_id = user.get('user_id')
     active_client = beatport_manager.get_client(user_id)
     is_chart = extra.get("is_chart")
@@ -261,7 +268,6 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Beatport'
     
-    # [FIX] Isi Metadata Playlist
     metadata['totaltracks'] = str(len(tracks))
     pref_qual = beatport_manager.get_user_quality(user_id)
     metadata['quality'] = pref_qual.capitalize()
