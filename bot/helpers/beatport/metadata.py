@@ -12,7 +12,7 @@ from config import Config
 from mutagen.flac import FLAC
 from mutagen.mp4 import MP4
 from mutagen.mp3 import MP3, EasyMP3
-from mutagen.id3 import TBPM, TKEY, TXXX, TPUB, TPE2
+from mutagen.id3 import TBPM, TKEY, TXXX, TPUB, TSRC, TPE4
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
@@ -58,63 +58,90 @@ async def _process_cover(metadata: dict, beatport_url: str):
     if not final and os.path.exists(FALLBACK_IMAGE_PATH): final = FALLBACK_IMAGE_PATH
     return await create_cover_file(final, metadata)
 
-# --- FUNGSI TAGGING LOKAL (AMAN, TIDAK MERUSAK GLOBAL) ---
+# --- FUNGSI TAGGING LOKAL (DIPERBARUI LENGKAP) ---
 async def write_extended_tags(filepath: str, meta: dict):
     """
-    Menulis tag khusus (BPM, Key, CatNo, Label) yang sering hilang di M4A global.
-    Hanya dijalankan untuk modul Beatport.
+    Menulis tag khusus: BPM, Key, CatNo, Label, UPC, ISRC, Barcode, Producer.
     """
     try:
         ext = os.path.splitext(filepath)[1].lower()
         
-        # 1. Handler M4A (iTunes)
+        # 1. Handler M4A (iTunes) - [UPDATE LENGKAP]
         if ext in ['.m4a', '.mp4']:
             audio = MP4(filepath)
             
-            # BPM (Atom 'tmpo' integer)
+            # --- BPM ---
             if meta.get('bpm'):
-                try:
-                    audio.tags['tmpo'] = [int(float(meta['bpm']))]
-                except: pass
-                # Fallback string
-                audio.tags['----:com.apple.iTunes:BPM'] = str(meta['bpm']).encode('utf-8')
+                try: audio.tags['tmpo'] = [int(float(meta['bpm']))]
+                except: audio.tags['----:com.apple.iTunes:BPM'] = str(meta['bpm']).encode('utf-8')
 
-            # KEY
+            # --- KEY ---
             if meta.get('key'):
                 audio.tags['----:com.apple.iTunes:initialkey'] = str(meta['key']).encode('utf-8')
                 audio.tags['----:com.apple.iTunes:KEY'] = str(meta['key']).encode('utf-8')
 
-            # CATALOG NUMBER
+            # --- CATALOG NUMBER ---
             if meta.get('catalog_number'):
                 audio.tags['----:com.apple.iTunes:CATALOGNUMBER'] = str(meta['catalog_number']).encode('utf-8')
 
-            # LABEL
+            # --- LABEL / PUBLISHER ---
             if meta.get('label'):
                 audio.tags['----:com.apple.iTunes:LABEL'] = str(meta['label']).encode('utf-8')
-                # Update Publisher standar juga
-                audio.tags['\u00a9pub'] = meta['label']
+                audio.tags['\u00a9pub'] = meta['label'] # Standard Publisher Atom
 
-            # REMIXER (Jika ada di mix_name atau artist)
-            if "remix" in meta.get('title', '').lower():
-                 audio.tags['----:com.apple.iTunes:REMIXER'] = str(meta['artist']).encode('utf-8')
+            # --- ISRC ---
+            if meta.get('isrc'):
+                audio.tags['----:com.apple.iTunes:ISRC'] = str(meta['isrc']).encode('utf-8')
+
+            # --- UPC / BARCODE ---
+            if meta.get('upc'):
+                # Tulis ke kedua variasi agar terbaca di berbagai software
+                audio.tags['----:com.apple.iTunes:UPC'] = str(meta['upc']).encode('utf-8')
+                audio.tags['----:com.apple.iTunes:BARCODE'] = str(meta['upc']).encode('utf-8')
+
+            # --- PRODUCER / REMIXER ---
+            if meta.get('remixer'):
+                audio.tags['----:com.apple.iTunes:REMIXER'] = str(meta['remixer']).encode('utf-8')
+            
+            # (Opsional) Mapping Producer standar iTunes
+            if meta.get('producer'):
+                audio.tags['\u00a9prd'] = meta['producer']
 
             audio.save()
 
-        # 2. Handler FLAC
+        # 2. Handler FLAC - [UPDATE LENGKAP]
         elif ext == '.flac':
             audio = FLAC(filepath)
+            
             if meta.get('bpm'): audio.tags['BPM'] = str(meta['bpm'])
-            if meta.get('key'): audio.tags['INITIALKEY'] = str(meta['key'])
+            
+            # Key: Tulis ke INITIALKEY (standar DJ) dan KEY (User Request)
+            if meta.get('key'): 
+                audio.tags['INITIALKEY'] = str(meta['key'])
+                audio.tags['KEY'] = str(meta['key'])
+            
             if meta.get('catalog_number'): audio.tags['CATALOGNUMBER'] = str(meta['catalog_number'])
+            
+            # Label & Publisher
             if meta.get('label'): 
                 audio.tags['LABEL'] = meta['label']
                 audio.tags['ORGANIZATION'] = meta['label']
+                audio.tags['PUBLISHER'] = meta['label'] # User Request
+            
+            if meta.get('isrc'): audio.tags['ISRC'] = str(meta['isrc'])
+            
+            # UPC & Barcode
+            if meta.get('upc'):
+                audio.tags['UPC'] = str(meta['upc'])
+                audio.tags['BARCODE'] = str(meta['upc']) # User Request
+
+            if meta.get('remixer'): audio.tags['REMIXER'] = str(meta['remixer'])
+
             audio.save()
 
         # 3. Handler MP3
         elif ext == '.mp3':
             audio = MP3(filepath, ID3=EasyMP3)
-            # EasyMP3 tidak support tag custom, pakai ID3 native
             from mutagen.id3 import ID3
             tags = ID3(filepath)
             
@@ -122,6 +149,9 @@ async def write_extended_tags(filepath: str, meta: dict):
             if meta.get('key'): tags.add(TKEY(encoding=3, text=str(meta['key'])))
             if meta.get('catalog_number'): tags.add(TXXX(encoding=3, desc='CATALOGNUMBER', text=str(meta['catalog_number'])))
             if meta.get('label'): tags.add(TPUB(encoding=3, text=meta['label']))
+            if meta.get('isrc'): tags.add(TSRC(encoding=3, text=str(meta['isrc'])))
+            if meta.get('remixer'): tags.add(TPE4(encoding=3, text=str(meta['remixer'])))
+            if meta.get('upc'): tags.add(TXXX(encoding=3, desc='BARCODE', text=str(meta['upc'])))
             
             tags.save()
 
@@ -166,6 +196,14 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     if track_data.get("mix_name"): metadata['title'] += f" ({track_data.get('mix_name')})"
     
     artist_raw = ", ".join([a.get("name") for a in track_data.get("artists", [])])
+    
+    # [NEW] Ambil Remixer
+    remixers = track_data.get("remixers", [])
+    remixer_raw = ", ".join([r.get("name") for r in remixers])
+    metadata['remixer'] = remixer_raw
+    # Beatport tidak memiliki field "Producer" eksplisit, kita gunakan remixer jika ada sebagai pendekatan
+    # atau biarkan kosong jika user strict.
+    
     albumartist_raw = ", ".join([a.get("name") for a in album_data.get("artists", [])])
     metadata['artist'] = truncate_artist_list(artist_raw)
     metadata['albumartist'] = truncate_artist_list(albumartist_raw)
@@ -179,16 +217,22 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['tracknumber'] = str(track_data.get("number", 1)).zfill(2)
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
 
-    # [DATA EKSTRA UNTUK EXTENDED TAGS]
+    # [DATA EKSTRA LENGKAP]
     metadata['bpm'] = str(track_data.get('bpm', ''))
     
     key_data = track_data.get('key')
     if isinstance(key_data, dict): metadata['key'] = key_data.get('name')
     else: metadata['key'] = str(key_data) if key_data else ''
 
+    # Catalog & Label
     metadata['catalog_number'] = track_data.get('release', {}).get('catalog_number', '')
     metadata['label'] = track_data.get('release', {}).get('label', {}).get('name', '')
     metadata['publisher'] = metadata['label']
+    
+    # [BARU] ISRC & UPC
+    metadata['isrc'] = track_data.get('isrc', '')
+    # UPC ada di object release
+    metadata['upc'] = track_data.get('release', {}).get('upc') or album_data.get('upc', '')
     
     # Cover Logic
     bp_cover = None
