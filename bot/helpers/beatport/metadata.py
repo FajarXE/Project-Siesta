@@ -58,7 +58,7 @@ async def _process_cover(metadata: dict, beatport_url: str):
     if not final and os.path.exists(FALLBACK_IMAGE_PATH): final = FALLBACK_IMAGE_PATH
     return await create_cover_file(final, metadata)
 
-# --- FUNGSI TAGGING LOKAL (DIPERBARUI LENGKAP) ---
+# --- FUNGSI TAGGING LOKAL ---
 async def write_extended_tags(filepath: str, meta: dict):
     """
     Menulis tag khusus: BPM, Key, CatNo, Label, UPC, ISRC, Barcode, Producer, Copyright.
@@ -66,74 +66,66 @@ async def write_extended_tags(filepath: str, meta: dict):
     try:
         ext = os.path.splitext(filepath)[1].lower()
         
-        # 1. Handler M4A (iTunes) - [UPDATE LENGKAP]
+        # 1. Handler M4A (iTunes)
         if ext in ['.m4a', '.mp4']:
             audio = MP4(filepath)
             
-            # --- BPM ---
+            # BPM
             if meta.get('bpm'):
                 try: audio.tags['tmpo'] = [int(float(meta['bpm']))]
                 except: audio.tags['----:com.apple.iTunes:BPM'] = str(meta['bpm']).encode('utf-8')
 
-            # --- KEY ---
+            # KEY
             if meta.get('key'):
                 audio.tags['----:com.apple.iTunes:initialkey'] = str(meta['key']).encode('utf-8')
                 audio.tags['----:com.apple.iTunes:KEY'] = str(meta['key']).encode('utf-8')
 
-            # --- CATALOG NUMBER ---
+            # CATALOG NUMBER
             if meta.get('catalog_number'):
-                # Tulis ke Custom Atom khusus
                 audio.tags['----:com.apple.iTunes:CATALOGNUMBER'] = str(meta['catalog_number']).encode('utf-8')
 
-            # --- COPYRIGHT (cpr) ---
+            # COPYRIGHT (cpr)
             if meta.get('copyright'):
-                # Atom Standar iTunes
                 audio.tags['\u00a9cpr'] = meta['copyright']
-                # Custom Atom (cadangan)
                 audio.tags['----:com.apple.iTunes:cpr'] = str(meta['copyright']).encode('utf-8')
                 audio.tags['----:com.apple.iTunes:COPYRIGHT'] = str(meta['copyright']).encode('utf-8')
 
-            # --- LABEL / PUBLISHER ---
+            # LABEL
             if meta.get('label'):
                 audio.tags['----:com.apple.iTunes:LABEL'] = str(meta['label']).encode('utf-8')
-                audio.tags['\u00a9pub'] = meta['label'] # Standard Publisher Atom
+                audio.tags['\u00a9pub'] = meta['label'] 
 
-            # --- ISRC ---
+            # ISRC
             if meta.get('isrc'):
                 audio.tags['----:com.apple.iTunes:ISRC'] = str(meta['isrc']).encode('utf-8')
 
-            # --- UPC / BARCODE ---
+            # UPC / BARCODE
             if meta.get('upc'):
                 audio.tags['----:com.apple.iTunes:UPC'] = str(meta['upc']).encode('utf-8')
                 audio.tags['----:com.apple.iTunes:BARCODE'] = str(meta['upc']).encode('utf-8')
 
-            # --- PRODUCER / REMIXER ---
+            # REMIXER
             if meta.get('remixer'):
                 audio.tags['----:com.apple.iTunes:REMIXER'] = str(meta['remixer']).encode('utf-8')
             
             audio.save()
 
-        # 2. Handler FLAC - [UPDATE LENGKAP]
+        # 2. Handler FLAC
         elif ext == '.flac':
             audio = FLAC(filepath)
             
             if meta.get('bpm'): audio.tags['BPM'] = str(meta['bpm'])
             
-            # Key
             if meta.get('key'): 
                 audio.tags['INITIALKEY'] = str(meta['key'])
                 audio.tags['KEY'] = str(meta['key'])
             
-            # Catalog Number
-            if meta.get('catalog_number'): 
-                audio.tags['CATALOGNUMBER'] = str(meta['catalog_number'])
+            if meta.get('catalog_number'): audio.tags['CATALOGNUMBER'] = str(meta['catalog_number'])
             
-            # Copyright (cpr)
             if meta.get('copyright'):
                 audio.tags['COPYRIGHT'] = str(meta['copyright'])
-                audio.tags['cpr'] = str(meta['copyright']) # Alias sering diminta
+                audio.tags['cpr'] = str(meta['copyright'])
 
-            # Label
             if meta.get('label'): 
                 audio.tags['LABEL'] = meta['label']
                 audio.tags['ORGANIZATION'] = meta['label']
@@ -208,7 +200,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     artist_raw = ", ".join([a.get("name") for a in track_data.get("artists", [])])
     
-    # [NEW] Ambil Remixer
+    # Ambil Remixer
     remixers = track_data.get("remixers", [])
     remixer_raw = ", ".join([r.get("name") for r in remixers])
     metadata['remixer'] = remixer_raw
@@ -238,8 +230,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['label'] = track_data.get('release', {}).get('label', {}).get('name') or album_data.get('label', {}).get('name', '')
     metadata['publisher'] = metadata['label']
     
-    # [FIX] Generate Copyright
-    # Format umum: © 2024 Label Name
+    # Generate Copyright
     if metadata['year'] and metadata['label']:
         metadata['copyright'] = f"© {metadata['year']} {metadata['label']}"
     else:
@@ -322,7 +313,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['totaltracks'] = str(len(tracks_raw))
     metadata['totalvolume'] = "1"
     
-    # Metadata Album Umum
     metadata['catalog_number'] = album_data.get('catalog_number', '')
     metadata['label'] = album_data.get('label', {}).get('name', '')
     if metadata['year'] and metadata['label']:
@@ -362,7 +352,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             t_meta['totaltracks'] = metadata['totaltracks']
             t_meta['cover'] = metadata['cover']
             
-            # Wariskan copyright jika track kosong
             if not t_meta.get('copyright'): t_meta['copyright'] = metadata.get('copyright')
 
             if t_meta.get('explicit'): album_explicit = True
@@ -381,15 +370,43 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     active_client = beatport_manager.get_client(user_id)
     is_chart = extra.get("is_chart")
     
-    if is_chart: pl_data = await active_client.get_chart(playlist_id)
-    else: pl_data = await active_client.get_playlist(playlist_id)
+    # [FIX] FALLBACK LOGIC: Playlist <-> Chart
+    # Jika endpoint playlist return 404, coba endpoint chart (dan sebaliknya)
+    pl_data = None
+    used_endpoint = "playlist"
     
+    try:
+        if is_chart:
+            pl_data = await active_client.get_chart(playlist_id)
+            used_endpoint = "chart"
+        else:
+            pl_data = await active_client.get_playlist(playlist_id)
+            used_endpoint = "playlist"
+    except Exception as e:
+        if "404" in str(e):
+            LOGGER.info(f"Beatport {used_endpoint} {playlist_id} not found, trying switch...")
+            try:
+                if used_endpoint == "playlist":
+                    pl_data = await active_client.get_chart(playlist_id)
+                    used_endpoint = "chart"
+                    is_chart = True # Switch flag
+                else:
+                    pl_data = await active_client.get_playlist(playlist_id)
+                    used_endpoint = "playlist"
+                    is_chart = False
+            except:
+                raise BeatportError(f"Konten tidak ditemukan (ID: {playlist_id}).")
+        else:
+            raise e
+    
+    # Fetch Tracks dengan endpoint yang BENAR
     tracks = []
     p = 1
+    fetch_func = active_client.get_chart_tracks if is_chart else active_client.get_playlist_tracks
+
     while True:
         try:
-            if is_chart: res = await active_client.get_chart_tracks(playlist_id, page=p)
-            else: res = await active_client.get_playlist_tracks(playlist_id, page=p)
+            res = await fetch_func(playlist_id, page=p)
             if not res.get("results"): break
             tracks.extend(res.get("results"))
             if len(tracks) >= res.get("count", 0): break
