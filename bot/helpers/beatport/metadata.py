@@ -3,13 +3,16 @@
 import copy
 import re
 import aiohttp
-import urllib.parse
-import logging
-import os 
-import traceback 
+import os
 import asyncio
 import random
 from config import Config 
+
+# Import Mutagen untuk Tagging Lokal
+from mutagen.flac import FLAC
+from mutagen.mp4 import MP4
+from mutagen.mp3 import MP3, EasyMP3
+from mutagen.id3 import TBPM, TKEY, TXXX, TPUB, TPE2
 
 from ..metadata import metadata as base_meta
 from ..metadata import create_cover_file
@@ -32,7 +35,6 @@ def truncate_artist_list(artist_str: str, max_len: int = 200) -> str:
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
     return None 
 
-# [FIX] Fungsi ini dikembalikan karena dibutuhkan handler.py
 def custom_url_parse(link: str):
     match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/.+?/(?P<id>\d+)", link)
     if not match: match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/(?P<id>\d+)", link)
@@ -56,7 +58,77 @@ async def _process_cover(metadata: dict, beatport_url: str):
     if not final and os.path.exists(FALLBACK_IMAGE_PATH): final = FALLBACK_IMAGE_PATH
     return await create_cover_file(final, metadata)
 
-# --- PROSES METADATA INTI (FIXED) ---
+# --- FUNGSI TAGGING LOKAL (AMAN, TIDAK MERUSAK GLOBAL) ---
+async def write_extended_tags(filepath: str, meta: dict):
+    """
+    Menulis tag khusus (BPM, Key, CatNo, Label) yang sering hilang di M4A global.
+    Hanya dijalankan untuk modul Beatport.
+    """
+    try:
+        ext = os.path.splitext(filepath)[1].lower()
+        
+        # 1. Handler M4A (iTunes)
+        if ext in ['.m4a', '.mp4']:
+            audio = MP4(filepath)
+            
+            # BPM (Atom 'tmpo' integer)
+            if meta.get('bpm'):
+                try:
+                    audio.tags['tmpo'] = [int(float(meta['bpm']))]
+                except: pass
+                # Fallback string
+                audio.tags['----:com.apple.iTunes:BPM'] = str(meta['bpm']).encode('utf-8')
+
+            # KEY
+            if meta.get('key'):
+                audio.tags['----:com.apple.iTunes:initialkey'] = str(meta['key']).encode('utf-8')
+                audio.tags['----:com.apple.iTunes:KEY'] = str(meta['key']).encode('utf-8')
+
+            # CATALOG NUMBER
+            if meta.get('catalog_number'):
+                audio.tags['----:com.apple.iTunes:CATALOGNUMBER'] = str(meta['catalog_number']).encode('utf-8')
+
+            # LABEL
+            if meta.get('label'):
+                audio.tags['----:com.apple.iTunes:LABEL'] = str(meta['label']).encode('utf-8')
+                # Update Publisher standar juga
+                audio.tags['\u00a9pub'] = meta['label']
+
+            # REMIXER (Jika ada di mix_name atau artist)
+            if "remix" in meta.get('title', '').lower():
+                 audio.tags['----:com.apple.iTunes:REMIXER'] = str(meta['artist']).encode('utf-8')
+
+            audio.save()
+
+        # 2. Handler FLAC
+        elif ext == '.flac':
+            audio = FLAC(filepath)
+            if meta.get('bpm'): audio.tags['BPM'] = str(meta['bpm'])
+            if meta.get('key'): audio.tags['INITIALKEY'] = str(meta['key'])
+            if meta.get('catalog_number'): audio.tags['CATALOGNUMBER'] = str(meta['catalog_number'])
+            if meta.get('label'): 
+                audio.tags['LABEL'] = meta['label']
+                audio.tags['ORGANIZATION'] = meta['label']
+            audio.save()
+
+        # 3. Handler MP3
+        elif ext == '.mp3':
+            audio = MP3(filepath, ID3=EasyMP3)
+            # EasyMP3 tidak support tag custom, pakai ID3 native
+            from mutagen.id3 import ID3
+            tags = ID3(filepath)
+            
+            if meta.get('bpm'): tags.add(TBPM(encoding=3, text=str(meta['bpm'])))
+            if meta.get('key'): tags.add(TKEY(encoding=3, text=str(meta['key'])))
+            if meta.get('catalog_number'): tags.add(TXXX(encoding=3, desc='CATALOGNUMBER', text=str(meta['catalog_number'])))
+            if meta.get('label'): tags.add(TPUB(encoding=3, text=meta['label']))
+            
+            tags.save()
+
+    except Exception as e:
+        LOGGER.warning(f"Gagal menulis extended tags Beatport: {e}")
+
+# --- PROSES METADATA UTAMA ---
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, fetch_stream: bool = True, album_pre_data: dict = None):
     user_id = user.get('user_id')
@@ -100,14 +172,23 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     
     metadata['album'] = album_data.get("name", "Unknown Album")
     
-    # [FIX] Tanggal & Explicit
     metadata['date'] = track_data.get("publish_date", "")[:10]
     metadata['year'] = metadata['date'][:4]
     metadata['explicit'] = track_data.get("explicit", False)
     
-    # Track Number Default (Akan di-override oleh Album Loop)
     metadata['tracknumber'] = str(track_data.get("number", 1)).zfill(2)
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
+
+    # [DATA EKSTRA UNTUK EXTENDED TAGS]
+    metadata['bpm'] = str(track_data.get('bpm', ''))
+    
+    key_data = track_data.get('key')
+    if isinstance(key_data, dict): metadata['key'] = key_data.get('name')
+    else: metadata['key'] = str(key_data) if key_data else ''
+
+    metadata['catalog_number'] = track_data.get('release', {}).get('catalog_number', '')
+    metadata['label'] = track_data.get('release', {}).get('label', {}).get('name', '')
+    metadata['publisher'] = metadata['label']
     
     # Cover Logic
     bp_cover = None
@@ -119,14 +200,13 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['cover'] = await _process_cover(metadata, bp_cover)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover, 80), metadata, True)
 
-    # 3. Stream & Quality Logic
+    # Stream Logic
     pref_qual = beatport_manager.get_user_quality(user_id)
     metadata['quality'] = pref_qual.capitalize()
     metadata['extension'] = "flac" if pref_qual == "lossless" else "m4a"
 
     if fetch_stream:
         qual_order = ["lossless", "high", "medium"] if pref_qual == "lossless" else (["high", "medium"] if pref_qual == "high" else ["medium"])
-        
         stream_loc = None
         for q in qual_order:
             try:
@@ -138,7 +218,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                     metadata['extension'] = "flac" if q == "lossless" else "m4a"
                     break
             except: continue
-            
         if not stream_loc: raise BeatportError("Gagal mendapatkan link download.")
         metadata['download_url'] = stream_loc
     else:
@@ -151,11 +230,9 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     active_client = beatport_manager.get_client(user_id)
     if not active_client: raise BeatportError("No Beatport Account.")
 
-    # 1. Fetch Album Info
     album_data = await active_client.get_release(album_id)
     if not album_data: raise BeatportError("Album not found.")
     
-    # 2. Get Tracks - Robust Pagination
     tracks_raw = album_data.get("tracks", [])
     need_full_fetch = not tracks_raw or (tracks_raw and isinstance(tracks_raw[0], str))
         
@@ -172,7 +249,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 await asyncio.sleep(0.5)
             except: break
 
-    # --- SETUP METADATA ALBUM ---
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     metadata['itemid'] = album_id
@@ -195,15 +271,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover, 80), metadata, True)
 
     metadata['tracks'] = []
-    
-    # FORCE TRACK NUMBERING
     album_explicit = False
     
     for i, track_item in enumerate(tracks_raw):
         try:
             t_data = track_item
             t_id = None
-            
             if isinstance(track_item, dict):
                 t_id = track_item.get('id')
                 if not t_id and track_item.get('track'): 
@@ -214,22 +287,16 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
             if not t_id: continue
 
-            # Proses Track
             t_meta = await process_track_metadata(str(t_id), r_id, user, 
                                                 pre_data=t_data if isinstance(t_data, dict) else None, 
                                                 fetch_stream=False, 
                                                 album_pre_data=album_data)
             
-            # PAKSA NOMOR TRACK
             t_meta['tracknumber'] = str(i + 1).zfill(2)
             t_meta['totaltracks'] = metadata['totaltracks']
-            
-            # Wariskan cover album ke track
             t_meta['cover'] = metadata['cover']
             
-            # Update explicit status album
             if t_meta.get('explicit'): album_explicit = True
-                
             metadata['tracks'].append(t_meta)
             
         except Exception as e:
@@ -238,7 +305,6 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
     metadata['explicit'] = album_explicit
     if not metadata['tracks']: raise BeatportError("Album kosong/Gagal memproses track.")
-        
     return metadata
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
@@ -267,8 +333,8 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['title'] = pl_data.get("name")
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Beatport'
-    
     metadata['totaltracks'] = str(len(tracks))
+    
     pref_qual = beatport_manager.get_user_quality(user_id)
     metadata['quality'] = pref_qual.capitalize()
 
@@ -280,8 +346,6 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['cover'] = await _process_cover(metadata, bp_cover)
 
     metadata['tracks'] = []
-    
-    # Cache album sederhana
     album_cache = {}
 
     for i, t_item in enumerate(tracks):
@@ -289,7 +353,6 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
             raw_t = t_item.get("track") if not is_chart else t_item
             if not raw_t: continue
             
-            # Smart Cache Release Data
             rel_id = raw_t.get("release", {}).get("id")
             alb_dat = None
             if rel_id:
@@ -306,9 +369,7 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
                                                 fetch_stream=False, 
                                                 album_pre_data=alb_dat)
             
-            # Fix Numbering for Playlist
             t_meta['tracknumber'] = str(i + 1).zfill(2)
             metadata['tracks'].append(t_meta)
         except: continue
-        
     return metadata
