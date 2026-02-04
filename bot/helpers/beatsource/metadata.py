@@ -1,345 +1,222 @@
-# [FILE: bot/helpers/beatsource/metadata.py]
+# [GANTI SELURUH FILE: bot/helpers/beatsource/metadata.py]
 
+import copy
 import re
-import traceback
-import random 
 import asyncio
-
+from bot.logger import LOGGER
 from .api import BeatsourceAPI, BeatsourceError
 from .manager import beatsource_manager
+from ..metadata import metadata as base_meta, create_cover_file
 
-from ..metadata import metadata, create_cover_file
-from ...settings import bot_set
-from ...logger import LOGGER
-
-# --- REGEX URL ---
 BEATSOURCE_URL_REGEX = re.compile(
     r"https?://(?:www\.)?beatsource\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlist|playlists|chart).*/(?P<id>\d+)[^/]*?(?:$|\?)"
 )
 
 def custom_url_parse(url: str):
-    """
-    Mem-parse URL Beatsource untuk mendapatkan tipe media dan ID.
-    """
     match = BEATSOURCE_URL_REGEX.search(url)
-    if not match:
-        raise ValueError(f"Tidak dapat mem-parse URL Beatsource: {url}")
+    if not match: raise ValueError(f"URL Invalid: {url}")
+    t, i = match.group("type"), match.group("id")
+    if t == "release": t = "album"
+    elif t in ["playlists", "chart"]: 
+        return "playlist", i, {"is_chart": t == "chart"}
+    return t, i, {}
 
-    media_type_str = match.group("type")
-    item_id = match.group("id")
-    extra = {}
+# --- CORE METADATA ---
 
-    if media_type_str == "track":
-        media_type = "track"
-    elif media_type_str == "release":
-        media_type = "album"
-    elif media_type_str == "artist":
-        media_type = "artist"
-    elif media_type_str in ["playlist", "playlists", "chart"]:
-        media_type = "playlist"
-        if media_type_str == "chart":
-            extra["is_chart"] = True
-    else:
-        raise ValueError(f"Tipe media Beatsource tidak diketahui: {media_type_str}")
-
-    return media_type, item_id, extra
-
-
-# --- PROSES METADATA INTI ---
-
-async def process_track_metadata(item_id: str, r_id: str, user: dict, fetch_stream: bool = True):
+async def process_track_metadata(item_id: str, r_id: str, user: dict, 
+                               fetch_stream: bool = True, 
+                               pre_data: dict = None, 
+                               album_pre_data: dict = None):
     """
-    Memproses metadata track.
-    
-    Args:
-        item_id (str): ID Track Beatsource.
-        r_id (str): ID Request unik.
-        user (dict): Data user (termasuk user_id).
-        fetch_stream (bool): 
-            - True (Single Download): Langsung ambil link download.
-            - False (Playlist/Album): Skip ambil link (akan diambil nanti di handler agar tidak expired).
+    [FIX] Menerima pre_data (data track) dan album_pre_data (data album)
+    untuk menghindari request API berulang.
     """
-    meta = metadata.copy()
+    meta = copy.deepcopy(base_meta)
     meta['provider'] = 'Beatsource'
     meta['itemid'] = item_id
-    meta['tempfolder'] = f"{meta['tempfolder']}{r_id}/Beatsource/{item_id}"
+    meta['tempfolder'] += f"{r_id}/Beatsource/{item_id}"
 
-    # [PENTING] Ambil client spesifik milik user (atau global fallback via manager)
-    # Ini memastikan Region Lock ditembus jika user punya akun region tersebut.
     user_id = user.get('user_id')
     active_client = beatsource_manager.get_client(user_id)
-    
-    if not active_client:
-        raise BeatsourceError("Tidak ada akun Beatsource yang tersedia/login.")
+    if not active_client: raise BeatsourceError("No Active Client")
 
-    track_data = None
-    release_data = None
-
-    # RETRY LOGIC (Sederhana untuk mengatasi timeout sesaat)
-    for attempt in range(2): 
-        try:
-            track_data = await active_client.get_track(item_id)
-            release_data = await active_client.get_release(track_data['release']['id'])
-            break
-        except Exception as e:
-            if attempt == 1: # Log error hanya pada percobaan terakhir
-                LOGGER.warning(f"Gagal ambil metadata track {item_id}: {e}")
-            await asyncio.sleep(0.5) 
-            continue
-            
+    # 1. Gunakan data cache jika ada
+    track_data = pre_data
     if not track_data:
-        raise BeatsourceError(f"Gagal mengambil metadata Track {item_id} (Mungkin Region Lock/Connection Timeout).")
-
-    try:
-        # --- LOGIKA STREAM (JUST-IN-TIME) ---
-        dl_url = None
-        final_quality = "High" # Default display
+        track_data = await active_client.get_track(item_id)
         
-        # Ambil preferensi kualitas user (Global Setting atau User Setting)
-        user_qual_pref = beatsource_manager.get_user_quality(user_id)
-        meta['quality'] = user_qual_pref.capitalize() 
+    # 2. Ambil data album (gunakan cache jika ada)
+    # [CRITICAL FIX] Ini mencegah 20x request get_release untuk album isi 20 lagu
+    release_data = album_pre_data
+    if not release_data:
+        rid = track_data.get('release', {}).get('id')
+        if rid: release_data = await active_client.get_release(rid)
+    
+    if not track_data or not release_data:
+        raise BeatsourceError("Metadata tidak lengkap.")
 
-        if fetch_stream:
-            # Tentukan prioritas kualitas berdasarkan setting user
-            quality_priority = []
-            if user_qual_pref == "lossless":
-                quality_priority = ["lossless", "high", "medium"]
-            elif user_qual_pref == "high":
-                quality_priority = ["high", "medium"]
-            else:
-                quality_priority = ["medium"]
-
-            # Coba ambil link download sesuai prioritas kualitas
-            # HANYA menggunakan active_client (agar konsisten dengan akun yang mengambil metadata)
-            for qual in quality_priority:
-                try:
-                    dl_data = await active_client.get_track_download(item_id, qual)
-                    dl_url = dl_data.get('location')
-                    if dl_url:
-                        final_quality = qual
-                        break 
-                except Exception: pass
-            
-            if not dl_url:
-                raise BeatsourceError(f"Gagal mendapatkan URL unduhan track {item_id}.")
-            
-            # Set kualitas dan ekstensi final yang didapatkan
-            meta['quality'] = final_quality.capitalize()
-            meta['extension'] = 'flac' if final_quality == 'lossless' else 'm4a'
-        else:
-            # Jika fetch_stream=False (misal dari Playlist), set placeholder
-            # URL sebenarnya akan diambil nanti di handler.py (Just-in-Time)
-            meta['extension'] = 'm4a' 
-            if user_qual_pref == 'lossless':
-                meta['extension'] = 'flac'
-
-        # --- PENGISIAN FIELD METADATA ---
-        track_artists = track_data.get("artists", [])
-        release_artists = release_data.get("artists", [])
-
-        meta['title'] = track_data['name']
-        if track_data.get('mix_name'):
-            meta['title'] += f" ({track_data['mix_name']})"
-        
-        meta['artist'] = ", ".join([a['name'] for a in track_artists])
-        meta['album'] = release_data['name']
-        meta['albumartist'] = ", ".join([a['name'] for a in release_artists])
-        
-        raw_track_number = str(track_data.get('track_number') or 1)
-        meta['tracknumber'] = raw_track_number.zfill(2)
-        
-        meta['totaltracks'] = str(release_data.get('track_count') or 1)
-        
-        meta['date'] = release_data.get('publish_date', '1970-01-01')[:10]
-        meta['year'] = meta['date'][:4]
-        meta['genre'] = track_data.get('genre', {}).get('name', '')
-        
-        meta['upc'] = release_data.get('upc')
-        meta['isrc'] = track_data.get('isrc')
-        meta['explicit'] = track_data.get('explicit', False)
-        
-        label_name = release_data.get('label', {}).get('name', '')
-        meta['copyright'] = f"© {meta['year']} {label_name}"
-        meta['duration'] = track_data.get('length_ms', 0) // 1000
-        
-        # Ambil Cover Art
-        img_uri = release_data.get('image', {}).get('dynamic_uri', '')
-        if not img_uri and track_data.get('image'):
-             img_uri = track_data.get('image', {}).get('dynamic_uri', '')
-
-        if img_uri:
-            meta['cover'] = await create_cover_file(img_uri.format(w=1400, h=1400), meta)
-            meta['thumbnail'] = await create_cover_file(img_uri.format(w=400, h=400), meta, thumbnail=True)
-        
-        meta['download_url'] = dl_url # Bisa None jika fetch_stream=False
-
-        return meta
-
-    except Exception as e:
-        LOGGER.error(f"Beatsource Meta Error {item_id}: {e}")
-        raise e
-
-
-async def process_album_metadata(item_id: str, r_id: str, user: dict):
-    """
-    Memproses metadata album.
-    """
-    meta = metadata.copy()
-    meta['provider'] = 'Beatsource'
-    meta['itemid'] = item_id
-    meta['tempfolder'] = f"{meta['tempfolder']}{r_id}/Beatsource/{item_id}_ALBUM"
-    meta['type'] = 'album'
-    meta['volume'] = "1"
-    meta['totalvolume'] = "1"
-
-    # [MODIFIKASI] Ambil Client User
-    active_client = beatsource_manager.get_client(user.get('user_id'))
-    if not active_client:
-        raise BeatsourceError("Tidak ada klien Beatsource aktif.")
-
-    try:
-        release_data = await active_client.get_release(item_id)
-    except Exception as e:
-        raise BeatsourceError(f"Gagal mengambil metadata Album: {e}")
-
-    # Ambil semua track (dengan pagination)
-    tracks_list = []
-    page = 1
-    while True:
-        try:
-            tracks_data = await active_client.get_release_tracks(item_id, page=page)
-            tracks_list.extend(tracks_data.get('results', []))
-            if not tracks_data.get('next'): break
-            page += 1
-            if page > 10: break 
-        except: break
-
-    if not tracks_list:
-        raise BeatsourceError(f"Album {item_id} tidak memiliki track.")
-
-    # Isi metadata album umum
-    meta['title'] = release_data['name']
-    meta['artist'] = ", ".join([a['name'] for a in release_data.get("artists", [])])
-    meta['date'] = release_data.get('publish_date', '1970-01-01')[:10]
+    # 3. Parsing Metadata
+    meta['title'] = track_data.get('name')
+    if track_data.get('mix_name'): meta['title'] += f" ({track_data['mix_name']})"
+    
+    meta['artist'] = ", ".join([a['name'] for a in track_data.get("artists", [])])
+    meta['album'] = release_data.get('name')
+    meta['albumartist'] = ", ".join([a['name'] for a in release_data.get("artists", [])])
+    
+    meta['tracknumber'] = str(track_data.get('track_number', 1)).zfill(2)
+    meta['totaltracks'] = str(release_data.get('track_count', 1))
+    meta['date'] = release_data.get('publish_date', '')[:10]
     meta['year'] = meta['date'][:4]
-    meta['upc'] = release_data.get('upc')
-    meta['totaltracks'] = str(len(tracks_list))
+    meta['duration'] = track_data.get('length_ms', 0) // 1000
     
-    img_uri = release_data.get('image', {}).get('dynamic_uri', '')
-    meta['cover'] = await create_cover_file(img_uri.format(w=1400, h=1400), meta)
-    meta['thumbnail'] = meta['cover']
+    # Cover
+    img = release_data.get('image', {}).get('dynamic_uri') or track_data.get('image', {}).get('dynamic_uri')
+    if img:
+        meta['cover'] = await create_cover_file(img.format(w=1400, h=1400), meta)
+        meta['thumbnail'] = await create_cover_file(img.format(w=400, h=400), meta, thumbnail=True)
 
-    album_is_explicit = False
-    tracks_meta_list = []
+    # 4. Stream Logic
+    user_qual = beatsource_manager.get_user_quality(user_id)
+    meta['quality'] = user_qual.capitalize()
     
-    # Loop setiap track
-    for i, track_data in enumerate(tracks_list):
-        try:
-            # PASS fetch_stream=False agar URL tidak diambil sekarang (biar tidak expired saat antri download)
-            track_meta = await process_track_metadata(track_data['id'], r_id, user, fetch_stream=False)
+    if fetch_stream:
+        # Tentukan urutan kualitas
+        qualities = ["medium"]
+        if user_qual == "lossless": qualities = ["lossless", "high", "medium"]
+        elif user_qual == "high": qualities = ["high", "medium"]
+        
+        dl_url = None
+        for q in qualities:
+            try:
+                # Delay random kecil
+                await asyncio.sleep(random.uniform(0.1, 0.3))
+                d = await active_client.get_track_download(item_id, q)
+                if d.get('location'):
+                    dl_url = d['location']
+                    meta['quality'] = q.capitalize()
+                    meta['extension'] = 'flac' if q == 'lossless' else 'm4a'
+                    break
+            except: continue
             
-            track_meta['tracknumber'] = str(i + 1).zfill(2)
-            track_meta['totaltracks'] = meta['totaltracks']
-            tracks_meta_list.append(track_meta)
-            
-            if track_meta['explicit']:
-                album_is_explicit = True
-        except Exception as e:
-            LOGGER.warning(f"Skip track {track_data['id']} di album: {e}")
-    
-    meta['tracks'] = tracks_meta_list
-    meta['explicit'] = album_is_explicit
-    
-    if tracks_meta_list:
-        meta['quality'] = tracks_meta_list[0]['quality']
+        if not dl_url: raise BeatsourceError("Gagal mengambil link download (Cek Langganan/Region).")
+        meta['download_url'] = dl_url
+    else:
+        # Placeholder untuk playlist/album
+        meta['download_url'] = None
+        meta['extension'] = 'flac' if user_qual == 'lossless' else 'm4a'
 
     return meta
 
-
-async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: dict):
-    """
-    Memproses metadata playlist atau chart.
-    """
-    meta = metadata.copy()
-    meta['provider'] = 'Beatsource'
-    meta['itemid'] = item_id
-    meta['tempfolder'] = f"{meta['tempfolder']}{r_id}/Beatsource/{item_id}_PLAYLIST"
-    meta['type'] = 'playlist'
-    meta['volume'] = "1"
-    meta['totalvolume'] = "1"
-
-    # [MODIFIKASI] Ambil Client User
+async def process_album_metadata(item_id: str, r_id: str, user: dict):
     active_client = beatsource_manager.get_client(user.get('user_id'))
-    if not active_client:
-        raise BeatsourceError("Tidak ada klien Beatsource aktif.")
+    if not active_client: raise BeatsourceError("No Client")
 
-    playlist_data = None
-    tracks_endpoint = None
-
-    # Cek apakah ini Playlist atau Chart
-    try:
-        try:
-            playlist_data = await active_client.get_playlist(item_id)
-            tracks_endpoint = active_client.get_playlist_tracks
-        except:
-            playlist_data = await active_client.get_chart(item_id)
-            tracks_endpoint = active_client.get_chart_tracks
-    except Exception as e:
-        raise BeatsourceError(f"Playlist/Chart tidak ditemukan: {e}")
-
-    # Ambil tracks (pagination)
-    tracks_list_raw = []
+    # 1. Fetch Album Sekali Saja
+    release_data = await active_client.get_release(item_id)
+    
+    # 2. Fetch Tracks
+    tracks = []
     page = 1
     while True:
         try:
-            tracks_data = await tracks_endpoint(item_id, page=page)
-            tracks_list_raw.extend(tracks_data.get('results', []))
-            if not tracks_data.get('next'): break
+            res = await active_client.get_release_tracks(item_id, page=page)
+            if not res.get('results'): break
+            tracks.extend(res['results'])
+            if not res.get('next'): break
             page += 1
-            if page > 20: break # Safety limit 2000 tracks
+            await asyncio.sleep(0.5) # Delay paginasi
         except: break
-        
-    tracks_list = []
-    # Normalisasi struktur data (Playlist membungkus track dalam objek 'track')
-    if tracks_endpoint == active_client.get_playlist_tracks:
-        for item in tracks_list_raw:
-            if item.get('track'):
-                tracks_list.append(item['track'])
-    else:
-        tracks_list = tracks_list_raw
 
-    meta['title'] = playlist_data['name']
-    meta['artist'] = playlist_data.get('user', {}).get('name', 'Beatsource')
-    meta['totaltracks'] = str(len(tracks_list))
+    meta = copy.deepcopy(base_meta)
+    meta['provider'] = 'Beatsource'
+    meta['tempfolder'] += f"{r_id}/Beatsource/{item_id}_ALBUM"
+    meta['type'] = 'album'
+    meta['title'] = release_data['name']
+    meta['artist'] = ", ".join([a['name'] for a in release_data.get("artists", [])])
     
-    cover_uri = playlist_data.get('image', {}).get('dynamic_uri', '')
-    if not cover_uri and playlist_data.get("release_images"):
-        cover_uri = playlist_data.get("release_images")[0].get("dynamic_uri", "")
+    img = release_data.get('image', {}).get('dynamic_uri')
+    if img:
+        meta['cover'] = await create_cover_file(img.format(w=1400, h=1400), meta)
+        meta['thumbnail'] = meta['cover']
 
-    meta['cover'] = await create_cover_file(cover_uri.format(w=1400, h=1400), meta)
-    meta['thumbnail'] = meta['cover']
-
-    playlist_is_explicit = False
-    tracks_meta_list = []
-    
-    for i, track_data in enumerate(tracks_list):
+    meta['tracks'] = []
+    for t in tracks:
         try:
-            # PASS fetch_stream=False -> URL diambil nanti di handler
-            track_meta = await process_track_metadata(track_data['id'], r_id, user, fetch_stream=False)
-            
-            track_meta['tracknumber'] = str(i + 1).zfill(2)
-            track_meta['totaltracks'] = meta['totaltracks']
-            tracks_meta_list.append(track_meta)
-            
-            if track_meta['explicit']:
-                playlist_is_explicit = True
+            # [CRITICAL] PASS release_data ke sini!
+            tm = await process_track_metadata(str(t['id']), r_id, user, 
+                                            fetch_stream=False, 
+                                            pre_data=t, 
+                                            album_pre_data=release_data)
+            tm['cover'] = meta['cover']
+            meta['tracks'].append(tm)
         except Exception as e:
-            LOGGER.warning(f"Skip track {track_data['id']} di playlist: {e}")
+            LOGGER.error(f"Error track {t.get('id')}: {e}")
 
-    meta['tracks'] = tracks_meta_list
-    meta['explicit'] = playlist_is_explicit
+    if not meta['tracks']: raise BeatsourceError("Album kosong.")
+    return meta
+
+async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: dict):
+    active_client = beatsource_manager.get_client(user.get('user_id'))
+    is_chart = extra.get('is_chart', False)
     
-    if tracks_meta_list:
-        meta['quality'] = tracks_meta_list[0]['quality']
+    # 1. Fetch Info
+    if is_chart: pl_data = await active_client.get_chart(item_id)
+    else: pl_data = await active_client.get_playlist(item_id)
+    
+    # 2. Fetch Tracks
+    tracks = []
+    page = 1
+    endpoint = active_client.get_chart_tracks if is_chart else active_client.get_playlist_tracks
+    while True:
+        try:
+            res = await endpoint(item_id, page=page)
+            if not res.get('results'): break
+            tracks.extend(res['results'])
+            if len(tracks) >= res.get('count', 0) or len(tracks) >= 2000: break
+            page += 1
+            await asyncio.sleep(0.5)
+        except: break
+
+    meta = copy.deepcopy(base_meta)
+    meta['provider'] = 'Beatsource'
+    meta['tempfolder'] += f"{r_id}/Beatsource/{item_id}_PLAY"
+    meta['type'] = 'playlist'
+    meta['title'] = pl_data['name']
+    meta['artist'] = "Beatsource Chart" if is_chart else pl_data.get('user', {}).get('name', 'User')
+
+    img = pl_data.get('image', {}).get('dynamic_uri')
+    if not img and pl_data.get('release_images'):
+        img = pl_data['release_images'][0].get('dynamic_uri')
+    if img:
+        meta['cover'] = await create_cover_file(img.format(w=1400, h=1400), meta)
+
+    meta['tracks'] = []
+    
+    # Cache album kecil-kecilan
+    album_cache = {}
+    
+    for item in tracks:
+        try:
+            t_data = item if is_chart else item.get('track')
+            if not t_data: continue
+            
+            # Cek cache album
+            rid = t_data.get('release', {}).get('id')
+            rel_data = None
+            if rid:
+                if rid in album_cache: rel_data = album_cache[rid]
+                else:
+                    try:
+                        rel_data = await active_client.get_release(rid)
+                        album_cache[rid] = rel_data
+                        await asyncio.sleep(0.2)
+                    except: pass
+            
+            tm = await process_track_metadata(str(t_data['id']), r_id, user,
+                                            fetch_stream=False,
+                                            pre_data=t_data,
+                                            album_pre_data=rel_data)
+            meta['tracks'].append(tm)
+        except: continue
 
     return meta
