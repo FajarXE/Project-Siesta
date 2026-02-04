@@ -155,11 +155,7 @@ except ImportError:
         raise NotImplementedError("Modul KKBox belum diimplementasikan.")
 
 # Beatsource
-try:
-    from ..helpers.beatsource.handler import start_beatsource
-except ImportError:
-    async def start_beatsource(*args, **kwargs):
-        raise NotImplementedError("Modul Beatsource belum diimplementasikan.")
+from bot.helpers.beatsource.handler import start_beatsource
 
 # Moov
 try:
