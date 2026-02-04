@@ -55,7 +55,7 @@ async def _process_cover(metadata: dict, beatport_url: str):
     if not final and os.path.exists(FALLBACK_IMAGE_PATH): final = FALLBACK_IMAGE_PATH
     return await create_cover_file(final, metadata)
 
-# --- PROSES METADATA INTI (FIXED) ---
+# --- PROSES METADATA INTI (FIXED & OPTIMIZED) ---
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, fetch_stream: bool = True, album_pre_data: dict = None):
     user_id = user.get('user_id')
@@ -68,12 +68,17 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     # 1. Get Track Data
     track_data = pre_data
     if not track_data:
-        try: track_data = await active_client.get_track(track_id)
-        except: pass
+        # Retry logic simple untuk fetch track individual
+        for _ in range(2):
+            try:
+                track_data = await active_client.get_track(track_id)
+                if track_data: break
+            except: 
+                await asyncio.sleep(1)
     
-    if not track_data: raise BeatportError(f"Track {track_id} not found.")
+    if not track_data: raise BeatportError(f"Track {track_id} not found (atau gagal diambil).")
 
-    # 2. Get Album Data (EFFICIENTLY)
+    # 2. Get Album Data
     album_data = album_pre_data 
     if not album_data:
         try:
@@ -141,20 +146,37 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
     
-    # 1. Fetch Album
+    # 1. Fetch Album Info
     album_data = await active_client.get_release(album_id)
     if not album_data: raise BeatportError("Album not found.")
     
-    # 2. Get Tracks
+    # 2. Get Tracks - OPTIMIZED LOGIC
+    # Jika 'tracks' di album_data hanya berisi URL (String), kita abaikan dan paksa fetch paginasi.
+    # Ini mencegah 100x request API individual yang menyebabkan timeout/ban.
     tracks_raw = album_data.get("tracks", [])
+    need_full_fetch = False
+    
     if not tracks_raw:
+        need_full_fetch = True
+    elif tracks_raw and isinstance(tracks_raw[0], str):
+        # Jika elemen pertama adalah string (URL), berarti ini bukan data lengkap
+        need_full_fetch = True
+        tracks_raw = [] # Reset untuk diisi data lengkap
+        
+    if need_full_fetch:
+        LOGGER.info(f"Beatport: Fetching full tracks pagination for album {album_id}...")
         p = 1
         while True:
-            res = await active_client.get_release_tracks(album_id, page=p)
-            if not res.get("results"): break
-            tracks_raw.extend(res.get("results"))
-            if not res.get("next"): break
-            p += 1
+            try:
+                res = await active_client.get_release_tracks(album_id, page=p)
+                if not res.get("results"): break
+                tracks_raw.extend(res.get("results"))
+                if not res.get("next"): break
+                p += 1
+                await asyncio.sleep(0.5) # Delay sopan
+            except Exception as e:
+                LOGGER.error(f"Beatport Pagination Error: {e}")
+                break
 
     metadata['itemid'] = album_id
     metadata['title'] = album_data.get("name")
@@ -169,48 +191,39 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
 
     metadata['tracks'] = []
     
-    # [FIX ROBUST] Penanganan Loop Track yang Aman
+    # Loop Processing dengan Fallback Kuat
     for track_item in tracks_raw:
         try:
             t_data = None
             t_id = None
 
-            # Skenario 1: Track Item adalah URL String
-            if isinstance(track_item, str):
-                t_id = track_item.split('/')[-1]
-                # Kita coba fetch data singkat jika memungkinkan, atau biarkan process_track_metadata yang fetch
-                try:
-                    t_data = await active_client.get_track(t_id)
-                except: pass
-
-            # Skenario 2: Track Item adalah Dictionary
-            elif isinstance(track_item, dict):
+            # Normalisasi Data
+            if isinstance(track_item, dict):
                 t_data = track_item
                 t_id = t_data.get('id')
-                
-                # Case: Wrapper {"track": {...}} (kadang terjadi di response tertentu)
-                if not t_id and t_data.get('track'):
+                if not t_id and t_data.get('track'): # Wrapper case
                     t_data = t_data.get('track')
-                    t_id = t_data.get('id') if t_data else None
+                    t_id = t_data.get('id')
+            elif isinstance(track_item, str):
+                # Fallback terakhir jika masih ada string URL (seharusnya sudah dihandle di atas)
+                t_id = track_item.split('/')[-1]
 
-            # Validasi Akhir ID
-            if not t_id and t_data:
-                # Jika masih tidak ada ID tapi ada URL di dalam object
-                url = t_data.get('url') or t_data.get('uri')
-                if url: t_id = url.split('/')[-1]
-
-            # Jika data track belum lengkap tapi ID ada, fetch ulang
+            # Jika data tidak lengkap, coba fetch (Last Resort)
             if t_id and (not t_data or not t_data.get('name')):
                 try:
+                    await asyncio.sleep(0.5) # Cegah spam request
                     t_data = await active_client.get_track(t_id)
-                except: pass
+                except Exception as e:
+                    LOGGER.warning(f"Gagal fetch individual track {t_id}: {e}")
 
-            # Final Check
+            # Validasi Akhir
             if not t_data or not t_data.get('id'):
-                LOGGER.warning(f"Skip track invalid di album {album_id}: Data kosong/corrupt.")
+                # Debug log untuk melihat apa yang salah
+                LOGGER.warning(f"Skip track invalid di album {album_id}. Raw item: {str(track_item)[:100]}")
                 continue
 
-            # Proses
+            # Proses Metadata
+            # Kita pass 'album_data' supaya tidak request get_release lagi
             t_meta = await process_track_metadata(str(t_data['id']), r_id, user, 
                                                 pre_data=t_data, 
                                                 fetch_stream=False, 
@@ -220,11 +233,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
             metadata['tracks'].append(t_meta)
             
         except Exception as e:
-            # Log error tapi JANGAN raise, agar loop lanjut ke track berikutnya
-            LOGGER.error(f"Error processing track meta: {e}")
+            LOGGER.error(f"Error processing track meta loop: {e}")
             continue
 
-    if not metadata['tracks']: raise BeatportError("Album kosong (Gagal mengambil metadata track).")
+    if not metadata['tracks']: 
+        raise BeatportError("Album kosong (Gagal mengambil metadata track). Kemungkinan struktur API berubah atau koneksi terhambat.")
+        
     return metadata
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
@@ -238,14 +252,16 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     tracks = []
     page = 1
     while True:
-        if is_chart: res = await active_client.get_chart_tracks(playlist_id, page=page)
-        else: res = await active_client.get_playlist_tracks(playlist_id, page=page)
-        
-        if not res.get("results"): break
-        tracks.extend(res.get("results"))
-        if len(tracks) >= res.get("count", 0): break
-        page += 1
-        await asyncio.sleep(0.5) 
+        try:
+            if is_chart: res = await active_client.get_chart_tracks(playlist_id, page=page)
+            else: res = await active_client.get_playlist_tracks(playlist_id, page=page)
+            
+            if not res.get("results"): break
+            tracks.extend(res.get("results"))
+            if len(tracks) >= res.get("count", 0): break
+            page += 1
+            await asyncio.sleep(0.5) 
+        except: break
 
     metadata = copy.deepcopy(base_meta)
     metadata['tempfolder'] += f"{r_id}-temp/"
