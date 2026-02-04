@@ -261,12 +261,19 @@ async def start_album(album_id: str, user: dict, upload=True):
         await edit_message(user['bot_msg'], f"Menyiapkan ZIP...")
         try:
             cover_src = album_meta.get('cover')
-            if cover_src and cover_src.startswith('http'):
+            if cover_src:
                 target_cover = os.path.join(album_meta['folderpath'], "cover.jpg")
-                client = beatport_manager.get_client(user.get('user_id'))
-                u_proxy = client.proxy if client else None
-                await download_beatport_track(cover_src, target_cover, proxy=u_proxy)
-        except: pass
+                
+                # [FIX] Cek apakah file sudah ada di lokal (hasil dari metadata.py)
+                if os.path.exists(cover_src):
+                    shutil.copy(cover_src, target_cover)
+                # Jika berupa URL, download dulu
+                elif cover_src.startswith('http'):
+                    client = beatport_manager.get_client(user.get('user_id'))
+                    u_proxy = client.proxy if client else None
+                    await download_beatport_track(cover_src, target_cover, proxy=u_proxy)
+        except Exception as e:
+            LOGGER.warning(f"Gagal menyalin cover ZIP: {e}")
 
         album_meta['zip_path'] = await zip_handler(album_meta['folderpath'])
 
@@ -307,6 +314,20 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
 
     if playlist_zip: 
         await edit_message(user['bot_msg'], f"Menyiapkan ZIP...")
+        try:
+            cover_src = play_meta.get('cover')
+            if cover_src:
+                target_cover = os.path.join(play_meta['folderpath'], "cover.jpg")
+                
+                # [FIX] Cek lokal file juga untuk playlist
+                if os.path.exists(cover_src):
+                    shutil.copy(cover_src, target_cover)
+                elif cover_src.startswith('http'):
+                    client = beatport_manager.get_client(user.get('user_id'))
+                    u_proxy = client.proxy if client else None
+                    await download_beatport_track(cover_src, target_cover, proxy=u_proxy)
+        except: pass
+
         play_meta['zip_path'] = await zip_handler(play_meta['folderpath'])
 
     if upload:
