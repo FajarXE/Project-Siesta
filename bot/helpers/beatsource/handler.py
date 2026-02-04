@@ -33,7 +33,8 @@ from ..utils import *
 try:
     from ..uploder import *
 except ImportError as e:
-    raise ImportError(f"Gagal mengimpor uploder.py: {e}\")
+    # [FIXED] Menghapus backslash yang menyebabkan SyntaxError
+    raise ImportError(f"Gagal mengimpor uploder.py: {e}")
 
 from ..metadata import set_metadata
 from ..message import edit_message
@@ -106,7 +107,7 @@ async def start_beatsource(url: str, user: dict):
 async def download_beatsource_track(url: str, filepath: str, proxy: str = None):
     try:
         headers = {
-            "User-Agent": USER_AGENT, # Menggunakan UA Orpheusdl
+            "User-Agent": USER_AGENT, 
             "Accept": "*/*",
             "Referer": "https://www.beatsource.com/"
         }
