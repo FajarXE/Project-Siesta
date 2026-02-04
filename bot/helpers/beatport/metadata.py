@@ -32,17 +32,6 @@ def truncate_artist_list(artist_str: str, max_len: int = 200) -> str:
 async def get_itunes_cover_url(metadata: dict, session: aiohttp.ClientSession) -> str | None:
     return None 
 
-def custom_url_parse(link: str):
-    match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/.+?/(?P<id>\d+)", link)
-    if not match: match = re.search(r"beatport\.com/(?:[a-z]{2}/)?(?P<type>track|release|artist|playlists|chart)/(?P<id>\d+)", link)
-    if not match: raise BeatportError(f"URL tidak valid: {link}")
-    
-    m_type = match.group("type")
-    if m_type == "release": m_type = "album"
-    elif m_type in ["playlists", "chart"]: m_type = "playlist"
-    
-    return m_type, match.group("id"), {"is_chart": match.group("type") == "chart"}
-
 async def _generate_artwork_url(dynamic_uri: str, size: int = 1400):
     if not dynamic_uri: return None
     res_pattern = re.compile(r"\d{3,4}x\d{3,4}")
@@ -55,7 +44,7 @@ async def _process_cover(metadata: dict, beatport_url: str):
     if not final and os.path.exists(FALLBACK_IMAGE_PATH): final = FALLBACK_IMAGE_PATH
     return await create_cover_file(final, metadata)
 
-# --- PROSES METADATA INTI (FIXED & OPTIMIZED) ---
+# --- PROSES METADATA INTI (FIXED) ---
 
 async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data: dict = None, fetch_stream: bool = True, album_pre_data: dict = None):
     user_id = user.get('user_id')
@@ -68,7 +57,6 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     # 1. Get Track Data
     track_data = pre_data
     if not track_data:
-        # Retry logic simple untuk fetch track individual
         for _ in range(2):
             try:
                 track_data = await active_client.get_track(track_id)
@@ -76,7 +64,7 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
             except: 
                 await asyncio.sleep(1)
     
-    if not track_data: raise BeatportError(f"Track {track_id} not found (atau gagal diambil).")
+    if not track_data: raise BeatportError(f"Track {track_id} not found.")
 
     # 2. Get Album Data
     album_data = album_pre_data 
@@ -99,7 +87,13 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['albumartist'] = truncate_artist_list(albumartist_raw)
     
     metadata['album'] = album_data.get("name", "Unknown Album")
-    metadata['date'] = track_data.get("publish_date")
+    
+    # [FIX] Tanggal & Explicit
+    metadata['date'] = track_data.get("publish_date", "")[:10]
+    metadata['year'] = metadata['date'][:4]
+    metadata['explicit'] = track_data.get("explicit", False)
+    
+    # Track Number Default (Akan di-override oleh Album Loop)
     metadata['tracknumber'] = str(track_data.get("number", 1)).zfill(2)
     metadata['totaltracks'] = str(album_data.get("track_count", 1))
     
@@ -113,9 +107,13 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
     metadata['cover'] = await _process_cover(metadata, bp_cover)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover, 80), metadata, True)
 
-    # 3. Stream Fetching
+    # 3. Stream & Quality Logic
+    # [FIX] Set Quality Placeholder dari User Pref jika tidak fetch stream (agar caption tidak kosong)
+    pref_qual = beatport_manager.get_user_quality(user_id)
+    metadata['quality'] = pref_qual.capitalize()
+    metadata['extension'] = "flac" if pref_qual == "lossless" else "m4a"
+
     if fetch_stream:
-        pref_qual = beatport_manager.get_user_quality(user_id)
         qual_order = ["lossless", "high", "medium"] if pref_qual == "lossless" else (["high", "medium"] if pref_qual == "high" else ["medium"])
         
         stream_loc = None
@@ -130,11 +128,10 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
                     break
             except: continue
             
-        if not stream_loc: raise BeatportError("Gagal mendapatkan link download (Cek Subscription/Region).")
+        if not stream_loc: raise BeatportError("Gagal mendapatkan link download.")
         metadata['download_url'] = stream_loc
     else:
         metadata['download_url'] = None
-        metadata['extension'] = "flac" 
 
     return metadata
 
@@ -143,28 +140,16 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     active_client = beatport_manager.get_client(user_id)
     if not active_client: raise BeatportError("No Beatport Account.")
 
-    metadata = copy.deepcopy(base_meta)
-    metadata['tempfolder'] += f"{r_id}-temp/"
-    
     # 1. Fetch Album Info
     album_data = await active_client.get_release(album_id)
     if not album_data: raise BeatportError("Album not found.")
     
-    # 2. Get Tracks - OPTIMIZED LOGIC
-    # Jika 'tracks' di album_data hanya berisi URL (String), kita abaikan dan paksa fetch paginasi.
-    # Ini mencegah 100x request API individual yang menyebabkan timeout/ban.
+    # 2. Get Tracks - Robust Pagination
     tracks_raw = album_data.get("tracks", [])
-    need_full_fetch = False
-    
-    if not tracks_raw:
-        need_full_fetch = True
-    elif tracks_raw and isinstance(tracks_raw[0], str):
-        # Jika elemen pertama adalah string (URL), berarti ini bukan data lengkap
-        need_full_fetch = True
-        tracks_raw = [] # Reset untuk diisi data lengkap
+    need_full_fetch = not tracks_raw or (tracks_raw and isinstance(tracks_raw[0], str))
         
     if need_full_fetch:
-        LOGGER.info(f"Beatport: Fetching full tracks pagination for album {album_id}...")
+        tracks_raw = []
         p = 1
         while True:
             try:
@@ -173,11 +158,12 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
                 tracks_raw.extend(res.get("results"))
                 if not res.get("next"): break
                 p += 1
-                await asyncio.sleep(0.5) # Delay sopan
-            except Exception as e:
-                LOGGER.error(f"Beatport Pagination Error: {e}")
-                break
+                await asyncio.sleep(0.5)
+            except: break
 
+    # --- SETUP METADATA ALBUM ---
+    metadata = copy.deepcopy(base_meta)
+    metadata['tempfolder'] += f"{r_id}-temp/"
     metadata['itemid'] = album_id
     metadata['title'] = album_data.get("name")
     metadata['album'] = metadata['title']
@@ -185,63 +171,70 @@ async def process_album_metadata(album_id: str, r_id: str, user: dict):
     metadata['type'] = 'album'
     metadata['provider'] = 'Beatport'
 
+    # [FIX] ISI METADATA UTAMA YANG HILANG DI SCREENSHOT
+    metadata['date'] = album_data.get("publish_date", "")[:10]
+    metadata['year'] = metadata['date'][:4]
+    metadata['totaltracks'] = str(len(tracks_raw))
+    metadata['totalvolume'] = "1"
+    
+    # Quality Placeholder (Ambil dari user pref)
+    pref_qual = beatport_manager.get_user_quality(user_id)
+    metadata['quality'] = pref_qual.capitalize()
+
     bp_cover = await _generate_artwork_url(album_data.get("image", {}).get("dynamic_uri"))
     metadata['cover'] = await _process_cover(metadata, bp_cover)
     metadata['thumbnail'] = await create_cover_file(await _generate_artwork_url(bp_cover, 80), metadata, True)
 
     metadata['tracks'] = []
     
-    # Loop Processing dengan Fallback Kuat
-    for track_item in tracks_raw:
+    # [FIX] FORCE TRACK NUMBERING (01, 02, 03...)
+    # Menggunakan 'enumerate' agar urutan track sesuai list API, bukan property 'number' yang sering hilang.
+    album_explicit = False
+    
+    for i, track_item in enumerate(tracks_raw):
         try:
-            t_data = None
+            t_data = track_item
             t_id = None
-
-            # Normalisasi Data
+            
             if isinstance(track_item, dict):
-                t_data = track_item
-                t_id = t_data.get('id')
-                if not t_id and t_data.get('track'): # Wrapper case
-                    t_data = t_data.get('track')
+                t_id = track_item.get('id')
+                if not t_id and track_item.get('track'): 
+                    t_data = track_item.get('track')
                     t_id = t_data.get('id')
             elif isinstance(track_item, str):
-                # Fallback terakhir jika masih ada string URL (seharusnya sudah dihandle di atas)
                 t_id = track_item.split('/')[-1]
 
-            # Jika data tidak lengkap, coba fetch (Last Resort)
-            if t_id and (not t_data or not t_data.get('name')):
-                try:
-                    await asyncio.sleep(0.5) # Cegah spam request
-                    t_data = await active_client.get_track(t_id)
-                except Exception as e:
-                    LOGGER.warning(f"Gagal fetch individual track {t_id}: {e}")
+            if not t_id: continue
 
-            # Validasi Akhir
-            if not t_data or not t_data.get('id'):
-                # Debug log untuk melihat apa yang salah
-                LOGGER.warning(f"Skip track invalid di album {album_id}. Raw item: {str(track_item)[:100]}")
-                continue
-
-            # Proses Metadata
-            # Kita pass 'album_data' supaya tidak request get_release lagi
-            t_meta = await process_track_metadata(str(t_data['id']), r_id, user, 
-                                                pre_data=t_data, 
+            # Proses Track
+            t_meta = await process_track_metadata(str(t_id), r_id, user, 
+                                                pre_data=t_data if isinstance(t_data, dict) else None, 
                                                 fetch_stream=False, 
                                                 album_pre_data=album_data)
             
+            # [FIX] PAKSA NOMOR TRACK
+            t_meta['tracknumber'] = str(i + 1).zfill(2)
+            t_meta['totaltracks'] = metadata['totaltracks']
+            
+            # Wariskan cover album ke track
             t_meta['cover'] = metadata['cover']
+            
+            # Update explicit status album
+            if t_meta.get('explicit'): album_explicit = True
+                
             metadata['tracks'].append(t_meta)
             
         except Exception as e:
-            LOGGER.error(f"Error processing track meta loop: {e}")
+            LOGGER.error(f"Skip track {i+1}: {e}")
             continue
 
-    if not metadata['tracks']: 
-        raise BeatportError("Album kosong (Gagal mengambil metadata track). Kemungkinan struktur API berubah atau koneksi terhambat.")
+    metadata['explicit'] = album_explicit
+    if not metadata['tracks']: raise BeatportError("Album kosong/Gagal memproses track.")
         
     return metadata
 
 async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, extra: dict):
+    # Logic Playlist (Tidak berubah banyak, hanya penyesuaian kecil)
     user_id = user.get('user_id')
     active_client = beatport_manager.get_client(user_id)
     is_chart = extra.get("is_chart")
@@ -250,16 +243,15 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     else: pl_data = await active_client.get_playlist(playlist_id)
     
     tracks = []
-    page = 1
+    p = 1
     while True:
         try:
-            if is_chart: res = await active_client.get_chart_tracks(playlist_id, page=page)
-            else: res = await active_client.get_playlist_tracks(playlist_id, page=page)
-            
+            if is_chart: res = await active_client.get_chart_tracks(playlist_id, page=p)
+            else: res = await active_client.get_playlist_tracks(playlist_id, page=p)
             if not res.get("results"): break
             tracks.extend(res.get("results"))
             if len(tracks) >= res.get("count", 0): break
-            page += 1
+            p += 1
             await asyncio.sleep(0.5) 
         except: break
 
@@ -269,6 +261,11 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['type'] = 'playlist'
     metadata['provider'] = 'Beatport'
     
+    # [FIX] Isi Metadata Playlist
+    metadata['totaltracks'] = str(len(tracks))
+    pref_qual = beatport_manager.get_user_quality(user_id)
+    metadata['quality'] = pref_qual.capitalize()
+
     img_uri = pl_data.get("image", {}).get("dynamic_uri")
     if not img_uri and not is_chart and pl_data.get("release_images"):
         img_uri = pl_data.get("release_images")[0] 
@@ -277,18 +274,20 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
     metadata['cover'] = await _process_cover(metadata, bp_cover)
 
     metadata['tracks'] = []
+    
+    # Cache album sederhana
     album_cache = {}
 
-    for t_item in tracks:
+    for i, t_item in enumerate(tracks):
         try:
             raw_t = t_item.get("track") if not is_chart else t_item
             if not raw_t: continue
             
+            # Smart Cache Release Data
             rel_id = raw_t.get("release", {}).get("id")
             alb_dat = None
             if rel_id:
-                if rel_id in album_cache:
-                    alb_dat = album_cache[rel_id]
+                if rel_id in album_cache: alb_dat = album_cache[rel_id]
                 else:
                     try:
                         alb_dat = await active_client.get_release(rel_id)
@@ -300,6 +299,9 @@ async def process_playlist_metadata(playlist_id: str, r_id: str, user: dict, ext
                                                 pre_data=raw_t, 
                                                 fetch_stream=False, 
                                                 album_pre_data=alb_dat)
+            
+            # Fix Numbering for Playlist
+            t_meta['tracknumber'] = str(i + 1).zfill(2)
             metadata['tracks'].append(t_meta)
         except: continue
         
