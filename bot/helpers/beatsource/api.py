@@ -15,10 +15,14 @@ except ImportError:
     ProxyConnector = None
 # -------------------------
 
-# [FIX 1] Gunakan User-Agent 'orpheusdl' untuk API Calls agar sesuai dengan Client ID
-# Gunakan Browser UA HANYA untuk Auth Flow
+# [FIX] Definisi User-Agent
+# API_USER_AGENT: Untuk request ke API (Meniru aplikasi Orpheus agar sesuai Client ID)
+# BROWSER_USER_AGENT: Untuk proses Login (Meniru Browser agar cookie sessionid valid)
 API_USER_AGENT = "orpheusdl/beatsource-module"
 BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+
+# [PENTING] Alias ini ditambahkan agar handler.py tidak error saat import 'USER_AGENT'
+USER_AGENT = API_USER_AGENT 
 
 class BeatsourceError(Exception):
     def __init__(self, message):
@@ -90,7 +94,7 @@ class BeatsourceAPI:
         self.password_cache = password
         await self._init_session()
         
-        # [FIX 2] Gunakan Browser User-Agent hanya untuk Login Step
+        # Gunakan Browser User-Agent hanya untuk Login Step
         login_headers = {"User-Agent": BROWSER_USER_AGENT}
         
         try:
@@ -192,7 +196,7 @@ class BeatsourceAPI:
                 else:
                     raise BeatsourceError("Sesi habis, gagal login ulang.")
 
-        # [FIX 3] Tambahkan Random Sleep untuk Human-Like behavior
+        # Tambahkan Random Sleep untuk Human-Like behavior
         await asyncio.sleep(random.uniform(0.2, 0.5))
 
         for attempt in range(3):
