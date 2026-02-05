@@ -21,7 +21,7 @@ from .metadata import (
     process_album_metadata, 
     process_playlist_metadata,
     custom_url_parse,
-    write_extended_tags  # <--- IMPORT FUNGSI BARU INI
+    write_extended_tags  # <--- Pastikan fungsi ini terimport
 )
 from .api import BeatportError, USER_AGENT
 from .manager import beatport_manager
@@ -166,7 +166,7 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             # 1. Jalankan Metadata Global (Standar)
             await set_metadata(track_meta, user['user_id'])
             
-            # 2. [BARU] Jalankan Metadata Ekstensi Lokal (BPM, Key, Label, CatNo untuk M4A)
+            # 2. Jalankan Metadata Ekstensi Lokal (BPM, Key, Label, CatNo untuk M4A)
             await write_extended_tags(track_meta['filepath'], track_meta)
             
         except Exception as e:
@@ -191,12 +191,12 @@ async def start_album(album_id: str, user: dict, upload=True):
     await update_progress_msg(user['bot_msg'], 0, len(album_meta['tracks']), album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
+        # [FIX] DELAY SAFETY 5-10 DETIK ANTAR LAGU
         if i > 0:
             await asyncio.sleep(random.uniform(5, 10))
 
         success = await start_track(track['itemid'], user, track, False, album_folder)
-        if success:
-            successful_tracks.append(track)
+        if success: successful_tracks.append(track)
         await update_progress_msg(user['bot_msg'], i + 1, len(album_meta['tracks']), album_meta['title'], album_meta['type'])
 
     album_meta['tracks'] = successful_tracks
@@ -234,12 +234,12 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     await update_progress_msg(user['bot_msg'], 0, len(play_meta['tracks']), play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
+        # [FIX] DELAY SAFETY 5-10 DETIK ANTAR LAGU
         if i > 0:
             await asyncio.sleep(random.uniform(5, 10))
 
         success = await start_track(track['itemid'], user, track, False, playlist_folder)
-        if success:
-            successful_tracks.append(track)
+        if success: successful_tracks.append(track)
         await update_progress_msg(user['bot_msg'], i + 1, len(play_meta['tracks']), play_meta['title'], play_meta['type'])
 
     play_meta['tracks'] = successful_tracks
