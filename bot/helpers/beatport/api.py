@@ -14,9 +14,7 @@ except ImportError:
     ProxyConnector = None
 # -------------------------
 
-# [FIX 1] Gunakan User-Agent yang sesuai dengan Client ID (Serato DJ Lite)
-# Jangan gunakan User-Agent Browser (Chrome) jika Client ID adalah aplikasi Desktop/Mobile
-USER_AGENT = "libbeatport/v2.8.2"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 class BeatportError(Exception):
     def __init__(self, message):
@@ -40,28 +38,26 @@ class BeatportAPI:
         self.session = None 
 
     async def _init_session(self):
-        """Membuat sesi aiohttp dengan dukungan Proxy (Auto-fix socks5h)."""
         if self.session is None or self.session.closed:
             connector = None
-            
-            if self.proxy:
-                if ProxyConnector:
-                    try:
-                        proxy_url = self.proxy
-                        use_rdns = False
-                        if proxy_url.startswith("socks5h://"):
-                            proxy_url = proxy_url.replace("socks5h://", "socks5://")
-                            use_rdns = True
-                        
-                        connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
-                        LOGGER.debug(f"BeatportAPI: Menggunakan Proxy untuk {self.email}")
-                    except Exception as e:
-                        LOGGER.error(f"BeatportAPI: Gagal Proxy: {e}")
-                else:
-                    LOGGER.error("BeatportAPI: Proxy diset tapi 'aiohttp_socks' belum diinstall.")
+            if self.proxy and ProxyConnector:
+                try:
+                    proxy_url = self.proxy.replace("socks5h://", "socks5://")
+                    connector = ProxyConnector.from_url(proxy_url, rdns=True)
+                except Exception as e:
+                    LOGGER.error(f"Beatport Proxy Error: {e}")
+
+            headers = {
+                'User-Agent': USER_AGENT,
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Origin': 'https://www.beatport.com',
+                'Referer': 'https://www.beatport.com/'
+            }
 
             self.session = aiohttp.ClientSession(
-                headers={'user-agent': USER_AGENT},
+                headers=headers,
+                cookie_jar=aiohttp.CookieJar(unsafe=True),
                 connector=connector
             )
 
@@ -160,22 +156,19 @@ class BeatportAPI:
             self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
 
     async def _get(self, endpoint: str, params: dict = None):
-        """Fungsi helper GET dengan Auto-Retry dan Delay."""
         await self._init_session()
         if not params: params = {}
 
-        # Cek Expired
         if self.expires and datetime.now() > self.expires:
             try:
                 await self.refresh()
-            except:
+            except: 
                 if self.email and self.password_cache:
                     await self.login(self.email, self.password_cache)
                 else:
                     raise BeatportError("Sesi habis.")
 
-        # [FIX 2] Tambahkan random sleep kecil untuk menghindari deteksi 'machine-like behavior'
-        await asyncio.sleep(random.uniform(0.1, 0.4))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
 
         max_retries = 3
         for attempt in range(max_retries):
