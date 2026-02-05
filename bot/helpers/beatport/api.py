@@ -1,5 +1,3 @@
-# [GANTI SELURUH FILE: bot/helpers/beatport/api.py]
-
 import aiohttp
 import asyncio
 import random
@@ -14,6 +12,8 @@ except ImportError:
     ProxyConnector = None
 # -------------------------
 
+# [FIX] Gunakan User-Agent Browser (Chrome) untuk SEMUA request (Login & API).
+# Ini mencegah deteksi "Inkonsistensi Fingerprint" yang menyebabkan ban.
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 class BeatportError(Exception):
@@ -38,25 +38,29 @@ class BeatportAPI:
         self.session = None 
 
     async def _init_session(self):
+        """Membuat sesi aiohttp dengan User-Agent Browser dan CookieJar."""
         if self.session is None or self.session.closed:
             connector = None
-            if self.proxy and ProxyConnector:
-                try:
-                    proxy_url = self.proxy.replace("socks5h://", "socks5://")
-                    connector = ProxyConnector.from_url(proxy_url, rdns=True)
-                except Exception as e:
-                    LOGGER.error(f"Beatport Proxy Error: {e}")
+            
+            if self.proxy:
+                if ProxyConnector:
+                    try:
+                        proxy_url = self.proxy
+                        use_rdns = False
+                        if proxy_url.startswith("socks5h://"):
+                            proxy_url = proxy_url.replace("socks5h://", "socks5://")
+                            use_rdns = True
+                        
+                        connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+                        LOGGER.debug(f"BeatportAPI: Menggunakan Proxy untuk {self.email}")
+                    except Exception as e:
+                        LOGGER.error(f"BeatportAPI: Gagal Proxy: {e}")
+                else:
+                    LOGGER.error("BeatportAPI: Proxy diset tapi 'aiohttp_socks' belum diinstall.")
 
-            headers = {
-                'User-Agent': USER_AGENT,
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Origin': 'https://www.beatport.com',
-                'Referer': 'https://www.beatport.com/'
-            }
-
+            # [FIX] Gunakan CookieJar(unsafe=True) dan Header Browser Default
             self.session = aiohttp.ClientSession(
-                headers=headers,
+                headers={'User-Agent': USER_AGENT},
                 cookie_jar=aiohttp.CookieJar(unsafe=True),
                 connector=connector
             )
@@ -66,10 +70,10 @@ class BeatportAPI:
             await self.session.close()
 
     def _get_headers(self, use_access_token: bool = False):
-        # [FIX] Pastikan header konsisten
-        headers = {'user-agent': USER_AGENT}
+        # Gunakan UA yang sama persis dengan sesi inisial
+        headers = {'User-Agent': USER_AGENT}
         if use_access_token and self.access_token:
-            headers['authorization'] = f'Bearer {self.access_token}'
+            headers['Authorization'] = f'Bearer {self.access_token}'
         return headers
 
     async def load_session(self, token_data: dict):
@@ -84,51 +88,67 @@ class BeatportAPI:
         self.password_cache = password
         await self._init_session()
         
-        # Saat Login via Web Flow, kita MUNGKIN butuh UA Browser, tapi API calls harus UA Library
-        # Namun untuk amannya, Serato flow biasanya tidak seketat itu di endpoint auth/o/authorize
-        # Kita gunakan UA Browser HANYA untuk login flow agar tidak dicurigai sebagai bot login
-        login_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+        # [FIX] Hapus header khusus. Gunakan session default agar fingerprint konsisten.
         
-        # 1. Otorisasi
+        # 1. Otorisasi (Step 1)
         params_auth = {
             "client_id": self.client_id,
             "response_type": "code",
             "redirect_uri": self.redirect_uri,
         }
-        async with self.session.get(f"{self.API_URL}auth/o/authorize/", params=params_auth, headers=login_headers, allow_redirects=False) as r:
+        
+        # Delay manusiawi sebelum request pertama
+        await asyncio.sleep(random.uniform(1.0, 2.0))
+        
+        async with self.session.get(f"{self.API_URL}auth/o/authorize/", params=params_auth, allow_redirects=False) as r:
             if r.status != 302:
-                raise BeatportError(f"Auth step 1 gagal: {await r.text()}")
+                # Coba baca error text jika ada
+                try: err_text = await r.text()
+                except: err_text = "Unknown"
+                raise BeatportError(f"Auth step 1 gagal ({r.status}): {err_text}")
+            
             base_url = str(r.url).replace(r.request_info.url.path_qs, '')
             referer = base_url + r.headers['location']
 
-        # 2. Login
+        # 2. Login POST
         json_login = {"username": email, "password": password}
-        async with self.session.post(f"{self.API_URL}auth/login/", json=json_login, headers={**login_headers, "Referer": referer}) as r:
+        
+        # Delay mengetik password
+        await asyncio.sleep(random.uniform(1.5, 2.5))
+        
+        # Sertakan Referer agar terlihat seperti navigasi sah
+        async with self.session.post(f"{self.API_URL}auth/login/", json=json_login, headers={"Referer": referer}) as r:
             if r.status != 200:
-                # Cek error spesifik
                 try:
                     err_json = await r.json()
-                    if 'username' in err_json or 'password' in err_json:
-                        raise BeatportError("Username/Password salah.")
+                    # Logika cek error spesifik bisa ditambah di sini
                 except: pass
-                raise BeatportError(f"Login gagal (Cek password): {r.status}")
+                raise BeatportError(f"Login gagal (Cek password / Captcha): {r.status}")
 
-        # 3. Otorisasi lagi
-        async with self.session.get(f"{self.API_URL}auth/o/authorize/", params=params_auth, headers=login_headers, allow_redirects=False) as r:
+        # 3. Otorisasi Ulang (Step 3 - Mengambil Code)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        
+        async with self.session.get(f"{self.API_URL}auth/o/authorize/", params=params_auth, allow_redirects=False) as r:
             if r.status != 302:
-                raise BeatportError(f"Auth step 3 gagal")
-            code = r.headers['location'].split('code=')[1]
+                raise BeatportError(f"Auth step 3 gagal ({r.status})")
+            
+            location = r.headers.get('location')
+            if not location or 'code=' not in location:
+                 raise BeatportError("Gagal mendapatkan Auth Code dari header location.")
+            
+            code = location.split('code=')[1]
 
-        # 4. Tukar kode dengan token (API Call dimulai, gunakan UA Library)
+        # 4. Tukar Code dengan Token
         data_token = {
             "client_id": self.client_id,
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": self.redirect_uri,
         }
-        async with self.session.post(f"{self.API_URL}auth/o/token/", data=data_token, headers={'user-agent': USER_AGENT}) as r:
+        
+        await asyncio.sleep(random.uniform(0.5, 1.0))
+        
+        async with self.session.post(f"{self.API_URL}auth/o/token/", data=data_token) as r:
             if r.status != 200:
                 raise BeatportError(f"Auth step 4 gagal: {await r.text()}")
             
@@ -146,7 +166,9 @@ class BeatportAPI:
             'grant_type': 'refresh_token',
         }
         
-        async with self.session.post(f'{self.API_URL}auth/o/token/', data=data, headers={'user-agent': USER_AGENT}) as r:
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        
+        async with self.session.post(f'{self.API_URL}auth/o/token/', data=data) as r:
             if r.status != 200:
                 raise BeatportError("Gagal refresh token (Invalid Grant)")
             
@@ -156,18 +178,22 @@ class BeatportAPI:
             self.expires = datetime.now() + timedelta(seconds=resp_json['expires_in'])
 
     async def _get(self, endpoint: str, params: dict = None):
+        """Fungsi helper GET dengan Delay Aman."""
         await self._init_session()
         if not params: params = {}
 
+        # Cek Expired
         if self.expires and datetime.now() > self.expires:
             try:
                 await self.refresh()
-            except: 
+            except:
                 if self.email and self.password_cache:
                     await self.login(self.email, self.password_cache)
                 else:
                     raise BeatportError("Sesi habis.")
 
+        # [FIX] Jeda aman antar request API (0.5s - 1.5s)
+        # Jangan terlalu cepat agar tidak dianggap bot spamming
         await asyncio.sleep(random.uniform(0.5, 1.5))
 
         max_retries = 3
@@ -188,14 +214,14 @@ class BeatportAPI:
                         raise BeatportError("Unauthorized (401)")
                     
                     if r.status == 403:
-                        # Analisis error lebih baik seperti kode referensi
+                        # Cek apakah region locked
                         try:
                             err_data = await r.json()
                             msg = str(err_data).lower()
                             if "territory" in msg or "region" in msg:
-                                raise BeatportError("Region Locked")
+                                raise BeatportError("Region Locked (Gunakan VPN/Proxy)")
                         except: pass
-                        raise BeatportError(f"Forbidden (403): {await r.text()}")
+                        raise BeatportError(f"Forbidden (403): Akses ditolak.")
                     
                     if r.status == 404:
                         raise BeatportError(f"Not Found (404): {endpoint}")
