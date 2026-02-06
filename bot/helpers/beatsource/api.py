@@ -1,5 +1,3 @@
-# [GANTI SELURUH FILE: bot/helpers/beatsource/api.py]
-
 import aiohttp
 import asyncio
 import random
@@ -7,18 +5,17 @@ from datetime import timedelta, datetime
 from urllib.parse import urlparse, parse_qs
 from bot.logger import LOGGER
 
-# --- Cek Library Proxy ---
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
     LOGGER.warning("Modul 'aiohttp_socks' tidak ditemukan. Proxy SOCKS/SOCKS5H tidak akan berjalan.")
     ProxyConnector = None
-# -------------------------
 
-# [FIX] STRATEGI ANTI-BAN
-# Hapus semua referensi ke "orpheusdl". Gunakan satu User-Agent Browser untuk SEMUA aktivitas.
-# Ini membuat bot terlihat 100% seperti pengguna Chrome biasa di mata server.
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+# [KONFIGURASI USER-AGENT]
+# 1. Browser: Digunakan saat Login & Refresh Token (Meniru aktivitas web)
+BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+# 2. App: Digunakan saat Download & API Call (Sesuai dengan Client ID Serato)
+APP_USER_AGENT = "Serato DJ Lite/3.2.1 (Windows NT 10.0; Win64; x64)"
 
 class BeatsourceError(Exception):
     def __init__(self, message):
@@ -28,8 +25,10 @@ class BeatsourceError(Exception):
 class BeatsourceAPI:
     def __init__(self):
         self.API_URL = "https://api.beatsource.com/v4/"
-        # Client ID Orpheus (Tetap digunakan karena valid untuk flow otorisasi ini)
+        # Client ID Serato DJ
         self.client_id = "ryZ8LuyQVPqbK2mBX2Hwt4qSMtnWuTYSqBPO92yQ"
+        # [PENTING] Redirect URI wajib ada dan cocok dengan Client ID
+        self.redirect_uri = "seratodjlite://beatsource"
 
         self.access_token = None
         self.refresh_token = None
@@ -41,9 +40,7 @@ class BeatsourceAPI:
         self.session = None 
 
     async def _init_session(self):
-        """
-        Membuat sesi aiohttp dengan User-Agent Browser dan CookieJar aktif.
-        """
+        """Inisialisasi sesi dengan identitas Browser."""
         if self.session is None or self.session.closed:
             connector = None
             if self.proxy and ProxyConnector:
@@ -55,12 +52,13 @@ class BeatsourceAPI:
                         use_rdns = True
                     
                     connector = ProxyConnector.from_url(proxy_url, rdns=use_rdns)
+                    LOGGER.debug(f"BeatsourceAPI: Menggunakan Proxy untuk {self.email}")
                 except Exception as e:
                     LOGGER.error(f"BeatsourceAPI: Gagal Proxy: {e}")
 
-            # [FIX] Gunakan UA Browser & CookieJar unsafe=True
+            # Default menggunakan Browser UA untuk sesi dasar (Login/Cookies)
             self.session = aiohttp.ClientSession(
-                headers={'User-Agent': USER_AGENT},
+                headers={'User-Agent': BROWSER_USER_AGENT},
                 cookie_jar=aiohttp.CookieJar(unsafe=True),
                 connector=connector
             )
@@ -70,10 +68,17 @@ class BeatsourceAPI:
             await self.session.close()
 
     def _get_headers(self, use_access_token: bool = False):
-        # Konsisten menggunakan UA Browser
-        headers = {'User-Agent': USER_AGENT}
+        """
+        Logika Split Identity:
+        - Jika akses API (use_access_token=True) -> Pakai APP_USER_AGENT
+        - Jika browsing/login -> Pakai BROWSER_USER_AGENT
+        """
+        headers = {}
         if use_access_token and self.access_token:
             headers['Authorization'] = f'Bearer {self.access_token}'
+            headers['User-Agent'] = APP_USER_AGENT
+        else:
+            headers['User-Agent'] = BROWSER_USER_AGENT
         return headers
 
     async def load_session(self, token_data: dict):
@@ -84,20 +89,16 @@ class BeatsourceAPI:
         self.expires = datetime.now() - timedelta(seconds=10)
 
     async def login(self, email: str, password: str):
-        """
-        Login Flow yang disamarkan sebagai aktivitas Browser.
-        """
         self.email = email
         self.password_cache = password
         await self._init_session()
         
         try:
-            # 1. Login POST (Mendapatkan sessionid cookie)
+            # 1. Login POST (Mendapatkan cookie sessionid)
             login_url = f"{self.API_URL}auth/login/"
             login_payload = {"username": email, "password": password}
             
-            # Delay manusiawi (mengetik password)
-            await asyncio.sleep(random.uniform(1.5, 2.5))
+            await asyncio.sleep(random.uniform(1.5, 2.5)) # Simulasi mengetik
             
             async with self.session.post(login_url, json=login_payload) as r_login:
                 if r_login.status != 200:
@@ -108,7 +109,6 @@ class BeatsourceAPI:
                     except: pass
                     raise BeatsourceError(f"Login step 1 gagal: {r_login.status}")
 
-            # Validasi Session ID cookie
             cookies = self.session.cookie_jar.filter_cookies(self.API_URL)
             if 'sessionid' not in cookies:
                 raise BeatsourceError("Login gagal: Cookie sessionid tidak ditemukan.")
@@ -118,9 +118,9 @@ class BeatsourceAPI:
             auth_params = {
                 "client_id": self.client_id,
                 "response_type": "code",
+                "redirect_uri": self.redirect_uri, # [WAJIB]
             }
             
-            # Delay loading page
             await asyncio.sleep(random.uniform(0.5, 1.5))
             
             async with self.session.get(auth_url, params=auth_params, allow_redirects=False) as r_auth:
@@ -145,6 +145,7 @@ class BeatsourceAPI:
                 "client_id": self.client_id,
                 "code": code,
                 "grant_type": "authorization_code",
+                "redirect_uri": self.redirect_uri, # [WAJIB]
             }
             
             await asyncio.sleep(random.uniform(0.5, 1.0))
@@ -171,14 +172,14 @@ class BeatsourceAPI:
             'grant_type': 'refresh_token',
         }
         
-        # Header form-urlencoded standar, UA diambil dari session
+        # Refresh biasanya butuh Content-Type form-urlencoded
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         
         await asyncio.sleep(random.uniform(0.5, 1.5))
         
         async with self.session.post(f'{self.API_URL}auth/o/token/', data=data, headers=headers) as r:
             if r.status != 200:
-                raise BeatsourceError("Gagal refresh token.")
+                raise BeatsourceError("Gagal refresh token (Invalid Grant)")
             
             js = await r.json()
             self.access_token = js['access_token']
@@ -186,11 +187,9 @@ class BeatsourceAPI:
             self.expires = datetime.now() + timedelta(seconds=js['expires_in'])
 
     async def _get(self, endpoint: str, params: dict = None):
-        """Helper GET dengan Auto-Retry dan Delay."""
         await self._init_session()
         if not params: params = {}
 
-        # Cek Expired
         if self.expires and datetime.now() > self.expires:
             try:
                 await self.refresh()
@@ -200,20 +199,23 @@ class BeatsourceAPI:
                 else:
                     raise BeatsourceError("Sesi habis, gagal login ulang.")
 
-        # [FIX] Random Delay (Throttling) agar tidak terdeteksi bot
+        # Delay keamanan
         await asyncio.sleep(random.uniform(0.5, 1.5))
 
-        for attempt in range(3):
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                # Headers akan otomatis menggunakan UA Browser dari _init_session + Authorization
+                # _get_headers(True) akan menggunakan APP_USER_AGENT
                 async with self.session.get(f'{self.API_URL}{endpoint}', params=params, headers=self._get_headers(True)) as r:
                     
                     if r.status == 200:
                         return await r.json()
 
                     if r.status in [500, 502, 503, 504]:
-                        await asyncio.sleep(2)
-                        continue
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2)
+                            continue
+                        raise ConnectionError(f"Server Error: {r.status}")
                     
                     if r.status == 401:
                         raise BeatsourceError("Unauthorized (401)")
@@ -230,10 +232,11 @@ class BeatsourceAPI:
                     
                     raise ConnectionError(f"API Error {r.status}")
             except aiohttp.ClientConnectorError:
-                await asyncio.sleep(2)
-                continue
-                
-    # --- Endpoints ---
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+                raise
+
     async def get_account(self): return await self._get('auth/o/introspect')
     async def get_track(self, track_id: str): return await self._get(f'catalog/tracks/{track_id}')
     async def get_release(self, release_id: str): return await self._get(f'catalog/releases/{release_id}')
