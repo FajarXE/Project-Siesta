@@ -23,7 +23,7 @@ from .metadata import (
     custom_url_parse,
     write_extended_tags 
 )
-from .api import BeatsourceError, USER_AGENT
+from .api import BeatsourceError, APP_USER_AGENT
 from .manager import beatsource_manager
 
 from ..utils import *
@@ -100,7 +100,7 @@ async def start_beatsource(url: str, user: dict):
 
 async def download_beatsource_track(url: str, filepath: str, proxy: str = None):
     try:
-        headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Referer": "https://www.beatsource.com/"}
+        headers = {"User-Agent": APP_USER_AGENT, "Accept": "*/*", "Referer": "https://www.beatsource.com/"}
         connector = None
         if proxy and ProxyConnector:
             try:
