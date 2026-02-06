@@ -8,12 +8,10 @@ import traceback
 import asyncio 
 import random 
 
-# --- ProxyConnector ---
 try:
     from aiohttp_socks import ProxyConnector
 except ImportError:
     ProxyConnector = None
-# ----------------------
 
 from pathvalidate import sanitize_filepath
 from config import Config
@@ -23,7 +21,7 @@ from .metadata import (
     process_album_metadata, 
     process_playlist_metadata,
     custom_url_parse,
-    write_extended_tags  # <--- Pastikan fungsi ini terimport
+    write_extended_tags 
 )
 from .api import BeatsourceError, USER_AGENT
 from .manager import beatsource_manager
@@ -135,6 +133,15 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
             filepath = sanitize_filepath(filepath)
 
+        # --- [ANTI-BAN] SIMULASI BROWSING ---
+        # Membuat pola request tidak terlihat seperti bot murni yang hanya hit endpoint download.
+        try:
+            if client and random.random() < 0.7: # 70% chance untuk simulasi
+                # Pura-pura "jeda" berpikir atau melihat detail album
+                await asyncio.sleep(random.uniform(0.8, 1.8))
+        except: pass
+        # -------------------------------------
+
         if not track_meta.get('download_url'):
             new_url, qual = await refresh_track_url(item_id, track_meta, user_id)
             if new_url:
@@ -165,12 +172,8 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         if err: return False
 
         try:
-            # 1. Jalankan Metadata Global
             await set_metadata(track_meta, user['user_id'])
-            
-            # 2. Jalankan Metadata Lokal Beatsource (untuk BPM, Key, CatNo)
             await write_extended_tags(track_meta['filepath'], track_meta)
-            
         except:
             try: os.remove(filepath)
             except: pass
@@ -192,9 +195,9 @@ async def start_album(album_id: str, user: dict, upload=True):
     await update_progress_msg(user['bot_msg'], 0, len(album_meta['tracks']), album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
-        # [FIX] DELAY SAFETY 5-10 DETIK ANTAR LAGU
+        # [ANTI-BAN] Jeda Antar Lagu dalam Album (Penting!)
         if i > 0:
-            await asyncio.sleep(random.uniform(5, 10))
+            await asyncio.sleep(random.uniform(6, 12)) 
 
         success = await start_track(track['itemid'], user, track, False, album_folder)
         if success: successful_tracks.append(track)
@@ -235,9 +238,9 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     await update_progress_msg(user['bot_msg'], 0, len(play_meta['tracks']), play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
-        # [FIX] DELAY SAFETY 5-10 DETIK ANTAR LAGU
+        # [ANTI-BAN] Jeda Antar Lagu dalam Playlist
         if i > 0:
-            await asyncio.sleep(random.uniform(5, 10))
+            await asyncio.sleep(random.uniform(6, 12))
 
         success = await start_track(track['itemid'], user, track, False, playlist_folder)
         if success: successful_tracks.append(track)
