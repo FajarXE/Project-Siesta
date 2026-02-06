@@ -21,7 +21,9 @@ from .metadata import (
     custom_url_parse,
     write_extended_tags 
 )
-from .api import BeatportError, USER_AGENT
+
+# [PERBAIKAN] Ubah import USER_AGENT menjadi APP_USER_AGENT
+from .api import BeatportError, APP_USER_AGENT 
 from .manager import beatport_manager
 
 from ..utils import *
@@ -98,7 +100,8 @@ async def start_beatport(url: str, user: dict):
 
 async def download_beatport_track(url: str, filepath: str, proxy: str = None):
     try:
-        headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Referer": "https://www.beatport.com/"}
+        # [PERBAIKAN] Gunakan APP_USER_AGENT agar konsisten dengan Client ID Serato
+        headers = {"User-Agent": APP_USER_AGENT, "Accept": "*/*", "Referer": "https://www.beatport.com/"}
         connector = None
         if proxy and ProxyConnector:
             try:
