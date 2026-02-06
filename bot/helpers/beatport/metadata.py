@@ -252,26 +252,48 @@ async def process_track_metadata(track_id: str, r_id: str, user: dict, pre_data:
 
     # Stream Logic
     pref_qual = beatport_manager.get_user_quality(user_id)
-    metadata['quality'] = pref_qual.capitalize()
-    metadata['extension'] = "flac" if pref_qual == "lossless" else "m4a"
+    
+    if pref_qual == "lossless":
+        metadata['quality'] = "FLAC"
+        metadata['extension'] = "flac"
+    elif pref_qual == "high":
+        metadata['quality'] = "AAC 256"
+        metadata['extension'] = "m4a"
+    else:
+        metadata['quality'] = "AAC 128"
+        metadata['extension'] = "m4a"
+
+    metadata['download_url'] = None
 
     if fetch_stream:
-        qual_order = ["lossless", "high", "medium"] if pref_qual == "lossless" else (["high", "medium"] if pref_qual == "high" else ["medium"])
         stream_loc = None
-        for q in qual_order:
+        target_q_code = QUALITY_MAP.get(pref_qual, "medium")
+
+        try:
+            await asyncio.sleep(random.uniform(1.0, 2.0)) 
+            
+            sd = await active_client.get_track_download(track_id, target_q_code)
+            stream_loc = sd.get('location')
+        except Exception:
+            stream_loc = None
+
+        if not stream_loc and pref_qual == "lossless":
             try:
-                await asyncio.sleep(random.uniform(0.1, 0.3))
-                sd = await active_client.get_track_download(track_id, QUALITY_MAP[q])
-                if sd.get('location'):
-                    stream_loc = sd.get('location')
-                    metadata['quality'] = "FLAC" if q == "lossless" else ("AAC 256" if q == "high" else "AAC 128")
-                    metadata['extension'] = "flac" if q == "lossless" else "m4a"
-                    break
-            except: continue
-        if not stream_loc: raise BeatportError("Gagal mendapatkan link download.")
+                await asyncio.sleep(random.uniform(2.0, 3.0))
+                
+                sd = await active_client.get_track_download(track_id, QUALITY_MAP["high"])
+                stream_loc = sd.get('location')
+                
+                if stream_loc:
+                    metadata['quality'] = "AAC 256"
+                    metadata['extension'] = "m4a"
+            except Exception:
+                pass 
+
+        if not stream_loc:
+            raise BeatportError(f"Gagal mendapatkan link download (Target: {pref_qual}).")
+            
         metadata['download_url'] = stream_loc
-    else:
-        metadata['download_url'] = None
 
     return metadata
 
