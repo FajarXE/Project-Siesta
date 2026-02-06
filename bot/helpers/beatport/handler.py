@@ -1,5 +1,3 @@
-# [GANTI SELURUH FILE: bot/helpers/beatport/handler.py]
-
 import aiohttp
 import aiofiles
 import os
@@ -21,7 +19,7 @@ from .metadata import (
     process_album_metadata, 
     process_playlist_metadata,
     custom_url_parse,
-    write_extended_tags  # <--- Pastikan fungsi ini terimport
+    write_extended_tags 
 )
 from .api import BeatportError, USER_AGENT
 from .manager import beatport_manager
@@ -133,6 +131,12 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
             filepath = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/{track_meta['provider']}/{track_meta['albumartist']}/{track_meta['album']}"
             filepath = sanitize_filepath(filepath)
 
+        try:
+            if client and random.random() < 0.7:
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+        except Exception: 
+            pass 
+
         if not track_meta.get('download_url'):
             new_url, qual = await refresh_track_url(item_id, track_meta, user_id)
             if new_url:
@@ -163,10 +167,8 @@ async def start_track(item_id: str, user: dict, track_meta: dict | None, upload=
         if err: return False
 
         try:
-            # 1. Jalankan Metadata Global (Standar)
             await set_metadata(track_meta, user['user_id'])
             
-            # 2. Jalankan Metadata Ekstensi Lokal (BPM, Key, Label, CatNo untuk M4A)
             await write_extended_tags(track_meta['filepath'], track_meta)
             
         except Exception as e:
@@ -191,7 +193,6 @@ async def start_album(album_id: str, user: dict, upload=True):
     await update_progress_msg(user['bot_msg'], 0, len(album_meta['tracks']), album_meta['title'], album_meta['type'])
 
     for i, track in enumerate(album_meta['tracks']):
-        # [FIX] DELAY SAFETY 5-10 DETIK ANTAR LAGU
         if i > 0:
             await asyncio.sleep(random.uniform(5, 10))
 
@@ -234,7 +235,6 @@ async def start_playlist(playlist_id: str, user: dict, extra: dict, upload=True)
     await update_progress_msg(user['bot_msg'], 0, len(play_meta['tracks']), play_meta['title'], play_meta['type'])
 
     for i, track in enumerate(play_meta['tracks']):
-        # [FIX] DELAY SAFETY 5-10 DETIK ANTAR LAGU
         if i > 0:
             await asyncio.sleep(random.uniform(5, 10))
 
