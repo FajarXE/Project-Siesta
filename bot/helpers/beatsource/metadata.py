@@ -51,58 +51,32 @@ async def _process_cover(metadata: dict, img_url: str):
 
 # --- FUNGSI TAGGING LOKAL ---
 async def write_extended_tags(filepath: str, meta: dict):
-    """
-    Menulis tag khusus Beatsource: BPM, Key, CatNo, Label, UPC, ISRC, Barcode, Producer, Copyright.
-    """
     try:
         ext = os.path.splitext(filepath)[1].lower()
-        
-        # 1. Handler M4A (iTunes)
         if ext in ['.m4a', '.mp4']:
             audio = MP4(filepath)
-            
-            # BPM
             if meta.get('bpm'):
                 try: audio.tags['tmpo'] = [int(float(meta['bpm']))]
                 except: audio.tags['----:com.apple.iTunes:BPM'] = str(meta['bpm']).encode('utf-8')
-
-            # KEY
             if meta.get('key'):
                 audio.tags['----:com.apple.iTunes:initialkey'] = str(meta['key']).encode('utf-8')
                 audio.tags['----:com.apple.iTunes:KEY'] = str(meta['key']).encode('utf-8')
-
-            # CATALOG NUMBER
             if meta.get('catalog_number'):
                 audio.tags['----:com.apple.iTunes:CATALOGNUMBER'] = str(meta['catalog_number']).encode('utf-8')
-
-            # COPYRIGHT
             if meta.get('copyright'):
                 audio.tags['\u00a9cpr'] = meta['copyright']
-                audio.tags['----:com.apple.iTunes:cpr'] = str(meta['copyright']).encode('utf-8')
-
-            # LABEL
             if meta.get('label'):
                 audio.tags['----:com.apple.iTunes:LABEL'] = str(meta['label']).encode('utf-8')
                 audio.tags['\u00a9pub'] = meta['label']
-
-            # ISRC
             if meta.get('isrc'):
                 audio.tags['----:com.apple.iTunes:ISRC'] = str(meta['isrc']).encode('utf-8')
-
-            # UPC
             if meta.get('upc'):
                 audio.tags['----:com.apple.iTunes:UPC'] = str(meta['upc']).encode('utf-8')
-                audio.tags['----:com.apple.iTunes:BARCODE'] = str(meta['upc']).encode('utf-8')
-
-            # PRODUCER
             if meta.get('remixer'):
                 audio.tags['----:com.apple.iTunes:REMIXER'] = str(meta['remixer']).encode('utf-8')
             if meta.get('producer'):
                 audio.tags['\u00a9prd'] = meta['producer']
-
             audio.save()
-
-        # 2. Handler FLAC
         elif ext == '.flac':
             audio = FLAC(filepath)
             if meta.get('bpm'): audio.tags['BPM'] = str(meta['bpm'])
@@ -110,23 +84,13 @@ async def write_extended_tags(filepath: str, meta: dict):
                 audio.tags['INITIALKEY'] = str(meta['key'])
                 audio.tags['KEY'] = str(meta['key'])
             if meta.get('catalog_number'): audio.tags['CATALOGNUMBER'] = str(meta['catalog_number'])
-            if meta.get('copyright'):
-                audio.tags['COPYRIGHT'] = str(meta['copyright'])
-                audio.tags['cpr'] = str(meta['copyright'])
-            if meta.get('label'): 
-                audio.tags['LABEL'] = meta['label']
-                audio.tags['ORGANIZATION'] = meta['label']
-                audio.tags['PUBLISHER'] = meta['label']
+            if meta.get('copyright'): audio.tags['COPYRIGHT'] = str(meta['copyright'])
+            if meta.get('label'): audio.tags['LABEL'] = meta['label']
             if meta.get('isrc'): audio.tags['ISRC'] = str(meta['isrc'])
-            if meta.get('upc'):
-                audio.tags['UPC'] = str(meta['upc'])
-                audio.tags['BARCODE'] = str(meta['upc'])
+            if meta.get('upc'): audio.tags['UPC'] = str(meta['upc'])
             if meta.get('remixer'): audio.tags['REMIXER'] = str(meta['remixer'])
             audio.save()
-
-        # 3. Handler MP3
         elif ext == '.mp3':
-            audio = MP3(filepath, ID3=EasyMP3)
             from mutagen.id3 import ID3
             tags = ID3(filepath)
             if meta.get('bpm'): tags.add(TBPM(encoding=3, text=str(meta['bpm'])))
@@ -136,9 +100,7 @@ async def write_extended_tags(filepath: str, meta: dict):
             if meta.get('copyright'): tags.add(TCOP(encoding=3, text=str(meta['copyright'])))
             if meta.get('isrc'): tags.add(TSRC(encoding=3, text=str(meta['isrc'])))
             if meta.get('remixer'): tags.add(TPE4(encoding=3, text=str(meta['remixer'])))
-            if meta.get('upc'): tags.add(TXXX(encoding=3, desc='BARCODE', text=str(meta['upc'])))
             tags.save()
-
     except Exception as e:
         LOGGER.warning(f"Gagal menulis extended tags Beatsource: {e}")
 
@@ -223,28 +185,49 @@ async def process_track_metadata(item_id: str, r_id: str, user: dict,
         meta['cover'] = await _process_cover(meta, img_url)
         meta['thumbnail'] = await create_cover_file(await _generate_artwork_url(img, 400), meta, thumbnail=True)
 
+    # --- [ANTI-BAN LOGIC] OPTIMASI STREAM FETCHING ---
     user_qual = beatsource_manager.get_user_quality(user_id)
-    meta['quality'] = user_qual.capitalize()
-    meta['extension'] = 'flac' if user_qual == 'lossless' else 'm4a'
+    
+    # Mapping awal (Optimis)
+    if user_qual == "lossless":
+        meta['quality'] = "FLAC"
+        meta['extension'] = "flac"
+    elif user_qual == "high":
+        meta['quality'] = "AAC 256"
+        meta['extension'] = "m4a"
+    else:
+        meta['quality'] = "AAC 128"
+        meta['extension'] = "m4a"
     
     if fetch_stream:
-        qualities = ["medium"]
-        if user_qual == "lossless": qualities = ["lossless", "high", "medium"]
-        elif user_qual == "high": qualities = ["high", "medium"]
-        
         dl_url = None
-        for q in qualities:
-            try:
-                await asyncio.sleep(random.uniform(0.1, 0.3))
-                d = await active_client.get_track_download(item_id, q)
-                if d.get('location'):
-                    dl_url = d['location']
-                    meta['quality'] = q.capitalize()
-                    meta['extension'] = 'flac' if q == 'lossless' else 'm4a'
-                    break
-            except: continue
+        target_q_code = "lossless" if user_qual == "lossless" else ("high" if user_qual == "high" else "medium")
+        
+        # 1. ATTEMPT UTAMA (Langsung minta apa yang dimau)
+        try:
+            # Jeda wajib sebelum request download (Endpoint paling sensitif)
+            await asyncio.sleep(random.uniform(1.0, 2.0))
             
-        if not dl_url: raise BeatsourceError("Gagal mengambil link download.")
+            d = await active_client.get_track_download(item_id, target_q_code)
+            dl_url = d.get('location')
+        except Exception: 
+            dl_url = None
+
+        # 2. LOGIKA FALLBACK (Hanya 1x turun ke High jika Lossless gagal)
+        if not dl_url and user_qual == "lossless":
+            try:
+                LOGGER.info(f"Fallback ke High untuk {item_id}...")
+                await asyncio.sleep(random.uniform(1.5, 2.5)) # Extra delay
+                
+                d = await active_client.get_track_download(item_id, "high")
+                dl_url = d.get('location')
+                
+                if dl_url:
+                    meta['quality'] = "AAC 256"
+                    meta['extension'] = "m4a"
+            except: pass
+            
+        if not dl_url: raise BeatsourceError(f"Gagal mengambil link download (Target: {user_qual}).")
         meta['download_url'] = dl_url
     else:
         meta['download_url'] = None
@@ -327,12 +310,10 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
     active_client = beatsource_manager.get_client(user_id)
     is_chart = extra.get('is_chart', False)
     
-    # [FIX] FALLBACK LOGIC: Jika Playlist 404, coba Chart (dan sebaliknya)
     pl_data = None
     used_endpoint = "playlist"
     
     try:
-        # Percobaan 1: Sesuai URL regex
         if is_chart:
             pl_data = await active_client.get_chart(item_id)
             used_endpoint = "chart"
@@ -340,14 +321,13 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
             pl_data = await active_client.get_playlist(item_id)
             used_endpoint = "playlist"
     except Exception as e:
-        # Percobaan 2: Switch tipe (Playlist <-> Chart) jika error 404
         if "404" in str(e):
             try:
                 LOGGER.info(f"Playlist {item_id} not found as {used_endpoint}, trying switch...")
                 if used_endpoint == "playlist":
                     pl_data = await active_client.get_chart(item_id)
                     used_endpoint = "chart"
-                    is_chart = True # Update flag
+                    is_chart = True 
                 else:
                     pl_data = await active_client.get_playlist(item_id)
                     used_endpoint = "playlist"
@@ -357,7 +337,6 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
         else:
             raise e
     
-    # 2. Fetch Tracks (Gunakan endpoint yang sesuai dengan hasil sukses di atas)
     tracks = []
     page = 1
     fetch_func = active_client.get_chart_tracks if is_chart else active_client.get_playlist_tracks
@@ -378,7 +357,6 @@ async def process_playlist_metadata(item_id: str, r_id: str, user: dict, extra: 
     meta['type'] = 'playlist'
     meta['title'] = pl_data['name']
     
-    # Artist Name Logic
     if is_chart:
         meta['artist'] = "Beatsource Chart"
     else:
