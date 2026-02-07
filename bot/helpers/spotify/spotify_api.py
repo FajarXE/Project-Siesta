@@ -519,78 +519,86 @@ class SpotifyAPI:
         self.user_market: Optional[str] = None
         
         # Check if custom client_id and client_secret are provided in config
-        # This allows users to use their own Spotify Developer credentials to avoid rate limits
         custom_client_id = self.config.get("client_id")
         custom_client_secret = self.config.get("client_secret")
         
         # HYBRID APPROACH: Use custom credentials for Web API, Desktop client_id for librespot
-        # Web API OAuth handler (for metadata calls - uses custom credentials to avoid rate limits)
         if custom_client_id and custom_client_secret:
             self.logger.info(f"Using custom Spotify Client ID for Web API: {custom_client_id[:10]}... (from config)")
             web_api_oauth_client_id = custom_client_id
             web_api_oauth_client_secret = custom_client_secret
         else:
-            self.logger.info("Using default Desktop Client ID for Web API (may be rate-limited by Spotify)")
+            self.logger.info("Using default Desktop Client ID for Web API")
             web_api_oauth_client_id = CLIENT_ID
             web_api_oauth_client_secret = None
         
-        # Librespot OAuth handler (for audio streaming - always uses Desktop client_id for private tokens)
-        self.logger.info("Using Desktop Client ID for librespot audio streaming (requires private tokens)")
+        self.logger.info("Using Desktop Client ID for librespot audio streaming")
         librespot_oauth_client_id = CLIENT_ID
         librespot_oauth_client_secret = None
         
-        # Create separate OAuth handlers
-        self.web_api_oauth_handler: Optional[OAuth] = OAuth(web_api_oauth_client_id, REDIRECT_URI, OAUTH_SCOPES, self.logger, client_secret=web_api_oauth_client_secret)
-        self.librespot_oauth_handler: Optional[OAuth] = OAuth(librespot_oauth_client_id, REDIRECT_URI, OAUTH_SCOPES, self.logger, client_secret=librespot_oauth_client_secret)
+        # --- [PERBAIKAN] DEFINISI SCOPE LENGKAP DI SINI ---
+        # Ini memastikan handler OAuth menggunakan scope yang BENAR untuk Premium
+        premium_scopes = [
+            "user-read-email",
+            "user-read-private",
+            "playlist-read-private",
+            "playlist-read-collaborative",
+            "playlist-modify-private",
+            "playlist-modify-public",
+            "user-library-read",
+            "user-library-modify",
+            "user-read-playback-state",
+            "user-modify-playback-state",
+            "user-read-currently-playing",
+            "user-read-recently-played",
+            "user-read-playback-position",
+            "user-top-read",
+            "streaming",           # <--- WAJIB ADA
+            "ugc-image-upload"
+        ]
         
-        # For backward compatibility, keep oauth_handler pointing to web_api_oauth_handler
+        # Create separate OAuth handlers dengan premium_scopes
+        self.web_api_oauth_handler: Optional[OAuth] = OAuth(web_api_oauth_client_id, REDIRECT_URI, premium_scopes, self.logger, client_secret=web_api_oauth_client_secret)
+        self.librespot_oauth_handler: Optional[OAuth] = OAuth(librespot_oauth_client_id, REDIRECT_URI, premium_scopes, self.logger, client_secret=librespot_oauth_client_secret)
+        
+        # For backward compatibility
         self.oauth_handler: Optional[OAuth] = self.web_api_oauth_handler
         
         # Separate tokens for Web API and librespot
         self.web_api_stored_token: Optional[StoredToken] = None
         self.librespot_stored_token: Optional[StoredToken] = None
         
-        # For backward compatibility, stored_token points to librespot token (used by librespot)
+        # For backward compatibility
         self.stored_token: Optional[StoredToken] = None
-        self.last_custom_provider_id_created: Optional[int] = None # ADDED FOR DIAGNOSTICS
+        self.last_custom_provider_id_created: Optional[int] = None
 
-                # Set up logging filter to suppress noisy librespot messages
+        # Set up logging filter (sama seperti kode lama)
         audio_key_filter = LibrespotAudioKeyFilter()
-        
-        # Apply filter to root logger
         root_logger = logging.getLogger()
         root_logger.addFilter(audio_key_filter)
-        
-        # Apply to all existing handlers on root logger
         for handler in root_logger.handlers:
             handler.addFilter(audio_key_filter)
         
-        # Apply to all possible logger names that might be used by librespot
         potential_logger_names = [
             'librespot', 'Librespot', 'LIBRESPOT',
             'librespot.core', 'Librespot.Core', 
             'librespot.audio', 'Librespot.Audio',
             'AudioKeyManager', 'audiokeymanager',
             'spotify', 'Spotify', 'modules.spotify',
-            '__main__', 'root',
-            '', # Empty string for root logger edge cases
+            '__main__', 'root', '', 
         ]
         
         for logger_name in potential_logger_names:
             logger = logging.getLogger(logger_name)
             logger.addFilter(audio_key_filter)
-            # Also apply to any existing handlers on these loggers
             for handler in logger.handlers:
                 handler.addFilter(audio_key_filter)
         
-        # Store reference to reapply filter later if needed
         self._audio_key_filter = audio_key_filter
         
-        self.logger.debug("Added LibrespotAudioKeyFilter to suppress noisy audio key error messages and rate limit warnings")
-
-        # Determine script directory for credentials.json - use config/spotify/ subdirectory        
+        # Determine script directory
         self.credentials_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "config", "spotify"))
-        os.makedirs(self.credentials_dir, exist_ok=True) # Ensure directory exists
+        os.makedirs(self.credentials_dir, exist_ok=True) 
         self.credentials_file_path = os.path.join(self.credentials_dir, CREDENTIALS_FILE_NAME)       
         self.logger.info(f"Credentials will be stored/loaded from: {self.credentials_file_path}")
 
