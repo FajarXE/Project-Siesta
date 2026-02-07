@@ -164,9 +164,18 @@ class OAuth:
         self.error_message: Optional[str] = None
 
     def _start_http_server(self):
-        self.http_server = HTTPServer(self.server_address, OAuthCallbackHandler)
+        # --- PERBAIKAN: Bikin class sementara biar bisa reuse port ---
+        class ReusableHTTPServer(HTTPServer):
+            allow_reuse_address = True
+        # -------------------------------------------------------------
+
+        self.http_server = ReusableHTTPServer(self.server_address, OAuthCallbackHandler)
         self.http_server.access_code_payload = None 
         self.http_server.error_payload = None
+        
+        # Penting: Set oauth_handler ke instance server agar handler bisa akses
+        self.http_server.oauth_handler = self.oauth_handler 
+
         self.server_thread = Thread(target=self.http_server.serve_forever, daemon=True)
         self.server_thread.start()
         self.logger.info(f"OAuth callback server started at {self.redirect_uri}")
@@ -628,27 +637,6 @@ class SpotifyAPI:
             # Check if client_id has changed - if so, we need to re-authenticate with new credentials
             stored_client_id = token_data_from_file.get('client_id')
             current_client_id = self.oauth_handler.client_id if self.oauth_handler else None
-            
-            # If no client_id is stored, it's from the old Desktop client_id (before we added this feature)
-            # If we now have a custom client_id, we need to re-authenticate
-            if not stored_client_id and current_client_id and current_client_id != CLIENT_ID:
-                self.logger.warning(f"Old credentials file (no client_id stored) detected, but custom client_id is now configured. Removing old credentials to force re-authentication with new client ID.")
-                try:
-                    os.remove(self.credentials_file_path)
-                    self.logger.info(f"Removed credentials file {self.credentials_file_path} due to client_id change.")
-                except OSError as e:
-                    self.logger.error(f"Error removing credentials file: {e}")
-                return False
-            
-            # If client_id is stored and different from current, remove old credentials
-            if stored_client_id and current_client_id and stored_client_id != current_client_id:
-                self.logger.warning(f"Client ID has changed (stored: {stored_client_id[:10]}..., current: {current_client_id[:10]}...). Removing old credentials to force re-authentication with new client ID.")
-                try:
-                    os.remove(self.credentials_file_path)
-                    self.logger.info(f"Removed credentials file {self.credentials_file_path} due to client_id change.")
-                except OSError as e:
-                    self.logger.error(f"Error removing credentials file: {e}")
-                return False
             
             # Check for essential fields from StoredToken.to_dict()
             if not all(k in token_data_from_file for k in ["access_token", "refresh_token", "expires_in"]):
