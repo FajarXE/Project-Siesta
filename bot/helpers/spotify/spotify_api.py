@@ -1914,225 +1914,216 @@ class SpotifyAPI:
             self.logger.error(f"Unexpected error in get_track_info for track_id {track_id}: {e}", exc_info=True)
             return None
 
-    def get_album_info(self, album_id: str, metadata: Optional['AlbumInfo'] = None, _retry_attempted: bool = False) -> Optional[dict]:
-        self.logger.info(f"SpotifyAPI: Attempting to get album info for ID: {album_id}{' (retry)' if _retry_attempted else ''}")
-
-        # Get Web API token (uses custom credentials if available, otherwise librespot token)
-        web_api_token = self._get_web_api_token()
-        if not web_api_token:
-            self.logger.info("SpotifyAPI.get_album_info: Token missing. Attempting to load/refresh session.")
-            if not self._load_credentials_and_init_session():
-                self.logger.error("SpotifyAPI.get_album_info: Session initialization failed.")
-                raise SpotifyAuthError("Authentication required/failed for get_album_info. Session could not be initialized.")
-            web_api_token = self._get_web_api_token()
-            if not web_api_token:
-                self.logger.error("SpotifyAPI.get_album_info: Still no access token after session initialization attempt.")
-                raise SpotifyAuthError("Authentication failed for get_album_info. No valid token.")
-
-        api_url = f"https://api.spotify.com/v1/albums/{album_id}"
-        headers = {"Authorization": f"Bearer {web_api_token}"}
-        params = {}
-        if self.user_market:
-            params['market'] = self.user_market
-
+    def get_album_info(self, album_id, metadata=None, _retry_attempted=False):
+        """
+        Mengambil info album dan mengembalikannya sebagai OBJECT AlbumInfo (Bukan Dict).
+        """
         try:
-            self.logger.debug(f"SpotifyAPI.get_album_info: Making GET request to {api_url} with params {params}")
-            response = requests.get(api_url, headers=headers, params=params, timeout=DEFAULT_REQUEST_TIMEOUT)
+            # 1. Autentikasi
+            token = self._get_valid_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            
+            # 2. Request API ke Spotify
+            # Gunakan market=from_token agar track linking sesuai region akun
+            url = f"https://api.spotify.com/v1/albums/{album_id}?market=from_token"
+            
+            self.logger.info(f"Mengambil info album: {album_id}")
+            r = requests.get(url, headers=headers)
+            
+            # Handle Token Expired (401) dengan Retry sederhana
+            if r.status_code == 401 and not _retry_attempted:
+                self.logger.warning("Token expired saat get_album_info. Mencoba refresh...")
+                self._load_credentials_and_init_session() # Refresh
+                return self.get_album_info(album_id, metadata, _retry_attempted=True)
 
-            if response.status_code == 200:
-                album_data = response.json()
-                self.logger.info(f"SpotifyAPI.get_album_info: Successfully retrieved album data for {album_id}")
-                # Keep full track items so interface can use them and avoid N get_track_info API calls (same pattern as Apple Music)
-                all_track_items = []
-                if 'tracks' in album_data and 'items' in album_data['tracks']:
-                    all_track_items.extend(album_data['tracks']['items'])
-                    next_tracks_url = album_data['tracks'].get('next')
-                    while next_tracks_url:
-                        self.logger.debug(f"SpotifyAPI.get_album_info: Fetching next page of tracks from {next_tracks_url}")
-                        current_headers = {"Authorization": f"Bearer {web_api_token}"}
-                        paginated_response = requests.get(next_tracks_url, headers=current_headers, timeout=DEFAULT_REQUEST_TIMEOUT)
-                        if paginated_response.status_code == 200:
-                            paginated_data = paginated_response.json()
-                            all_track_items.extend(paginated_data.get('items', []))
-                            next_tracks_url = paginated_data.get('next')
-                        elif paginated_response.status_code == 401 and not _retry_attempted:
-                            self.logger.warning(f"SpotifyAPI.get_album_info (pagination): Auth error (401) fetching next page for {album_id}. Invalidating token and attempting full re-auth flow.")
-                            self.web_api_stored_token = None
-                            if self._load_credentials_and_init_session():
-                                self.logger.info("SpotifyAPI.get_album_info (pagination): Re-authentication successful. Retrying the original get_album_info call.")
-                                return self.get_album_info(album_id, metadata, _retry_attempted=True)
-                            else:
-                                self.logger.error("SpotifyAPI.get_album_info (pagination): Re-authentication failed after 401 on next page.")
-                                raise SpotifyAuthError(f"Re-authentication failed after 401 on paginated album tracks for {album_id}.")
-                        else:
-                            self.logger.warning(f"SpotifyAPI.get_album_info: Failed to get next page of tracks (status: {paginated_response.status_code}). Breaking pagination.")
-                            break
-                album_data['tracks'] = {'items': all_track_items, 'total': len(all_track_items)}
-                return album_data
-            elif response.status_code == 401:
-                self.logger.warning(f"SpotifyAPI.get_album_info: Authorization error (401) for {album_id}. Token might be invalid.")
-                if not _retry_attempted:
-                    self.logger.info("SpotifyAPI.get_album_info: Attempting re-authentication and retry for 401.")
-                    # Invalidate Web API token and re-initialize session
-                    self.web_api_stored_token = None
-                    if self._load_credentials_and_init_session():
-                        self.logger.info("SpotifyAPI.get_album_info: Re-authentication successful. Retrying original call.")
-                        return self.get_album_info(album_id, metadata, _retry_attempted=True) # Recursive call with retry flag
+            if r.status_code != 200:
+                self.logger.error(f"Gagal get_album_info: {r.status_code} - {r.text}")
+                return None
+            
+            data = r.json()
+            
+            # 3. Ambil Cover Art Terbesar
+            cover_url = ""
+            if data.get("images"):
+                cover_url = data["images"][0]["url"]
+            
+            # 4. Handle Pagination (Spotify membatasi 50 lagu per request)
+            raw_tracks = data.get("tracks", {}).get("items", [])
+            next_url = data.get("tracks", {}).get("next")
+            
+            while next_url:
+                try:
+                    self.logger.debug(f"Mengambil halaman lagu berikutnya: {next_url}")
+                    r_next = requests.get(next_url, headers=headers)
+                    if r_next.status_code == 200:
+                        next_data = r_next.json()
+                        raw_tracks.extend(next_data.get("items", []))
+                        next_url = next_data.get("next")
                     else:
-                        self.logger.error("SpotifyAPI.get_album_info: Re-authentication failed after 401.")
-                        raise SpotifyAuthError(f"Re-authentication failed for album {album_id} after 401.")
-                else:
-                    self.logger.error(f"SpotifyAPI.get_album_info: Authorization error (401) for {album_id} even after retry.")
-                    raise SpotifyAuthError(f"Authorization failed for album {album_id} (401) after retry.")
-            elif response.status_code == 404:
-                self.logger.warning(f"SpotifyAPI.get_album_info: Album {album_id} not found (404).")
-                raise SpotifyItemNotFoundError(f"Album with ID {album_id} not found.")
-            else:
-                self.logger.error(f"SpotifyAPI.get_album_info: Failed to get album data for {album_id}. Status: {response.status_code}, Response: {response.text}")
-                raise SpotifyApiError(f"Failed to get album data for {album_id}. Status: {response.status_code}, Response Text: {response.text[:200]}")
+                        break
+                except Exception as e:
+                    self.logger.warning(f"Gagal mengambil halaman berikutnya: {e}")
+                    break
 
-        except requests.exceptions.HTTPError as http_err: # Catch HTTP errors from requests lib directly
-            if http_err.response.status_code == 401:
-                self.logger.warning(f"SpotifyAPI.get_album_info: HTTPError 401 caught for {album_id}.")
-                if not _retry_attempted:
-                    self.logger.info("SpotifyAPI.get_album_info: Attempting re-authentication and retry for HTTPError 401.")
-                    # Invalidate Web API token and re-initialize session
-                    self.web_api_stored_token = None
-                    if self._load_credentials_and_init_session():
-                        self.logger.info("SpotifyAPI.get_album_info: Re-authentication successful. Retrying original call.")
-                        return self.get_album_info(album_id, metadata, _retry_attempted=True)
-                    else:
-                        self.logger.error("SpotifyAPI.get_album_info: Re-authentication failed after HTTPError 401.")
-                        raise SpotifyAuthError(f"Re-authentication failed for album {album_id} after HTTPError 401.")
-                else:
-                    self.logger.error(f"SpotifyAPI.get_album_info: HTTPError 401 for {album_id} even after retry.")
-                    raise SpotifyAuthError(f"Authorization failed for album {album_id} (HTTPError 401) after retry.")
-            else: # Re-raise other HTTPError s as SpotifyApiError
-                self.logger.error(f"SpotifyAPI.get_album_info: HTTPError {http_err.response.status_code} for {album_id}: {http_err.response.text[:200]}")
-                raise SpotifyApiError(f"HTTP error fetching album {album_id}: {http_err.response.status_code} - {http_err.response.text[:200]}") from http_err
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"SpotifyAPI.get_album_info: RequestException for {album_id}: {e}", exc_info=False) # exc_info=False for cleaner log
-            raise SpotifyApiError(f"Network error while fetching album {album_id}: {e}")
-        except SpotifyAuthError: # Re-raise if it's already our specific auth error
-             raise
-        except Exception as e:
-            self.logger.error(f"SpotifyAPI.get_album_info: Unexpected error for {album_id}: {e}", exc_info=True)
-            # Avoid wrapping SpotifyApiError in another SpotifyApiError
-            if isinstance(e, SpotifyApiError):
-                raise
-            raise SpotifyApiError(f"An unexpected error occurred while fetching album {album_id}: {e}")
-
-    def get_playlist_info(self, playlist_id: str, metadata: Optional['PlaylistInfo'] = None, _retry_attempted: bool = False) -> Optional[dict]:
-        self.logger.info(f"SpotifyAPI: Attempting to get playlist info for ID: {playlist_id}{' (retry)' if _retry_attempted else ''}")
-
-        # Get Web API token (uses custom credentials if available, otherwise librespot token)
-        web_api_token = self._get_web_api_token()
-        if not web_api_token:
-            self.logger.info("SpotifyAPI.get_playlist_info: Token missing. Attempting to load/refresh session.")
-            if not self._load_credentials_and_init_session():
-                self.logger.error("SpotifyAPI.get_playlist_info: Session initialization failed.")
-                raise SpotifyAuthError("Authentication required/failed for get_playlist_info. Session could not be initialized.")
-            web_api_token = self._get_web_api_token()
-            if not web_api_token:
-                self.logger.error("SpotifyAPI.get_playlist_info: Still no access token after session initialization attempt.")
-                raise SpotifyAuthError("Authentication failed for get_playlist_info. No valid token.")
-
-        api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-        headers = {"Authorization": f"Bearer {web_api_token}"}
-        params = {} # Add market if needed, Spotify API for playlists doesn't typically use it directly for main info but for tracks inside.
-
-        try:
-            self.logger.debug(f"SpotifyAPI.get_playlist_info: Making GET request to {api_url} with params {params}")
-            response = requests.get(api_url, headers=headers, params=params, timeout=DEFAULT_REQUEST_TIMEOUT)
-
-            if response.status_code == 200:
-                playlist_data = response.json()
-                self.logger.info(f"SpotifyAPI.get_playlist_info: Successfully retrieved initial playlist data for {playlist_id}")
-                all_track_items = []
-                if 'tracks' in playlist_data and 'items' in playlist_data['tracks']:
-                    all_track_items.extend(playlist_data['tracks']['items'])
-                    next_tracks_url = playlist_data['tracks'].get('next')
-                    while next_tracks_url:
-                        self.logger.debug(f"SpotifyAPI.get_playlist_info: Fetching next page of tracks from {next_tracks_url}")
-                        # Use Web API token for paginated calls (same as initial request)
-                        current_headers = {"Authorization": f"Bearer {web_api_token}"}
-                        paginated_response = requests.get(next_tracks_url, headers=current_headers, timeout=DEFAULT_REQUEST_TIMEOUT)
-                        if paginated_response.status_code == 200:
-                            paginated_data = paginated_response.json()
-                            all_track_items.extend(paginated_data.get('items', []))
-                            next_tracks_url = paginated_data.get('next')
-                        elif paginated_response.status_code == 401 and not _retry_attempted:
-                            self.logger.warning(f"SpotifyAPI.get_playlist_info (pagination): Auth error (401) for {playlist_id}. Invalidating token, attempting re-auth.")
-                            # Invalidate Web API token and re-initialize session
-                            self.web_api_stored_token = None
-                            if self._load_credentials_and_init_session():
-                                self.logger.info("SpotifyAPI.get_playlist_info (pagination): Re-authentication successful. Retrying original call.")
-                                return self.get_playlist_info(playlist_id, metadata, _retry_attempted=True)
-                            else:
-                                self.logger.error("SpotifyAPI.get_playlist_info (pagination): Re-authentication failed.")
-                                raise SpotifyAuthError(f"Re-authentication failed for paginated playlist tracks {playlist_id}.")
-                        else:
-                            self.logger.warning(f"SpotifyAPI.get_playlist_info: Failed to get next page of playlist tracks for {playlist_id} (status: {paginated_response.status_code}). Breaking.")
-                            break
+            # 5. Konversi Dictionary ke Objek TrackInfo
+            track_objects = []
+            
+            for t in raw_tracks:
+                # Skip jika track kosong atau null
+                if not t: continue
                 
-                if 'tracks' in playlist_data and isinstance(playlist_data['tracks'], dict):
-                    playlist_data['tracks']['items'] = all_track_items
-                    playlist_data['tracks']['next'] = None # All items fetched
-                else:
-                    self.logger.warning(f"SpotifyAPI.get_playlist_info: Playlist data for {playlist_id} missing 'tracks' object or not a dict. Reconstructing.")
-                    playlist_data['tracks'] = {'items': all_track_items, 'total': len(all_track_items), 'next': None}
-                return playlist_data
-            elif response.status_code == 401:
-                self.logger.warning(f"SpotifyAPI.get_playlist_info: Auth error (401) for {playlist_id}. Token might be invalid.")
-                if not _retry_attempted:
-                    self.logger.info("SpotifyAPI.get_playlist_info: Attempting re-auth and retry for 401.")
-                    # Invalidate Web API token and re-initialize session
-                    self.web_api_stored_token = None
-                    if self._load_credentials_and_init_session():
-                        self.logger.info("SpotifyAPI.get_playlist_info: Re-auth successful. Retrying call.")
-                        return self.get_playlist_info(playlist_id, metadata, _retry_attempted=True)
-                    else:
-                        self.logger.error("SpotifyAPI.get_playlist_info: Re-auth failed after 401.")
-                        raise SpotifyAuthError(f"Re-authentication failed for playlist {playlist_id} after 401.")
-                else:
-                    self.logger.error(f"SpotifyAPI.get_playlist_info: Auth error (401) for {playlist_id} after retry.")
-                    raise SpotifyAuthError(f"Auth failed for playlist {playlist_id} (401) after retry.")
-            elif response.status_code == 404:
-                self.logger.warning(f"SpotifyAPI.get_playlist_info: Playlist {playlist_id} not found (404).")
-                raise SpotifyItemNotFoundError(f"Playlist with ID {playlist_id} not found.")
-            else:
-                self.logger.error(f"SpotifyAPI.get_playlist_info: Failed for {playlist_id}. Status: {response.status_code}, Response: {response.text[:200]}")
-                raise SpotifyApiError(f"Failed for playlist {playlist_id}. Status: {response.status_code}, Text: {response.text[:200]}")
+                artist_name = "Unknown"
+                if t.get("artists"):
+                    artist_name = t["artists"][0]["name"]
+                
+                # Buat Objek TrackInfo
+                track_obj = TrackInfo(
+                    name=t.get("name"),
+                    id=t.get("id"),
+                    artists=[artist_name],
+                    album=data.get("name"),
+                    duration=t.get("duration_ms", 0) // 1000,
+                    cover_url=cover_url,
+                    release_year=data.get("release_date", "")[:4],
+                    explicit=t.get("explicit", False),
+                    tags=Tags(
+                        track_number=t.get("track_number"),
+                        total_tracks=data.get("total_tracks"),
+                        disc_number=t.get("disc_number"),
+                        album_artist=data["artists"][0]["name"] if data.get("artists") else "Unknown",
+                        release_date=data.get("release_date")
+                    )
+                )
+                track_objects.append(track_obj)
+            
+            self.logger.info(f"Berhasil memproses album: {data.get('name')} ({len(track_objects)} lagu)")
 
-        except requests.exceptions.HTTPError as http_err:
-            if http_err.response.status_code == 401:
-                self.logger.warning(f"SpotifyAPI.get_playlist_info: HTTPError 401 for {playlist_id}.")
-                if not _retry_attempted:
-                    self.logger.info("SpotifyAPI.get_playlist_info: Attempting re-auth for HTTPError 401.")
-                    # Invalidate Web API token and re-initialize session
-                    self.web_api_stored_token = None
-                    if self._load_credentials_and_init_session():
-                        self.logger.info("SpotifyAPI.get_playlist_info: Re-auth successful. Retrying call.")
-                        return self.get_playlist_info(playlist_id, metadata, _retry_attempted=True)
-                    else:
-                        self.logger.error("SpotifyAPI.get_playlist_info: Re-auth failed after HTTPError 401.")
-                        raise SpotifyAuthError(f"Re-auth failed for playlist {playlist_id} after HTTPError 401.")
-                else:
-                    self.logger.error(f"SpotifyAPI.get_playlist_info: HTTPError 401 for {playlist_id} after retry.")
-                    raise SpotifyAuthError(f"Auth failed for playlist {playlist_id} (HTTPError 401) after retry.")
-            else:
-                self.logger.error(f"SpotifyAPI.get_playlist_info: HTTPError {http_err.response.status_code} for {playlist_id}: {http_err.response.text[:200]}")
-                raise SpotifyApiError(f"HTTP error for playlist {playlist_id}: {http_err.response.status_code} - {http_err.response.text[:200]}") from http_err
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"SpotifyAPI.get_playlist_info: RequestException for {playlist_id}: {e}", exc_info=False)
-            raise SpotifyApiError(f"Network error for playlist {playlist_id}: {e}")
-        except SpotifyAuthError:
-             raise
+            # 6. Return Objek AlbumInfo (PENTING: Jangan return Dict)
+            return AlbumInfo(
+                name=data.get("name"),
+                artist=data["artists"][0]["name"] if data.get("artists") else "Unknown",
+                tracks=track_objects,
+                all_track_cover_jpg_url=cover_url,
+                release_year=data.get("release_date", "")[:4],
+                id=data.get("id")
+            )
+
         except Exception as e:
-            self.logger.error(f"SpotifyAPI.get_playlist_info: Unexpected error for {playlist_id}: {e}", exc_info=True)
-            if isinstance(e, SpotifyApiError):
-                raise
-            raise SpotifyApiError(f"Unexpected error for playlist {playlist_id}: {e}")
+            self.logger.error(f"Error fatal parsing album info: {e}", exc_info=True)
+            return None
+
+    def get_playlist_info(self, playlist_id):
+        """
+        Mengambil info playlist dan mengembalikannya sebagai OBJECT PlaylistInfo (Bukan Dict).
+        """
+        try:
+            # 1. Autentikasi
+            token = self._get_valid_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            
+            # 2. Request API
+            # Tambahkan market=from_token agar lagu yang tidak tersedia di region akun otomatis tersaring/re-linked
+            url = f"https://api.spotify.com/v1/playlists/{playlist_id}?market=from_token"
+            
+            self.logger.info(f"Mengambil info playlist: {playlist_id}")
+            r = requests.get(url, headers=headers)
+            
+            # Handle Token Expired (401)
+            if r.status_code == 401:
+                self.logger.warning("Token expired saat get_playlist_info. Mencoba refresh...")
+                self._load_credentials_and_init_session()
+                # Coba sekali lagi dengan token baru
+                token = self._get_valid_token()
+                headers = {"Authorization": f"Bearer {token}"}
+                r = requests.get(url, headers=headers)
+
+            if r.status_code != 200:
+                self.logger.error(f"Gagal get_playlist_info: {r.status_code} - {r.text}")
+                return None
+            
+            data = r.json()
+            
+            # 3. Ambil Cover Art
+            cover_url = ""
+            if data.get("images"):
+                cover_url = data["images"][0]["url"]
+            
+            # 4. Handle Pagination (Spotify Playlist pakai paging)
+            # Struktur playlist: data['tracks']['items']
+            raw_items = data.get("tracks", {}).get("items", [])
+            next_url = data.get("tracks", {}).get("next")
+            
+            while next_url:
+                try:
+                    self.logger.debug(f"Mengambil halaman playlist berikutnya: {next_url}")
+                    r_next = requests.get(next_url, headers=headers)
+                    if r_next.status_code == 200:
+                        next_data = r_next.json()
+                        raw_items.extend(next_data.get("items", []))
+                        next_url = next_data.get("next")
+                    else:
+                        break
+                except Exception as e:
+                    self.logger.warning(f"Gagal mengambil halaman berikutnya: {e}")
+                    break
+            
+            # 5. Konversi ke Objek TrackInfo
+            track_objects = []
+            
+            for item in raw_items:
+                # Di playlist, track dibungkus dalam key 'track'
+                t = item.get("track")
+                
+                # Skip jika track kosong, null, atau Local File (biasanya tidak punya ID)
+                if not t or not t.get("id"): 
+                    continue 
+                
+                artist_name = "Unknown"
+                if t.get("artists"):
+                    artist_name = t["artists"][0]["name"]
+                
+                album_name = "Unknown"
+                if t.get("album"):
+                    album_name = t["album"]["name"]
+                
+                # Cover track (biasanya cover albumnya)
+                track_cover = cover_url
+                if t.get("album") and t["album"].get("images"):
+                    track_cover = t["album"]["images"][0]["url"]
+
+                # Buat Objek TrackInfo
+                track_obj = TrackInfo(
+                    name=t.get("name"),
+                    id=t.get("id"),
+                    artists=[artist_name],
+                    album=album_name,
+                    duration=t.get("duration_ms", 0) // 1000,
+                    cover_url=track_cover,
+                    release_year=t.get("album", {}).get("release_date", "")[:4],
+                    explicit=t.get("explicit", False),
+                    tags=Tags(
+                        track_number=t.get("track_number"),
+                        total_tracks=t.get("album", {}).get("total_tracks"),
+                        album_artist=artist_name, 
+                        release_date=t.get("album", {}).get("release_date")
+                    )
+                )
+                track_objects.append(track_obj)
+            
+            self.logger.info(f"Berhasil memproses playlist: {data.get('name')} ({len(track_objects)} lagu)")
+
+            # 6. Return Objek PlaylistInfo
+            return PlaylistInfo(
+                name=data.get("name"),
+                creator=data.get("owner", {}).get("display_name", "Spotify"),
+                tracks=track_objects,
+                cover_url=cover_url,
+                id=data.get("id")
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error fatal parsing playlist info: {e}", exc_info=True)
+            return None
 
     def get_several_artists(self, artist_ids: list, _retry_attempted: bool = False) -> list:
         """
