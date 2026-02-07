@@ -52,6 +52,7 @@ bandcamp_manager = safe_import('bot.helpers.bandcamp.manager', 'bandcamp_manager
 livephish_manager = safe_import('bot.helpers.livephish.manager', 'livephish_manager')
 beatstars_manager = safe_import('bot.helpers.beatstars.manager', 'beatstars_manager')
 khinsider_manager = safe_import('bot.helpers.khinsider.manager', 'khinsider_manager')
+spotify_manager = safe_import('bot.helpers.spotify.manager', 'spotify_manager')
 
 
 # --- [DEBUG] EXCEPTION HANDLER (DIPERBAIKI) ---
@@ -164,7 +165,7 @@ async def start_services():
         (highresaudio_manager, "HIGHRESAUDIO"), (moov_manager, "Moov"),
         (jiosaavn_manager, "JioSaavn"), (gaana_manager, "Gaana"), 
         (bandcamp_manager, "Bandcamp"), (livephish_manager, "LivePhish"), 
-        (beatstars_manager, "BeatStars"), (khinsider_manager, "Khinsider")
+        (beatstars_manager, "BeatStars"), (khinsider_manager, "Khinsider"), (spotify_manager, "Spotify")
     ]
 
     for mgr, name in managers:
