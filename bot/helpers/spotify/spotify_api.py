@@ -916,44 +916,57 @@ class SpotifyAPI:
         return False
 
     def _get_web_api_token(self) -> Optional[str]:
-        """Get access token for Web API calls. Uses custom OAuth token if available, otherwise falls back to librespot token.
-        Automatically refreshes expired tokens if refresh_token is available."""
-        # Prefer web_api_stored_token (custom credentials) for Web API calls
-        if self.web_api_stored_token and self.web_api_stored_token.access_token:
-            if self.web_api_stored_token.expired():
-                # Token expired, try to refresh if refresh_token is available
-                if self.web_api_stored_token.refresh_token and self.web_api_oauth_handler:
-                    self.logger.info("Web API token expired, attempting to refresh automatically...")
-                    try:
-                        refreshed_token_data = self.web_api_oauth_handler.refresh_access_token(self.web_api_stored_token.refresh_token)
-                        if refreshed_token_data:
-                            self.web_api_stored_token = StoredToken(refreshed_token_data)
-                            # Save the refreshed token
-                            web_api_credentials_path = self.credentials_file_path.replace('.json', '_webapi.json')
-                            try:
-                                token_dict = self.web_api_stored_token.to_dict()
-                                token_dict['client_id'] = self.web_api_oauth_handler.client_id
-                                with open(web_api_credentials_path, 'w') as f:
-                                    json.dump(token_dict, f, indent=4)
-                                self.logger.info(f"Auto-refreshed and saved Web API credentials to {web_api_credentials_path}")
-                            except Exception as e_save:
-                                self.logger.warning(f"Could not save auto-refreshed Web API credentials: {e_save}")
-                            return self.web_api_stored_token.access_token
-                        else:
-                            self.logger.warning("Failed to auto-refresh Web API token. Will need re-authentication.")
-                    except Exception as refresh_err:
-                        self.logger.warning(f"Error auto-refreshing Web API token: {refresh_err}")
+        """
+        Mendapatkan Token untuk Metadata (Info Lagu/Album).
+        MODIFIKASI: Menggunakan 'Client Credentials Flow' untuk Custom ID.
+        Ini memungkinkan bot login otomatis tanpa browser dan BEBAS RATE LIMIT.
+        """
+        # 1. Cek apakah ada Token Web API yang tersimpan dan masih valid
+        if self.web_api_stored_token and not self.web_api_stored_token.expired():
+            return self.web_api_stored_token.access_token
+
+        # 2. Jika Token Expired/Hilang, kita buat baru.
+        # Cek apakah user punya Custom Client ID & Secret di Config
+        client_id = self.web_api_oauth_handler.client_id
+        client_secret = self.web_api_oauth_handler.client_secret
+
+        # PENTING: Hanya gunakan Flow Otomatis jika ini ADALAH Custom ID (punya Secret)
+        # Jika Public ID (tidak punya secret), kita skip langkah ini.
+        if client_id and client_secret and client_id != CLIENT_ID:
+            try:
+                self.logger.info("🔄 Membuat Token Metadata Baru menggunakan Custom ID (Client Credentials)...")
+                
+                # Request Token langsung ke Spotify (Tanpa Browser)
+                auth_str = f"{client_id}:{client_secret}"
+                b64_auth = base64.b64encode(auth_str.encode()).decode()
+                
+                response = requests.post(
+                    "https://accounts.spotify.com/api/token",
+                    data={"grant_type": "client_credentials"},
+                    headers={"Authorization": f"Basic {b64_auth}"},
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    token_data = response.json()
+                    # Simpan token ini di memori
+                    self.web_api_stored_token = StoredToken(token_data)
+                    self.logger.info("✅ Berhasil membuat Token Metadata Custom (Anti-Limit 429).")
+                    return self.web_api_stored_token.access_token
                 else:
-                    self.logger.warning("Web API token expired and no refresh_token available. Re-authentication required.")
-            else:
-                return self.web_api_stored_token.access_token
-        
-        # Fallback to librespot token if web_api token not available
-        if self.librespot_stored_token and self.librespot_stored_token.access_token and not self.librespot_stored_token.expired():
+                    self.logger.error(f"Gagal Client Credentials Flow: {response.status_code} - {response.text}")
+            
+            except Exception as e:
+                self.logger.error(f"Error saat auto-login metadata: {e}")
+
+        # 3. FALLBACK: Jika gagal atau tidak punya Custom ID, gunakan Token dari Librespot (Public)
+        # Ini adalah opsi terakhir (yang rawan kena limit 429)
+        if self.librespot_stored_token and not self.librespot_stored_token.expired():
+            # Hanya log warning jika kita SEHARUSNYA punya Custom ID tapi gagal
+            if client_id != CLIENT_ID:
+                self.logger.warning("⚠️ Terpaksa menggunakan Public Token untuk Metadata (Rawan 429).")
             return self.librespot_stored_token.access_token
-        # Last resort: use stored_token (backward compatibility)
-        if self.stored_token and self.stored_token.access_token and not self.stored_token.expired():
-            return self.stored_token.access_token
+            
         return None
 
     def _clear_credentials(self):
