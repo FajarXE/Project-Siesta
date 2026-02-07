@@ -9,6 +9,7 @@ from datetime import datetime
 from mutagen import File
 from mutagen.wave import WAVE 
 from mutagen.flac import FLAC, Picture
+from mutagen.oggvorbis import OggVorbis
 from mutagen.mp4 import MP4, MP4Cover
 from mutagen.mp3 import MP3, EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
@@ -215,6 +216,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
             if '.wav' in ext: handle = WAVE(audio_path)
             elif '.mp3' in ext: handle = MP3(audio_path)
             elif '.flac' in ext: handle = FLAC(audio_path)
+            elif '.ogg' in ext: handle = OggVorbis(audio_path)
             elif ext in ['.m4a', '.mp4', '.m4b']: handle = MP4(audio_path)
                 
     except Exception as e:
@@ -246,7 +248,9 @@ async def set_metadata(metadata:dict, user_id: int = None):
 
     # --- 3. ROUTING KE HANDLER SPESIFIK ---
     try:
-        if isinstance(handle, FLAC):
+        if isinstance(handle, OggVorbis)
+            await set_vorbis(metadata, handle, dur_ms)
+        elif isinstance(handle, FLAC):
             await set_flac(metadata, handle, dur_ms)
         elif isinstance(handle, MP4): 
             await set_m4a(metadata, handle)
@@ -565,6 +569,55 @@ async def set_wav(data, handle, dur_ms=0):
 
 
 # ==========================================
+# HANDLER OGG VORBIS (BARU - KHUSUS SPOTIFY)
+# ==========================================
+async def set_vorbis(data, handle, dur_ms=0):
+    """Handler khusus untuk file OGG (Spotify)"""
+    if handle.tags is None:
+        try: handle.add_tags()
+        except: pass
+    
+    # Vorbis Comments menggunakan Key-Value list, mirip FLAC
+    # Kita bisa reuse logika field yang mirip dengan FLAC
+    
+    handle.tags['TITLE'] = data['title']
+    handle.tags['ALBUM'] = data['album']
+    handle.tags['ALBUMARTIST'] = data['albumartist']
+    handle.tags['ARTIST'] = data['artist']
+    
+    cpr = data.get('copyright') or ''
+    if cpr: handle.tags['COPYRIGHT'] = cpr
+        
+    pub = data.get('publisher') or data.get('organization') or ''
+    if pub: handle.tags['PUBLISHER'] = pub
+
+    # Tracks & Discs
+    handle.tags['TRACKNUMBER'] = str(data.get('tracknumber') or '1')
+    handle.tags['TRACKTOTAL'] = str(data.get('totaltracks') or '1')
+    handle.tags['DISCNUMBER'] = str(data.get('volume') or '1')
+    handle.tags['DISCTOTAL'] = str(data.get('totalvolume') or '1')
+
+    # Codes
+    if data.get('upc'): handle.tags['UPC'] = data['upc']
+    if data.get('isrc'): handle.tags['ISRC'] = data['isrc']
+
+    # Dates
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if data.get('date'): handle.tags['DATE'] = data['date']
+    if data.get('release_date'): handle.tags['ORIGINALDATE'] = data['release_date']
+    
+    # Misc
+    if data.get('genre'): handle.tags['GENRE'] = data['genre']
+    if data.get('composer'): handle.tags['COMPOSER'] = data['composer']
+    if data.get('lyrics'): handle.tags['LYRICS'] = data['lyrics']
+    
+    # Cover Art untuk OGG sama dengan FLAC (menggunakan Picture block)
+    await savePic(handle, data)
+    handle.save()
+    return True
+
+
+# ==========================================
 # HELPER UTILS
 # ==========================================
 async def savePic(handle, metadata):
@@ -578,15 +631,33 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
+    # 1. Handler FLAC (Original)
     if isinstance(handle, FLAC):
         pic = Picture()
         pic.data = data
         pic.mime = u"image/jpeg"
         handle.clear_pictures()
         handle.add_picture(pic)
+
+    # 2. [span_0](start_span)Handler OGG VORBIS (TAMBAHAN BARU - WAJIB INI)[span_0](end_span)
+    elif isinstance(handle, OggVorbis):
+        pic = Picture()
+        pic.data = data
+        pic.mime = u"image/jpeg"
+        pic.type = 3
+        pic.desc = u"Cover"
+        
+        # OGG membutuhkan gambar di-encode ke Base64
+        pic_data = pic.write()
+        encoded_data = base64.b64encode(pic_data).decode("ascii")
+        handle["METADATA_BLOCK_PICTURE"] = [encoded_data]
+
+    # 3. Handler MP4 (Original)
     elif isinstance(handle, MP4):
         pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
         handle.tags['covr'] = [pic]
+
+    # 4. Handler MP3/Fallback (Original)
     elif isinstance(handle, (MP3, EasyMP3, WAVE)) or hasattr(handle, 'tags'):
         try:
             handle.tags.delall("APIC")
