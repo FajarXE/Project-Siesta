@@ -8,9 +8,9 @@ from datetime import datetime
 
 # Import Mutagen
 from mutagen import File
-from mutagen.wave import WAVE 
-from mutagen.flac import FLAC, Picture
 from mutagen.oggvorbis import OggVorbis
+from mutagen.wave import WAVE
+from mutagen.flac import FLAC, Picture
 from mutagen.mp4 import MP4, MP4Cover
 from mutagen.mp3 import MP3, EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
