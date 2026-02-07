@@ -11,9 +11,9 @@ class SpotifyManager:
     def __init__(self):
         self.client = None
         self.authenticated = False
-        self.credentials_path = os.path.join(os.getcwd(), "config", "spotify", "credentials.json")
+        # [PERBAIKAN PATH] Menambahkan 'bot' ke dalam path agar sesuai dengan spotify_api.py
+        self.credentials_path = os.path.join(os.getcwd(), "bot", "config", "spotify", "credentials.json")
 
-    # [PERBAIKAN] Ganti nama fungsi dari 'initialize' ke 'initialize_clients'
     async def initialize_clients(self):
         """
         Dijalankan saat startup. Mengecek ENV Render atau File Lokal.
@@ -25,14 +25,15 @@ class SpotifyManager:
         
         if env_creds:
             LOGGER.info("Spotify: Kredensial ditemukan di ENV Variables.")
-            # Tulis ke file fisik karena library spotify_api.py membacanya dari file
+            # Pastikan folder ada sebelum menulis
             os.makedirs(os.path.dirname(self.credentials_path), exist_ok=True)
             with open(self.credentials_path, "w") as f:
                 f.write(env_creds)
         
-        # 2. Cek apakah file fisik ada (jika tidak pakai ENV/Local run)
+        # 2. Cek apakah file fisik ada
         if not os.path.exists(self.credentials_path):
-            LOGGER.warning("Spotify: Tidak ada kredensial. Jalankan /spotify_login nanti.")
+            LOGGER.warning(f"Spotify: File kredensial tidak ditemukan di {self.credentials_path}")
+            LOGGER.warning("Silakan jalankan /spotify_login di Telegram.")
             return
 
         # 3. Inisialisasi Client
@@ -50,13 +51,15 @@ class SpotifyManager:
 
     def _sync_init(self):
         """Fungsi sinkronus untuk init API"""
+        # Kita set config agar spotify_api membaca dari lokasi yang sama
         config = {
             "username": "BotUser",
             "client_id": Config.SPOTIFY_CLIENT_ID,
-            "client_secret": Config.SPOTIFY_CLIENT_SECRET
+            "client_secret": Config.SPOTIFY_CLIENT_SECRET,
+            # Memaksa spotify_api menggunakan path kredensial kita (opsional, tapi aman)
+            "credentials_location": self.credentials_path 
         }
         self.client = SpotifyAPI(config=config)
-        # authenticate_stream_api akan mencoba me-refresh token jika expired
         self.client.authenticate_stream_api()
 
     def get_client(self):
@@ -64,7 +67,6 @@ class SpotifyManager:
             return self.client
         return None
     
-    # Tambahkan dummy shutdown method agar tidak error saat bot mati
     async def shutdown(self):
         pass
 
