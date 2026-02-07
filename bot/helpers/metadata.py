@@ -632,7 +632,7 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    # 1. Handler FLAC (Original)
+    # 1. Handler FLAC
     if isinstance(handle, FLAC):
         pic = Picture()
         pic.data = data
@@ -640,25 +640,25 @@ async def savePic(handle, metadata):
         handle.clear_pictures()
         handle.add_picture(pic)
 
-    # 2. [span_0](start_span)Handler OGG VORBIS (TAMBAHAN BARU - WAJIB INI)[span_0](end_span)
-    elif isinstance(handle, OggVorbis):
+    # 2. Handler OGG VORBIS (Perhatikan tanda ':' di akhir baris ini)
+    elif isinstance(handle, OggVorbis): 
         pic = Picture()
         pic.data = data
         pic.mime = u"image/jpeg"
         pic.type = 3
         pic.desc = u"Cover"
         
-        # OGG membutuhkan gambar di-encode ke Base64
+        # Encode gambar ke Base64
         pic_data = pic.write()
         encoded_data = base64.b64encode(pic_data).decode("ascii")
         handle["METADATA_BLOCK_PICTURE"] = [encoded_data]
 
-    # 3. Handler MP4 (Original)
+    # 3. Handler MP4
     elif isinstance(handle, MP4):
         pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
         handle.tags['covr'] = [pic]
 
-    # 4. Handler MP3/Fallback (Original)
+    # 4. Handler MP3/Fallback
     elif isinstance(handle, (MP3, EasyMP3, WAVE)) or hasattr(handle, 'tags'):
         try:
             handle.tags.delall("APIC")
