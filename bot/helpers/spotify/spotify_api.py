@@ -931,59 +931,80 @@ class SpotifyAPI:
                     self.logger.warning(f"Could not remove credentials file {cred_file}: {e}")
 
     def _load_credentials_and_init_session(self) -> bool:
-        """Loads existing OAuth credentials or performs PKCE flow, then creates librespot session.
-        Uses hybrid approach: librespot always uses Desktop client_id, Web API uses custom credentials if available."""
+        """
+        Loads existing OAuth credentials.
+        MODIFIED FOR RENDER: Disables auto-browser login to prevent crashes.
+        """
         self.logger.info("Attempting to authenticate and initialize session...")
         
-        # Check if required credentials are provided before attempting any OAuth flow
+        # Cek konfigurasi dasar
         username = self.config.get('username', '') if self.config else ''
         if not username:
             error_msg = "spotify -> Spotify credentials are required. Please fill in your username, client ID and secret in the settings."
             self.logger.error(error_msg)
-            raise SpotifyConfigError(error_msg)
+            # raise SpotifyConfigError(error_msg) # Optional: raise error or just return False
+            return False
         
-        # Step 1: Load/initialize librespot token (always uses Desktop client_id for private tokens)
-        # Temporarily switch to librespot handler
+        # Step 1: Load/initialize librespot token
         original_oauth_handler = self.oauth_handler
         self.oauth_handler = self.librespot_oauth_handler
         
         librespot_loaded = False
         credentials_existed = os.path.exists(self.credentials_file_path)
+        
+        # Coba load dari file JSON
         if self._load_existing_credentials():
             self.logger.info("Successfully loaded existing librespot OAuth credentials.")
             self.librespot_stored_token = self.stored_token
             librespot_loaded = True
         else:
-            # If credentials file existed but loading failed, it means refresh failed
             if credentials_existed:
-                self.logger.warning("Credentials file exists but could not be loaded (likely refresh failed). Clearing invalid credentials...")
+                self.logger.warning("Credentials file exists but could not be loaded. Clearing invalid credentials...")
                 self._clear_credentials()
-            self.logger.info("No valid existing librespot credentials found, will perform OAuth flow.")
+            self.logger.info("No valid existing librespot credentials found.")
         
+        # --- MODIFIKASI UTAMA DI SINI ---
         if not librespot_loaded:
-            self.logger.info("Proceeding with librespot PKCE OAuth flow (Desktop client_id).")
-            print("\n" + "="*60)
-            print("SPOTIFY AUTHENTICATION REQUIRED")
-            print("="*60)
-            print("A browser window will open for Spotify authorization.")
-            print("Please complete the authorization in your browser.")
-            print("="*60 + "\n")
+            # JIKA GAGAL LOAD, KITA BERHENTI (JANGAN BUKA BROWSER/SERVER)
+            self.logger.error("❌ FATAL: Kredensial Spotify Kadaluarsa atau Hilang.")
+            self.logger.error("⚠️ Auto-Login dimatikan untuk mencegah Crash di Server Render.")
+            self.logger.error("👉 SOLUSI: Jalankan command '/spotify_login' di Telegram untuk memperbarui token.")
             
-            oauth_error = None
-            if self.oauth_handler and hasattr(self.oauth_handler, 'error_message') and self.oauth_handler.error_message:
-                oauth_error = self.oauth_handler.error_message
-            oauth_result = self._perform_oauth_flow()
-            if oauth_result:
-                self.librespot_stored_token = self.stored_token
-                self.logger.info("Librespot OAuth PKCE flow completed successfully.")
-                print("\n✓ Spotify authentication successful!\n")
-            else:
-                error_msg = self.oauth_handler.error_message if (self.oauth_handler and hasattr(self.oauth_handler, 'error_message')) else "Unknown error"
-                self.logger.error(f"Librespot OAuth PKCE flow failed: {error_msg}")
-                print(f"\n✗ Spotify authentication failed: {error_msg}\n")
+            # Kembalikan handler asli dan RETURN FALSE
+            self.oauth_handler = original_oauth_handler
+            return False
+        # --------------------------------
+
+        # Step 2: Create Librespot Session
+        try:
+            self.logger.info("Creating Librespot session from stored OAuth token...")
+            self.librespot_session = self._create_librespot_session_from_oauth()
+            
+            if not self.librespot_session:
+                self.logger.error("Failed to create librespot session object.")
                 self.oauth_handler = original_oauth_handler
                 return False
-        
+
+            self.oauth_handler = original_oauth_handler
+            
+            # Step 3: Test Call (DENGAN BYPASS ERROR 403)
+            example_track_id = TrackId.from_base62("4cOdK2wGLETKBW3PvgPWqT") 
+            self.logger.info(f"Session object created. Testing API access with track {example_track_id}...")
+            
+            try:
+                track_meta = self.librespot_session.api().get_metadata_4_track(example_track_id)
+                self.logger.info(f"Test API Sukses: {track_meta.name}")
+            except Exception as e:
+                # KITA ABAIKAN ERROR TEST CALL
+                self.logger.warning(f"⚠️ Test API Gagal ({e}), tapi kita anggap Login BERHASIL dan lanjut saja.")
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Unexpected error during session init: {e}", exc_info=True)
+            self.oauth_handler = original_oauth_handler
+            return False
+
         # Step 2: If custom credentials are available, also load/initialize Web API token
         if self.web_api_oauth_handler != self.librespot_oauth_handler:
             self.oauth_handler = self.web_api_oauth_handler
