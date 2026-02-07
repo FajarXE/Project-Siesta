@@ -249,7 +249,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
 
     # --- 3. ROUTING KE HANDLER SPESIFIK ---
     try:
-        if isinstance(handle, OggVorbis)
+        if isinstance(handle, OggVorbis):
             await set_vorbis(metadata, handle, dur_ms)
         elif isinstance(handle, FLAC):
             await set_flac(metadata, handle, dur_ms)
