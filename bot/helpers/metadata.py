@@ -3,6 +3,7 @@
 import os
 import aiohttp
 import aiofiles
+import base64
 from datetime import datetime
 
 # Import Mutagen
