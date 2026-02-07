@@ -35,7 +35,12 @@ async def start_spotify(link: str, user: dict):
         return
 
     item_type_enum, item_id = parsed_data
-    item_type = item_type_enum.name # 'track', 'album', 'playlist', 'artist'
+    if hasattr(item_type_enum, 'name'):
+        item_type = item_type_enum.name
+    else:
+        item_type = str(item_type_enum)
+
+    item_type = item_type.lower() # Normalisasi ke lowercase
 
     LOGGER.info(f"Spotify Processing: Type={item_type}, ID={item_id}")
 
