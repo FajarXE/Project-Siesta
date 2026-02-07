@@ -933,69 +933,71 @@ class SpotifyAPI:
     def _load_credentials_and_init_session(self) -> bool:
         """
         Loads existing OAuth credentials.
-        MODIFIED FOR RENDER: Disables auto-browser login to prevent crashes.
+        MODIFIED: Fixes 'bool object' error and disables auto-browser login for Render.
         """
         self.logger.info("Attempting to authenticate and initialize session...")
         
-        # Cek konfigurasi dasar
+        # Cek username di config
         username = self.config.get('username', '') if self.config else ''
         if not username:
-            error_msg = "spotify -> Spotify credentials are required. Please fill in your username, client ID and secret in the settings."
-            self.logger.error(error_msg)
-            # raise SpotifyConfigError(error_msg) # Optional: raise error or just return False
+            self.logger.error("Spotify credentials missing in config.")
             return False
         
-        # Step 1: Load/initialize librespot token
+        # Step 1: Load Librespot Token
         original_oauth_handler = self.oauth_handler
         self.oauth_handler = self.librespot_oauth_handler
         
         librespot_loaded = False
         credentials_existed = os.path.exists(self.credentials_file_path)
         
-        # Coba load dari file JSON
+        # Coba load kredensial dari file/JSON
         if self._load_existing_credentials():
             self.logger.info("Successfully loaded existing librespot OAuth credentials.")
             self.librespot_stored_token = self.stored_token
             librespot_loaded = True
         else:
             if credentials_existed:
-                self.logger.warning("Credentials file exists but could not be loaded. Clearing invalid credentials...")
                 self._clear_credentials()
             self.logger.info("No valid existing librespot credentials found.")
         
-        # --- MODIFIKASI UTAMA DI SINI ---
+        # --- MATIKAN AUTO LOGIN BROWSER ---
         if not librespot_loaded:
-            # JIKA GAGAL LOAD, KITA BERHENTI (JANGAN BUKA BROWSER/SERVER)
             self.logger.error("❌ FATAL: Kredensial Spotify Kadaluarsa atau Hilang.")
-            self.logger.error("⚠️ Auto-Login dimatikan untuk mencegah Crash di Server Render.")
-            self.logger.error("👉 SOLUSI: Jalankan command '/spotify_login' di Telegram untuk memperbarui token.")
-            
-            # Kembalikan handler asli dan RETURN FALSE
+            self.logger.error("👉 SOLUSI: Jalankan '/spotify_login' di Telegram.")
             self.oauth_handler = original_oauth_handler
             return False
-        # --------------------------------
 
         # Step 2: Create Librespot Session
         try:
             self.logger.info("Creating Librespot session from stored OAuth token...")
-            self.librespot_session = self._create_librespot_session_from_oauth()
             
-            if not self.librespot_session:
+            # [PERBAIKAN UTAMA DI SINI]
+            # Jangan assign ke self.librespot_session, tapi tampung statusnya
+            session_created_status = self._create_librespot_session_from_oauth()
+            
+            # Cek apakah berhasil DAN apakah objek sesi benar-benar ada
+            if not session_created_status or not self.librespot_session:
                 self.logger.error("Failed to create librespot session object.")
                 self.oauth_handler = original_oauth_handler
                 return False
 
             self.oauth_handler = original_oauth_handler
             
-            # Step 3: Test Call (DENGAN BYPASS ERROR 403)
-            example_track_id = TrackId.from_base62("4cOdK2wGLETKBW3PvgPWqT") 
-            self.logger.info(f"Session object created. Testing API access with track {example_track_id}...")
-            
+            # Step 3: Test Call (Safe Mode)
+            # Kita gunakan try-except agar jika test gagal, bot tetap jalan
             try:
+                example_track_id = TrackId.from_base62("4cOdK2wGLETKBW3PvgPWqT") 
+                self.logger.info(f"Session object created. Testing API access...")
+                
+                # Pastikan ini Objek, bukan Boolean (Double check)
+                if isinstance(self.librespot_session, bool):
+                     self.logger.error("FATAL: self.librespot_session is BOOLEAN. This should not happen.")
+                     return False
+                     
                 track_meta = self.librespot_session.api().get_metadata_4_track(example_track_id)
                 self.logger.info(f"Test API Sukses: {track_meta.name}")
             except Exception as e:
-                # KITA ABAIKAN ERROR TEST CALL
+                # KITA HANYA KASIH WARNING, JANGAN RETURN FALSE!
                 self.logger.warning(f"⚠️ Test API Gagal ({e}), tapi kita anggap Login BERHASIL dan lanjut saja.")
 
             return True
@@ -1913,6 +1915,28 @@ class SpotifyAPI:
         except Exception as e:
             self.logger.error(f"Unexpected error in get_track_info for track_id {track_id}: {e}", exc_info=True)
             return None
+
+    def _get_valid_token(self):
+        """
+        Helper untuk mendapatkan token Web API yang valid.
+        Jika token expired/hilang, otomatis mencoba refresh.
+        """
+        # Coba ambil token langsung
+        token = self._get_web_api_token()
+        
+        if token:
+            return token
+            
+        # Jika gagal (None), coba load ulang kredensial (Refresh)
+        self.logger.warning("Token Web API hilang/expired. Mencoba refresh session...")
+        if self._load_credentials_and_init_session():
+            # Coba ambil lagi setelah refresh
+            token = self._get_web_api_token()
+            if token:
+                return token
+        
+        # Jika masih gagal, raise Error
+        raise Exception("Gagal mendapatkan Token Spotify Web API yang valid.")
 
     def get_album_info(self, album_id, metadata=None, _retry_attempted=False):
         """
