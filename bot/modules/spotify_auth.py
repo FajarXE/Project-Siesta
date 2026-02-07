@@ -1,5 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from config import Config
 from bot import CMD
 from bot.helpers.spotify.credentials_manager import HeadlessSpotifyAuth
 from bot.helpers.spotify.manager import spotify_manager
