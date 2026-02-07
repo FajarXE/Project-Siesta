@@ -10,7 +10,7 @@ WORKDIR /usr/src/app
 
 # Install curl dan dependencies sistem
 RUN apt-get update -qq && \
-    apt-get install -qq -y ffmpeg gcc libffi-dev curl zip cargo pkg-config && \
+    apt-get install -qq -y ffmpeg gcc libffi-dev curl zip cargo pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
 # Builder Stage
