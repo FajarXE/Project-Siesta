@@ -1985,7 +1985,8 @@ class SpotifyAPI:
 
     def get_album_info(self, album_id, metadata=None, _retry_attempted=False):
         """
-        Mengambil info album dan mengembalikannya sebagai OBJECT AlbumInfo (Bukan Dict).
+        Mengambil info album dan mengembalikannya sebagai OBJECT AlbumInfo.
+        MODIFIKASI: Menambahkan Auto-Retry khusus untuk Error 429 (Rate Limit).
         """
         try:
             # 1. Autentikasi
@@ -1993,59 +1994,78 @@ class SpotifyAPI:
             headers = {"Authorization": f"Bearer {token}"}
             
             # 2. Request API ke Spotify
-            # Gunakan market=from_token agar track linking sesuai region akun
             url = f"https://api.spotify.com/v1/albums/{album_id}?market=from_token"
             
             self.logger.info(f"Mengambil info album: {album_id}")
             r = requests.get(url, headers=headers)
             
-            # Handle Token Expired (401) dengan Retry sederhana
+            # --- PENANGANAN ERROR ---
+            
+            # CASE A: Rate Limit (429) - Server Sibuk
+            if r.status_code == 429:
+                # Cek apakah kita sudah mencoba retry sebelumnya?
+                # Kita manfaatkan _retry_attempted sebagai counter sederhana atau flag
+                if not _retry_attempted:
+                    wait_time = int(r.headers.get("Retry-After", 3)) # Ambil saran server atau default 3 detik
+                    self.logger.warning(f"⚠️ Rate Limit (429) terkena. Menunggu {wait_time} detik...")
+                    time.sleep(wait_time)
+                    # Coba lagi (Recursive call)
+                    return self.get_album_info(album_id, metadata, _retry_attempted=True)
+                else:
+                    self.logger.error("❌ Gagal get_album_info: 429 (Rate Limit) terus-menerus.")
+                    return None
+
+            # CASE B: Token Expired (401)
             if r.status_code == 401 and not _retry_attempted:
                 self.logger.warning("Token expired saat get_album_info. Mencoba refresh...")
-                self._load_credentials_and_init_session() # Refresh
+                self._load_credentials_and_init_session() 
                 return self.get_album_info(album_id, metadata, _retry_attempted=True)
 
+            # CASE C: Error Lain
             if r.status_code != 200:
                 self.logger.error(f"Gagal get_album_info: {r.status_code} - {r.text}")
                 return None
             
+            # --- PARSING DATA (Jika Sukses 200) ---
             data = r.json()
             
-            # 3. Ambil Cover Art Terbesar
             cover_url = ""
             if data.get("images"):
                 cover_url = data["images"][0]["url"]
             
-            # 4. Handle Pagination (Spotify membatasi 50 lagu per request)
+            # Handle Pagination
             raw_tracks = data.get("tracks", {}).get("items", [])
             next_url = data.get("tracks", {}).get("next")
             
             while next_url:
                 try:
+                    # Tambahkan delay kecil saat pagination agar tidak kena 429 lagi
+                    time.sleep(0.5) 
                     self.logger.debug(f"Mengambil halaman lagu berikutnya: {next_url}")
                     r_next = requests.get(next_url, headers=headers)
                     if r_next.status_code == 200:
                         next_data = r_next.json()
                         raw_tracks.extend(next_data.get("items", []))
                         next_url = next_data.get("next")
+                    elif r_next.status_code == 429:
+                        time.sleep(3) # Tunggu jika kena limit saat paging
+                        continue
                     else:
                         break
                 except Exception as e:
                     self.logger.warning(f"Gagal mengambil halaman berikutnya: {e}")
                     break
 
-            # 5. Konversi Dictionary ke Objek TrackInfo
+            # Konversi ke Objek
             track_objects = []
             
             for t in raw_tracks:
-                # Skip jika track kosong atau null
                 if not t: continue
                 
                 artist_name = "Unknown"
                 if t.get("artists"):
                     artist_name = t["artists"][0]["name"]
                 
-                # Buat Objek TrackInfo
                 track_obj = TrackInfo(
                     name=t.get("name"),
                     id=t.get("id"),
@@ -2067,7 +2087,6 @@ class SpotifyAPI:
             
             self.logger.info(f"Berhasil memproses album: {data.get('name')} ({len(track_objects)} lagu)")
 
-            # 6. Return Objek AlbumInfo (PENTING: Jangan return Dict)
             return AlbumInfo(
                 name=data.get("name"),
                 artist=data["artists"][0]["name"] if data.get("artists") else "Unknown",
