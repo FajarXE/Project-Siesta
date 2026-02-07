@@ -1768,43 +1768,60 @@ class SpotifyAPI:
             SpotifyAPI.logger.warning(f"parse_spotify_url: could not extract type/id from URL '{url_string}' despite initial regex match. Groups: {g}")
             return None
 
-    def parse_url(self, input_str: str) -> Optional[Tuple[DownloadTypeEnum, str]]:
+    def parse_url(self, url: str):
         """
-        Parses a Spotify URL/URI string and returns a tuple of (DownloadTypeEnum, item_id)
-        or None if parsing fails. This method is specifically for the interface.py's parse_input.
+        Menerjemahkan URL Spotify menjadi Tipe (Track/Album) dan ID.
+        Mendukung format:
+        - https://open.spotify.com/track/ID?si=...
+        - https://open.spotify.com/track/...
+        - spotify:track:ID (URI)
         """
-        parsed_info = SpotifyAPI.parse_spotify_url(input_str)
-        if parsed_info:
-            type_str = parsed_info.get('type')
-            id_str = parsed_info.get('id')
-            if type_str and id_str:
-                try:
-                    from utils.models import DownloadTypeEnum as CoreDownloadTypeEnum
-                    try:
-                        dt_enum_member = CoreDownloadTypeEnum(type_str)
-                        self.logger.info(f"parse_url: Successfully mapped type '{type_str}' to CoreDownloadTypeEnum member for ID '{id_str}'.")
-                        return dt_enum_member, id_str
-                    except ValueError:
-                        self.logger.error(f"parse_url: Type string '{type_str}' from URL ('{input_str}') is not a valid value for CoreDownloadTypeEnum.")
-                        return None
-                except ImportError:
-                    self.logger.warning("parse_url: CoreDownloadTypeEnum not imported. Using fallback enum mapping for URL parsing.")
-                    if hasattr(DownloadTypeEnum, type_str):
-                        try:
-                            fallback_enum_member_value = getattr(DownloadTypeEnum, type_str)
-                            self.logger.info(f"parse_url (fallback): Mapped type '{type_str}' to fallback DownloadTypeEnum value '{fallback_enum_member_value}' for ID '{id_str}'.")
-                            return fallback_enum_member_value, id_str
-                        except AttributeError: 
-                            self.logger.error(f"parse_url (fallback): Type '{type_str}' not found as an attribute in fallback DownloadTypeEnum. Input: '{input_str}'.")
-                            return None
-                    else:
-                        self.logger.error(f"parse_url (fallback): Unknown type '{type_str}' for input '{input_str}'. Not an attribute of fallback DownloadTypeEnum.")
-                        return None
-            else: 
-                self.logger.warning(f"parse_url: parse_spotify_url returned data but type_str or id_str is missing. Parsed info: {parsed_info}. Input: '{input_str}'.")
+        try:
+            self.logger.info(f"Parsing URL: {url}")
+            
+            # 1. Bersihkan URL (Hapus '?' dan parameter di belakangnya, serta spasi)
+            clean_url = url.split("?")[0].strip()
+            if clean_url.endswith("/"):
+                clean_url = clean_url[:-1] # Hapus slash terakhir jika ada
+            
+            # 2. Deteksi Tipe Konten
+            # Kita menggunakan DownloadTypeEnum yang sudah didefinisikan di atas file
+            item_type = None
+            
+            if "/track/" in clean_url or ":track:" in clean_url:
+                item_type = DownloadTypeEnum.track
+            elif "/album/" in clean_url or ":album:" in clean_url:
+                item_type = DownloadTypeEnum.album
+            elif "/playlist/" in clean_url or ":playlist:" in clean_url:
+                item_type = DownloadTypeEnum.playlist
+            elif "/artist/" in clean_url or ":artist:" in clean_url:
+                item_type = DownloadTypeEnum.artist
+            elif "/episode/" in clean_url or ":episode:" in clean_url:
+                item_type = DownloadTypeEnum.episode
+            elif "/show/" in clean_url or ":show:" in clean_url:
+                item_type = DownloadTypeEnum.show
+            
+            # 3. Ekstrak ID
+            if not item_type:
+                self.logger.warning(f"URL tidak dikenali jenisnya (track/album/dll): {url}")
                 return None
-        else: 
-            self.logger.debug(f"parse_url: input_str '{input_str}' was not recognized as a Spotify URL by parse_spotify_url, or another issue occurred.")
+
+            # Logika: Ambil teks paling belakang setelah "/" (untuk URL) atau ":" (untuk URI)
+            if "http" in clean_url:
+                # Format Web: .../track/4cOdK2wGLETKBW3PvgPWqT
+                # Kita split berdasarkan "/" dan ambil elemen terakhir
+                item_id = clean_url.split("/")[-1]
+            else:
+                # Format URI: spotify:track:4cOdK2wGLETKBW3PvgPWqT
+                item_id = clean_url.split(":")[-1]
+            
+            self.logger.info(f"Hasil Parse -> Tipe: {item_type}, ID: {item_id}")
+            
+            # Kembalikan Tuple (Enum, String ID)
+            return (item_type, item_id)
+
+        except Exception as e:
+            self.logger.error(f"Error fatal saat parsing URL {url}: {e}", exc_info=True)
             return None
 
     def get_track_info(self, track_id: str, quality_tier: QualityEnum, codec_options: CodecOptions, **extra_kwargs) -> Optional[TrackInfo]:
