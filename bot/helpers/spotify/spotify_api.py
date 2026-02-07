@@ -639,71 +639,101 @@ class SpotifyAPI:
             self.logger.error(f"Unexpected error saving credentials: {e}", exc_info=True)
 
     def _load_existing_credentials(self) -> bool:
-        """Try to load and validate existing OAuth credentials (StoredToken)."""
-        if not os.path.exists(self.credentials_file_path):
-            self.logger.info(f"No existing credentials file at {self.credentials_file_path}")
-            return False
+        """
+        Mencoba memuat kredensial OAuth.
+        MODIFIKASI: Memprioritaskan Environment Variable 'SPOTIFY_CREDENTIALS_JSON'
+        agar sesi TIDAK HILANG saat restart di Render/Heroku.
+        """
+        token_data_from_file = None
+        source = "File"
+
+        # 1. CEK ENVIRONMENT VARIABLE (Prioritas Utama)
+        # Ini kuncinya: Baca JSON dari setting Render jika file lokal hilang
+        env_creds = os.environ.get("SPOTIFY_CREDENTIALS_JSON")
+        if env_creds and env_creds.strip():
+            try:
+                # Parsing string JSON dari Env Var
+                token_data_from_file = json.loads(env_creds)
+                self.logger.info("✅ Memuat kredensial dari Environment Variable (SPOTIFY_CREDENTIALS_JSON).")
+                source = "EnvVar"
+            except json.JSONDecodeError:
+                self.logger.error("❌ Format JSON di Environment Variable rusak/tidak valid.")
+        
+        # 2. JIKA ENV KOSONG, CEK FILE LOKAL (Fallback)
+        if not token_data_from_file:
+            if os.path.exists(self.credentials_file_path):
+                try:
+                    with open(self.credentials_file_path, 'r') as f:
+                        token_data_from_file = json.load(f)
+                    source = "File"
+                except Exception as e:
+                    self.logger.error(f"Gagal membaca file kredensial: {e}")
+            else:
+                self.logger.info(f"Tidak ada kredensial di Env Var maupun File {self.credentials_file_path}")
+                return False
+
+        # 3. VALIDASI & REFRESH TOKEN
         try:
-            with open(self.credentials_file_path, 'r') as f:
-                token_data_from_file = json.load(f)
-            
-            # Check if client_id has changed - if so, we need to re-authenticate with new credentials
-            stored_client_id = token_data_from_file.get('client_id')
-            current_client_id = self.oauth_handler.client_id if self.oauth_handler else None
-            
-            # Check for essential fields from StoredToken.to_dict()
+            # Cek field wajib
             if not all(k in token_data_from_file for k in ["access_token", "refresh_token", "expires_in"]):
-                self.logger.warning(f"Credentials file {self.credentials_file_path} is missing essential token fields. Re-authentication needed.")
+                self.logger.warning(f"Kredensial dari {source} tidak lengkap. Butuh Login Ulang.")
                 return False
 
             loaded_token = StoredToken.from_dict(token_data_from_file)
 
+            # Jika token expired, refresh otomatis
             if loaded_token.expired():
-                self.logger.info("Existing token is expired. Attempting to refresh...")
+                self.logger.info(f"Token dari {source} expired. Mencoba refresh otomatis...")
+                
                 if not loaded_token.refresh_token:
-                    self.logger.warning("No refresh token available. Full re-authentication required.")
-                    try:
-                        os.remove(self.credentials_file_path)
-                        self.logger.info(f"Removed credentials file {self.credentials_file_path} (no refresh token).")
-                    except OSError as e_rm:
-                        self.logger.error(f"Error removing credentials file: {e_rm}")
+                    self.logger.warning("Tidak ada refresh token. Harus login ulang.")
+                    # Hapus file jika sumbernya adalah file dan rusak
+                    if source == "File" and os.path.exists(self.credentials_file_path):
+                         try: os.remove(self.credentials_file_path)
+                         except: pass
                     return False
                 
+                # Lakukan Refresh
                 refreshed_token_data = self.oauth_handler.refresh_access_token(loaded_token.refresh_token)
+                
                 if refreshed_token_data:
                     self.stored_token = StoredToken(refreshed_token_data)
-                    # Save the refreshed token
+                    
+                    # Simpan hasil refresh ke FILE LOKAL (untuk sesi berjalan saat ini)
                     try:
                         token_dict = self.stored_token.to_dict()
+                        # Pertahankan username lama jika ada
                         token_dict['spotify_username'] = token_data_from_file.get('spotify_username', 'PKCE_USER')
                         token_dict['client_id'] = self.oauth_handler.client_id if self.oauth_handler else None
+                        
                         with open(self.credentials_file_path, 'w') as f:
                             json.dump(token_dict, f, indent=4)
-                        self.logger.info("Successfully refreshed and saved token.")
+                        self.logger.info("Token berhasil di-refresh dan disimpan ke file lokal.")
                     except Exception as e_save:
-                        self.logger.warning(f"Could not save refreshed token: {e_save}")
-                    self.logger.info("Successfully refreshed and loaded token.")
-                    return True # Librespot session will be created next
+                        self.logger.warning(f"Gagal menyimpan token refresh ke file: {e_save}")
+                    
+                    return True
                 else:
-                    error_msg = self.oauth_handler.error_message if self.oauth_handler else "Unknown error"
-                    self.logger.warning(f"Failed to refresh token: {error_msg}. Full re-authentication required.")
-                    # Delete the invalid credentials file to force re-authentication
-                    try:
-                        os.remove(self.credentials_file_path)
-                        self.logger.info(f"Removed invalid/expired credentials file: {self.credentials_file_path}")
-                    except OSError as e_rm:
-                        self.logger.error(f"Error removing invalid credentials file: {e_rm}")
+                    self.logger.warning("Gagal refresh token. Token sudah tidak valid.")
+                    if source == "File" and os.path.exists(self.credentials_file_path):
+                         try: os.remove(self.credentials_file_path)
+                         except: pass
                     return False
             else:
                 self.stored_token = loaded_token
-                self.logger.info("Successfully loaded valid existing token.")
-                return True # Librespot session will be created next
+                self.logger.info(f"Berhasil memuat token valid dari {source}.")
+                
+                # Opsional: Jika load dari Env, kita tulis juga ke file lokal sebagai cache
+                if source == "EnvVar":
+                    try:
+                        with open(self.credentials_file_path, 'w') as f:
+                            json.dump(token_data_from_file, f, indent=4)
+                    except: pass
+                    
+                return True
 
-        except json.JSONDecodeError:
-            self.logger.error(f"Error decoding JSON from {self.credentials_file_path}. File might be corrupted.")
-            return False # Treat as needing re-auth
         except Exception as e:
-            self.logger.error(f"Unexpected error loading credentials: {e}", exc_info=True)
+            self.logger.error(f"Error tak terduga saat memuat kredensial: {e}", exc_info=True)
             return False
 
     def _perform_oauth_flow(self, save_to_main_file: bool = True) -> bool:
