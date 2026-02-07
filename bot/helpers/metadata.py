@@ -1,4 +1,4 @@
-# [GANTI FILE: bot/helpers/metadata.py]
+# [FILE PERBAIKAN: bot/helpers/metadata.py]
 
 import os
 import aiohttp
@@ -9,6 +9,7 @@ from datetime import datetime
 from mutagen import File
 from mutagen.wave import WAVE 
 from mutagen.flac import FLAC, Picture
+from mutagen.oggvorbis import OggVorbis # <--- TAMBAHAN PENTING
 from mutagen.mp4 import MP4, MP4Cover
 from mutagen.mp3 import MP3, EasyMP3
 from mutagen.id3 import TALB, TCOP, TDRC, TIT2, TPE1, TRCK, APIC, \
@@ -83,11 +84,10 @@ metadata = {
     }
 
 
-# --- TAMBAHAN BARU: FUNGSI PENGAMBIL DATA UTAMA (Genre & Composer Fix) ---
+# --- FUNGSI PENGAMBIL DATA UTAMA ---
 async def get_track_metadata(track_id, track_data, user_id, cover=None, thumbnail=None, client=None):
     """
-    Mengolah data mentah dari Tidal menjadi dictionary metadata standar.
-    Mengambil Genre dari Album dan Composer dari Contributors.
+    Mengolah data mentah dari Tidal/Spotify menjadi dictionary metadata standar.
     """
     
     # 1. Setup Dasar
@@ -98,15 +98,15 @@ async def get_track_metadata(track_id, track_data, user_id, cover=None, thumbnai
     meta['itemid'] = str(track_id)
     meta['title'] = track_data.get('title', 'Unknown Title')
     meta['tracknumber'] = str(track_data.get('trackNumber', '1'))
-    meta['totaltracks'] = str(track_data.get('volumeNumber', '1')) # Default sementara
+    meta['totaltracks'] = str(track_data.get('volumeNumber', '1')) 
     meta['volume'] = str(track_data.get('volumeNumber', '1'))
     meta['totalvolume'] = '1'
     meta['duration'] = track_data.get('duration', 0)
     meta['explicit'] = track_data.get('explicit', False)
     meta['copyright'] = track_data.get('copyright', '')
     meta['isrc'] = track_data.get('isrc', '')
-    meta['upc'] = '' # Biasanya ada di album
-    meta['provider'] = 'tidal'
+    meta['upc'] = '' 
+    meta['provider'] = 'tidal' # Default fallback
     meta['type'] = 'track'
     
     # URL Cover
@@ -125,13 +125,12 @@ async def get_track_metadata(track_id, track_data, user_id, cover=None, thumbnai
     
     # Album & Album Artist
     meta['album'] = album_data.get('title', 'Unknown Album')
-    # Coba ambil album artist dari list artists jika ada
     if 'artists' in track_data:
         meta['albumartist'] = track_data['artists'][0].get('name', meta['artist'])
     else:
         meta['albumartist'] = meta['artist']
 
-    # Tanggal (Stream Start Date atau Release Date)
+    # Tanggal
     raw_date = track_data.get('streamStartDate', track_data.get('dateAdded', ''))
     if raw_date:
         try:
@@ -144,51 +143,32 @@ async def get_track_metadata(track_id, track_data, user_id, cover=None, thumbnai
     # --- LOGIKA TAMBAHAN (GENRE & COMPOSER) ---
     if client:
         try:
-            # A. AMBIL DATA ALBUM LENGKAP (Untuk GENRE, UPC, TOTAL TRACKS)
             if 'id' in album_data:
                 full_album = await client.get_album(album_data['id'])
-                
-                # Genre
                 if 'genre' in full_album and 'name' in full_album['genre']:
                     meta['genre'] = full_album['genre']['name']
-                
-                # UPC
                 if 'upc' in full_album:
                     meta['upc'] = full_album['upc']
-                
-                # Total Tracks (Akurasi)
                 if 'numberOfTracks' in full_album:
                     meta['totaltracks'] = str(full_album['numberOfTracks'])
                 if 'numberOfVolumes' in full_album:
                     meta['totalvolume'] = str(full_album['numberOfVolumes'])
-                
-                # Release Date yang lebih akurat
                 if 'releaseDate' in full_album:
                     meta['release_date'] = full_album['releaseDate']
                     meta['date'] = full_album['releaseDate'][:4]
 
-            # B. AMBIL CONTRIBUTORS (Untuk COMPOSER)
             credits_data = await client.get_track_contributors(track_id)
             composers = []
             producers = []
-            
             if 'items' in credits_data:
                 for item in credits_data['items']:
                     role = item.get('role', '').lower()
                     name = item.get('name', '')
-                    
-                    if 'composer' in role:
-                        composers.append(name)
-                    if 'producer' in role:
-                        producers.append(name)
+                    if 'composer' in role: composers.append(name)
+                    if 'producer' in role: producers.append(name)
             
-            # Gabungkan nama dengan koma
-            if composers:
-                meta['composer'] = ', '.join(composers)
-            
-            # Opsional: Masukkan Producer ke tag Publisher atau Organization jika kosong
-            if producers and not meta.get('publisher'):
-                meta['publisher'] = ', '.join(producers)
+            if composers: meta['composer'] = ', '.join(composers)
+            if producers and not meta.get('publisher'): meta['publisher'] = ', '.join(producers)
 
         except Exception as e:
             LOGGER.warning(f"Metadata Enrichment Error (Track {track_id}): {e}")
@@ -215,6 +195,7 @@ async def set_metadata(metadata:dict, user_id: int = None):
             if '.wav' in ext: handle = WAVE(audio_path)
             elif '.mp3' in ext: handle = MP3(audio_path)
             elif '.flac' in ext: handle = FLAC(audio_path)
+            elif '.ogg' in ext: handle = OggVorbis(audio_path) # <--- TAMBAHAN MANUAL
             elif ext in ['.m4a', '.mp4', '.m4b']: handle = MP4(audio_path)
                 
     except Exception as e:
@@ -246,7 +227,10 @@ async def set_metadata(metadata:dict, user_id: int = None):
 
     # --- 3. ROUTING KE HANDLER SPESIFIK ---
     try:
-        if isinstance(handle, FLAC):
+        # [PERBAIKAN UTAMA DI SINI]
+        if isinstance(handle, OggVorbis):
+            await set_vorbis(metadata, handle, dur_ms)
+        elif isinstance(handle, FLAC):
             await set_flac(metadata, handle, dur_ms)
         elif isinstance(handle, MP4): 
             await set_m4a(metadata, handle)
@@ -257,7 +241,9 @@ async def set_metadata(metadata:dict, user_id: int = None):
         else:
             # Fallback terakhir berdasarkan ekstensi
             ext = os.path.splitext(audio_path)[1].lower()
-            if ext in ['.m4a', '.mp4']:
+            if ext == '.ogg':
+                await set_vorbis(metadata, handle, dur_ms)
+            elif ext in ['.m4a', '.mp4']:
                  await set_m4a(metadata, handle)
             else:
                 await set_mp3(metadata, handle, dur_ms) 
@@ -268,34 +254,78 @@ async def set_metadata(metadata:dict, user_id: int = None):
 
 
 # ==========================================
+# HANDLER OGG VORBIS (BARU)
+# ==========================================
+async def set_vorbis(data, handle, dur_ms=0):
+    """Handler khusus untuk file OGG (Spotify)"""
+    if handle.tags is None:
+        handle.add_tags()
+    
+    # Vorbis Comments menggunakan Key-Value list, mirip FLAC
+    # Kita bisa reuse logika field yang mirip dengan FLAC
+    
+    handle.tags['TITLE'] = data['title']
+    handle.tags['ALBUM'] = data['album']
+    handle.tags['ALBUMARTIST'] = data['albumartist']
+    handle.tags['ARTIST'] = data['artist']
+    
+    cpr = data.get('copyright') or ''
+    if cpr: handle.tags['COPYRIGHT'] = cpr
+        
+    pub = data.get('publisher') or data.get('organization') or ''
+    if pub: handle.tags['PUBLISHER'] = pub
+
+    # Tracks & Discs
+    handle.tags['TRACKNUMBER'] = str(data.get('tracknumber') or '1')
+    handle.tags['TRACKTOTAL'] = str(data.get('totaltracks') or '1')
+    handle.tags['DISCNUMBER'] = str(data.get('volume') or '1')
+    handle.tags['DISCTOTAL'] = str(data.get('totalvolume') or '1')
+
+    # Codes
+    if data.get('upc'): handle.tags['UPC'] = data['upc']
+    if data.get('isrc'): handle.tags['ISRC'] = data['isrc']
+
+    # Dates
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if data.get('date'): handle.tags['DATE'] = data['date']
+    if data.get('release_date'): handle.tags['ORIGINALDATE'] = data['release_date']
+    
+    handle.tags['ENCODED_BY'] = 'Mono Marsx Bot'
+
+    # Misc
+    if data.get('genre'): handle.tags['GENRE'] = data['genre']
+    if data.get('composer'): handle.tags['COMPOSER'] = data['composer']
+    if data.get('lyrics'): handle.tags['LYRICS'] = data['lyrics']
+    
+    # Cover Art untuk OGG sama dengan FLAC (menggunakan Picture block)
+    await savePic(handle, data)
+    handle.save()
+    return True
+
+
+# ==========================================
 # HANDLER FLAC (VORBIS COMMENT)
 # ==========================================
 async def set_flac(data, handle, dur_ms=0):
     if handle.tags is None:
             handle.add_tags()
     
-    # --- Standard Basic Tags ---
     handle.tags['TITLE'] = data['title']
     handle.tags['ALBUM'] = data['album']
     handle.tags['ALBUMARTIST'] = data['albumartist']
     handle.tags['ARTIST'] = data['artist']
     
-    # --- COPYRIGHT (cpr) ---
     cpr = data.get('copyright') or ''
     if cpr:
         handle.tags['COPYRIGHT'] = cpr
-        handle.tags['cpr'] = cpr # Alias khusus MediaInfo
+        handle.tags['cpr'] = cpr 
         
-    # --- PUBLISHER (pub) ---
     pub = data.get('publisher') or data.get('organization') or ''
     if pub:
         handle.tags['PUBLISHER'] = pub
         handle.tags['ORGANIZATION'] = pub
         handle.tags['LABEL'] = pub
-        handle.tags['pub'] = pub # Alias khusus MediaInfo
 
-    # --- TRACKS & DISCS (Part/Total) ---
-    # Mengisi semua variasi agar MediaInfo menampilkan format "N/T"
     t_num = str(data.get('tracknumber') or '1')
     t_tot = str(data.get('totaltracks') or '1')
     d_num = str(data.get('volume') or '1')
@@ -309,21 +339,12 @@ async def set_flac(data, handle, dur_ms=0):
     handle.tags['DISCTOTAL'] = d_tot
     handle.tags['TOTALDISCS'] = d_tot 
 
-    # --- UPC ---
-    if data.get('upc'):
-        handle.tags['UPC'] = data['upc']
-        handle.tags['BARCODE'] = data['upc']
-        handle.tags['EAN'] = data['upc']
+    if data.get('upc'): handle.tags['UPC'] = data['upc']
+    if data.get('isrc'): handle.tags['ISRC'] = data['isrc']
 
-    # --- ISRC ---
-    if data.get('isrc'):
-        handle.tags['ISRC'] = data['isrc']
-
-    # --- DATES (Encoded, Tagged) ---
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
     if data.get('date'): 
-        handle.tags['DATE'] = data['date'] # Year
+        handle.tags['DATE'] = data['date'] 
         handle.tags['YEAR'] = data['date']
     
     if data.get('release_date'): 
@@ -331,35 +352,16 @@ async def set_flac(data, handle, dur_ms=0):
         handle.tags['ORIGINALDATE'] = data['release_date']
 
     handle.tags['TAGGING_TIME'] = now_str
-    handle.tags['DATE_TAGGED'] = now_str
-    handle.tags['ENCODED_DATE'] = now_str 
-
-    # --- RATING ---
+    
     if data.get('explicit') is True:
         handle.tags['ITUNESADVISORY'] = '1'
-        handle.tags['RATING'] = 'Explicit'
     elif data.get('explicit') is False:
         handle.tags['ITUNESADVISORY'] = '2'
-        handle.tags['RATING'] = 'Clean'
 
-    # --- MISC ---
     if data.get('genre'): handle.tags['GENRE'] = data['genre']
     if data.get('subgenre'): handle.tags['SUBGENRE'] = data['subgenre']
     if data.get('composer'): handle.tags['COMPOSER'] = data['composer']
     if data.get('lyrics'): handle.tags['LYRICS'] = data['lyrics']
-    
-    if data.get('bit_depth'):
-        handle.tags['BPS'] = str(data['bit_depth'])
-    if data.get('sample_rate'):
-        handle.tags['SAMPLERATE'] = str(int(data['sample_rate'] * 1000))
-    
-    # MQA Specifics
-    if data.get('mqa_details'):
-        mqa_file = data['mqa_details']
-        mqa_str = f'MQAEncode v1.1, 2.4.0+0, {now_str}'
-        handle.tags['ENCODER'] = mqa_str
-        handle.tags['MQAENCODER'] = mqa_str
-        handle.tags['ORIGINALSAMPLERATE'] = str(mqa_file.original_sample_rate)
     
     await savePic(handle, data)
     handle.save()
@@ -373,34 +375,25 @@ async def set_m4a(data, handle):
     if handle.tags is None:
         handle.add_tags()
     
-    # --- Standard Atoms ---
     handle.tags['\u00a9nam'] = data['title']
     handle.tags['\u00a9alb'] = data['album']
     handle.tags['\u00a9ART'] = data['artist']
     handle.tags['aART'] = data['albumartist']
     
-    # --- COPYRIGHT (cpr) ---
     cpr = data.get('copyright') or ''
     if cpr:
         handle.tags['\u00a9cpr'] = cpr
-        # Custom atom fallback
         handle.tags['----:com.apple.iTunes:cpr'] = cpr.encode('utf-8')
 
-    # --- PUBLISHER (pub) ---
     pub = data.get('publisher') or data.get('organization') or ''
     if pub:
-        handle.tags['\u00a9pub'] = pub # Standard Atom Publisher
+        handle.tags['\u00a9pub'] = pub 
         handle.tags['----:com.apple.iTunes:PUBLISHER'] = str(pub).encode('utf-8')
         handle.tags['----:com.apple.iTunes:LABEL'] = str(pub).encode('utf-8')
-        handle.tags['----:com.apple.iTunes:pub'] = str(pub).encode('utf-8') # Alias
 
-    # --- GENRE & COMPOSER ---
-    if data.get('genre'): 
-        handle.tags['\u00a9gen'] = data['genre']
-    if data.get('composer'): 
-        handle.tags['\u00a9wrt'] = data['composer']
+    if data.get('genre'): handle.tags['\u00a9gen'] = data['genre']
+    if data.get('composer'): handle.tags['\u00a9wrt'] = data['composer']
 
-    # --- TRACKS & DISCS (Part/Total) ---
     def safe_int(x):
         try: return int(x)
         except: return 0
@@ -410,39 +403,24 @@ async def set_m4a(data, handle):
     d_num = safe_int(data.get('volume'))
     d_tot = safe_int(data.get('totalvolume'))
 
-    # Hack: Jika total 0 tapi number > 0, set total=number agar MediaInfo menampilkan "1/1"
     if t_tot == 0 and t_num > 0: t_tot = t_num 
     if d_tot == 0 and d_num > 0: d_tot = d_num
 
-    # Penulisan Tuple (Wajib Integer)
     handle.tags['trkn'] = [(t_num, t_tot)]
     handle.tags['disk'] = [(d_num, d_tot)]
     
-    # --- UPC ---
     if data.get('upc'):
         handle.tags['----:com.apple.iTunes:UPC'] = str(data['upc']).encode('utf-8')
-        handle.tags['----:com.apple.iTunes:BARCODE'] = str(data['upc']).encode('utf-8')
-
-    # --- ISRC ---
     if data.get('isrc'):
          handle.tags['----:com.apple.iTunes:ISRC'] = str(data['isrc']).encode('utf-8')
 
-    # --- DATES ---
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    if data.get('date'): 
-        handle.tags['\u00a9day'] = data['date'] # Year
-    
+    if data.get('date'): handle.tags['\u00a9day'] = data['date']
     if data.get('release_date'):
         handle.tags['----:com.apple.iTunes:RELEASETIME'] = data.get('release_date').encode('utf-8')
 
-    # Encoded & Tagged Date (Custom Atoms)
     handle.tags['\u00a9too'] = f"Encoded on {now_str}" 
-    handle.tags['----:com.apple.iTunes:TAGGING_TIME'] = now_str.encode('utf-8')
-    handle.tags['----:com.apple.iTunes:ENCODED_DATE'] = now_str.encode('utf-8')
 
-    # --- RATING ---
-    # Atom 'rtng': 0=None, 1=Explicit, 2=Clean
     if data.get('explicit') is True:
         handle.tags['rtng'] = [1] 
     elif data.get('explicit') is False:
@@ -450,14 +428,7 @@ async def set_m4a(data, handle):
     else:
         handle.tags['rtng'] = [0]
 
-    # --- MISC ---
-    if data.get('subgenre'): handle.tags['----:com.apple.iTunes:SUBGENRE'] = data.get('subgenre').encode('utf-8')
     if data.get('lyrics'): handle.tags['\u00a9lyr'] = data['lyrics']
-
-    if data.get('bit_depth'):
-        handle.tags['----:com.apple.iTunes:BITS PER SAMPLE'] = str(data['bit_depth']).encode('utf-8')
-    if data.get('sample_rate'):
-        handle.tags['----:com.apple.iTunes:SAMPLERATE'] = str(int(data['sample_rate'] * 1000)).encode('utf-8')
     
     await savePic(handle, data)
     handle.save()
@@ -507,11 +478,6 @@ async def set_mp3(data, handle, dur_ms=0):
     
     if dur_ms > 0:
          handle.tags.add(TLEN(encoding=3, text=str(dur_ms)))
-
-    if data.get('bit_depth'):
-        handle.tags.add(TXXX(encoding=3, desc='BPS', text=str(data['bit_depth'])))
-    if data.get('sample_rate'):
-        handle.tags.add(TXXX(encoding=3, desc='SAMPLERATE', text=str(int(data['sample_rate'] * 1000))))
     
     await savePic(handle, data)
     handle.save()
@@ -578,7 +544,8 @@ async def savePic(handle, metadata):
         LOGGER.error(e)
         return
     
-    if isinstance(handle, FLAC):
+    # [PERBAIKAN] Tambahkan pengecekan OggVorbis untuk cover art
+    if isinstance(handle, (FLAC, OggVorbis)):
         pic = Picture()
         pic.data = data
         pic.mime = u"image/jpeg"
@@ -602,6 +569,7 @@ async def get_audio_extension(path):
              return ext.replace('.', '')
         if isinstance(handle, MP4): return 'm4a'
         if isinstance(handle, FLAC): return 'flac'
+        if isinstance(handle, OggVorbis): return 'ogg' # Tambahan
         if isinstance(handle, WAVE): return 'wav'
         return 'mp3'
     except:
