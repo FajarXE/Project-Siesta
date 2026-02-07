@@ -64,7 +64,7 @@ async def spotify_token_cmd(client, message: Message):
             f.write(json_creds)
             
         # Init ulang manager
-        await spotify_manager.initialize()
+        await spotify_manager.initialize_clients()
         
         final_msg = (
             "✅ <b>LOGIN BERHASIL!</b>\n\n"
