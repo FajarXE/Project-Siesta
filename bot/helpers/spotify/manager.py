@@ -13,7 +13,8 @@ class SpotifyManager:
         self.authenticated = False
         self.credentials_path = os.path.join(os.getcwd(), "config", "spotify", "credentials.json")
 
-    async def initialize(self):
+    # [PERBAIKAN] Ganti nama fungsi dari 'initialize' ke 'initialize_clients'
+    async def initialize_clients(self):
         """
         Dijalankan saat startup. Mengecek ENV Render atau File Lokal.
         """
@@ -62,6 +63,10 @@ class SpotifyManager:
         if self.authenticated and self.client:
             return self.client
         return None
+    
+    # Tambahkan dummy shutdown method agar tidak error saat bot mati
+    async def shutdown(self):
+        pass
 
 # Instance Global
 spotify_manager = SpotifyManager()
