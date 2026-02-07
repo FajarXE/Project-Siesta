@@ -520,28 +520,27 @@ class SpotifyAPI:
         self.librespot_session: Optional[LibrespotSession] = None        
         self.user_market: Optional[str] = None
         
-        # --- KONFIGURASI HYBRID (SOLUSI FINAL) ---
-        # 1. WEB API (Metadata/Info Lagu): Gunakan Custom Client ID Anda.
-        #    Alasan: Custom ID punya Rate Limit (kuota) sendiri, jadi jarang kena Error 429.
+        # --- KONFIGURASI HYBRID (FIXED 403) ---
+        
+        # 1. Setup Public Client ID (WAJIB untuk Download)
+        public_client_id = CLIENT_ID 
+        
+        # 2. Setup Custom Client ID (Opsional untuk Metadata agar hemat limit)
         custom_client_id = self.config.get("client_id")
         custom_client_secret = self.config.get("client_secret")
         
         if custom_client_id and custom_client_secret:
-            self.logger.info(f"Web API (Metadata): Menggunakan Custom Client ID ({custom_client_id[:10]}...) agar hemat Rate Limit.")
+            self.logger.info(f"Web API: Menggunakan Custom ID ({custom_client_id[:10]}...) untuk Metadata.")
             web_api_oauth_client_id = custom_client_id
             web_api_oauth_client_secret = custom_client_secret
         else:
-            self.logger.warning("Web API: Custom ID tidak ditemukan! Terpaksa pakai Public ID (Rawan Error 429).")
-            web_api_oauth_client_id = CLIENT_ID
+            web_api_oauth_client_id = public_client_id
             web_api_oauth_client_secret = None
-        
-        # 2. LIBRESPOT (Streaming/Download): WAJIB Public Client ID.
-        #    Alasan: Custom ID dilarang download (Error 403). Public ID diizinkan.
-        self.logger.info("Librespot (Streaming): Menggunakan Public Client ID agar Anti-403.")
-        librespot_oauth_client_id = CLIENT_ID
+            
+        librespot_oauth_client_id = public_client_id
         librespot_oauth_client_secret = None
         
-        # --- SCOPE LENGKAP (PREMIUM) ---
+        # Scope Lengkap
         premium_scopes = [
             "user-read-email",
             "user-read-private",
@@ -561,17 +560,18 @@ class SpotifyAPI:
             "ugc-image-upload"
         ]
         
-        # Buat 2 Handler Berbeda
-        # Handler 1: Untuk Info Lagu (Pakai Custom ID Anda)
+        # Handler 1: Custom ID (Untuk Info Lagu)
         self.web_api_oauth_handler: Optional[OAuth] = OAuth(web_api_oauth_client_id, REDIRECT_URI, premium_scopes, self.logger, client_secret=web_api_oauth_client_secret)
         
-        # Handler 2: Untuk Download (Pakai Public ID Spotify)
+        # Handler 2: Public ID (Untuk Download)
         self.librespot_oauth_handler: Optional[OAuth] = OAuth(librespot_oauth_client_id, REDIRECT_URI, premium_scopes, self.logger, client_secret=librespot_oauth_client_secret)
         
-        # Default handler (biasanya untuk web api)
-        self.oauth_handler: Optional[OAuth] = self.web_api_oauth_handler
+        # --- PERBAIKAN UTAMA DI SINI ---
+        # Saat user ketik /spotify_login, kita HARUS menggunakan handler LIBRESPOT (Public ID).
+        # Agar token yang dihasilkan adalah token Public, yang diizinkan untuk download.
+        self.oauth_handler: Optional[OAuth] = self.librespot_oauth_handler
         
-        # Token Storage Terpisah
+        # Token Storage
         self.web_api_stored_token: Optional[StoredToken] = None
         self.librespot_stored_token: Optional[StoredToken] = None
         
@@ -607,6 +607,7 @@ class SpotifyAPI:
         os.makedirs(self.credentials_dir, exist_ok=True) 
         self.credentials_file_path = os.path.join(self.credentials_dir, CREDENTIALS_FILE_NAME)       
         self.logger.info(f"Credentials will be stored/loaded from: {self.credentials_file_path}")
+
 
     def _save_credentials(self, token_obj: StoredToken, username: Optional[str] = "PKCE_USER"):
         """Saves OAuth token data and a username to credentials.json for librespot."""        
