@@ -415,37 +415,39 @@ class SpotifyApiTokenProvider(LibrespotTokenProvider):
 
     def get_token(self, *scopes: str) -> _OriginalLibrespotTokenProvider.StoredToken:
         """
-        Called by Librespot components when they need a token for the given scopes.
-        Following Zotify's approach: return the OAuth token directly instead of 
-        trying to fetch from keymaster.
+        Dipanggil oleh Librespot saat membutuhkan token.
+        PERBAIKAN: Mengembalikan token dengan SEMUA scope yang dimiliki (streaming, dll),
+        bukan hanya scope yang diminta oleh Librespot (yang biasanya cuma playlist-read).
         """
         spotify_api = self._spotify_api_ref()
-        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}, API: {id(spotify_api)}): get_token CALLED for scopes: {scopes}")
+        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): get_token DIPANGGIL untuk scopes: {scopes}")
 
         if not spotify_api or not hasattr(spotify_api, 'stored_token') or not spotify_api.stored_token:
-            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): SpotifyAPI instance or its stored_token is not available. Raising AuthError.")
+            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): SpotifyAPI instance atau stored_token tidak tersedia.")
             raise Exception("SpotifyAPI instance or stored_token not available") 
 
         pkce_token_info = spotify_api.stored_token
         if not pkce_token_info.access_token:
-            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): PKCE access_token is missing from SpotifyAPI.stored_token.")
+            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): PKCE access_token hilang.")
             raise Exception("PKCE access_token is missing")
 
-        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Returning OAuth token directly for scopes {' '.join(scopes)} (Zotify approach)")
+        # --- PERBAIKAN KRUSIAL DI SINI ---
+        # Kita ambil scope ASLI dari token yang kita simpan (yang berisi 'streaming', dll)
+        actual_scopes = pkce_token_info.scopes
+        
+        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Mengembalikan Token. Diminta: {scopes} -> Diberikan Full: {actual_scopes}")
 
-        # Create a response that mimics what keymaster would return        
+        # Buat respons token yang meniru keymaster
         oauth_token_response = {
             "accessToken": pkce_token_info.access_token,
             "expiresIn": pkce_token_info.expires_in,
-            "scope": list(scopes)  # Use the requested scopes
+            "scope": actual_scopes  # <--- PENTING: Gunakan actual_scopes, JANGAN list(scopes)
         }
 
-        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Created token response for scopes {' '.join(scopes)}")
-        
         try:
             return _OriginalLibrespotTokenProvider.StoredToken(oauth_token_response)
         except Exception as e:
-            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Error creating StoredToken: {e}", exc_info=True)
+            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Gagal membuat StoredToken: {e}", exc_info=True)
             raise
 
 class LibrespotAudioKeyFilter(logging.Filter):
