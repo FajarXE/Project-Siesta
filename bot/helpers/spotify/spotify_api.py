@@ -520,26 +520,25 @@ class SpotifyAPI:
         self.librespot_session: Optional[LibrespotSession] = None        
         self.user_market: Optional[str] = None
         
-        # Check if custom client_id and client_secret are provided in config
-        custom_client_id = self.config.get("client_id")
-        custom_client_secret = self.config.get("client_secret")
+        # --- PERBAIKAN FATAL ERROR 403 ---
+        # Kita TIDAK BOLEH menggunakan Custom Client ID untuk Login User/Streaming.
+        # Token untuk streaming WAJIB berasal dari ID '65b7...' (Spotify Web Player)
+        # agar diizinkan mengambil file audio.
         
-        # HYBRID APPROACH: Use custom credentials for Web API, Desktop client_id for librespot
-        if custom_client_id and custom_client_secret:
-            self.logger.info(f"Using custom Spotify Client ID for Web API: {custom_client_id[:10]}... (from config)")
-            web_api_oauth_client_id = custom_client_id
-            web_api_oauth_client_secret = custom_client_secret
-        else:
-            self.logger.info("Using default Desktop Client ID for Web API")
-            web_api_oauth_client_id = CLIENT_ID
-            web_api_oauth_client_secret = None
+        # ID Bawaan (Web Player / Desktop) - WAJIB DIPAKAI
+        public_client_id = CLIENT_ID 
         
-        self.logger.info("Using Desktop Client ID for librespot audio streaming")
-        librespot_oauth_client_id = CLIENT_ID
+        self.logger.info("Memaksa penggunaan Public Client ID agar Streaming diizinkan (Mengatasi 403).")
+        
+        # Kita abaikan Custom Client ID dari config untuk keperluan Login User
+        # Custom ID hanya bikin error 403 saat download
+        web_api_oauth_client_id = public_client_id
+        web_api_oauth_client_secret = None
+        
+        librespot_oauth_client_id = public_client_id
         librespot_oauth_client_secret = None
         
-        # --- [PERBAIKAN] DEFINISI SCOPE LENGKAP DI SINI ---
-        # Ini memastikan handler OAuth menggunakan scope yang BENAR untuk Premium
+        # Scope Lengkap
         premium_scopes = [
             "user-read-email",
             "user-read-private",
@@ -555,26 +554,24 @@ class SpotifyAPI:
             "user-read-recently-played",
             "user-read-playback-position",
             "user-top-read",
-            "streaming",           # <--- WAJIB ADA
+            "streaming", 
             "ugc-image-upload"
         ]
         
-        # Create separate OAuth handlers dengan premium_scopes
+        # Buat Handler dengan Public ID
         self.web_api_oauth_handler: Optional[OAuth] = OAuth(web_api_oauth_client_id, REDIRECT_URI, premium_scopes, self.logger, client_secret=web_api_oauth_client_secret)
         self.librespot_oauth_handler: Optional[OAuth] = OAuth(librespot_oauth_client_id, REDIRECT_URI, premium_scopes, self.logger, client_secret=librespot_oauth_client_secret)
         
-        # For backward compatibility
+        # Handler Utama
         self.oauth_handler: Optional[OAuth] = self.web_api_oauth_handler
         
-        # Separate tokens for Web API and librespot
+        # Token Storage
         self.web_api_stored_token: Optional[StoredToken] = None
         self.librespot_stored_token: Optional[StoredToken] = None
-        
-        # For backward compatibility
         self.stored_token: Optional[StoredToken] = None
         self.last_custom_provider_id_created: Optional[int] = None
 
-        # Set up logging filter (sama seperti kode lama)
+        # --- Setup Logging Filter (Sama seperti sebelumnya) ---
         audio_key_filter = LibrespotAudioKeyFilter()
         root_logger = logging.getLogger()
         root_logger.addFilter(audio_key_filter)
@@ -598,11 +595,12 @@ class SpotifyAPI:
         
         self._audio_key_filter = audio_key_filter
         
-        # Determine script directory
+        # Directory Config
         self.credentials_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "config", "spotify"))
         os.makedirs(self.credentials_dir, exist_ok=True) 
         self.credentials_file_path = os.path.join(self.credentials_dir, CREDENTIALS_FILE_NAME)       
         self.logger.info(f"Credentials will be stored/loaded from: {self.credentials_file_path}")
+
 
     def _save_credentials(self, token_obj: StoredToken, username: Optional[str] = "PKCE_USER"):
         """Saves OAuth token data and a username to credentials.json for librespot."""        
@@ -632,7 +630,6 @@ class SpotifyAPI:
             self.logger.error(f"IOError saving credentials to {self.credentials_file_path}: {e}")
         except Exception as e:
             self.logger.error(f"Unexpected error saving credentials: {e}", exc_info=True)
-
 
     def _load_existing_credentials(self) -> bool:
         """Try to load and validate existing OAuth credentials (StoredToken)."""
