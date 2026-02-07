@@ -236,7 +236,7 @@ except Exception as e:
     async def start_livephish(*args, **kwargs):
         raise NotImplementedError("Modul LivePhish belum diimplementasikan.")
 
-# BeatStars (BARU)
+# BeatStars
 try:
     from ..helpers.beatstars.handler import start_beatstars
 except ImportError as e:
@@ -245,12 +245,20 @@ except ImportError as e:
     async def start_beatstars(*args, **kwargs):
         raise NotImplementedError(f"Modul BeatStars Rusak: {err_bs}")
 
-# Khinsider (TAMBAHAN BARU)
+# Khinsider
 try:
     from ..helpers.khinsider.handler import start_khinsider
 except ImportError:
     async def start_khinsider(*args, **kwargs):
         raise NotImplementedError("Modul Khinsider belum diimplementasikan.")
+
+# Spotify
+try:
+    from ..helpers.spotify.handler import start_spotify
+except ImportError as e:
+    LOGGER.error(f"Gagal Import Spotify Handler: {e}")
+    async def start_spotify(*args, **kwargs):
+        raise NotImplementedError("Modul Spotify Rusak.")
 
 
 from ..helpers.message import send_message, check_user, fetch_user_details, edit_message
@@ -447,14 +455,13 @@ async def start_link(link: str, user: dict) -> None:
     jiosaavn = ["https://www.jiosaavn.com", "jiosaavn.com"]
     gaana = ["https://gaana.com", "gaana.com"]
 
-    # LivePhish Domains
     livephish = ["https://plus.livephish.com", "https://www.livephish.com", "https://streamapi.livephish.com"]
     
-    # BeatStars Domains (BARU)
     beatstars = ["https://www.beatstars.com", "beatstars.com", "https://main.v2.beatstars.com", "https://bsta.rs", "bsta.rs"]
 
-    # Khinsider Domains (TAMBAHAN BARU)
     khinsider = ["https://downloads.khinsider.com", "downloads.khinsider.com", "http://downloads.khinsider.com"]
+
+    spotify = ["https://open.spotify.com", "open.spotify.com", "https://spotify.link", "spotify.link", "https://spoti.fi", "spoti.fi"]
     
     # Blok TIDAL
     if link.startswith(tuple(tidal)):
@@ -905,7 +912,7 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.error(f"LivePhish Gagal: {e}")
             raise e
 
-    # Blok BEATSTARS (BARU)
+    # Blok BEATSTARS
     elif link.startswith(tuple(beatstars)):
         user['provider'] = 'BeatStars'
         if not beatstars_manager:
@@ -919,7 +926,7 @@ async def start_link(link: str, user: dict) -> None:
             LOGGER.error(f"BeatStars Gagal: {e}")
             raise e
 
-    # Blok KHINSIDER (TAMBAHAN BARU)
+    # Blok KHINSIDER
     elif link.startswith(tuple(khinsider)):
         user['provider'] = 'Khinsider'
         if not khinsider_manager:
@@ -931,6 +938,17 @@ async def start_link(link: str, user: dict) -> None:
             return
         except Exception as e:
             LOGGER.error(f"Khinsider Gagal: {e}")
+            raise e
+
+    # Blok SPOTIFY
+    elif link.startswith(tuple(spotify)) or "spotify.com" in link:
+        user['provider'] = 'Spotify'
+        try:
+            await start_spotify(link, user)
+            LOGGER.info("Spotify: Unduhan berhasil.")
+            return
+        except Exception as e:
+            LOGGER.error(f"Spotify Gagal: {e}")
             raise e
 
     else:
