@@ -19,7 +19,7 @@ async def start_spotify(link: str, user: dict):
     client = spotify_manager.get_client()
     if not client:
         # Coba init ulang jika client mati
-        await spotify_manager.initialize()
+        await spotify_manager.initialize_clients()
         client = spotify_manager.get_client()
         if not client:
             await send_message(user, "❌ **Spotify Gagal:** Bot belum login. Admin harus menjalankan `/spotify_login`.", 'text')
