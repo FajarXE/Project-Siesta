@@ -693,39 +693,63 @@ class SpotifyAPI:
             return False
 
     def _perform_oauth_flow(self, save_to_main_file: bool = True) -> bool:
-        """Performs the full PKCE OAuth flow and optionally saves credentials to the main file."""
+        """
+        Melakukan proses Login PKCE OAuth.
+        MODIFIKASI: Menambahkan scope 'streaming' agar akun Premium tidak kena 403.
+        """
         if not self.oauth_handler:
             self.logger.error("OAuth handler not initialized!")
             return False
         
-        # Check if required credentials are provided before opening browser
+        # Cek konfigurasi
         username = self.config.get('username', '') if self.config else ''
         client_id = self.config.get('client_id', '') if self.config else ''
         client_secret = self.config.get('client_secret', '') if self.config else ''
         
-        # Check if username is provided (required for librespot)
         if not username:
             error_msg = "spotify -> Spotify credentials are required. Please fill in your username, client ID and secret in the settings."
             self.logger.error(error_msg)
             raise SpotifyConfigError(error_msg)
         
-        # Check if custom client_id and client_secret are provided (recommended to avoid rate limits)
-        # Note: We allow proceeding with default CLIENT_ID, but warn if custom credentials aren't set
         if not client_id or not client_secret:
-            self.logger.warning("Spotify custom client_id and client_secret are not set. Using default credentials may result in rate limiting. Consider setting up your own Spotify Developer app credentials.")
+            self.logger.warning("Spotify custom client_id and client_secret are not set. Using default credentials may result in rate limiting.")
         
+        # --- [PERBAIKAN UTAMA: DEFINISI SCOPE LENGKAP] ---
+        # Kita paksa handler untuk menggunakan scope ini sebelum memulai login
+        required_scopes = (
+            "user-read-email "
+            "user-read-private "
+            "playlist-read-private "
+            "playlist-modify-private "
+            "playlist-modify-public "
+            "user-library-read "
+            "user-library-modify "
+            "user-read-playback-state "
+            "user-modify-playback-state "
+            "streaming "         # <--- WAJIB UNTUK PREMIUM DOWNLOAD
+            "ugc-image-upload"
+        )
+        
+        # Update scope di handler
+        if self.oauth_handler:
+            self.oauth_handler.scope = required_scopes
+            self.logger.info(f"Mengupdate Scope OAuth menjadi: {required_scopes}")
+
         self.logger.info("Starting PKCE OAuth flow...")
+        
+        # Jalankan flow (Handler akan men-generate URL dengan scope baru di atas)
         token_data = self.oauth_handler.perform_full_oauth_flow()
 
         if token_data:
             self.stored_token = StoredToken(token_data)
             self.logger.info(f"OAuth flow successful. Access token obtained: {self.stored_token.access_token[:20]}...")
             
-            # Try to get username for storage, default if not available
+            # Coba ambil detail user untuk disimpan
             spotify_user_details = self._fetch_spotify_user_details(self.stored_token.access_token)
             username_for_storage = spotify_user_details.get('id', "PKCE_USER_NEW") if spotify_user_details else "PKCE_USER_UNKNOWN"
+            
             if spotify_user_details and 'country' in spotify_user_details:
-                self.user_market = spotify_user_details['country'] # Set user market
+                self.user_market = spotify_user_details['country'] 
                 self.logger.info(f"User market set to: {self.user_market}")
             else:
                 self.logger.warning("Could not determine user market from OAuth flow.")
@@ -736,7 +760,9 @@ class SpotifyAPI:
                 self.logger.info("Skipping save to main credentials file (save_to_main_file=False).")
             return True
         else:
-            self.logger.error(f"OAuth flow failed. Error: {self.oauth_handler.error_message if self.oauth_handler else 'Unknown OAuth error'}")
+            # Jika gagal (misal user membatalkan di browser)
+            err_msg = self.oauth_handler.error_message if self.oauth_handler else 'Unknown OAuth error'
+            self.logger.error(f"OAuth flow failed. Error: {err_msg}")
             self.stored_token = None
             return False
 
@@ -1414,35 +1440,37 @@ class SpotifyAPI:
 
     def get_track_download(self, track_id, quality_tier=None, **kwargs):
         """
-        Mendownload track dengan fitur AUTO-RETRY jika koneksi diputus (Errno 104).
-        Menggantikan fungsi lama yang rentan putus koneksi.
+        Mendownload track dengan fitur:
+        1. Auto-Retry untuk koneksi putus (Errno 104).
+        2. Auto-Downgrade Quality untuk error 403 (Mengatasi isu Premium/Region).
         """
-        # 1. Parsing Input (Support kwargs dari kode lama atau direct args)
+        # 1. Parsing Input
         if not track_id and 'track_id' in kwargs:
             track_id = kwargs.get('track_id')
         if not quality_tier and 'quality_tier' in kwargs:
             quality_tier = kwargs.get('quality_tier')
 
         # 2. Mapping Kualitas Audio
-        # High (160kbps) adalah default untuk akun free/umum via librespot
-        # Very High (320kbps) hanya untuk Premium
         quality_map = {
             "LOW": LibrespotAudioQualityEnum.NORMAL, 
-            "NORMAL": LibrespotAudioQualityEnum.HIGH,
+            "NORMAL": LibrespotAudioQualityEnum.HIGH, 
             "HIGH": LibrespotAudioQualityEnum.HIGH,   
             "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,
             "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH
         }
         
         qt_str = str(quality_tier).upper() if quality_tier else "HIGH"
+        # Mulai dengan kualitas yang diminta user
         selected_quality = quality_map.get(qt_str, LibrespotAudioQualityEnum.HIGH)
+        
+        # Penanda apakah kita sudah menurunkan kualitas (agar tidak loop downgrade terus)
+        has_downgraded = False
         
         self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str}")
 
-        # 3. Konversi ID ke Object TrackId Librespot
+        # 3. Konversi ID
         try:
             if isinstance(track_id, str):
-                # Cek apakah ini Hex GID atau Base62
                 if len(track_id) == 32 and all(c in '0123456789abcdefABCDEF' for c in track_id):
                     tid = TrackId.from_hex(track_id)
                 else:
@@ -1453,7 +1481,7 @@ class SpotifyAPI:
             self.logger.error(f"Gagal memparsing Track ID: {e}")
             raise SpotifyApiError(f"Track ID tidak valid: {e}")
 
-        # --- LOGIKA RETRY (MAKSIMAL 3 KALI) ---
+        # --- LOOP RETRY ---
         max_retries = 3
         last_error = None
 
@@ -1462,20 +1490,18 @@ class SpotifyAPI:
             try:
                 # A. Cek Sesi
                 if not self.librespot_session:
-                    self.logger.warning(f"[Percobaan {attempt}] Sesi hilang/belum siap. Login ulang...")
+                    self.logger.warning(f"[Percobaan {attempt}] Sesi hilang. Login ulang...")
                     if not self._load_credentials_and_init_session():
-                        raise Exception("Gagal inisialisasi sesi (Login Gagal).")
+                        raise Exception("Gagal inisialisasi sesi.")
 
-                # B. Siapkan Content Feeder (Streamer)
-                # content_feeder() bisa error jika sesi mati, jadi kita wrap try-except
+                # B. Siapkan Feeder
                 try:
                     feeder = self.librespot_session.content_feeder()
                 except Exception:
-                    # Sesi mungkin zombie, paksa restart
                     raise Exception("Connection reset (Session Dead)")
 
-                # C. Mulai Load Stream
-                # load(...) mengembalikan StreamLoader
+                # C. Load Stream
+                # Gunakan selected_quality yang dinamis (bisa berubah jika downgrade)
                 stream_loader = feeder.load(
                     tid, 
                     VorbisOnlyAudioQuality(selected_quality), 
@@ -1486,16 +1512,15 @@ class SpotifyAPI:
                 if not stream_loader:
                     raise Exception("Stream Loader kosong (Lagu tidak tersedia/Region lock?)")
 
-                # D. Baca Stream dan Tulis ke File Temp
+                # D. Download ke File Temp
                 import tempfile
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg")
                 
                 input_stream = stream_loader.input_stream
                 total_size = input_stream.size
                 downloaded = 0
-                buffer_size = 65536 # 64KB per chunk
+                buffer_size = 65536 
                 
-                # Loop Membaca Byte
                 while downloaded < total_size:
                     chunk = input_stream.stream().read(buffer_size)
                     if not chunk:
@@ -1505,10 +1530,7 @@ class SpotifyAPI:
                 
                 temp_file.close()
                 
-                # E. Sukses! Return Info
-                self.logger.info(f"✅ Download Berhasil (Size: {total_size} bytes): {temp_file.name}")
-                
-                # Return objek TrackDownloadInfo (sesuai yang diminta handler)
+                self.logger.info(f"✅ Download Berhasil: {temp_file.name}")
                 return TrackDownloadInfo(
                     download_type=DownloadEnum.TEMP_FILE_PATH,
                     temp_file_path=temp_file.name,
@@ -1520,38 +1542,47 @@ class SpotifyAPI:
                 last_error = e
                 self.logger.warning(f"⚠️ Gagal Download (Percobaan {attempt}/{max_retries}): {error_msg}")
                 
-                # Bersihkan file gagal
+                # Hapus file sampah
                 if temp_file and os.path.exists(temp_file.name):
                     try: os.unlink(temp_file.name)
                     except: pass
 
-                # Cek apakah Error Koneksi (Errno 104, Reset, Broken Pipe)
-                if any(x in error_msg for x in ["104", "Connection reset", "Broken pipe", "ChannelError", "Session Dead"]):
-                    self.logger.info("♻️ Mendeteksi koneksi putus. Merestart sesi Librespot...")
-                    
-                    # Matikan sesi lama
+                # --- STRATEGI PENANGANAN ERROR ---
+
+                # 1. Jika Error 403 (Forbidden / Premium Limit / Region)
+                if "403" in error_msg:
+                    # Jika belum pernah downgrade dan kualitas saat ini BUKAN Normal
+                    if not has_downgraded and selected_quality != LibrespotAudioQualityEnum.NORMAL:
+                        self.logger.info("📉 Terdeteksi Error 403. Menurunkan kualitas ke NORMAL (96kbps) dan mencoba lagi...")
+                        selected_quality = LibrespotAudioQualityEnum.NORMAL
+                        has_downgraded = True
+                        time.sleep(1)
+                        continue # Langsung retry dengan kualitas baru
+                    else:
+                        self.logger.error("❌ Tetap 403 meskipun sudah kualitas terendah/downgrade. Kemungkinan Region Lock atau Scope Streaming kurang.")
+                        # Jangan retry lagi, buang waktu.
+                        raise SpotifyApiError("Gagal Download: Izin Streaming kurang (Scope) atau Region Lock.")
+
+                # 2. Jika Koneksi Putus (104, Broken Pipe)
+                elif any(x in error_msg for x in ["104", "Connection reset", "Broken pipe", "Session Dead"]):
+                    self.logger.info("♻️ Koneksi putus. Merestart sesi...")
                     if self.librespot_session:
                         try: self.librespot_session.close()
                         except: pass
                     self.librespot_session = None
-                    
-                    # Tunggu sebentar sebelum retry
                     time.sleep(2)
-                    continue # Lanjut ke 'for' berikutnya
-                
-                elif "404" in error_msg or "Metadata" in error_msg:
-                    # Jika 404, jangan retry. Lagu emang gak ada.
-                    self.logger.error("Lagu tidak ditemukan (404).")
-                    raise SpotifyApiError("Lagu tidak ditemukan atau tidak tersedia di region akun.")
-                
-                else:
-                    # Error lain (misal logic error), retry aja siapa tau glitch
-                    time.sleep(1)
-                    continue
+                    continue # Retry dengan sesi baru
 
-        # Jika sudah 3x mencoba masih gagal
-        self.logger.error("❌ Gagal mengunduh lagu setelah 3 kali percobaan.")
-        raise last_error if last_error else Exception("Gagal download Unknown Error")
+                # 3. Jika Lagu Tidak Ditemukan (404)
+                elif "404" in error_msg:
+                    raise SpotifyApiError("Lagu tidak ditemukan (404).")
+                
+                # Default retry untuk error lain
+                time.sleep(1)
+                continue
+
+        # Jika loop selesai tanpa hasil
+        raise last_error if last_error else Exception("Gagal download setelah retry.")
 
     def close_session(self):
         """Placeholder for closing librespot session if needed by OrpheusDL's lifecycle."""
