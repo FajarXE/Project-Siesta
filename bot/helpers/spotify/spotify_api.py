@@ -1410,140 +1410,146 @@ class SpotifyAPI:
                 except Exception as close_err:
                     self.logger.warning(f"Error closing original stream object after saving: {close_err}")
 
-    def get_track_download(self, **kwargs) -> Optional[TrackDownloadInfo]:
-        track_id_base62 = kwargs.get("track_id_str") or kwargs.get("track_id")
-        quality_tier = kwargs.get("quality_tier")
-        download_options = kwargs.get("codec_options")
-        track_info_obj = kwargs.get("track_info_obj")
+    def get_track_download(self, track_id, quality_tier=None, **kwargs):
+        """
+        Mendownload track dengan fitur AUTO-RETRY jika koneksi diputus (Errno 104).
+        Menggantikan fungsi lama yang rentan putus koneksi.
+        """
+        # 1. Parsing Input (Support kwargs dari kode lama atau direct args)
+        if not track_id and 'track_id' in kwargs:
+            track_id = kwargs.get('track_id')
+        if not quality_tier and 'quality_tier' in kwargs:
+            quality_tier = kwargs.get('quality_tier')
 
-        if not track_id_base62:
-            self.logger.error("get_track_download: No track_id provided in kwargs")
-            raise SpotifyApiError("No track_id provided for download")
+        # 2. Mapping Kualitas Audio
+        # High (160kbps) adalah default untuk akun free/umum via librespot
+        # Very High (320kbps) hanya untuk Premium
+        quality_map = {
+            "LOW": LibrespotAudioQualityEnum.NORMAL, 
+            "NORMAL": LibrespotAudioQualityEnum.HIGH,
+            "HIGH": LibrespotAudioQualityEnum.HIGH,   
+            "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,
+            "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH
+        }
+        
+        qt_str = str(quality_tier).upper() if quality_tier else "HIGH"
+        selected_quality = quality_map.get(qt_str, LibrespotAudioQualityEnum.HIGH)
+        
+        self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str}")
 
-        # Convert base62 track ID to hex GID format required by librespot
-        track_id_hex = self._convert_base62_to_gid_hex(track_id_base62)
-        if not track_id_hex:
-            self.logger.error(f"Failed to convert track_id '{track_id_base62}' to hex GID format")
-            raise SpotifyApiError(f"Failed to convert track_id '{track_id_base62}' to hex GID format")
-
-        if not self._is_session_valid(self.librespot_session):
-            self.logger.error("Librespot session is not active or not logged in for track download.")
-            if not self._load_credentials_and_init_session() or not self._is_session_valid(self.librespot_session):
-                 raise SpotifyAuthError("Authentication required/failed for track download.")
-        track_id_obj = TrackId.from_hex(track_id_hex)
-        temp_file_path = None
+        # 3. Konversi ID ke Object TrackId Librespot
         try:
-            self.logger.info(f"Fetching librespot Track metadata for GID hex: {track_id_hex}")
-            librespot_audio_quality_mode = LibrespotAudioQualityEnum.NORMAL
-            qt_str = None
-            if hasattr(quality_tier, 'name'):
-                qt_str = quality_tier.name.upper()
-            elif isinstance(quality_tier, str):
-                qt_str = quality_tier.upper()
-            if qt_str == "LOSSLESS" or qt_str == "HIFI" or qt_str == "VERY_HIGH":
-                librespot_audio_quality_mode = LibrespotAudioQualityEnum.VERY_HIGH
-            elif qt_str == "HIGH":
-                librespot_audio_quality_mode = LibrespotAudioQualityEnum.HIGH
-            elif qt_str == "LOW":
-                # LOW doesn't exist in librespot, map to NORMAL (lowest available quality)
-                librespot_audio_quality_mode = LibrespotAudioQualityEnum.NORMAL
-            self.logger.info(f"Quality tier input: '{quality_tier}', resolved to string: '{qt_str}', mapped to librespot AudioQuality mode: {librespot_audio_quality_mode}")
-            # Ensure our audio key filter is still active before librespot operations
-            if hasattr(self, '_audio_key_filter'):
-                # Reapply filter to ensure it's active for this operation
-                for handler in logging.getLogger().handlers:
-                    if self._audio_key_filter not in handler.filters:
-                        handler.addFilter(self._audio_key_filter)
-            
-            content_feeder = self.librespot_session.content_feeder()
-            self.logger.info(f"Attempting to load track {track_id_hex} using content_feeder.load_track with VorbisOnlyAudioQuality.")
-            try:
-                stream_loader = content_feeder.load_track(
-                    track_id_obj,
-                    VorbisOnlyAudioQuality(librespot_audio_quality_mode),
-                    False, 
-                    None   
-                )
-            except Exception as load_err:
-                # Check if this is a 404 error (likely an episode)
-                error_str = str(load_err).lower()
-                if "status code 404" in error_str or "extended metadata request failed" in error_str:
-                    self.logger.info(f"Track load failed with 404 for {track_id_hex}, likely an episode. Re-raising as SpotifyApiError for episode fallback.")
-                    raise SpotifyApiError(f"Failed to download track {track_id_hex}: Extended Metadata request failed: Status code 404") from load_err
-                raise
-            
-            if not stream_loader or not hasattr(stream_loader, 'input_stream') or not stream_loader.input_stream:
-                self.logger.error(f"Librespot returned no stream_loader or input_stream for track {track_id_hex} (TrackId: {str(track_id_obj)}).")
-                try:
-                    track_metadata_check = track_id_obj.get(self.librespot_session)
-                    if track_metadata_check and not track_metadata_check.file:
-                         self.logger.error(f"Additionally, track metadata for GID {track_id_hex} has no associated audio files.")
-                         raise SpotifyTrackUnavailableError(f"No audio files listed for track GID {track_id_hex} and stream_loader failed.")
-                    elif not track_metadata_check:
-                         self.logger.error(f"Additionally, failed to get any track metadata from librespot for GID hex: {track_id_hex}")
-                except ConnectionError as conn_err:
-                    # Check if this is a 404 error (likely an episode)
-                    error_str = str(conn_err).lower()
-                    if "status code 404" in error_str or "extended metadata request failed" in error_str:
-                        self.logger.info(f"Track metadata check failed with 404 for {track_id_hex}, likely an episode. Re-raising as SpotifyApiError for episode fallback.")
-                        raise SpotifyApiError(f"Failed to download track {track_id_hex}: Extended Metadata request failed: Status code 404") from conn_err
-                    raise
-                except Exception as meta_err:
-                     self.logger.error(f"Error during additional metadata check for {track_id_hex} after stream_loader failure: {meta_err}")
-                raise SpotifyTrackUnavailableError(f"Failed to load audio stream (no stream_loader or input_stream) for GID {track_id_hex}")
-            raw_audio_byte_stream = stream_loader.input_stream.stream()
-            temp_file_path = self._save_stream_to_temp_file(raw_audio_byte_stream, CodecEnum.VORBIS)
-            if not temp_file_path:
-                self.logger.error(f"Failed to save downloaded stream for GID {track_id_hex} to a temp file.")
-                if hasattr(stream_loader, 'input_stream') and stream_loader.input_stream and hasattr(stream_loader.input_stream, 'close'):
-                    try:
-                        stream_loader.input_stream.close()
-                    except Exception as close_ex:
-                        self.logger.warning(f"Exception while closing input_stream after save failure for track {track_id_hex}: {close_ex}")
-                return None
-            self.logger.info(f"Successfully downloaded track {track_id_hex} to {temp_file_path}")
-            if track_info_obj and hasattr(track_info_obj, 'codec'):
-                self.logger.info(f"Updating track_info_obj.codec to VORBIS for track: {track_info_obj.name if hasattr(track_info_obj, 'name') else track_id_hex}")
-                track_info_obj.codec = CodecEnum.VORBIS
-            elif track_info_obj:
-                self.logger.warning(f"track_info_obj for {track_id_hex} provided but has no 'codec' attribute to update.")
-            return TrackDownloadInfo(
-                download_type=DownloadEnum.TEMP_FILE_PATH,
-                temp_file_path=temp_file_path,
-            )
-        except SpotifyAuthError: 
-            raise
-        except SpotifyTrackUnavailableError as e: 
-            self.logger.warning(f"Track {track_id_hex} is unavailable for download: {e}")
-            raise 
-        except SpotifyItemNotFoundError as e: 
-            self.logger.warning(f"Track metadata for {track_id_hex} not found: {e}")
-            raise 
-        except RuntimeError as rt_err:
-            if "Failed fetching audio key!" in str(rt_err):
-                # Suppress the noisy warning message - it's handled by the rate limit detection
-                # self.logger.warning(f"Rate limit suspected for track {track_id_hex} due to audio key error: {rt_err}")
-                # Clean up the error message by removing technical details (gid, fileId)
-                clean_error_msg = "Failed fetching audio key!"
-                raise SpotifyRateLimitDetectedError(f"Rate limit suspected: {clean_error_msg}") from rt_err
-            elif str(rt_err) == "Cannot get alternative track":
-                self.logger.warning(f"Track {track_id_hex} is unavailable (librespot: Cannot get alternative track).")
-                raise SpotifyTrackUnavailableError(f"Track {track_id_hex} is unavailable (Cannot get alternative track)") from rt_err
+            if isinstance(track_id, str):
+                # Cek apakah ini Hex GID atau Base62
+                if len(track_id) == 32 and all(c in '0123456789abcdefABCDEF' for c in track_id):
+                    tid = TrackId.from_hex(track_id)
+                else:
+                    tid = TrackId.from_base62(track_id)
             else:
-                self.logger.error(f"Unhandled RuntimeError during get_track_download for {track_id_hex}: {rt_err}", exc_info=True)
-                raise SpotifyApiError(f"Runtime error during track download {track_id_hex}: {rt_err}") from rt_err
+                tid = track_id
         except Exception as e:
-            error_str = str(e)
-            error_type = type(e).__name__
-            self.logger.error(f"Unexpected error during get_track_download for {track_id_hex}: {error_type}: {error_str}", exc_info=True)
-            
-            if temp_file_path and os.path.exists(temp_file_path):
+            self.logger.error(f"Gagal memparsing Track ID: {e}")
+            raise SpotifyApiError(f"Track ID tidak valid: {e}")
+
+        # --- LOGIKA RETRY (MAKSIMAL 3 KALI) ---
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            temp_file = None
+            try:
+                # A. Cek Sesi
+                if not self.librespot_session:
+                    self.logger.warning(f"[Percobaan {attempt}] Sesi hilang/belum siap. Login ulang...")
+                    if not self._load_credentials_and_init_session():
+                        raise Exception("Gagal inisialisasi sesi (Login Gagal).")
+
+                # B. Siapkan Content Feeder (Streamer)
+                # content_feeder() bisa error jika sesi mati, jadi kita wrap try-except
                 try:
-                    os.unlink(temp_file_path)
-                    self.logger.info(f"Cleaned up temp file {temp_file_path} after error in get_track_download.")
-                except OSError as unlink_e:
-                    self.logger.error(f"Error unlinking temp file {temp_file_path} during error handling: {unlink_e}")
-            raise SpotifyApiError(f"Failed to download track {track_id_hex}: {e}") from e
+                    feeder = self.librespot_session.content_feeder()
+                except Exception:
+                    # Sesi mungkin zombie, paksa restart
+                    raise Exception("Connection reset (Session Dead)")
+
+                # C. Mulai Load Stream
+                # load(...) mengembalikan StreamLoader
+                stream_loader = feeder.load(
+                    tid, 
+                    VorbisOnlyAudioQuality(selected_quality), 
+                    False, 
+                    None
+                )
+                
+                if not stream_loader:
+                    raise Exception("Stream Loader kosong (Lagu tidak tersedia/Region lock?)")
+
+                # D. Baca Stream dan Tulis ke File Temp
+                import tempfile
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg")
+                
+                input_stream = stream_loader.input_stream
+                total_size = input_stream.size
+                downloaded = 0
+                buffer_size = 65536 # 64KB per chunk
+                
+                # Loop Membaca Byte
+                while downloaded < total_size:
+                    chunk = input_stream.stream().read(buffer_size)
+                    if not chunk:
+                        break
+                    temp_file.write(chunk)
+                    downloaded += len(chunk)
+                
+                temp_file.close()
+                
+                # E. Sukses! Return Info
+                self.logger.info(f"✅ Download Berhasil (Size: {total_size} bytes): {temp_file.name}")
+                
+                # Return objek TrackDownloadInfo (sesuai yang diminta handler)
+                return TrackDownloadInfo(
+                    download_type=DownloadEnum.TEMP_FILE_PATH,
+                    temp_file_path=temp_file.name,
+                    file_url=None
+                )
+
+            except Exception as e:
+                error_msg = str(e)
+                last_error = e
+                self.logger.warning(f"⚠️ Gagal Download (Percobaan {attempt}/{max_retries}): {error_msg}")
+                
+                # Bersihkan file gagal
+                if temp_file and os.path.exists(temp_file.name):
+                    try: os.unlink(temp_file.name)
+                    except: pass
+
+                # Cek apakah Error Koneksi (Errno 104, Reset, Broken Pipe)
+                if any(x in error_msg for x in ["104", "Connection reset", "Broken pipe", "ChannelError", "Session Dead"]):
+                    self.logger.info("♻️ Mendeteksi koneksi putus. Merestart sesi Librespot...")
+                    
+                    # Matikan sesi lama
+                    if self.librespot_session:
+                        try: self.librespot_session.close()
+                        except: pass
+                    self.librespot_session = None
+                    
+                    # Tunggu sebentar sebelum retry
+                    time.sleep(2)
+                    continue # Lanjut ke 'for' berikutnya
+                
+                elif "404" in error_msg or "Metadata" in error_msg:
+                    # Jika 404, jangan retry. Lagu emang gak ada.
+                    self.logger.error("Lagu tidak ditemukan (404).")
+                    raise SpotifyApiError("Lagu tidak ditemukan atau tidak tersedia di region akun.")
+                
+                else:
+                    # Error lain (misal logic error), retry aja siapa tau glitch
+                    time.sleep(1)
+                    continue
+
+        # Jika sudah 3x mencoba masih gagal
+        self.logger.error("❌ Gagal mengunduh lagu setelah 3 kali percobaan.")
+        raise last_error if last_error else Exception("Gagal download Unknown Error")
 
     def close_session(self):
         """Placeholder for closing librespot session if needed by OrpheusDL's lifecycle."""
