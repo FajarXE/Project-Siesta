@@ -13,9 +13,6 @@ import sys
 import io
 import contextlib
 
-from utils.vendor_bootstrap import bootstrap_vendor_paths
-bootstrap_vendor_paths()
-
 # OAuth and HTTP server imports for Zotify-style authentication
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -44,9 +41,13 @@ _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 try:
     from utils.models import TrackInfo, Tags, TrackDownloadInfo, DownloadEnum, CodecEnum, QualityEnum, CodecOptions, DownloadTypeEnum, ArtistInfo, AlbumInfo, PlaylistInfo
 except ImportError:
-    logging.warning("spotify_api.py: Could not import from utils.models. Defining dummy types for method signatures if run standalone.")    
-    class TrackInfo: pass
-    class Tags: pass
+    # Definisi Class Manual agar tidak Error
+    class TrackInfo:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items(): setattr(self, k, v)
+    class Tags:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items(): setattr(self, k, v)
     class ArtistInfo:
         def __init__(self, name=None, albums=None, **kwargs):
             self.name = name
@@ -62,20 +63,22 @@ except ImportError:
             self.name = name
             self.tracks = tracks if tracks else []
             for k,v in kwargs.items(): setattr(self, k, v)
+            
     class QualityEnum: LOW=1; HIGH=2; HIFI=3
     class CodecEnum: VORBIS=1; AAC=2; FLAC=3; MP3=4
     class DownloadEnum: TEMP_FILE_PATH=1
     class DownloadTypeEnum: track="track"; album="album"; artist="artist"; playlist="playlist"; show="show"; episode="episode"
+    
     class TrackDownloadInfo:
         def __init__(self, download_type=None, file_url=None, codec=None, **kwargs):
             self.download_type=download_type; self.file_url=file_url; self.codec=codec;
             for k,v in kwargs.items(): setattr(self, k, v)
+            
     class CodecOptions: pass
-    # For _save_stream_to_temp_file if codec_data is not available:
     class DummyContainer: name = 'ogg'
     class DummyCodecData: container = DummyContainer()
     codec_data_fallback = {CodecEnum.VORBIS: DummyCodecData(), CodecEnum.AAC: DummyCodecData(), CodecEnum.FLAC: DummyCodecData(), CodecEnum.MP3: DummyCodecData()}
-
+    
 # OAuth constants
 API_URL = "https://api.spotify.com/v1/"
 AUTH_URL = "https://accounts.spotify.com/"
