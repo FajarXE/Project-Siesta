@@ -173,8 +173,7 @@ class OAuth:
         self.http_server.access_code_payload = None 
         self.http_server.error_payload = None
         
-        # Penting: Set oauth_handler ke instance server agar handler bisa akses
-        self.http_server.oauth_handler = self.oauth_handler 
+        self.http_server.oauth_handler = self
 
         self.server_thread = Thread(target=self.http_server.serve_forever, daemon=True)
         self.server_thread.start()
