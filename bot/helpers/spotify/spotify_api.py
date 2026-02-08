@@ -38,25 +38,42 @@ _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 
 # --- MANUAL CLASS: STORED TOKEN (SOLUSI IMPORT ERROR) ---
 class StoredToken:
-    def __init__(self, access_token, expires_in, refresh_token=None, expires_at=None, spotify_username=None, scope=None, **kwargs):
-        self.access_token = access_token
-        self.expires_in = int(expires_in)
-        self.refresh_token = refresh_token
-        self.spotify_username = spotify_username
-        self.scopes = scope.split() if isinstance(scope, str) else (scope or [])
-        
-        if expires_at:
-            self.expires_at = int(expires_at)
+    def __init__(self, access_token_or_dict, expires_in=None, refresh_token=None, expires_at=None, spotify_username=None, scope=None, **kwargs):
+        # LOGIKA CERDAS: Cek apakah input pertama adalah Dictionary
+        if isinstance(access_token_or_dict, dict):
+            data = access_token_or_dict
+            self.access_token = data.get("access_token")
+            # Default expires_in ke 3600 jika tidak ada
+            self.expires_in = int(data.get("expires_in", 3600))
+            self.refresh_token = data.get("refresh_token")
+            self.spotify_username = data.get("spotify_username")
+            scope_val = data.get("scope")
+            self.scopes = scope_val.split() if isinstance(scope_val, str) else (scope_val or [])
+            
+            # Hitung expires_at otomatis jika belum ada
+            if data.get("expires_at"):
+                self.expires_at = int(data["expires_at"])
+            else:
+                self.expires_at = int(time.time()) + self.expires_in
         else:
-            self.expires_at = int(time.time()) + self.expires_in
+            # Jika dipanggil secara normal (argumen terpisah)
+            self.access_token = access_token_or_dict
+            self.expires_in = int(expires_in) if expires_in else 3600
+            self.refresh_token = refresh_token
+            self.spotify_username = spotify_username
+            self.scopes = scope.split() if isinstance(scope, str) else (scope or [])
+            
+            if expires_at:
+                self.expires_at = int(expires_at)
+            else:
+                self.expires_at = int(time.time()) + self.expires_in
 
     def expired(self):
         return int(time.time()) > (self.expires_at - 30)
 
     @classmethod
     def from_dict(cls, data):
-        # Ini penting agar dictionary dibongkar menjadi argumen
-        return cls(**data)
+        return cls(data) # Sekarang aman memanggil langsung
         
     def to_dict(self):
         return {
