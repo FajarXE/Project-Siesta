@@ -868,30 +868,27 @@ class SpotifyAPI:
 
     def _create_librespot_session_from_oauth(self) -> bool:
         """
-        Membuat sesi Librespot menggunakan token OAuth dengan sistem global patch.
-        [FIX] Menambahkan Auto-Refresh jika terkena 'BadCredentials' saat restart.
+        Membuat sesi Librespot dengan penanganan Token Mati (Revoked).
         """
         if not self.stored_token or not self.stored_token.access_token:
-            self.logger.error("No valid OAuth token available for librespot session creation.")
+            self.logger.error("No valid OAuth token available.")
             return False
 
-        spotify_username_for_librespot = self.stored_token.spotify_username or "PKCE_LibrespotUser"
-        current_spotify_api_instance_ref = weakref.ref(self)
-
-        # 1. Setup Patching
-        def temporary_token_provider_factory_for_patch(session_instance, *args, **kwargs):
-            api_instance = current_spotify_api_instance_ref()
-            if api_instance:
-                return SpotifyApiTokenProvider(session_instance, api_instance)
-            return _OriginalLibrespotTokenProvider(session_instance, *args, **kwargs)
+        spotify_username = self.stored_token.spotify_username or "PKCE_LibrespotUser"
+        
+        # Setup Patching
+        current_api_ref = weakref.ref(self)
+        def token_provider_patch(session, *args, **kwargs):
+            api = current_api_ref()
+            if api: return SpotifyApiTokenProvider(session, api)
+            return _OriginalLibrespotTokenProvider(session, *args, **kwargs)
 
         if not hasattr(librespot.core, '_truly_original_token_provider_for_restore'):
             librespot.core._truly_original_token_provider_for_restore = librespot.core.TokenProvider
-        
-        librespot.core.TokenProvider = temporary_token_provider_factory_for_patch
+        librespot.core.TokenProvider = token_provider_patch
 
         try:
-            # 2. Konfigurasi Dasar
+            # Config Builder
             conf_builder = LibrespotSession.Configuration.Builder()
             conf_builder.set_store_credentials(False) 
             cache_path = os.path.join(self.credentials_dir, ".librespot_cache")
@@ -901,89 +898,80 @@ class SpotifyAPI:
             conf = conf_builder.build()
 
             builder = LibrespotSession.Builder(conf)
-            auth_type = Authentication_pb2.AuthenticationType.values()[3] # OAUTH
-            
-            # Setup Kredensial Awal
-            builder.login_credentials = Authentication_pb2.LoginCredentials(
-                username=spotify_username_for_librespot,
-                typ=auth_type,
-                auth_data=self.stored_token.access_token.encode('utf-8')
-            )
+            auth_type = Authentication_pb2.AuthenticationType.values()[3]
 
-            # 3. --- [RETRY LOGIC + BAD CREDENTIALS FIX] ---
+            # --- RETRY LOOP (FIXED) ---
             max_retries = 3
             for attempt in range(max_retries):
+                # Update kredensial di setiap putaran (penting jika token berubah)
+                builder.login_credentials = Authentication_pb2.LoginCredentials(
+                    username=spotify_username,
+                    typ=auth_type,
+                    auth_data=self.stored_token.access_token.encode('utf-8')
+                )
+
                 try:
-                    self.logger.info(f"Mencoba builder.create() - Percobaan {attempt + 1}/{max_retries}...")
+                    self.logger.info(f"Mencoba login Librespot (Percobaan {attempt + 1})...")
                     self.librespot_session = builder.create() 
-                    break # Berhasil, keluar loop
+                    break 
 
                 except Exception as e:
-                    error_msg = str(e)
+                    err_msg = str(e)
                     
-                    # KASUS A: Token Basi (BadCredentials) - Sering terjadi saat restart ENV
-                    if "BadCredentials" in error_msg:
-                        self.logger.warning("⚠️ BadCredentials terdeteksi! Token ENV kadaluarsa. Mencoba Refresh Paksa...")
-                        
+                    # KASUS 1: Token ENV Basi (BadCredentials)
+                    if "BadCredentials" in err_msg:
+                        self.logger.warning("⚠️ Token Kadaluarsa (BadCredentials). Melakukan Refresh Darurat...")
                         try:
-                            # Refresh Manual menggunakan endpoint Proxy/Google yang ada di file Anda
                             PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
                             payload = {
                                 "grant_type": "refresh_token",
                                 "refresh_token": self.stored_token.refresh_token,
                                 "client_id": PUBLIC_ID
                             }
-                            # Gunakan URL yang sama dengan logic _load_credentials Anda
                             resp = requests.post("https://accounts.spotify.com/api/token", data=payload, timeout=10)
                             
                             if resp.status_code == 200:
                                 new_data = resp.json()
-                                # Update StoredToken
                                 self.stored_token.access_token = new_data['access_token']
-                                self.stored_token.expires_in = new_data['expires_in']
-                                self.stored_token.expires_at = int(time.time()) + new_data['expires_in']
+                                self.stored_token.expires_in = int(new_data['expires_in'])
+                                self.stored_token.expires_at = int(time.time()) + int(new_data['expires_in'])
                                 
-                                # Update File JSON agar sinkron
-                                self._save_credentials(self.stored_token, self.stored_token.spotify_username)
-                                
-                                # PENTING: Update Builder dengan Token BARU
-                                builder.login_credentials = Authentication_pb2.LoginCredentials(
-                                    username=spotify_username_for_librespot,
-                                    typ=auth_type,
-                                    auth_data=self.stored_token.access_token.encode('utf-8')
-                                )
-                                self.logger.info("✅ Token berhasil di-refresh! Mengulangi login...")
-                                continue # Coba lagi dengan token baru
+                                # Simpan token baru agar sinkron
+                                self._save_credentials(self.stored_token, spotify_username)
+                                self.logger.info("✅ Token berhasil disegarkan! Mencoba login lagi...")
+                                continue 
                             else:
-                                self.logger.error(f"Gagal Refresh Token: {resp.text}")
+                                # [FIX] Jika Refresh Gagal Total (Revoked), Hapus File & Menyerah
+                                self.logger.error(f"❌ Refresh Gagal: {resp.text}")
+                                if "revoked" in resp.text or "invalid_grant" in resp.text:
+                                    self.logger.error("💀 Token Mati Total (Revoked). Menghapus kredensial...")
+                                    self._clear_credentials()
+                                    return False # Kembalikan False agar _load_credentials bisa trigger Re-Auth
                         except Exception as refresh_err:
-                            self.logger.error(f"Error saat refresh token darurat: {refresh_err}")
+                            self.logger.error(f"Error saat refresh: {refresh_err}")
 
-                    # KASUS B: Koneksi Ditolak (Errno 111)
-                    if "Connection refused" in error_msg or "111" in error_msg:
-                        if attempt < max_retries - 1:
-                            self.logger.warning(f"⚠️ Koneksi ditolak (Errno 111). Menunggu 3 detik...")
-                            time.sleep(3)
-                            continue
+                    # KASUS 2: Koneksi
+                    if "Connection refused" in err_msg or "111" in err_msg:
+                        self.logger.warning("⚠️ Koneksi ditolak. Menunggu 3 detik...")
+                        time.sleep(3)
+                        continue
                     
-                    # Jika error lain atau refresh gagal, lempar error
-                    raise e
+                    if attempt == max_retries - 1: 
+                        self.logger.error(f"❌ Gagal login setelah retry: {e}")
+                        return False
 
-            # 4. Finalisasi
             if self.librespot_session:
-                self.logger.info(f"✅ Sesi Librespot berhasil dibuat: {self.librespot_session.username()}")
+                self.logger.info(f"✅ Sesi Librespot Aktif: {self.librespot_session.username()}")
                 return True
             return False
 
         except Exception as e:
-            self.logger.error(f"❌ Gagal membuat sesi Librespot: {e}")
+            self.logger.error(f"❌ Exception Fatal Sesi: {e}")
             self.librespot_session = None
             return False
         finally:
             if hasattr(librespot.core, '_truly_original_token_provider_for_restore'):
                 librespot.core.TokenProvider = librespot.core._truly_original_token_provider_for_restore
-        
-        return False
 
     def _get_web_api_token(self) -> Optional[str]:
         """
@@ -1055,197 +1043,113 @@ class SpotifyAPI:
 
     def _load_credentials_and_init_session(self) -> bool:
         """
-        Loads existing OAuth credentials.
-        MODIFIED: Fixes 'bool object' error and disables auto-browser login for Render.
+        Memuat kredensial dan inisialisasi sesi.
+        [FIX] Menghapus 'return False' prematur agar bot bisa lanjut ke Login Ulang jika sesi awal gagal.
         """
         self.logger.info("Attempting to authenticate and initialize session...")
         
-        # Cek username di config
         username = self.config.get('username', '') if self.config else ''
         if not username:
             self.logger.error("Spotify credentials missing in config.")
             return False
         
-        # Step 1: Load Librespot Token
+        # Simpan handler asli untuk restore nanti
         original_oauth_handler = self.oauth_handler
         self.oauth_handler = self.librespot_oauth_handler
         
-        librespot_loaded = False
-        credentials_existed = os.path.exists(self.credentials_file_path)
-        
-        # Coba load kredensial dari file/JSON
-        if self._load_existing_credentials():
-            self.logger.info("Successfully loaded existing librespot OAuth credentials.")
-            self.librespot_stored_token = self.stored_token
-            librespot_loaded = True
-        else:
-            if credentials_existed:
-                self._clear_credentials()
-            self.logger.info("No valid existing librespot credentials found.")
-        
-        # --- MATIKAN AUTO LOGIN BROWSER ---
-        if not librespot_loaded:
-            self.logger.error("❌ FATAL: Kredensial Spotify Kadaluarsa atau Hilang.")
-            self.logger.error("👉 SOLUSI: Jalankan '/spotify_login' di Telegram.")
-            self.oauth_handler = original_oauth_handler
-            return False
-
-        # Step 2: Create Librespot Session
+        # --- STEP 1: LOAD KREDENSIAL DARI FILE/ENV ---
+        # Kita inline logika helper di sini agar Anda mudah copas satu blok
+        credentials_loaded = False
         try:
-            self.logger.info("Creating Librespot session from stored OAuth token...")
-            
-            # [PERBAIKAN UTAMA DI SINI]
-            # Jangan assign ke self.librespot_session, tapi tampung statusnya
-            session_created_status = self._create_librespot_session_from_oauth()
-            
-            # Cek apakah berhasil DAN apakah objek sesi benar-benar ada
-            if not session_created_status or not self.librespot_session:
-                self.logger.error("Failed to create librespot session object.")
-                self.oauth_handler = original_oauth_handler
-                return False
+            if self._load_existing_credentials():
+                self.librespot_stored_token = self.stored_token
+                credentials_loaded = True
+            else:
+                self.logger.info("No valid existing credentials found (or load failed).")
+        except Exception: 
+            pass
 
-            self.oauth_handler = original_oauth_handler
-            
-            # Step 3: Test Call (Safe Mode)
-            # Kita gunakan try-except agar jika test gagal, bot tetap jalan
-            try:
-                example_track_id = TrackId.from_base62("4cOdK2wGLETKBW3PvgPWqT") 
-                self.logger.info(f"Session object created. Testing API access...")
-                
-                # Pastikan ini Objek, bukan Boolean (Double check)
-                if isinstance(self.librespot_session, bool):
-                     self.logger.error("FATAL: self.librespot_session is BOOLEAN. This should not happen.")
-                     return False
-                     
-                track_meta = self.librespot_session.api().get_metadata_4_track(example_track_id)
-                self.logger.info(f"Test API Sukses: {track_meta.name}")
-            except Exception as e:
-                # KITA HANYA KASIH WARNING, JANGAN RETURN FALSE!
-                self.logger.warning(f"⚠️ Test API Gagal ({e}), tapi kita anggap Login BERHASIL dan lanjut saja.")
-
-            return True
-
+        # --- STEP 2: COBA BUAT SESI (INITIAL ATTEMPT) ---
+        session_active = False
+        try:
+            if credentials_loaded:
+                self.logger.info("Creating Librespot session (Attempt 1)...")
+                # Panggil fungsi create yang sudah kita perbaiki sebelumnya (Anti-BadCredentials)
+                if self._create_librespot_session_from_oauth() and self.librespot_session:
+                    self.logger.info("✅ Login Sukses dengan token yang ada.")
+                    session_active = True
+                else:
+                    self.logger.warning("⚠️ Login awal gagal. Akan mencoba Re-Auth di langkah terakhir...")
         except Exception as e:
-            self.logger.error(f"Unexpected error during session init: {e}", exc_info=True)
-            self.oauth_handler = original_oauth_handler
-            return False
+            self.logger.error(f"Error during initial session init: {e}")
 
-        # Step 2: If custom credentials are available, also load/initialize Web API token
+        # --- STEP 3: LOAD WEB API (Opsional/Secondary) ---
+        # Bagian ini tetap dijalankan untuk memuat token metadata jika ada
+        self.oauth_handler = original_oauth_handler 
+        
         if self.web_api_oauth_handler != self.librespot_oauth_handler:
             self.oauth_handler = self.web_api_oauth_handler
-            # Try to load Web API credentials from a separate file or perform OAuth flow
             web_api_credentials_path = self.credentials_file_path.replace('.json', '_webapi.json')
             
-            web_api_loaded = False
             if os.path.exists(web_api_credentials_path):
-                self.logger.info(f"Web API credentials file found at {web_api_credentials_path}, attempting to load...")
                 try:
                     with open(web_api_credentials_path, 'r') as f:
                         token_data = json.load(f)
-                    
-                    # Check if client_id matches (similar to librespot credentials check)
-                    stored_client_id = token_data.get('client_id')
-                    current_client_id = self.oauth_handler.client_id if self.oauth_handler else None
-                    if stored_client_id and current_client_id and stored_client_id != current_client_id:
-                        self.logger.warning(f"Web API Client ID has changed (stored: {stored_client_id[:10]}..., current: {current_client_id[:10]}...). Removing old credentials.")
-                        try:
-                            os.remove(web_api_credentials_path)
-                            self.logger.info(f"Removed Web API credentials file {web_api_credentials_path} due to client_id change.")
-                        except OSError as e_rm:
-                            self.logger.error(f"Error removing Web API credentials file: {e_rm}")
-                    elif all(k in token_data for k in ["access_token", "refresh_token", "expires_in"]):
+                    if all(k in token_data for k in ["access_token", "refresh_token"]):
                         loaded_token = StoredToken.from_dict(token_data)
                         if loaded_token.expired():
-                            self.logger.info("Web API token is expired, attempting to refresh...")
                             refreshed = self.oauth_handler.refresh_access_token(loaded_token.refresh_token)
                             if refreshed:
                                 self.web_api_stored_token = StoredToken(refreshed)
-                                # Save the refreshed token
-                                try:
-                                    token_dict = self.web_api_stored_token.to_dict()
-                                    token_dict['client_id'] = self.oauth_handler.client_id
-                                    with open(web_api_credentials_path, 'w') as f:
-                                        json.dump(token_dict, f, indent=4)
-                                    self.logger.info(f"Saved refreshed Web API credentials to {web_api_credentials_path}")
-                                except Exception as e_save:
-                                    self.logger.warning(f"Could not save refreshed Web API credentials: {e_save}")
-                                web_api_loaded = True
-                                self.logger.info("Web API credentials successfully loaded and refreshed.")
-                            else:
-                                error_msg = self.oauth_handler.error_message if hasattr(self.oauth_handler, 'error_message') else "Unknown error"
-                                self.logger.warning(f"Failed to refresh Web API token: {error_msg}. Will perform new OAuth flow.")
+                                # Save refreshed
+                                t_dict = self.web_api_stored_token.to_dict()
+                                t_dict['client_id'] = self.oauth_handler.client_id
+                                with open(web_api_credentials_path, 'w') as f: json.dump(t_dict, f, indent=4)
                         else:
                             self.web_api_stored_token = loaded_token
-                            web_api_loaded = True
-                            self.logger.info("Web API credentials successfully loaded (token still valid).")
-                    else:
-                        self.logger.warning(f"Web API credentials file is missing required fields. Will perform new OAuth flow.")
                 except Exception as e:
-                    self.logger.warning(f"Could not load Web API credentials: {e}", exc_info=True)
-            else:
-                self.logger.info(f"Web API credentials file not found at {web_api_credentials_path}. Will perform new OAuth flow.")
-            
-            if not web_api_loaded:
-                self.logger.info("Proceeding with Web API PKCE OAuth flow (custom credentials).")
-                # Don't save to the main credentials.json file, we will save to credentials_webapi.json manually below
-                if self._perform_oauth_flow(save_to_main_file=False):
-                    self.web_api_stored_token = self.stored_token
-                    # Save Web API token to separate file
-                    try:
-                        with open(web_api_credentials_path, 'w') as f:
-                            token_dict = self.stored_token.to_dict()
-                            token_dict['client_id'] = self.oauth_handler.client_id
-                            json.dump(token_dict, f, indent=4)
-                        self.logger.info(f"Saved Web API credentials to {web_api_credentials_path}")
-                        # Verify file was created
-                        if os.path.exists(web_api_credentials_path):
-                            pass
-                        else:
-                            self.logger.warning("Web API credentials file NOT found after save!")
-                    except Exception as e:
-                        self.logger.warning(f"Could not save Web API credentials: {e}")
-                else:
-                    self.logger.warning("Web API OAuth PKCE flow failed, will use librespot token as fallback.")
-                    self.web_api_stored_token = self.librespot_stored_token
-        else:
-            # Same handler, reuse librespot token
-            self.web_api_stored_token = self.librespot_stored_token
-        
-        # Restore original handler and set stored_token to librespot token for backward compatibility
-        self.oauth_handler = original_oauth_handler
+                    self.logger.warning(f"Web API load error: {e}")
+
+            # Jika token Web API masih kosong, pakai token librespot sebagai fallback
+            if not self.web_api_stored_token:
+                 self.web_api_stored_token = self.librespot_stored_token
+
+        # Restore handler ke Librespot untuk main operations
+        self.oauth_handler = self.librespot_oauth_handler
         self.stored_token = self.librespot_stored_token
         
-        # Step 3: Create librespot session using librespot token
-        if self._create_librespot_session_from_oauth():
-            self.logger.info("Successfully initialized Librespot session.")
+        # Jika sesi sudah aktif dari Step 2, selesai.
+        if session_active:
             return True
-        else:
-            self.logger.error("Failed to create Librespot session with loaded/refreshed credentials. Credentials might be invalid.")
-            # If session creation failed, force re-authentication
-            self.logger.info("Forcing re-authentication due to session creation failure...")
-            self._clear_credentials()
-            
-            # Switch back to librespot handler for the re-auth flow
-            self.oauth_handler = self.librespot_oauth_handler
-            
-            self.logger.info("Proceeding with librespot PKCE OAuth flow (Desktop client_id) - Retry.")
-            print("\n" + "="*60)
-            print("SPOTIFY AUTHENTICATION REQUIRED (Session Creation Failed)")
-            print("="*60)
-            print("A browser window will open for Spotify authorization.")
-            print("Please complete the authorization in your browser.")
-            print("="*60 + "\n")
-            
-            if self._perform_oauth_flow():
-                self.librespot_stored_token = self.stored_token
-                # Try creating session again
-                if self._create_librespot_session_from_oauth():
-                    self.logger.info("Successfully initialized Librespot session after re-authentication.")
-                    return True
-            
-            self.logger.error("CRITICAL: Failed to create Librespot session even after re-authentication attempt.")
-            return False
 
+        # --- STEP 4: FORCE RE-AUTHENTICATION (JARING PENGAMAN) ---
+        # Jika sampai sini sesi belum aktif, berarti token mati total. Kita minta login ulang.
+        
+        self.logger.info("🔄 Masuk ke tahap Re-Authentication Darurat...")
+        self._clear_credentials() # Hapus file lama yang rusak
+        
+        print("\n" + "="*60)
+        print("SPOTIFY LOGIN DIPERLUKAN (Token Lama Mati/Revoked)")
+        print("="*60 + "\n")
+        
+        # Coba Flow Login Baru
+        if self._perform_oauth_flow():
+            self.librespot_stored_token = self.stored_token
+            # Coba buat sesi lagi dengan token BARU
+            if self._create_librespot_session_from_oauth():
+                self.logger.info("✅ Login Ulang Berhasil! Sesi aktif.")
+                
+                print("\n" + "!"*60)
+                print("PENTING: Token baru telah dibuat.")
+                print("Segera salin isi 'bot/config/spotify/credentials.json'")
+                print("ke ENV VARIABLE di hosting Anda agar tidak error saat restart lagi.")
+                print("!"*60 + "\n")
+                
+                return True
+        
+        self.logger.error("❌ CRITICAL: Gagal login ulang. Jalankan /spotify_login di Telegram.")
+        return False
+    
     def _is_session_valid(self, session_obj: Optional[LibrespotSession]) -> bool:
         """Checks if the provided librespot session object is considered valid."""
         self.logger.debug(f"_is_session_valid invoked. Type of session_obj: {type(session_obj)}")
