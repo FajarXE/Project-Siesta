@@ -36,7 +36,36 @@ from librespot.mercury import MercuryClient
 # Store reference to original LibrespotTokenProvider before any patching
 _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 
-# --- DATA STRUCTURES (BERSIH & FINAL) ---
+# --- MANUAL CLASS: STORED TOKEN (SOLUSI IMPORT ERROR) ---
+class StoredToken:
+    def __init__(self, access_token, expires_in, refresh_token=None, expires_at=None, spotify_username=None, **kwargs):
+        self.access_token = access_token
+        self.expires_in = expires_in
+        self.refresh_token = refresh_token
+        self.spotify_username = spotify_username
+        
+        if expires_at:
+            self.expires_at = expires_at
+        else:
+            self.expires_at = int(time.time()) + expires_in
+
+    def expired(self):
+        return int(time.time()) > self.expires_at
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(**data)
+        
+    def to_dict(self):
+        return {
+            "access_token": self.access_token,
+            "expires_in": self.expires_in,
+            "refresh_token": self.refresh_token,
+            "expires_at": self.expires_at,
+            "spotify_username": self.spotify_username
+        }
+
+# --- DATA STRUCTURES (LENGKAP DENGAN DOWNLOADTYPEENUM) ---
 
 @dataclass
 class Tags:
@@ -56,6 +85,15 @@ class QualityEnum:
 
 class CodecEnum:
     VORBIS = "VORBIS"
+
+# [PERBAIKAN UTAMA] Menambahkan class ini agar tidak Error NameError
+class DownloadTypeEnum:
+    track = "track"
+    album = "album"
+    playlist = "playlist"
+    artist = "artist"
+    episode = "episode"
+    show = "show"
 
 @dataclass
 class TrackInfo:
