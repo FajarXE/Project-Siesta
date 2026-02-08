@@ -1920,64 +1920,78 @@ class SpotifyAPI:
 
     def get_track_info(self, track_id: str, quality_tier: QualityEnum, codec_options: CodecOptions, **extra_kwargs) -> Optional[TrackInfo]:
         """
-        Fetches track information using the Spotify Web API (via get_track_by_id)
-        and then enriches it with stream details if necessary (placeholder for now).
+        Mengambil info track dan mengisi SEMUA field agar Caption Telegram lengkap.
         """
         self.logger.debug(f"SpotifyAPI.get_track_info entered for track_id: {track_id}")
-        # Get Web API token (uses custom credentials if available, otherwise librespot token)
+        
         web_api_token = self._get_web_api_token()
         if not web_api_token:
-            self.logger.info("Access token missing in get_track_info. Attempting to load/refresh.")
-            if not self._load_credentials_and_init_session():
-                self.logger.error("Failed to ensure authentication for get_track_info.")
-                return None
+            if not self._load_credentials_and_init_session(): return None
             web_api_token = self._get_web_api_token()
-            if not web_api_token:
-                self.logger.error("Still no access token after session initialization in get_track_info.")
-                return None 
+        
         try:
             web_api_track_data = self.get_track_by_id(track_id) 
-            if not web_api_track_data:
-                self.logger.warning(f"No track data returned from Web API for ID: {track_id}")
-                return None
+            if not web_api_track_data: return None
+
+            # --- PARSING DATA ---
             name = web_api_track_data.get('name')
             duration_ms = web_api_track_data.get('duration_ms')
-            explicit = web_api_track_data.get('explicit', False)
+            
+            # [PERBAIKAN] Ubah Boolean Explicit jadi String agar muncul di Caption
+            explicit_bool = web_api_track_data.get('explicit', False)
+            explicit_str = "Yes" if explicit_bool else "No"
+            
             track_number = web_api_track_data.get('track_number')
             disc_number = web_api_track_data.get('disc_number')
-            isrc = web_api_track_data.get('external_ids', {}).get('isrc')
+            
             artists_data = web_api_track_data.get('artists', [])
             artist_names = [artist.get('name') for artist in artists_data if artist.get('name')]
             artist_ids = [artist.get('id') for artist in artists_data if artist.get('id')]
+            
             album_data = web_api_track_data.get('album', {})
             album_name = album_data.get('name')
             album_id_spotify = album_data.get('id')
             album_release_date_str = album_data.get('release_date')
-            album_type_str = album_data.get('album_type')
             album_total_tracks = album_data.get('total_tracks')
+            
+            # Ambil Album Artist
             album_artist_data = album_data.get('artists', [])
             album_artist_names = [aa.get('name') for aa in album_artist_data if aa.get('name')]
-            album_release_year_int = 0
-            if album_release_date_str and len(album_release_date_str) >= 4:
-                try:
-                    album_release_year_int = int(album_release_date_str[:4])
-                except ValueError:
-                    self.logger.warning(f"Could not parse year from album release_date: {album_release_date_str} for track {track_id}")
+            
+            # Cover Art (Cari resolusi 640x640)
             cover_url = None
             if album_data.get('images'):
-                preferred_image = next((img for img in album_data['images'] if img.get('height') == 640 and img.get('width') == 640), None)
-                if preferred_image:
-                    cover_url = preferred_image.get('url')
-                else: 
-                    cover_url = album_data['images'][0].get('url')
+                preferred_image = next((img for img in album_data['images'] if img.get('height') == 640), None)
+                cover_url = preferred_image.get('url') if preferred_image else album_data['images'][0].get('url')
+            
+            # Parsing Tahun
+            album_release_year_int = 0
+            if album_release_date_str and len(album_release_date_str) >= 4:
+                try: album_release_year_int = int(album_release_date_str[:4])
+                except: pass
+
             gid_hex_value = self._convert_base62_to_gid_hex(track_id) 
+
+            # --- ISI TAGS LENGKAP ---
             tags_obj = Tags(
                 album_artist=album_artist_names if album_artist_names else artist_names,
-                track_number=str(track_number) if track_number is not None else None,
-                total_tracks=str(album_total_tracks) if album_total_tracks is not None else None,
-                disc_number=str(disc_number) if disc_number is not None else None,
+                track_number=str(track_number) if track_number is not None else "1",
+                total_tracks=str(album_total_tracks) if album_total_tracks is not None else "1",
+                disc_number=str(disc_number) if disc_number is not None else "1",
                 release_date=album_release_date_str,
+                year=str(album_release_year_int) # Tambahan untuk caption
             )
+
+            # --- [PERBAIKAN] TENTUKAN STRING KUALITAS UNTUK CAPTION ---
+            # Karena kita sudah paksa 320kbps di get_track_download, kita tulis hardcode atau dinamis
+            quality_str = "High (320kbps)" 
+            if quality_tier and hasattr(quality_tier, 'name'):
+                if "HIFI" in quality_tier.name or "VERY" in quality_tier.name:
+                    quality_str = "Very High (320kbps)"
+                elif "NORMAL" in quality_tier.name:
+                    quality_str = "Normal (160kbps)"
+
+            # --- RETURN TRACK INFO DENGAN EXTRA FIELDS ---
             track_info_instance = TrackInfo(
                 id=track_id,
                 name=name,
@@ -1987,25 +2001,25 @@ class SpotifyAPI:
                 album=album_name,
                 duration=duration_ms // 1000 if duration_ms else 0,
                 cover_url=cover_url,
-                explicit=explicit,
+                explicit=explicit_bool, # Boolean untuk Logic internal
                 tags=tags_obj,
                 codec=CodecEnum.VORBIS, 
                 release_year=album_release_year_int,
                 gid_hex=gid_hex_value,
+                
+                # --- FIELD TAMBAHAN AGAR CAPTION MUNCUL ---
+                quality=quality_str,             # Mengisi field QUALITY :
+                provider="Spotify",              # Mengisi field PROVIDER :
+                release_date=album_release_date_str, # Mengisi RELEASE DATE :
+                total_tracks=album_total_tracks, # Mengisi TOTAL TRACKS :
+                total_volumes=1,                 # Default volume
+                explicit_str=explicit_str        # Mengisi EXPLICIT : (Yes/No)
             )
-            self.logger.debug(f"Successfully created TrackInfo for {track_id}: {name}. Returning object.")
+            
             return track_info_instance
-        except SpotifyItemNotFoundError:
-            self.logger.warning(f"Track with ID '{track_id}' not found via Spotify Web API.")
-            return None
-        except SpotifyAuthError as auth_err:
-            self.logger.error(f"Authentication error while getting track info for {track_id}: {auth_err}", exc_info=True)
-            raise
-        except SpotifyApiError as api_err:
-            self.logger.error(f"API error while getting track info for {track_id}: {api_err}", exc_info=True)
-            return None
+
         except Exception as e:
-            self.logger.error(f"Unexpected error in get_track_info for track_id {track_id}: {e}", exc_info=True)
+            self.logger.error(f"Error in get_track_info: {e}", exc_info=True)
             return None
 
     def _get_valid_token(self):
