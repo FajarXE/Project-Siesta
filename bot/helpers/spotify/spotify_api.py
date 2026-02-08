@@ -1500,6 +1500,7 @@ class SpotifyAPI:
         Mendownload track dengan fitur:
         1. Auto-Retry untuk koneksi putus (Errno 104).
         2. Auto-Downgrade Quality untuk error 403 (Mengatasi isu Premium/Region).
+        3. [MODIFIKASI] Memaksa 320kbps (Very High) untuk setting 'HIGH'.
         """
         # 1. Parsing Input
         if not track_id and 'track_id' in kwargs:
@@ -1507,23 +1508,26 @@ class SpotifyAPI:
         if not quality_tier and 'quality_tier' in kwargs:
             quality_tier = kwargs.get('quality_tier')
 
-        # 2. Mapping Kualitas Audio
+        # 2. Mapping Kualitas Audio (PERBAIKAN DI SINI)
+        # Librespot Def: NORMAL=96kbps, HIGH=160kbps, VERY_HIGH=320kbps
+        # Kita ubah agar input "HIGH" dari bot dianggap "VERY_HIGH" (320kbps)
         quality_map = {
-            "LOW": LibrespotAudioQualityEnum.NORMAL, 
-            "NORMAL": LibrespotAudioQualityEnum.HIGH, 
-            "HIGH": LibrespotAudioQualityEnum.HIGH,   
-            "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,
-            "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH
+            "LOW": LibrespotAudioQualityEnum.NORMAL,      # 96 kbps
+            "NORMAL": LibrespotAudioQualityEnum.HIGH,     # 160 kbps (Upgrade dikit)
+            "HIGH": LibrespotAudioQualityEnum.VERY_HIGH,  # <--- PERUBAHAN UTAMA: PAKSA 320 KBPS
+            "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,  # 320 kbps
+            "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH # 320 kbps
         }
         
         qt_str = str(quality_tier).upper() if quality_tier else "HIGH"
-        # Mulai dengan kualitas yang diminta user
-        selected_quality = quality_map.get(qt_str, LibrespotAudioQualityEnum.HIGH)
+        
+        # Mulai dengan kualitas yang diminta (sekarang HIGH = 320kbps)
+        selected_quality = quality_map.get(qt_str, LibrespotAudioQualityEnum.VERY_HIGH)
         
         # Penanda apakah kita sudah menurunkan kualitas (agar tidak loop downgrade terus)
         has_downgraded = False
         
-        self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str}")
+        self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str} (Target Librespot: 320kbps)")
 
         # 3. Konversi ID
         try:
