@@ -104,13 +104,13 @@ async def send_message(user, item, itype='text',
                 disable_web_page_preview=True
             )
             
-            elif itype == 'doc':
+        elif itype == 'doc':
             # [LOGIKA BARU] Prioritas: Argument 'thumb' -> Meta 'thumbnail' -> Meta 'cover'
             thumb_path = thumb 
             if not thumb_path and meta:
                 thumb_path = meta.get('thumbnail') or meta.get('cover')
             
-            # Validasi file ada (cegah error jika file terhapus)
+            # Validasi file ada
             if thumb_path and not os.path.exists(thumb_path):
                 thumb_path = None
 
@@ -118,32 +118,24 @@ async def send_message(user, item, itype='text',
 
             async def progress_callback(current, total):
                 current_time = time.time()
-                if current_time - last_update_time[0] < 5:
-                    return
+                if current_time - last_update_time[0] < 5: return
                 last_update_time[0] = current_time
-
                 percentage = int((current / total) * 100)
                 progress_bar = "{0}{1}".format(
                     ''.join(["▰" for i in range(math.floor(percentage / 10))]),
                     ''.join(["▱" for i in range(10 - math.floor(percentage / 10))])
                 )
-                
                 try:
-                    text = (
-                        f"**Mengunggah file .zip...**\n"
-                        f"`{os.path.basename(item)}`\n\n"
-                        f"{progress_bar} {percentage}%"
-                    )
+                    text = (f"**Mengunggah file .zip...**\n`{os.path.basename(item)}`\n\n{progress_bar} {percentage}%")
                     asyncio.create_task(edit_message(user['bot_msg'], text, antiflood=False))
-                except Exception:
-                    pass
+                except: pass
             
             msg = await aio.send_document(
                 chat_id=chat_id,
                 document=item,
                 caption=caption,
                 reply_to_message_id=user['r_id'],
-                thumb=thumb_path, # <--- Pastikan parameter ini ada
+                thumb=thumb_path,
                 progress=progress_callback
             )
 
