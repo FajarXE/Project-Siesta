@@ -622,17 +622,29 @@ async def set_vorbis(data, handle, dur_ms=0):
 # HELPER UTILS
 # ==========================================
 async def savePic(handle, metadata):
-    album_art = metadata['cover']
-    if album_art == './project-siesta.png' or not os.path.exists(album_art):
+    # Ambil path cover dari metadata
+    album_art = metadata.get('cover')
+    
+    # [LOGIKA PENGAMAN]: Jika cover masih berupa URL (http...), download dulu!
+    # Ini mencegah error "No such file or directory" jika handler lupa mendownload gambar.
+    if album_art and album_art.startswith('http'):
+        # Kita panggil create_cover_file untuk mengubah URL -> File Lokal
+        # Pastikan fungsi create_cover_file sudah didefinisikan di file ini
+        album_art = await create_cover_file(album_art, metadata, thumbnail=False)
+        metadata['cover'] = album_art # Update variable
+
+    # Validasi: Pastikan sekarang file gambar benar-benar ada di disk
+    if not album_art or album_art == './project-siesta.png' or not os.path.exists(album_art):
         return
+
     try:
         with open(album_art, "rb") as f:
             data = f.read()
     except Exception as e:
-        LOGGER.error(e)
+        LOGGER.error(f"Error membaca file cover art: {e}")
         return
     
-    # 1. Handler FLAC
+    # --- 1. Handler FLAC ---
     if isinstance(handle, FLAC):
         pic = Picture()
         pic.data = data
@@ -640,25 +652,29 @@ async def savePic(handle, metadata):
         handle.clear_pictures()
         handle.add_picture(pic)
 
-    # 2. Handler OGG VORBIS (Perhatikan tanda ':' di akhir baris ini)
+    # --- 2. Handler OGG VORBIS (Spotify) ---
     elif isinstance(handle, OggVorbis): 
-        pic = Picture()
-        pic.data = data
-        pic.mime = u"image/jpeg"
-        pic.type = 3
-        pic.desc = u"Cover"
-        
-        # Encode gambar ke Base64
-        pic_data = pic.write()
-        encoded_data = base64.b64encode(pic_data).decode("ascii")
-        handle["METADATA_BLOCK_PICTURE"] = [encoded_data]
+        try:
+            pic = Picture()
+            pic.data = data
+            pic.mime = u"image/jpeg"
+            pic.type = 3 # 3 = Front Cover
+            pic.desc = u"Cover"
+            
+            # Encode gambar ke Base64 (Standard OGG Vorbis Comment)
+            # Wajib import base64 di paling atas file!
+            pic_data = pic.write()
+            encoded_data = base64.b64encode(pic_data).decode("ascii")
+            handle["METADATA_BLOCK_PICTURE"] = [encoded_data]
+        except Exception as e:
+            LOGGER.error(f"Gagal set cover art OGG: {e}")
 
-    # 3. Handler MP4
+    # --- 3. Handler MP4 (M4A) ---
     elif isinstance(handle, MP4):
         pic = MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)
         handle.tags['covr'] = [pic]
 
-    # 4. Handler MP3/Fallback
+    # --- 4. Handler MP3 / WAVE (ID3) ---
     elif isinstance(handle, (MP3, EasyMP3, WAVE)) or hasattr(handle, 'tags'):
         try:
             handle.tags.delall("APIC")
