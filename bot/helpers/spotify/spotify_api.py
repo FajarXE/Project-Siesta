@@ -1003,8 +1003,7 @@ class SpotifyAPI:
     def _load_credentials_and_init_session(self) -> bool:
         """
         Memuat kredensial dan inisialisasi sesi.
-        [FIX FINAL] Menghapus Auto Re-Auth yang memblokir startup server (Headless Mode).
-        Jika login gagal, bot akan tetap jalan (Spotify mati sementara) agar bisa diperbaiki lewat Telegram.
+        [FIX] Memperbaiki pemanggilan StoredToken.from_dict() pada bagian Web API Refresh.
         """
         self.logger.info("Attempting to authenticate and initialize session...")
         
@@ -1033,7 +1032,7 @@ class SpotifyAPI:
         try:
             if credentials_loaded:
                 self.logger.info("Creating Librespot session (Attempt 1)...")
-                # Gunakan fungsi create yang sudah kita perbaiki sebelumnya (Anti-BadCredentials)
+                # Gunakan fungsi create yang sudah kita perbaiki
                 if self._create_librespot_session_from_oauth() and self.librespot_session:
                     self.logger.info("✅ Login Sukses dengan token yang ada.")
                     session_active = True
@@ -1053,12 +1052,21 @@ class SpotifyAPI:
                 try:
                     with open(web_api_credentials_path, 'r') as f:
                         token_data = json.load(f)
+                    
                     if all(k in token_data for k in ["access_token", "refresh_token"]):
+                        # Gunakan from_dict
                         loaded_token = StoredToken.from_dict(token_data)
+                        
                         if loaded_token.expired():
+                            self.logger.info("Web API token expired, refreshing...")
                             refreshed = self.oauth_handler.refresh_access_token(loaded_token.refresh_token)
+                            
                             if refreshed:
-                                self.web_api_stored_token = StoredToken(refreshed)
+                                # [FIX UTAMA] DULU ERROR DI SINI: StoredToken(refreshed)
+                                # SEKARANG BENAR:
+                                self.web_api_stored_token = StoredToken.from_dict(refreshed)
+                                
+                                # Save refreshed
                                 t_dict = self.web_api_stored_token.to_dict()
                                 t_dict['client_id'] = self.oauth_handler.client_id
                                 with open(web_api_credentials_path, 'w') as f: json.dump(t_dict, f, indent=4)
@@ -1077,11 +1085,9 @@ class SpotifyAPI:
         if session_active:
             return True
 
-        # --- STEP 4: FAIL GRACEFULLY (JANGAN MACET!) ---
-        # Kita hapus file rusak, log error, dan biarkan bot start
+        # --- STEP 4: FAIL GRACEFULLY ---
         self.logger.error("❌ Login Gagal Total (Token Mati/Revoked).")
-        self.logger.error("👉 Bot akan tetap start, tapi Spotify NON-AKTIF.")
-        self.logger.error("👉 SOLUSI: Setelah bot on, kirim '/spotify_login' di Telegram.")
+        self.logger.error("👉 Bot akan tetap start. Silakan kirim '/spotify_login' di Telegram.")
         
         self._clear_credentials()
         return False
