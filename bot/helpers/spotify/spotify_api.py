@@ -967,27 +967,31 @@ class SpotifyAPI:
     def _get_web_api_token(self) -> Optional[str]:
         """
         Mendapatkan token untuk Metadata (Web API).
-        [FIX] Menghapus Fallback ke Public Token agar tidak kena Rate Limit 429.
+        [FIX] STRICT MODE: Hanya gunakan Custom Client ID. DILARANG Fallback ke Public Token.
         """
-        # Cek token yang sudah ada
+        # 1. Cek apakah token lama masih valid
         if self.web_api_stored_token and not self.web_api_stored_token.expired():
             return self.web_api_stored_token.access_token
 
-        self.logger.info("🔄 Membuat Token Metadata Baru menggunakan Custom ID...")
+        self.logger.info("🔄 Membuat Token Metadata Baru (Client Credentials)...")
         
         try:
-            import base64
-            # Pastikan Client ID/Secret terisi di Config
-            if not self.config.get('client_id') or not self.config.get('client_secret'):
-                self.logger.error("❌ Client ID / Secret Kosong! Tidak bisa login metadata.")
+            # 2. Pastikan Client ID tersedia
+            client_id = self.config.get('client_id')
+            client_secret = self.config.get('client_secret')
+            
+            if not client_id or not client_secret:
+                self.logger.error("❌ CRITICAL: Client ID / Secret belum diisi di Config!")
+                self.logger.error("❌ Bot tidak bisa mengambil metadata tanpa Custom ID.")
                 return None
 
-            auth_str = f"{self.config['client_id']}:{self.config['client_secret']}"
+            # 3. Request Token Baru
+            import base64
+            auth_str = f"{client_id}:{client_secret}"
             b64_auth = base64.b64encode(auth_str.encode()).decode()
             
-            # Request Token Resmi
             resp = requests.post(
-                "https://accounts.spotify.com/api/token", # URL Token Spotify
+                "https://accounts.spotify.com/api/token",
                 data={"grant_type": "client_credentials"},
                 headers={"Authorization": f"Basic {b64_auth}"},
                 timeout=10
@@ -995,17 +999,24 @@ class SpotifyAPI:
             
             if resp.status_code == 200:
                 token_data = resp.json()
-                # Class StoredToken yang baru sudah pintar, tidak akan error di sini
-                self.web_api_stored_token = StoredToken(token_data)
+                # Gunakan .from_dict agar aman
+                self.web_api_stored_token = StoredToken.from_dict(token_data)
+                
+                # Simpan ke file cache khusus Web API
+                web_api_path = self.credentials_file_path.replace('.json', '_webapi.json')
+                with open(web_api_path, 'w') as f:
+                    json.dump(self.web_api_stored_token.to_dict(), f, indent=4)
+                    
+                self.logger.info("✅ Token Metadata Berhasil Diperbarui.")
                 return self.web_api_stored_token.access_token
             else:
-                self.logger.error(f"❌ Gagal Client Credentials: {resp.text}")
-                return None # JANGAN Fallback, biarkan error agar ketahuan
+                self.logger.error(f"❌ Gagal Login Metadata: {resp.status_code} - {resp.text}")
+                return None
                 
         except Exception as e:
-            self.logger.error(f"❌ Error Fatal saat login metadata: {e}")
+            self.logger.error(f"❌ Error Fatal Metadata: {e}")
             return None
-    
+
     def _clear_credentials(self):
         """Clear all Spotify credentials files to force re-authentication."""
         credentials_files = [
