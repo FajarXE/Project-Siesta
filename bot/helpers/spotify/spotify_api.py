@@ -1044,7 +1044,8 @@ class SpotifyAPI:
     def _load_credentials_and_init_session(self) -> bool:
         """
         Memuat kredensial dan inisialisasi sesi.
-        [FIX] Menghapus 'return False' prematur agar bot bisa lanjut ke Login Ulang jika sesi awal gagal.
+        [FIX FINAL] Menghapus Auto Re-Auth yang memblokir startup server (Headless Mode).
+        Jika login gagal, bot akan tetap jalan (Spotify mati sementara) agar bisa diperbaiki lewat Telegram.
         """
         self.logger.info("Attempting to authenticate and initialize session...")
         
@@ -1053,12 +1054,11 @@ class SpotifyAPI:
             self.logger.error("Spotify credentials missing in config.")
             return False
         
-        # Simpan handler asli untuk restore nanti
+        # Simpan handler asli
         original_oauth_handler = self.oauth_handler
         self.oauth_handler = self.librespot_oauth_handler
         
         # --- STEP 1: LOAD KREDENSIAL DARI FILE/ENV ---
-        # Kita inline logika helper di sini agar Anda mudah copas satu blok
         credentials_loaded = False
         try:
             if self._load_existing_credentials():
@@ -1069,22 +1069,21 @@ class SpotifyAPI:
         except Exception: 
             pass
 
-        # --- STEP 2: COBA BUAT SESI (INITIAL ATTEMPT) ---
+        # --- STEP 2: COBA BUAT SESI ---
         session_active = False
         try:
             if credentials_loaded:
                 self.logger.info("Creating Librespot session (Attempt 1)...")
-                # Panggil fungsi create yang sudah kita perbaiki sebelumnya (Anti-BadCredentials)
+                # Gunakan fungsi create yang sudah kita perbaiki sebelumnya (Anti-BadCredentials)
                 if self._create_librespot_session_from_oauth() and self.librespot_session:
                     self.logger.info("✅ Login Sukses dengan token yang ada.")
                     session_active = True
                 else:
-                    self.logger.warning("⚠️ Login awal gagal. Akan mencoba Re-Auth di langkah terakhir...")
+                    self.logger.warning("⚠️ Login awal gagal. Token mungkin expired atau revoked.")
         except Exception as e:
             self.logger.error(f"Error during initial session init: {e}")
 
-        # --- STEP 3: LOAD WEB API (Opsional/Secondary) ---
-        # Bagian ini tetap dijalankan untuk memuat token metadata jika ada
+        # --- STEP 3: LOAD WEB API (Metadata) ---
         self.oauth_handler = original_oauth_handler 
         
         if self.web_api_oauth_handler != self.librespot_oauth_handler:
@@ -1101,7 +1100,6 @@ class SpotifyAPI:
                             refreshed = self.oauth_handler.refresh_access_token(loaded_token.refresh_token)
                             if refreshed:
                                 self.web_api_stored_token = StoredToken(refreshed)
-                                # Save refreshed
                                 t_dict = self.web_api_stored_token.to_dict()
                                 t_dict['client_id'] = self.oauth_handler.client_id
                                 with open(web_api_credentials_path, 'w') as f: json.dump(t_dict, f, indent=4)
@@ -1110,46 +1108,25 @@ class SpotifyAPI:
                 except Exception as e:
                     self.logger.warning(f"Web API load error: {e}")
 
-            # Jika token Web API masih kosong, pakai token librespot sebagai fallback
             if not self.web_api_stored_token:
                  self.web_api_stored_token = self.librespot_stored_token
 
-        # Restore handler ke Librespot untuk main operations
+        # Restore handler ke Librespot
         self.oauth_handler = self.librespot_oauth_handler
         self.stored_token = self.librespot_stored_token
         
-        # Jika sesi sudah aktif dari Step 2, selesai.
         if session_active:
             return True
 
-        # --- STEP 4: FORCE RE-AUTHENTICATION (JARING PENGAMAN) ---
-        # Jika sampai sini sesi belum aktif, berarti token mati total. Kita minta login ulang.
+        # --- STEP 4: FAIL GRACEFULLY (JANGAN MACET!) ---
+        # Kita hapus file rusak, log error, dan biarkan bot start
+        self.logger.error("❌ Login Gagal Total (Token Mati/Revoked).")
+        self.logger.error("👉 Bot akan tetap start, tapi Spotify NON-AKTIF.")
+        self.logger.error("👉 SOLUSI: Setelah bot on, kirim '/spotify_login' di Telegram.")
         
-        self.logger.info("🔄 Masuk ke tahap Re-Authentication Darurat...")
-        self._clear_credentials() # Hapus file lama yang rusak
-        
-        print("\n" + "="*60)
-        print("SPOTIFY LOGIN DIPERLUKAN (Token Lama Mati/Revoked)")
-        print("="*60 + "\n")
-        
-        # Coba Flow Login Baru
-        if self._perform_oauth_flow():
-            self.librespot_stored_token = self.stored_token
-            # Coba buat sesi lagi dengan token BARU
-            if self._create_librespot_session_from_oauth():
-                self.logger.info("✅ Login Ulang Berhasil! Sesi aktif.")
-                
-                print("\n" + "!"*60)
-                print("PENTING: Token baru telah dibuat.")
-                print("Segera salin isi 'bot/config/spotify/credentials.json'")
-                print("ke ENV VARIABLE di hosting Anda agar tidak error saat restart lagi.")
-                print("!"*60 + "\n")
-                
-                return True
-        
-        self.logger.error("❌ CRITICAL: Gagal login ulang. Jalankan /spotify_login di Telegram.")
+        self._clear_credentials()
         return False
-    
+
     def _is_session_valid(self, session_obj: Optional[LibrespotSession]) -> bool:
         """Checks if the provided librespot session object is considered valid."""
         self.logger.debug(f"_is_session_valid invoked. Type of session_obj: {type(session_obj)}")
