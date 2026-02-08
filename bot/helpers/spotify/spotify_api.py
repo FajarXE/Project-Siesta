@@ -5,24 +5,25 @@ import requests
 import argparse
 import logging
 import time
-from typing import List, Optional, Tuple
 import tempfile
 import re
-from urllib.parse import urlparse
 import sys
 import io
 import contextlib
-
-# OAuth and HTTP server imports for Zotify-style authentication
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
-from urllib.parse import urlencode, urlparse, parse_qs
-
-# PKCE imports
 import secrets
 import base64
 import hashlib
+import weakref
+
+# --- [WAJIB ADA] Import untuk Data Class ---
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+# -------------------------------------------
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+from urllib.parse import urlencode, urlparse, parse_qs
 
 # Librespot imports
 from librespot.core import Session as LibrespotSession
@@ -32,37 +33,87 @@ from librespot.metadata import TrackId, EpisodeId
 from librespot.audio.decoders import AudioQuality as LibrespotAudioQualityEnum, VorbisOnlyAudioQuality
 from librespot.core import TokenProvider as LibrespotTokenProvider 
 from librespot.mercury import MercuryClient
-import weakref
 
 # Store reference to original LibrespotTokenProvider before any patching
 _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 
-# Attempt to import necessary types from utils.models for return types and enums
-try:
-    from utils.models import TrackInfo, Tags, TrackDownloadInfo, DownloadEnum, CodecEnum, QualityEnum, CodecOptions, DownloadTypeEnum, ArtistInfo, AlbumInfo, PlaylistInfo
-except ImportError:
-    # Definisi Class Manual agar tidak Error
-    class TrackInfo:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items(): setattr(self, k, v)
-    class Tags:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items(): setattr(self, k, v)
-    class ArtistInfo:
-        def __init__(self, name=None, albums=None, **kwargs):
-            self.name = name
-            self.albums = albums if albums else []
-            for k,v in kwargs.items(): setattr(self, k, v)
-    class AlbumInfo:
-        def __init__(self, name=None, tracks=None, **kwargs):
-            self.name = name
-            self.tracks = tracks if tracks else []
-            for k,v in kwargs.items(): setattr(self, k, v)
-    class PlaylistInfo:
-        def __init__(self, name=None, tracks=None, **kwargs):
-            self.name = name
-            self.tracks = tracks if tracks else []
-            for k,v in kwargs.items(): setattr(self, k, v)
+# --- DATA STRUCTURES ---
+
+@dataclass
+class Tags:
+    album_artist: str = None
+    track_number: int = None
+    total_tracks: int = None
+    disc_number: int = None
+    release_date: str = None
+    year: str = None
+
+@dataclass
+class CodecOptions:
+    format: str = "OGG"
+
+class QualityEnum:
+    HIGH = "HIGH"
+
+class CodecEnum:
+    VORBIS = "VORBIS"
+
+@dataclass
+class TrackInfo:
+    name: str
+    id: str
+    artists: List[str]
+    album: str
+    duration: int
+    cover_url: str
+    release_year: str = ""
+    explicit: bool = False
+    tags: Tags = None
+    codec: str = None
+    artist_id: str = None
+    album_id: str = None
+    gid_hex: str = None
+    # Field Tambahan untuk Caption & Handler
+    quality: str = None
+    provider: str = None
+    release_date: str = None
+    total_tracks: str = None
+    total_volumes: int = 1
+    explicit_str: str = "No"
+
+@dataclass
+class TrackDownloadInfo:
+    download_type: str
+    temp_file_path: str
+    file_url: str
+
+class DownloadEnum:
+    TEMP_FILE_PATH = "TEMP_FILE_PATH"
+
+@dataclass
+class AlbumInfo:
+    name: str
+    artist: str
+    tracks: List[TrackInfo]
+    all_track_cover_jpg_url: str
+    release_year: str
+    id: str
+    small_cover_url: str = None  # <--- [FIX ZIP] Field Baru untuk Thumbnail
+
+@dataclass
+class PlaylistInfo:
+    name: str
+    creator: str
+    tracks: List[TrackInfo]
+    cover_url: str
+    id: str
+    small_cover_url: str = None  # <--- [FIX ZIP] Field Baru untuk Thumbnail
+
+@dataclass
+class ArtistInfo:
+    name: str
+    albums: List[AlbumInfo] = None
+    id: str = None
             
     class QualityEnum: LOW=1; HIGH=2; HIFI=3
     class CodecEnum: VORBIS=1; AAC=2; FLAC=3; MP3=4
@@ -2035,7 +2086,9 @@ class SpotifyAPI:
     def get_album_info(self, album_id, metadata=None, _retry_attempted=False):
         """
         Mengambil info album dan mengembalikannya sebagai OBJECT AlbumInfo.
-        MODIFIKASI: Menggunakan market=US (bukan from_token) agar kompatibel dengan Client Credentials.
+        MODIFIKASI: 
+        1. Menggunakan market=US agar kompatibel dengan Client Credentials.
+        2. Mengambil 'small_cover_url' untuk Thumbnail ZIP.
         """
         try:
             # 1. Autentikasi
@@ -2043,8 +2096,6 @@ class SpotifyAPI:
             headers = {"Authorization": f"Bearer {token}"}
             
             # 2. Request API ke Spotify
-            # PERBAIKAN: Ganti 'market=from_token' menjadi 'market=US'
-            # Token Client Credentials tidak punya user, jadi from_token akan error 400.
             url = f"https://api.spotify.com/v1/albums/{album_id}?market=US"
             
             self.logger.info(f"Mengambil info album: {album_id}")
@@ -2077,10 +2128,25 @@ class SpotifyAPI:
             # --- PARSING DATA ---
             data = r.json()
             
+            # [LOGIKA BARU] Ambil Cover Besar & Kecil
             cover_url = ""
-            if data.get("images"):
-                cover_url = data["images"][0]["url"]
+            small_cover_url = ""
             
+            if data.get("images"):
+                cover_url = data["images"][0]["url"] # Gambar Terbesar (Original)
+                
+                # Cari gambar yang ukurannya <= 320px untuk Thumbnail ZIP
+                # Telegram butuh gambar < 320px agar muncul sebagai ikon file
+                for img in data["images"]:
+                    if img.get("height") and img.get("height") <= 320:
+                        small_cover_url = img["url"]
+                        break
+                
+                # Fallback: jika tidak ada yang pas, ambil yang paling kecil yang tersedia
+                if not small_cover_url: 
+                    small_cover_url = data["images"][-1]["url"]
+            
+            # Parsing Tracks (dengan Pagination)
             raw_tracks = data.get("tracks", {}).get("items", [])
             next_url = data.get("tracks", {}).get("next")
             
@@ -2126,13 +2192,15 @@ class SpotifyAPI:
             
             self.logger.info(f"Berhasil memproses album: {data.get('name')} ({len(track_objects)} lagu)")
 
+            # Return Object AlbumInfo LENGKAP dengan small_cover_url
             return AlbumInfo(
                 name=data.get("name"),
                 artist=data["artists"][0]["name"] if data.get("artists") else "Unknown",
                 tracks=track_objects,
                 all_track_cover_jpg_url=cover_url,
                 release_year=data.get("release_date", "")[:4],
-                id=data.get("id")
+                id=data.get("id"),
+                small_cover_url=small_cover_url  # <--- INI PENTING UNTUK ZIP
             )
 
         except Exception as e:
@@ -2142,18 +2210,22 @@ class SpotifyAPI:
     def get_playlist_info(self, playlist_id):
         """
         Mengambil info playlist dan mengembalikannya sebagai OBJECT PlaylistInfo.
-        MODIFIKASI: market=US (Fix 400 Error).
+        MODIFIKASI: 
+        1. market=US (Fix 400 Error).
+        2. Ambil 'small_cover_url' untuk Thumbnail ZIP.
         """
         try:
+            # 1. Autentikasi
             token = self._get_valid_token()
             headers = {"Authorization": f"Bearer {token}"}
             
-            # PERBAIKAN: market=US
+            # 2. Request API (Market US)
             url = f"https://api.spotify.com/v1/playlists/{playlist_id}?market=US"
             
             self.logger.info(f"Mengambil info playlist: {playlist_id}")
             r = requests.get(url, headers=headers)
             
+            # Handle Token Expired
             if r.status_code == 401:
                 self._load_credentials_and_init_session()
                 token = self._get_valid_token()
@@ -2165,8 +2237,26 @@ class SpotifyAPI:
                 return None
             
             data = r.json()
-            cover_url = data["images"][0]["url"] if data.get("images") else ""
             
+            # --- [LOGIKA BARU] AMBIL SMALL COVER UNTUK ZIP ---
+            cover_url = ""
+            small_cover_url = ""
+            
+            if data.get("images"):
+                cover_url = data["images"][0]["url"] # Gambar Terbesar (HD)
+                
+                # Cari gambar yang ukurannya <= 320px (Syarat Thumbnail Telegram)
+                for img in data["images"]:
+                    if img.get("height") and img.get("height") <= 320:
+                        small_cover_url = img["url"]
+                        break
+                
+                # Fallback: jika tidak ada yang pas, ambil yang paling kecil
+                if not small_cover_url: 
+                    small_cover_url = data["images"][-1]["url"]
+            # -------------------------------------------------
+            
+            # Parsing Tracks (Pagination Loop)
             raw_items = data.get("tracks", {}).get("items", [])
             next_url = data.get("tracks", {}).get("next")
             
@@ -2186,11 +2276,17 @@ class SpotifyAPI:
             track_objects = []
             for item in raw_items:
                 t = item.get("track")
+                # Skip jika track kosong atau Local File (tidak punya ID)
                 if not t or not t.get("id"): continue 
                 
                 artist_name = t["artists"][0]["name"] if t.get("artists") else "Unknown"
-                album_name = t["album"]["name"] if t.get("album") else "Unknown"
-                track_cover = t["album"]["images"][0]["url"] if t.get("album") and t["album"].get("images") else cover_url
+                
+                # Ambil data Album
+                alb = t.get("album", {})
+                album_name = alb.get("name", "Unknown")
+                
+                # Cover per track (jika beda)
+                track_cover = alb["images"][0]["url"] if alb.get("images") else cover_url
 
                 track_obj = TrackInfo(
                     name=t.get("name"),
@@ -2199,25 +2295,30 @@ class SpotifyAPI:
                     album=album_name,
                     duration=t.get("duration_ms", 0) // 1000,
                     cover_url=track_cover,
-                    release_year=t.get("album", {}).get("release_date", "")[:4],
+                    release_year=alb.get("release_date", "")[:4],
                     explicit=t.get("explicit", False),
                     tags=Tags(
+                        # PENTING: Ambil Track Number & Disc Number dari Album Asli
+                        # Ini agar format nama file "01 - Judul" sesuai album aslinya
                         track_number=t.get("track_number"),
-                        total_tracks=t.get("album", {}).get("total_tracks"),
+                        total_tracks=alb.get("total_tracks"),
+                        disc_number=t.get("disc_number"),
                         album_artist=artist_name, 
-                        release_date=t.get("album", {}).get("release_date")
+                        release_date=alb.get("release_date")
                     )
                 )
                 track_objects.append(track_obj)
             
             self.logger.info(f"Berhasil memproses playlist: {data.get('name')} ({len(track_objects)} lagu)")
 
+            # Return PlaylistInfo LENGKAP dengan small_cover_url
             return PlaylistInfo(
                 name=data.get("name"),
                 creator=data.get("owner", {}).get("display_name", "Spotify"),
                 tracks=track_objects,
                 cover_url=cover_url,
-                id=data.get("id")
+                id=data.get("id"),
+                small_cover_url=small_cover_url  # <--- Field Baru untuk ZIP
             )
             
         except Exception as e:
