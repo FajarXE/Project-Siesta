@@ -1807,11 +1807,22 @@ class SpotifyAPI:
 
     @staticmethod
     def is_spotify_url(url_string: str) -> bool:
+        """
+        Cek apakah string adalah URL Spotify atau LINK LOGIN 127.0.0.1.
+        """
         if not isinstance(url_string, str):
-            SpotifyAPI.logger.debug(f"is_spotify_url: input is not a string: {type(url_string)}")
             return False
-        return bool(SpotifyAPI._spotify_url_pattern.match(url_string))
-
+            
+        # --- [BYPASS KHUSUS] ---
+        # Jika link mengandung 127.0.0.1 dan code=, kita paksa TRUE (Valid).
+        # Ini agar Handler bot tidak menolak link login Anda.
+        if "127.0.0.1" in url_string and "code=" in url_string:
+            return True
+            
+        # --- [CEK NORMAL] ---
+        # Gunakan .search() (bukan .match) agar lebih aman mendeteksi link
+        return bool(SpotifyAPI._spotify_url_pattern.search(url_string))
+    
     def _manual_login_exchange(self, code):
         self.logger.info("Menukar Kode dengan Token ke Spotify...")
         
@@ -1856,30 +1867,43 @@ class SpotifyAPI:
         if not url or not isinstance(url, str):
             return None
 
-        if "127.0.0.1" in url and "code=" in url:
-            self.logger.info("Mendeteksi Link Login Manual! Memproses...")
+        # Bersihkan input (hapus spasi depan/belakang/enter)
+        clean_input = url.strip()
+
+        # 1. DETEKSI LINK LOGIN MANUAL (Prioritas Utama)
+        # Jika link mengandung "127.0.0.1" dan "code=", itu pasti link login.
+        if "127.0.0.1" in clean_input and "code=" in clean_input:
+            self.logger.info("🚀 MENDETEKSI LINK LOGIN! SEDANG MEMPROSES...")
             try:
-                parsed = urlparse(url)
+                parsed = urlparse(clean_input)
                 query = parse_qs(parsed.query)
                 if 'code' in query:
                     code = query['code'][0]
+                    # Panggil fungsi penukar kode
                     self._manual_login_exchange(code)
+                    # Return None karena ini bukan link lagu, tapi perintah sistem
                     return None 
             except Exception as e:
-                self.logger.error(f"Gagal memproses link login: {e}")
+                self.logger.error(f"Gagal parse link login: {e}")
                 return None
 
-        clean_url = url.split("?")[0].strip()
+        # 2. PARSE LINK LAGU/ALBUM (Normal)
+        # Hapus query params (?si=...) agar regex bekerja optimal pada link lagu
+        clean_url_spotify = clean_input.split("?")[0]
         
-        match = self._spotify_url_pattern.match(clean_url)
+        # Gunakan .search() agar lebih aman daripada .match()
+        match = self._spotify_url_pattern.search(clean_url_spotify)
+        
         if match:
             g = match.groups()
+            # Group regex bisa berbeda posisinya tergantung tipe link (web vs uri)
             item_type = g[0] or g[3]
             item_id = g[1] or g[2] or g[4]
             
             if item_type and item_id:
                 if len(item_id) == 22 and item_id.isalnum():
                     self.logger.info(f"Hasil Parse -> Tipe: {item_type}, ID: {item_id}")
+                    # PENTING: Return Tuple (Kurung Biasa), BUKAN Dictionary
                     return (item_type, item_id)
         
         self.logger.warning(f"URL tidak dikenali: {url}")
