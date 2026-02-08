@@ -236,8 +236,12 @@ CREDENTIALS_FILE_NAME = "credentials.json"
 
 # --- PKCE Helper Functions ---
 def generate_code_verifier(length=64) -> str:
-    """Generate a high-entropy cryptographic random string for PKCE code verifier."""
-    return secrets.token_urlsafe(length)[:length] 
+    """
+    [MODIFIKASI] Mengembalikan Kunci Statis agar login tidak error 
+    saat bot restart atau login manual.
+    """
+    # KUNCI RAHASIA INI JANGAN DIUBAH-UBAH
+    return "MonomarsxBotStaticKeyForAuth2026Secure" 
 
 def get_code_challenge(verifier: str) -> str:
     """Create a PKCE code challenge from a code verifier."""
@@ -1824,7 +1828,8 @@ class SpotifyAPI:
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": REDIRECT_URI,
-                "code_verifier": self.config.get("code_verifier", "") 
+                # GUNAKAN KUNCI YANG SAMA PERSIS DENGAN BAGIAN 1
+                "code_verifier": "MonomarsxBotStaticKeyForAuth2026Secure" 
             }
             
             r = requests.post("https://accounts.spotify.com/api/token", data=payload)
