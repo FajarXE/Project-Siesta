@@ -825,7 +825,7 @@ class SpotifyAPI:
         token_data = self.oauth_handler.perform_full_oauth_flow()
 
         if token_data:
-            self.stored_token = StoredToken(token_data)
+            self.stored_token = StoredToken.from_dict(token_data)
             self.logger.info(f"OAuth flow successful. Access token obtained: {self.stored_token.access_token[:20]}...")
             
             # Coba ambil detail user untuk disimpan
@@ -973,7 +973,7 @@ class SpotifyAPI:
                 if response.status_code == 200:
                     token_data = response.json()
                     # Simpan token ini di memori
-                    self.web_api_stored_token = StoredToken(token_data)
+                    self.web_api_stored_token = StoredToken.from_dict(token_data)
                     self.logger.info("✅ Berhasil membuat Token Metadata Custom (Anti-Limit 429).")
                     return self.web_api_stored_token.access_token
                 else:
