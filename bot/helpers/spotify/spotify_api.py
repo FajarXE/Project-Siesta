@@ -430,32 +430,6 @@ class PkceTokenDetails: # Simplified for current use if only access_token is man
             return True
         return (self.issued_at + self.expires_in - margin_seconds) < time.time()
 
-class StoredToken: 
-    """Token storage class compatible with librespot TokenProvider."""
-    def __init__(self, token_data: dict):
-        self.timestamp = int(time.time() * 1000)  # milliseconds
-        self.expires_in = int(token_data.get("expires_in", 3600))
-        self.access_token = token_data["access_token"]
-        self.scopes = token_data.get("scope", "").split() if token_data.get("scope") else []
-        self.refresh_token = token_data.get("refresh_token", "") 
-        
-    def expired(self, margin_seconds: int = 60) -> bool:
-        current_time = int(time.time() * 1000)
-        return (self.timestamp + (self.expires_in * 1000) - (margin_seconds * 1000)) < current_time
-
-    def to_dict(self) -> dict: 
-        return {
-            "timestamp": self.timestamp,
-            "expires_in": self.expires_in,
-            "access_token": self.access_token,
-            "scope": " ".join(self.scopes),
-            "refresh_token": self.refresh_token
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'StoredToken':
-        return cls(data)
-
 # --- Custom Token Provider for Librespot (REINSTATING THIS SECTION) --- 
 class LibrespotStoredTokenAdapter(LibrespotTokenProvider.StoredToken):
     """Adapts our StoredToken to what LibrespotTokenProvider.StoredToken expects."""
