@@ -1920,7 +1920,7 @@ class SpotifyAPI:
 
     def get_track_info(self, track_id: str, quality_tier: QualityEnum, codec_options: CodecOptions, **extra_kwargs) -> Optional[TrackInfo]:
         """
-        Mengambil info track dan mengisi SEMUA field agar Caption Telegram lengkap.
+        Mengambil info track dan menyiapkan data untuk Handler.
         """
         self.logger.debug(f"SpotifyAPI.get_track_info entered for track_id: {track_id}")
         
@@ -1937,9 +1937,9 @@ class SpotifyAPI:
             name = web_api_track_data.get('name')
             duration_ms = web_api_track_data.get('duration_ms')
             
-            # [PERBAIKAN] Ubah Boolean Explicit jadi String agar muncul di Caption
+            # [FIX 1] Explicit biarkan Boolean (True/False) di sini.
+            # Konversi string dilakukan di Handler agar fleksibel.
             explicit_bool = web_api_track_data.get('explicit', False)
-            explicit_str = "Yes" if explicit_bool else "No"
             
             track_number = web_api_track_data.get('track_number')
             disc_number = web_api_track_data.get('disc_number')
@@ -1954,11 +1954,10 @@ class SpotifyAPI:
             album_release_date_str = album_data.get('release_date')
             album_total_tracks = album_data.get('total_tracks')
             
-            # Ambil Album Artist
             album_artist_data = album_data.get('artists', [])
             album_artist_names = [aa.get('name') for aa in album_artist_data if aa.get('name')]
             
-            # Cover Art (Cari resolusi 640x640)
+            # Cover Art
             cover_url = None
             if album_data.get('images'):
                 preferred_image = next((img for img in album_data['images'] if img.get('height') == 640), None)
@@ -1972,18 +1971,17 @@ class SpotifyAPI:
 
             gid_hex_value = self._convert_base62_to_gid_hex(track_id) 
 
-            # --- ISI TAGS LENGKAP ---
+            # --- ISI TAGS ---
             tags_obj = Tags(
                 album_artist=album_artist_names if album_artist_names else artist_names,
                 track_number=str(track_number) if track_number is not None else "1",
                 total_tracks=str(album_total_tracks) if album_total_tracks is not None else "1",
                 disc_number=str(disc_number) if disc_number is not None else "1",
                 release_date=album_release_date_str,
-                year=str(album_release_year_int) # Tambahan untuk caption
+                year=str(album_release_year_int)
             )
 
-            # --- [PERBAIKAN] TENTUKAN STRING KUALITAS UNTUK CAPTION ---
-            # Karena kita sudah paksa 320kbps di get_track_download, kita tulis hardcode atau dinamis
+            # --- QUALTIY STRING ---
             quality_str = "High (320kbps)" 
             if quality_tier and hasattr(quality_tier, 'name'):
                 if "HIFI" in quality_tier.name or "VERY" in quality_tier.name:
@@ -1991,7 +1989,7 @@ class SpotifyAPI:
                 elif "NORMAL" in quality_tier.name:
                     quality_str = "Normal (160kbps)"
 
-            # --- RETURN TRACK INFO DENGAN EXTRA FIELDS ---
+            # --- RETURN OBJECT ---
             track_info_instance = TrackInfo(
                 id=track_id,
                 name=name,
@@ -2001,26 +1999,25 @@ class SpotifyAPI:
                 album=album_name,
                 duration=duration_ms // 1000 if duration_ms else 0,
                 cover_url=cover_url,
-                explicit=explicit_bool, # Boolean untuk Logic internal
+                explicit=explicit_bool, # Boolean Murni
                 tags=tags_obj,
                 codec=CodecEnum.VORBIS, 
                 release_year=album_release_year_int,
                 gid_hex=gid_hex_value,
                 
-                # --- FIELD TAMBAHAN AGAR CAPTION MUNCUL ---
-                quality=quality_str,             # Mengisi field QUALITY :
-                provider="Spotify",              # Mengisi field PROVIDER :
-                release_date=album_release_date_str, # Mengisi RELEASE DATE :
-                total_tracks=album_total_tracks, # Mengisi TOTAL TRACKS :
-                total_volumes=1,                 # Default volume
-                explicit_str=explicit_str        # Mengisi EXPLICIT : (Yes/No)
+                # Field Tambahan untuk Handler
+                quality=quality_str,
+                provider="Spotify",
+                release_date=album_release_date_str,
+                total_tracks=album_total_tracks,
+                total_volumes=1
             )
             
             return track_info_instance
 
         except Exception as e:
             self.logger.error(f"Error in get_track_info: {e}", exc_info=True)
-            return None
+            return None 
 
     def _get_valid_token(self):
         """
