@@ -39,25 +39,29 @@ _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 # --- MANUAL CLASS: STORED TOKEN (SOLUSI IMPORT ERROR) ---
 class StoredToken:
     def __init__(self, access_token_or_dict, expires_in=None, refresh_token=None, expires_at=None, spotify_username=None, scope=None, **kwargs):
-        # --- LOGIKA PINTAR: Deteksi apakah inputnya Dictionary ---
+        # 1. Logika Pintar: Cek apakah input pertama adalah Dictionary
         if isinstance(access_token_or_dict, dict):
             data = access_token_or_dict
             self.access_token = data.get("access_token")
-            # Ambil expires_in, default ke 3600 jika tidak ada
+            # Default expires_in ke 3600 jika tidak ada
             self.expires_in = int(data.get("expires_in", 3600))
             self.refresh_token = data.get("refresh_token")
             self.spotify_username = data.get("spotify_username")
-            # Handle Scope
-            scope_val = data.get("scope")
-            self.scopes = scope_val.split() if isinstance(scope_val, str) else (scope_val or [])
             
-            # Hitung expires_at
+            # Handle Scope (bisa berupa string spasi atau list)
+            scope_val = data.get("scope")
+            if isinstance(scope_val, str):
+                self.scopes = scope_val.split()
+            else:
+                self.scopes = scope_val or []
+            
+            # Hitung expires_at otomatis
             if data.get("expires_at"):
                 self.expires_at = int(data["expires_at"])
             else:
                 self.expires_at = int(time.time()) + self.expires_in
         else:
-            # --- LOGIKA BIASA: Jika input argumen terpisah ---
+            # 2. Logika Biasa: Input argumen terpisah
             self.access_token = access_token_or_dict
             self.expires_in = int(expires_in) if expires_in else 3600
             self.refresh_token = refresh_token
@@ -74,7 +78,6 @@ class StoredToken:
 
     @classmethod
     def from_dict(cls, data):
-        # Sekarang aman dipanggil karena __init__ sudah pintar
         return cls(data)
         
     def to_dict(self):
@@ -964,21 +967,27 @@ class SpotifyAPI:
     def _get_web_api_token(self) -> Optional[str]:
         """
         Mendapatkan token untuk Metadata (Web API).
+        [FIX] Menghapus Fallback ke Public Token agar tidak kena Rate Limit 429.
         """
         # Cek token yang sudah ada
         if self.web_api_stored_token and not self.web_api_stored_token.expired():
             return self.web_api_stored_token.access_token
 
-        self.logger.info("🔄 Membuat Token Metadata Baru menggunakan Custom ID (Client Credentials)...")
+        self.logger.info("🔄 Membuat Token Metadata Baru menggunakan Custom ID...")
         
         try:
-            # Gunakan Client ID & Secret sendiri (Custom)
             import base64
+            # Pastikan Client ID/Secret terisi di Config
+            if not self.config.get('client_id') or not self.config.get('client_secret'):
+                self.logger.error("❌ Client ID / Secret Kosong! Tidak bisa login metadata.")
+                return None
+
             auth_str = f"{self.config['client_id']}:{self.config['client_secret']}"
             b64_auth = base64.b64encode(auth_str.encode()).decode()
             
+            # Request Token Resmi
             resp = requests.post(
-                "https://accounts.spotify.com/api/token",
+                "https://accounts.spotify.com/api/token", # URL Token Spotify
                 data={"grant_type": "client_credentials"},
                 headers={"Authorization": f"Basic {b64_auth}"},
                 timeout=10
@@ -986,25 +995,17 @@ class SpotifyAPI:
             
             if resp.status_code == 200:
                 token_data = resp.json()
-                # [FIX PENTING] Gunakan .from_dict() agar 'expires_in' terbaca otomatis
-                self.web_api_stored_token = StoredToken.from_dict(token_data)
+                # Class StoredToken yang baru sudah pintar, tidak akan error di sini
+                self.web_api_stored_token = StoredToken(token_data)
                 return self.web_api_stored_token.access_token
             else:
-                self.logger.error(f"Gagal Client Credentials: {resp.text}")
+                self.logger.error(f"❌ Gagal Client Credentials: {resp.text}")
+                return None # JANGAN Fallback, biarkan error agar ketahuan
                 
         except Exception as e:
-            self.logger.error(f"Error saat auto-login metadata: {e}")
-
-        # Fallback ke Public Token (Darurat)
-        self.logger.warning("⚠️ Terpaksa menggunakan Public Token untuk Metadata (Rawan 429).")
-        try:
-            r = requests.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player")
-            if r.status_code == 200:
-                return r.json()["accessToken"]
-        except: pass
-        
-        return None
-
+            self.logger.error(f"❌ Error Fatal saat login metadata: {e}")
+            return None
+    
     def _clear_credentials(self):
         """Clear all Spotify credentials files to force re-authentication."""
         credentials_files = [
