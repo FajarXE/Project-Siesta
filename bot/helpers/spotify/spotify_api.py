@@ -40,25 +40,22 @@ _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 class StoredToken:
     def __init__(self, access_token, expires_in, refresh_token=None, expires_at=None, spotify_username=None, scope=None, **kwargs):
         self.access_token = access_token
-        self.expires_in = expires_in
+        self.expires_in = int(expires_in)
         self.refresh_token = refresh_token
         self.spotify_username = spotify_username
-        # Mendukung input string (dari API) atau list
         self.scopes = scope.split() if isinstance(scope, str) else (scope or [])
         
         if expires_at:
-            self.expires_at = expires_at
+            self.expires_at = int(expires_at)
         else:
-            self.expires_at = int(time.time()) + expires_in
+            self.expires_at = int(time.time()) + self.expires_in
 
     def expired(self):
-        return int(time.time()) > self.expires_at
+        return int(time.time()) > (self.expires_at - 30)
 
     @classmethod
     def from_dict(cls, data):
-        # Memastikan 'scope' dari JSON dipetakan ke argumen init
-        if 'scope' in data and 'scopes' not in data:
-            data['scope'] = data['scope']
+        # Ini penting agar dictionary dibongkar menjadi argumen
         return cls(**data)
         
     def to_dict(self):
@@ -68,7 +65,7 @@ class StoredToken:
             "refresh_token": self.refresh_token,
             "expires_at": self.expires_at,
             "spotify_username": self.spotify_username,
-            "scope": " ".join(self.scopes) # Simpan sebagai string spasi
+            "scope": " ".join(self.scopes)
         }
 
 # --- DATA STRUCTURES (LENGKAP DENGAN DOWNLOADTYPEENUM) ---
@@ -776,78 +773,72 @@ class SpotifyAPI:
             self.logger.error(f"Error loading credentials: {e}")
             return False
 
-    def _perform_oauth_flow(self, save_to_main_file: bool = True) -> bool:
+    def _perform_oauth_flow(self):
         """
-        Melakukan proses Login PKCE OAuth.
-        MODIFIKASI: Menambahkan scope 'streaming' agar akun Premium tidak kena 403.
+        Melakukan login OAuth PKCE Baru.
         """
-        if not self.oauth_handler:
-            self.logger.error("OAuth handler not initialized!")
-            return False
+        # 1. Update Scope
+        scope = "user-read-email user-read-private playlist-read-private playlist-modify-private playlist-modify-public user-library-read user-library-modify user-read-playback-state user-modify-playback-state streaming ugc-image-upload"
+        self.logger.info(f"Mengupdate Scope OAuth menjadi: {scope}")
+        self.oauth_handler.scope = scope
         
-        # Cek konfigurasi
-        username = self.config.get('username', '') if self.config else ''
-        client_id = self.config.get('client_id', '') if self.config else ''
-        client_secret = self.config.get('client_secret', '') if self.config else ''
-        
-        if not username:
-            error_msg = "spotify -> Spotify credentials are required. Please fill in your username, client ID and secret in the settings."
-            self.logger.error(error_msg)
-            raise SpotifyConfigError(error_msg)
-        
-        if not client_id or not client_secret:
-            self.logger.warning("Spotify custom client_id and client_secret are not set. Using default credentials may result in rate limiting.")
-        
-        # --- [PERBAIKAN UTAMA: DEFINISI SCOPE LENGKAP] ---
-        # Kita paksa handler untuk menggunakan scope ini sebelum memulai login
-        required_scopes = (
-            "user-read-email "
-            "user-read-private "
-            "playlist-read-private "
-            "playlist-modify-private "
-            "playlist-modify-public "
-            "user-library-read "
-            "user-library-modify "
-            "user-read-playback-state "
-            "user-modify-playback-state "
-            "streaming "         # <--- WAJIB UNTUK PREMIUM DOWNLOAD
-            "ugc-image-upload"
-        )
-        
-        # Update scope di handler
-        if self.oauth_handler:
-            self.oauth_handler.scope = required_scopes
-            self.logger.info(f"Mengupdate Scope OAuth menjadi: {required_scopes}")
-
         self.logger.info("Starting PKCE OAuth flow...")
         
-        # Jalankan flow (Handler akan men-generate URL dengan scope baru di atas)
-        token_data = self.oauth_handler.perform_full_oauth_flow()
+        # 2. Setup Server Callback
+        auth_url = self.oauth_handler.get_auth_url()
+        self.auth_code = None
+        self.server = HTTPServer(('0.0.0.0', 4381), self.RequestHandler)
+        self.server.oauth_handler = self
+        
+        server_thread = Thread(target=self.server.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+        
+        self.logger.info(f"OAuth callback server started at http://127.0.0.1:4381/login")
+        
+        # 3. Tampilkan Link Login (Public Gateway)
+        # Gunakan Gateway Google agar bisa diakses dari mana saja (HP/PC)
+        public_auth_url = f"https://accounts.spotify.com/authorize?client_id=65b708073fc0480ea92a077233ca87bd&response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A4381%2Flogin&scope=user-read-email+user-read-private+playlist-read-private+playlist-read-collaborative+playlist-modify-private+playlist-modify-public+user-library-read+user-library-modify+user-read-playback-state+user-modify-playback-state+user-read-currently-playing+user-read-recently-played+user-read-playback-position+user-top-read+streaming+ugc-image-upload&code_challenge_method=S256&code_challenge=4pHCIx61Po0MTFi0aciAkOQiPcVsz_7crg5eX2d9Nx4"
+        print(f"\nPlease authorize in your browser: {public_auth_url}\n")
+        self.logger.info(f"Please authorize in your browser: {public_auth_url}")
 
-        if token_data:
+        # 4. Tunggu User Login
+        self.logger.info("Waiting for user authorization in browser...")
+        
+        # Timeout 5 menit
+        max_wait = 300 
+        start_wait = time.time()
+        
+        while self.auth_code is None:
+            if time.time() - start_wait > max_wait:
+                self.logger.error("OAuth flow timed out waiting for user input.")
+                self.server.shutdown()
+                return False
+            time.sleep(1)
+            
+        # 5. Tukar Code dengan Token
+        self.server.shutdown()
+        self.logger.info("Authorization code received. Exchanging for token...")
+        
+        try:
+            token_data = self.oauth_handler.get_access_token(self.auth_code)
+            
+            # Ambil Info User (Username)
+            sp_user_info = requests.get(
+                "https://api.spotify.com/v1/me", 
+                headers={"Authorization": f"Bearer {token_data['access_token']}"}
+            ).json()
+            
+            token_data['spotify_username'] = sp_user_info.get('id')
+            
+            # [FIX PENTING] Gunakan .from_dict()
             self.stored_token = StoredToken.from_dict(token_data)
-            self.logger.info(f"OAuth flow successful. Access token obtained: {self.stored_token.access_token[:20]}...")
             
-            # Coba ambil detail user untuk disimpan
-            spotify_user_details = self._fetch_spotify_user_details(self.stored_token.access_token)
-            username_for_storage = spotify_user_details.get('id', "PKCE_USER_NEW") if spotify_user_details else "PKCE_USER_UNKNOWN"
-            
-            if spotify_user_details and 'country' in spotify_user_details:
-                self.user_market = spotify_user_details['country'] 
-                self.logger.info(f"User market set to: {self.user_market}")
-            else:
-                self.logger.warning("Could not determine user market from OAuth flow.")
-
-            if save_to_main_file:
-                self._save_credentials(self.stored_token, username_for_storage)
-            else:
-                self.logger.info("Skipping save to main credentials file (save_to_main_file=False).")
+            self._save_credentials(self.stored_token, token_data['spotify_username'])
             return True
-        else:
-            # Jika gagal (misal user membatalkan di browser)
-            err_msg = self.oauth_handler.error_message if self.oauth_handler else 'Unknown OAuth error'
-            self.logger.error(f"OAuth flow failed. Error: {err_msg}")
-            self.stored_token = None
+            
+        except Exception as e:
+            self.logger.error(f"Failed to exchange code for token: {e}")
             return False
 
     def _fetch_spotify_user_details(self, access_token: str) -> Optional[dict]:
@@ -975,56 +966,46 @@ class SpotifyAPI:
 
     def _get_web_api_token(self) -> Optional[str]:
         """
-        Mendapatkan Token untuk Metadata (Info Lagu/Album).
-        MODIFIKASI: Menggunakan 'Client Credentials Flow' untuk Custom ID.
-        Ini memungkinkan bot login otomatis tanpa browser dan BEBAS RATE LIMIT.
+        Mendapatkan token untuk Metadata (Web API).
         """
-        # 1. Cek apakah ada Token Web API yang tersimpan dan masih valid
+        # Cek token yang sudah ada
         if self.web_api_stored_token and not self.web_api_stored_token.expired():
             return self.web_api_stored_token.access_token
 
-        # 2. Jika Token Expired/Hilang, kita buat baru.
-        # Cek apakah user punya Custom Client ID & Secret di Config
-        client_id = self.web_api_oauth_handler.client_id
-        client_secret = self.web_api_oauth_handler.client_secret
-
-        # PENTING: Hanya gunakan Flow Otomatis jika ini ADALAH Custom ID (punya Secret)
-        # Jika Public ID (tidak punya secret), kita skip langkah ini.
-        if client_id and client_secret and client_id != CLIENT_ID:
-            try:
-                self.logger.info("🔄 Membuat Token Metadata Baru menggunakan Custom ID (Client Credentials)...")
-                
-                # Request Token langsung ke Spotify (Tanpa Browser)
-                auth_str = f"{client_id}:{client_secret}"
-                b64_auth = base64.b64encode(auth_str.encode()).decode()
-                
-                response = requests.post(
-                    "https://accounts.spotify.com/api/token",
-                    data={"grant_type": "client_credentials"},
-                    headers={"Authorization": f"Basic {b64_auth}"},
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    token_data = response.json()
-                    # Simpan token ini di memori
-                    self.web_api_stored_token = StoredToken.from_dict(token_data)
-                    self.logger.info("✅ Berhasil membuat Token Metadata Custom (Anti-Limit 429).")
-                    return self.web_api_stored_token.access_token
-                else:
-                    self.logger.error(f"Gagal Client Credentials Flow: {response.status_code} - {response.text}")
+        self.logger.info("🔄 Membuat Token Metadata Baru menggunakan Custom ID (Client Credentials)...")
+        
+        try:
+            # Gunakan Client ID & Secret sendiri (Custom)
+            import base64
+            auth_str = f"{self.config['client_id']}:{self.config['client_secret']}"
+            b64_auth = base64.b64encode(auth_str.encode()).decode()
             
-            except Exception as e:
-                self.logger.error(f"Error saat auto-login metadata: {e}")
-
-        # 3. FALLBACK: Jika gagal atau tidak punya Custom ID, gunakan Token dari Librespot (Public)
-        # Ini adalah opsi terakhir (yang rawan kena limit 429)
-        if self.librespot_stored_token and not self.librespot_stored_token.expired():
-            # Hanya log warning jika kita SEHARUSNYA punya Custom ID tapi gagal
-            if client_id != CLIENT_ID:
-                self.logger.warning("⚠️ Terpaksa menggunakan Public Token untuk Metadata (Rawan 429).")
-            return self.librespot_stored_token.access_token
+            resp = requests.post(
+                "https://accounts.spotify.com/api/token",
+                data={"grant_type": "client_credentials"},
+                headers={"Authorization": f"Basic {b64_auth}"},
+                timeout=10
+            )
             
+            if resp.status_code == 200:
+                token_data = resp.json()
+                # [FIX PENTING] Gunakan .from_dict() agar 'expires_in' terbaca otomatis
+                self.web_api_stored_token = StoredToken.from_dict(token_data)
+                return self.web_api_stored_token.access_token
+            else:
+                self.logger.error(f"Gagal Client Credentials: {resp.text}")
+                
+        except Exception as e:
+            self.logger.error(f"Error saat auto-login metadata: {e}")
+
+        # Fallback ke Public Token (Darurat)
+        self.logger.warning("⚠️ Terpaksa menggunakan Public Token untuk Metadata (Rawan 429).")
+        try:
+            r = requests.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player")
+            if r.status_code == 200:
+                return r.json()["accessToken"]
+        except: pass
+        
         return None
 
     def _clear_credentials(self):
