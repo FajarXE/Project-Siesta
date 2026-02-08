@@ -39,24 +39,25 @@ _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 # --- MANUAL CLASS: STORED TOKEN (SOLUSI IMPORT ERROR) ---
 class StoredToken:
     def __init__(self, access_token_or_dict, expires_in=None, refresh_token=None, expires_at=None, spotify_username=None, scope=None, **kwargs):
-        # LOGIKA CERDAS: Cek apakah input pertama adalah Dictionary
+        # --- LOGIKA PINTAR: Deteksi apakah inputnya Dictionary ---
         if isinstance(access_token_or_dict, dict):
             data = access_token_or_dict
             self.access_token = data.get("access_token")
-            # Default expires_in ke 3600 jika tidak ada
+            # Ambil expires_in, default ke 3600 jika tidak ada
             self.expires_in = int(data.get("expires_in", 3600))
             self.refresh_token = data.get("refresh_token")
             self.spotify_username = data.get("spotify_username")
+            # Handle Scope
             scope_val = data.get("scope")
             self.scopes = scope_val.split() if isinstance(scope_val, str) else (scope_val or [])
             
-            # Hitung expires_at otomatis jika belum ada
+            # Hitung expires_at
             if data.get("expires_at"):
                 self.expires_at = int(data["expires_at"])
             else:
                 self.expires_at = int(time.time()) + self.expires_in
         else:
-            # Jika dipanggil secara normal (argumen terpisah)
+            # --- LOGIKA BIASA: Jika input argumen terpisah ---
             self.access_token = access_token_or_dict
             self.expires_in = int(expires_in) if expires_in else 3600
             self.refresh_token = refresh_token
@@ -73,7 +74,8 @@ class StoredToken:
 
     @classmethod
     def from_dict(cls, data):
-        return cls(data) # Sekarang aman memanggil langsung
+        # Sekarang aman dipanggil karena __init__ sudah pintar
+        return cls(data)
         
     def to_dict(self):
         return {
