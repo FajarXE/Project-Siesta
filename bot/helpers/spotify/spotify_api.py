@@ -690,22 +690,9 @@ class SpotifyAPI:
 
     def _load_existing_credentials(self) -> bool:
         """
-        Mencoba memuat kredensial.
-        [FIX CRITICAL] Auto-Refresh HARUS menggunakan Public ID (65b7...) 
-        agar token diterima oleh Librespot.
+        Loads credentials from the JSON file.
+        [FIX] Menggunakan StoredToken.from_dict() agar tidak error 'missing expires_in'.
         """
-        # 1. Coba Restore dari Environment Variable (Untuk Render/Heroku)
-        env_creds = os.environ.get("SPOTIFY_CREDENTIALS_JSON")
-        if env_creds:
-            try:
-                # Cek validitas JSON sekilas
-                json.loads(env_creds) 
-                # Tulis ulang ke file lokal
-                with open(self.credentials_file_path, 'w') as f:
-                    f.write(env_creds)
-            except: pass
-
-        # 2. Cek File Lokal
         if not os.path.exists(self.credentials_file_path):
             return False
 
@@ -713,64 +700,55 @@ class SpotifyAPI:
             with open(self.credentials_file_path, 'r') as f:
                 token_data = json.load(f)
 
-            if not all(k in token_data for k in ["access_token", "refresh_token", "expires_in"]):
+            # Validasi minimal
+            if "access_token" not in token_data or "refresh_token" not in token_data:
+                self.logger.warning("Stored credentials incomplete.")
                 return False
 
-            # Gunakan Class Manual kita (StoredToken) yang baru dibuat di atas
-            loaded_token = StoredToken.from_dict(token_data)
-
-            # 3. LOGIKA AUTO-REFRESH (ANTI BAD CREDENTIALS)
-            if loaded_token.expired():
-                self.logger.info("♻️ Token Expired. Melakukan Refresh Khusus (Public ID)...")
+            # [FIX UTAMA DI SINI]
+            # Dulu: self.stored_token = StoredToken(token_data)  <-- INI PENYEBAB ERROR
+            # Sekarang: Gunakan .from_dict()
+            self.stored_token = StoredToken.from_dict(token_data)
+            
+            # Cek kadaluwarsa
+            if self.stored_token.expired():
+                self.logger.info("Stored token expired. Refreshing...")
+                
+                # Gunakan payload refresh yang aman
+                # Coba refresh menggunakan logika yang sama dengan _perform_oauth_flow
+                PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
+                payload = {
+                    "grant_type": "refresh_token",
+                    "refresh_token": self.stored_token.refresh_token,
+                    "client_id": PUBLIC_ID
+                }
+                
                 try:
-                    # --- [PENTING] ---
-                    # Kita TIDAK boleh pakai self.oauth_handler.refresh_token() 
-                    # karena itu akan pakai Custom ID Anda.
-                    # Kita harus REQUEST MANUAL pakai ID Public Librespot.
-                    
-                    PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd" # <--- JANGAN DIUBAH
-                    
-                    payload = {
-                        "grant_type": "refresh_token",
-                        "refresh_token": loaded_token.refresh_token,
-                        "client_id": PUBLIC_ID
-                    }
-                    
-                    # Tembak langsung ke Endpoint Spotify
-                    resp = requests.post("https://accounts.spotify.com/api/token", data=payload)
-                    
+                    resp = requests.post("https://accounts.spotify.com/api/token", data=payload, timeout=10)
                     if resp.status_code == 200:
                         new_data = resp.json()
+                        self.stored_token.access_token = new_data['access_token']
+                        self.stored_token.expires_in = int(new_data['expires_in'])
+                        self.stored_token.expires_at = int(time.time()) + int(new_data['expires_in'])
                         
-                        # Update data token
-                        token_data['access_token'] = new_data['access_token']
-                        token_data['expires_in'] = new_data['expires_in']
-                        token_data['expires_at'] = int(time.time()) + new_data['expires_in']
-                        
-                        # Update refresh token jika dikasih baru (Rotasi)
-                        if 'refresh_token' in new_data:
-                            token_data['refresh_token'] = new_data['refresh_token']
-                        
-                        # Simpan ke file
-                        with open(self.credentials_file_path, 'w') as f:
-                            json.dump(token_data, f, indent=4)
-                            
-                        # Update object loaded_token
-                        loaded_token = StoredToken.from_dict(token_data)
-                        self.logger.info("✅ Auto-Refresh Berhasil! Sesi diperpanjang.")
+                        # Simpan hasil refresh
+                        username = token_data.get('spotify_username') or self.config.get('username')
+                        self._save_credentials(self.stored_token, username)
+                        return True
                     else:
-                        self.logger.error(f"❌ Auto-Refresh Gagal (HTTP {resp.status_code}): {resp.text}")
+                        self.logger.warning(f"Failed to refresh token during load: {resp.text}")
                         return False
-                        
                 except Exception as e:
-                    self.logger.error(f"❌ Error Koneksi saat Refresh: {e}")
+                    self.logger.error(f"Exception during token refresh in load: {e}")
                     return False
 
-            self.stored_token = loaded_token
             return True
 
+        except json.JSONDecodeError:
+            self.logger.error("Credentials file corrupted.")
+            return False
         except Exception as e:
-            self.logger.error(f"Error loading credentials: {e}")
+            self.logger.error(f"Failed to load credentials: {e}")
             return False
 
     def _perform_oauth_flow(self):
