@@ -16,10 +16,9 @@ import base64
 import hashlib
 import weakref
 
-# --- [WAJIB ADA] Import untuk Data Class ---
+# --- [WAJIB] Import Dataclass ---
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-# -------------------------------------------
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
@@ -37,7 +36,7 @@ from librespot.mercury import MercuryClient
 # Store reference to original LibrespotTokenProvider before any patching
 _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 
-# --- DATA STRUCTURES ---
+# --- DATA STRUCTURES (BERSIH & FINAL) ---
 
 @dataclass
 class Tags:
@@ -114,6 +113,8 @@ class ArtistInfo:
     name: str
     albums: List[AlbumInfo] = None
     id: str = None
+
+# --- BATAS REPLACE ---
             
     class QualityEnum: LOW=1; HIGH=2; HIFI=3
     class CodecEnum: VORBIS=1; AAC=2; FLAC=3; MP3=4
