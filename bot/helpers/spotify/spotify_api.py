@@ -887,44 +887,27 @@ class SpotifyAPI:
             return None
 
     def _create_librespot_session_from_oauth(self) -> bool:
-        """Create librespot session using OAuth token with global TokenProvider patch."""
+        """
+        Membuat sesi Librespot menggunakan token OAuth dengan sistem global patch.
+        [FIX] Menambahkan Retry Logic untuk mengatasi 'Connection refused' (Errno 111).
+        """
         if not self.stored_token or not self.stored_token.access_token:
             self.logger.error("No valid OAuth token available for librespot session creation.")
             return False
 
-        spotify_username_for_librespot = "PKCE_LibrespotUser"
-        if os.path.exists(self.credentials_file_path):
-            try:
-                with open(self.credentials_file_path, 'r') as f_user:
-                    cred_data_user = json.load(f_user)
-                    spotify_username_for_librespot = cred_data_user.get('spotify_username', spotify_username_for_librespot)
-            except Exception as e_load_user:
-                self.logger.warning(f"Could not load username from credentials file, using default. Error: {e_load_user}")
-
-        self.logger.info(f"Attempting to create librespot session for user: '{spotify_username_for_librespot}' using OAuth token.")
-
-        # --- Setup Temporary Global librespot.core.TokenProvider Patch (Closure-based) ---
+        spotify_username_for_librespot = self.stored_token.spotify_username or "PKCE_LibrespotUser"
         current_spotify_api_instance_ref = weakref.ref(self)
 
-        def temporary_token_provider_factory_for_patch(session_instance_for_provider, *args_passed_by_librespot, **kwargs_passed_by_librespot):
+        def temporary_token_provider_factory_for_patch(session_instance, *args, **kwargs):
             api_instance = current_spotify_api_instance_ref()
             if api_instance:
-                api_instance.logger.info(f"GLOBAL_PATCH_DEBUG: temporary_token_provider_factory called. SpotifyAPI ID: {id(api_instance)}.")
-                provider = SpotifyApiTokenProvider(session_instance_for_provider, api_instance) # Pass api_instance (SpotifyAPI)
-                return provider
-            else:
-                # This path should ideally not be hit if SpotifyAPI instance is managed correctly.
-                logging.getLogger(__name__).error("GLOBAL_PATCH_DEBUG: temporary_token_provider_factory: SpotifyAPI weak_ref is dead! Cannot create custom provider.")
-                return _OriginalLibrespotTokenProvider(session_instance_for_provider, *args_passed_by_librespot, **kwargs_passed_by_librespot)
+                return SpotifyApiTokenProvider(session_instance, api_instance)
+            return _OriginalLibrespotTokenProvider(session_instance, *args, **kwargs)
 
-        # Store the truly original one if we haven't for this whole module load        
         if not hasattr(librespot.core, '_truly_original_token_provider_for_restore'):
-            librespot.core._truly_original_token_provider_for_restore = librespot.core.TokenProvider # Store current before patch
-            self.logger.info(f"GLOBAL_PATCH_DEBUG: Stored _truly_original_token_provider_for_restore (was: {librespot.core._truly_original_token_provider_for_restore}).")
+            librespot.core._truly_original_token_provider_for_restore = librespot.core.TokenProvider
         
-        # Apply the patch
         librespot.core.TokenProvider = temporary_token_provider_factory_for_patch
-        self.logger.info(f"GLOBAL_PATCH_DEBUG: Applied temporary global patch. librespot.core.TokenProvider is now: {librespot.core.TokenProvider}")        
 
         try:
             conf_builder = LibrespotSession.Configuration.Builder()
@@ -936,72 +919,42 @@ class SpotifyAPI:
             conf = conf_builder.build()
 
             builder = LibrespotSession.Builder(conf)
+            auth_type = Authentication_pb2.AuthenticationType.values()[3] # OAUTH
             
-            auth_type_for_oauth = Authentication_pb2.AuthenticationType.values()[3] 
-            self.logger.info(f"Using AuthenticationType index 3 for OAuth: {Authentication_pb2.AuthenticationType.Name(auth_type_for_oauth)}")
-            
-            credentials_pb = Authentication_pb2.LoginCredentials(
+            builder.login_credentials = Authentication_pb2.LoginCredentials(
                 username=spotify_username_for_librespot,
-                typ=auth_type_for_oauth,
+                typ=auth_type,
                 auth_data=self.stored_token.access_token.encode('utf-8')
             )
-            builder.login_credentials = credentials_pb
-            self.logger.info(f"Set LoginCredentials for Librespot with OAuth token for user {spotify_username_for_librespot}.")
 
-            self.logger.info("GLOBAL_PATCH_DEBUG: About to call builder.create()...")
-            self.librespot_session = builder.create() 
-            self.logger.info(f"GLOBAL_PATCH_DEBUG: builder.create() completed. Resulting session object ID: {id(self.librespot_session) if self.librespot_session else 'None'}")
+            # --- [PROSES RETRY 3X] ---
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.logger.info(f"Mencoba builder.create() - Percobaan {attempt + 1}/{max_retries}...")
+                    self.librespot_session = builder.create() 
+                    break 
+                except Exception as e:
+                    if "Connection refused" in str(e) or "111" in str(e):
+                        if attempt < max_retries - 1:
+                            self.logger.warning(f"⚠️ Koneksi ditolak (Errno 111). Menunggu 3 detik...")
+                            time.sleep(3)
+                            continue
+                    raise e
+            # -------------------------
 
             if self.librespot_session:
-                self.logger.info(f"Librespot session created successfully. Username: {self.librespot_session.username()}. Device ID: {self.librespot_session.device_id()}")
-                
-                actual_provider = self.librespot_session.tokens() # type: ignore
-                self.logger.info(f"DIAGNOSTIC: Librespot session's internal token provider type: {type(actual_provider)}")
-                if isinstance(actual_provider, SpotifyApiTokenProvider):
-                    self.logger.info(f"  It IS SpotifyApiTokenProvider (Instance ID: {actual_provider.instance_id})")
-                    bound_api_instance = actual_provider._spotify_api_ref() if hasattr(actual_provider, '_spotify_api_ref') else None
-                    if bound_api_instance and id(self) == id(bound_api_instance):
-                         self.logger.info(f"  And it's bound to the correct SpotifyAPI instance ({id(self)}).")
-                    else:
-                         self.logger.error(f"  BUT it's bound to a DIFFERENT/DEAD SpotifyAPI instance (Provider's ref: {id(bound_api_instance) if bound_api_instance else 'N/A'})!")
-                else:
-                    self.logger.warning(f"  It is NOT SpotifyApiTokenProvider, it is {type(actual_provider)}.")
-
-                # Test with a simple API call that requires a token, made via Librespot's mechanisms
-                try:                    
-                    example_track_id = TrackId.from_uri("spotify:track:0VjIjW4GlUZAMYd2vXMi3b") # The Weeknd - Blinding Lights
-                    self.logger.info(f"Performing post-session creation Librespot API test call (get_metadata_4_track for {str(example_track_id)})...")
-                    track_meta = self.librespot_session.api().get_metadata_4_track(example_track_id)
-                    self.logger.info(f"Post-session creation Librespot API test call SUCCEEDED. Track: {track_meta.name if track_meta else 'Unknown'}")
-                except Exception as e_meta_test:
-                    self.logger.error(f"Post-session creation Librespot API test call (get_metadata_4_track for {str(example_track_id) if 'example_track_id' in locals() else 'unknown track'}) FAILED: {e_meta_test}", exc_info=True)
-                    
+                self.logger.info(f"✅ Sesi Librespot berhasil dibuat: {self.librespot_session.username()}")
                 return True
-            else:
-                self.logger.error("Librespot builder.create() returned None.")
-                return False # Session creation failed
+            return False
 
-        except librespot.core.Session.SpotifyAuthenticationException as auth_exc:
-            self.logger.error(f"Librespot authentication failed during session creation: {auth_exc}") # No exc_info for this specific case
+        except Exception as e:
+            self.logger.error(f"❌ Gagal membuat sesi Librespot: {e}")
             self.librespot_session = None
             return False
-
-        except MercuryClient.MercuryException as me:
-            self.logger.error(f"GLOBAL_PATCH_DEBUG: MercuryException during builder.create(): {me}", exc_info=True)
-            self.librespot_session = None # Clear session on error
-            return False
-        except Exception as e:
-            self.logger.error(f"GLOBAL_PATCH_DEBUG: Unexpected generic exception during Librespot session creation: {e}", exc_info=True)
-            self.librespot_session = None # Clear session on error
-            return False
         finally:
-            # --- Restore Original Global librespot.core.TokenProvider ---
             if hasattr(librespot.core, '_truly_original_token_provider_for_restore'):
                 librespot.core.TokenProvider = librespot.core._truly_original_token_provider_for_restore
-                self.logger.info(f"GLOBAL_PATCH_DEBUG: Restored original librespot.core.TokenProvider from _truly_original_token_provider_for_restore. It is now: {librespot.core.TokenProvider}")
-            else:
-                self.logger.warning("GLOBAL_PATCH_DEBUG: _truly_original_token_provider_for_restore not found. Original may not have been stored or patch was bypassed.")
-            self.logger.info("GLOBAL_PATCH_DEBUG: Librespot session creation attempt finished.")
         
         return False
 
