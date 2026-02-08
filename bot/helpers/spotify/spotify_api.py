@@ -36,31 +36,35 @@ from librespot.mercury import MercuryClient
 # Store reference to original LibrespotTokenProvider before any patching
 _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 
-# --- [TAMBAHAN BARU] KONEKSI MONGODB (ANTI-RESET) ---
+# --- [PERBAIKAN] KONEKSI MONGODB VIA DATABASE_URL ---
 try:
     from pymongo import MongoClient
 except ImportError:
     MongoClient = None
 
-# Ambil URI dari Environment Variable
-MONGODB_URI = os.environ.get("MONGO_DB_URI") or os.environ.get("MONGODB_URI")
+# [UBAH DI SINI] Mengambil URI dari DATABASE_URL
+MONGODB_URI = os.environ.get("DATABASE_URL")
 mongo_collection = None
 
 if MONGODB_URI and MongoClient:
     try:
-        client = MongoClient(MONGODB_URI)
-        db = client.get_default_database()
-        mongo_collection = db["spotify_credentials"] # Nama koleksi di DB
-        logging.getLogger(__name__).info("✅ MongoDB terdeteksi. Token akan disimpan secara permanen.")
+        # Cek apakah URL ini untuk MongoDB (bukan Postgres/Redis)
+        if MONGODB_URI.startswith("mongodb"):
+            client = MongoClient(MONGODB_URI)
+            db = client.get_default_database()
+            mongo_collection = db["spotify_credentials"] # Nama koleksi
+            logging.getLogger(__name__).info("✅ MongoDB terdeteksi (via DATABASE_URL). Token aman.")
+        else:
+            logging.getLogger(__name__).warning("⚠️ DATABASE_URL terdeteksi tapi bukan MongoDB (mungkin Postgres?). Auto-Save dimatikan.")
     except Exception as e:
         logging.getLogger(__name__).error(f"Gagal koneksi MongoDB: {e}")
 else:
     if not MongoClient:
-        logging.getLogger(__name__).warning("⚠️ Module 'pymongo' tidak terinstall. Fitur Auto-Save Database dimatikan.")
+        logging.getLogger(__name__).warning("⚠️ Module 'pymongo' tidak terinstall.")
     if not MONGODB_URI:
-        logging.getLogger(__name__).warning("⚠️ MONGO_DB_URI tidak ditemukan. Token hanya disimpan sementara di file.")
+        logging.getLogger(__name__).warning("⚠️ DATABASE_URL tidak ditemukan di ENV.")
 
-# --- MANUAL CLASS: STORED TOKEN (SOLUSI IMPORT ERROR) ---
+# --- MANUAL CLASS: STORED TOKEN (VERSI PINTAR) ---
 class StoredToken:
     def __init__(self, access_token_or_dict, expires_in=None, refresh_token=None, expires_at=None, spotify_username=None, scope=None, **kwargs):
         # 1. Logika Pintar: Cek apakah input pertama adalah Dictionary
