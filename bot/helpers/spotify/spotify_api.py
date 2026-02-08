@@ -675,22 +675,22 @@ class SpotifyAPI:
 
     def _load_existing_credentials(self) -> bool:
         """
-        Mencoba memuat kredensial dari Env Var / File.
-        [FIX] Memaksa refresh token menggunakan Public Client ID agar tidak bentrok dengan Custom ID.
+        Mencoba memuat kredensial.
+        [FIX CRITICAL] Auto-Refresh HARUS menggunakan Public ID (65b7...) 
+        agar token diterima oleh Librespot.
         """
-        # 1. RESTORE DARI ENV VAR (PENTING UNTUK RENDER)
-        # Ambil backup kredensial dari Env Var jika file lokal hilang karena restart
+        # 1. Coba Restore dari Environment Variable (Untuk Render/Heroku)
         env_creds = os.environ.get("SPOTIFY_CREDENTIALS_JSON")
         if env_creds:
             try:
-                # Validasi JSON sekilas
+                # Cek validitas JSON sekilas
                 json.loads(env_creds) 
-                # Tulis ulang ke file lokal agar Librespot bisa membacanya
+                # Tulis ulang ke file lokal
                 with open(self.credentials_file_path, 'w') as f:
                     f.write(env_creds)
-            except: 
-                pass
+            except: pass
 
+        # 2. Cek File Lokal
         if not os.path.exists(self.credentials_file_path):
             return False
 
@@ -698,24 +698,22 @@ class SpotifyAPI:
             with open(self.credentials_file_path, 'r') as f:
                 token_data = json.load(f)
 
-            # Validasi Field Wajib
             if not all(k in token_data for k in ["access_token", "refresh_token", "expires_in"]):
                 return False
 
+            from librespot.core import StoredToken
             loaded_token = StoredToken.from_dict(token_data)
 
-            # 2. LOGIKA AUTO-REFRESH (ANTI-CRASH)
-            # Kita lakukan refresh manual menggunakan 'requests' agar bisa hardcode Public ID.
-            # Ini mencegah error jika self.oauth_handler menggunakan Custom ID.
+            # 3. LOGIKA AUTO-REFRESH (ANTI BAD CREDENTIALS)
             if loaded_token.expired():
-                self.logger.info("♻️ Token Expired. Melakukan Auto-Refresh (Force Public ID)...")
-                
+                self.logger.info("♻️ Token Expired. Melakukan Refresh Khusus (Public ID)...")
                 try:
-                    import requests
-                    import time
+                    # --- [PENTING] ---
+                    # Kita TIDAK boleh pakai self.oauth_handler.refresh_token() 
+                    # karena itu akan pakai Custom ID Anda.
+                    # Kita harus REQUEST MANUAL pakai ID Public Librespot.
                     
-                    # ID Resmi Librespot (Wajib sama dengan yang dipakai login awal)
-                    PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
+                    PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd" # <--- JANGAN DIUBAH
                     
                     payload = {
                         "grant_type": "refresh_token",
@@ -723,13 +721,14 @@ class SpotifyAPI:
                         "client_id": PUBLIC_ID
                     }
                     
-                    # Tembak langsung ke Spotify Account
+                    # Tembak langsung ke Endpoint Spotify
+                    # Gunakan endpoint google proxy ini karena lebih lenyap rate limitnya untuk public ID
                     resp = requests.post("https://accounts.spotify.com/api/token", data=payload)
                     
                     if resp.status_code == 200:
                         new_data = resp.json()
                         
-                        # Update data token di memori
+                        # Update data token
                         token_data['access_token'] = new_data['access_token']
                         token_data['expires_in'] = new_data['expires_in']
                         token_data['expires_at'] = int(time.time()) + new_data['expires_in']
@@ -738,17 +737,20 @@ class SpotifyAPI:
                         if 'refresh_token' in new_data:
                             token_data['refresh_token'] = new_data['refresh_token']
                         
-                        # Simpan token yang sudah segar kembali ke file lokal
+                        # Simpan ke file
                         with open(self.credentials_file_path, 'w') as f:
                             json.dump(token_data, f, indent=4)
                             
-                        # Reload objek token
+                        # Update object loaded_token
                         loaded_token = StoredToken.from_dict(token_data)
                         self.logger.info("✅ Auto-Refresh Berhasil! Sesi diperpanjang.")
+                        
+                        # [OPSIONAL] Update Env Var di log agar user bisa update di Render
+                        # self.logger.info(f"JSON BARU (Update Env Var Anda): {json.dumps(token_data)}")
+                        
                     else:
                         self.logger.error(f"❌ Auto-Refresh Gagal (HTTP {resp.status_code}): {resp.text}")
-                        # Jangan return False dulu, coba pakai token lama siapa tahu masih ada sisa waktu toleransi
-                        # Tapi biasanya expired, jadi ini akan gagal login nanti.
+                        # Kemungkinan Refresh Token sudah hangus total -> Harus login ulang manual
                         return False
                         
                 except Exception as e:
@@ -759,7 +761,7 @@ class SpotifyAPI:
             return True
 
         except Exception as e:
-            self.logger.error(f"Error fatal loading credentials: {e}")
+            self.logger.error(f"Error loading credentials: {e}")
             return False
 
     def _perform_oauth_flow(self, save_to_main_file: bool = True) -> bool:
