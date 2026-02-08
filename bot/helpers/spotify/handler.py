@@ -80,7 +80,6 @@ async def process_track(client, track_id, user, is_episode=False):
 
         meta = map_spotify_to_bot_metadata(track_info, user, is_episode)
         
-        # Nama File Track
         final_filename = f"{meta['artist']} - {meta['title']}.ogg".replace("/", "_")
         user_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Spotify"
         os.makedirs(user_folder, exist_ok=True)
@@ -91,6 +90,10 @@ async def process_track(client, track_id, user, is_episode=False):
         
         meta['filepath'] = final_path
         meta['folderpath'] = user_folder
+
+        # [FIX CRASH] Cek Ukuran File
+        if os.path.getsize(final_path) < 1024: # Kurang dari 1KB = Rusak
+            raise Exception("File audio korup/kosong (0 bytes).")
 
         if meta.get('cover'):
             thumb_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
@@ -136,12 +139,11 @@ async def process_album(client, album_id, user):
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/"
     }
     
-    # Download Poster Besar (Untuk Pesan Art Poster)
+    # Poster Besar (Untuk Art Poster Telegram)
     if meta_album.get('cover'):
          poster_path = await create_cover_file(meta_album['cover'], meta_album, thumbnail=False)
          meta_album['thumb'] = poster_path
 
-    # Reuse Poster Message
     poster_key = f'poster_album_{album_id}'
     if user.get(poster_key):
         meta_album['poster_msg'] = user[poster_key]
@@ -167,13 +169,11 @@ async def process_album(client, album_id, user):
                 meta = map_spotify_to_bot_metadata(track, user)
                 meta['totaltracks'] = str(total)
                 
-                # [PERBAIKAN NAMA FILE ALBUM] "01 - Judul.ogg"
                 clean_title = meta['title'].replace("/", "_")
                 track_str = str(meta['tracknumber']).zfill(2)
                 filename = f"{track_str} - {clean_title}.ogg"
                 
                 final_path = os.path.join(user_folder, filename)
-                
                 import shutil
                 shutil.move(download_result.temp_file_path, final_path)
                 
@@ -181,18 +181,23 @@ async def process_album(client, album_id, user):
                 meta['folderpath'] = user_folder
                 meta['cover'] = album_info.all_track_cover_jpg_url
                 
-                # Thumb per file
-                if meta_album.get('thumb'):
-                    meta['thumb'] = meta_album['thumb']
-                else:
-                    t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
-                    meta['thumb'] = t_path
-                
-                await set_metadata(meta, user['user_id'])
-                processed_tracks.append(meta)
+                # [FIX CRASH] Validasi File
+                if os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
+                    if meta_album.get('thumb'):
+                        meta['thumb'] = meta_album['thumb']
+                    else:
+                        t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
+                        meta['thumb'] = t_path
+                    
+                    await set_metadata(meta, user['user_id'])
+                    processed_tracks.append(meta)
 
-                if upload_per_track:
-                    await track_upload(meta, user)
+                    if upload_per_track:
+                        await track_upload(meta, user)
+                else:
+                    LOGGER.warning(f"File korup dilewati: {filename}")
+                    try: os.remove(final_path)
+                    except: pass
                 
         except Exception as e:
             LOGGER.error(f"Gagal download track {track.name}: {e}")
@@ -203,30 +208,37 @@ async def process_album(client, album_id, user):
 
     meta_album['tracks'] = processed_tracks
     
-    # --- LOGIKA ZIP ALBUM ---
+    # --- LOGIKA ZIP ALBUM (FIX THUMBNAIL) ---
     if album_zip:
         await edit_message(user['bot_msg'], f"🗜️ **Zipping:** Menyiapkan {len(processed_tracks)} lagu...")
         
-        # [PERBAIKAN ZIP THUMBNAIL]
-        # Gunakan gambar kecil (small_cover_url) jika ada agar Telegram menerimanya
-        thumb_url = getattr(album_info, 'small_cover_url', None) or meta_album['cover']
+        # 1. Ambil URL Gambar Kecil (Thumbnail)
+        # Prioritas: small_cover_url dari API -> Cover biasa -> None
+        thumb_url = getattr(album_info, 'small_cover_url', None) or meta_album.get('cover')
         
         if thumb_url:
-             # Download versi kecil khusus untuk ZIP Icon
+             # 2. Paksa download versi thumbnail (kecil)
+             # Parameter thumbnail=True di create_cover_file biasanya menambahkan suffix '-thumb'
+             # dan mendownload ulang jika belum ada.
              zip_thumb_path = await create_cover_file(thumb_url, meta_album, thumbnail=True)
+             
+             # 3. SET sebagai thumb utama untuk ZIP
              meta_album['thumb'] = zip_thumb_path
              
-             # Salin cover besar ke dalam folder agar user tetap dapat HD cover
-             if os.path.exists(zip_thumb_path):
+             # 4. Copy cover besar ke dalam folder zip (agar user tetap dapat HD cover saat extract)
+             if meta_album.get('cover'):
                  try:
                      large_cover = await create_cover_file(meta_album['cover'], meta_album, thumbnail=False)
                      shutil.copy(large_cover, os.path.join(user_folder, "cover.jpg"))
                  except: pass
 
+        # Buat ZIP
         zip_path = await zip_handler(user_folder)
         meta_album['zip_path'] = zip_path
         
         await edit_message(user['bot_msg'], "⬆️ **Uploading Zip...**")
+        
+        # Upload dengan metadata yang sudah punya 'thumb' kecil
         await album_upload(meta_album, user)
     
     elif not album_zip:
@@ -260,7 +272,6 @@ async def process_playlist(client, playlist_id, user):
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/"
     }
     
-    # Download Poster Besar
     if meta_playlist.get('cover'):
          p_path = await create_cover_file(meta_playlist['cover'], meta_playlist, thumbnail=False)
          meta_playlist['thumb'] = p_path
@@ -294,8 +305,6 @@ async def process_playlist(client, playlist_id, user):
                 clean_artist = meta['artist'].replace("/", "_")
                 clean_title = meta['title'].replace("/", "_")
                 
-                # [PERBAIKAN NAMA FILE PLAYLIST] Gunakan Original Track Number
-                # Format: "01 - Artist - Judul.ogg" (Dimana 01 adalah Track No dari Album)
                 orig_track_num = str(meta['tracknumber']).zfill(2)
                 filename = f"{orig_track_num} - {clean_artist} - {clean_title}.ogg"
                 
@@ -306,15 +315,20 @@ async def process_playlist(client, playlist_id, user):
                 meta['filepath'] = final_path
                 meta['folderpath'] = user_folder
                 
-                if meta.get('cover'):
-                    t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
-                    meta['thumb'] = t_path
-                
-                await set_metadata(meta, user['user_id'])
-                processed_tracks.append(meta)
+                # [FIX CRASH]
+                if os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
+                    if meta.get('cover'):
+                        t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
+                        meta['thumb'] = t_path
+                    
+                    await set_metadata(meta, user['user_id'])
+                    processed_tracks.append(meta)
 
-                if upload_per_track:
-                    await track_upload(meta, user)
+                    if upload_per_track:
+                        await track_upload(meta, user)
+                else:
+                    try: os.remove(final_path)
+                    except: pass
 
         except Exception as e:
             LOGGER.error(f"Skip track playlist ({i}): {e}")
@@ -325,18 +339,22 @@ async def process_playlist(client, playlist_id, user):
 
     meta_playlist['tracks'] = processed_tracks
     
-    # --- LOGIKA ZIP PLAYLIST ---
+    # --- LOGIKA ZIP PLAYLIST (FIX THUMBNAIL) ---
     if playlist_zip:
         await edit_message(user['bot_msg'], f"🗜️ **Zipping:** Menyiapkan {len(processed_tracks)} lagu...")
         
-        # [PERBAIKAN ZIP THUMBNAIL] Gunakan gambar kecil
-        thumb_url = getattr(playlist_info, 'small_cover_url', None) or meta_playlist['cover']
+        # 1. Ambil URL Gambar Kecil
+        thumb_url = getattr(playlist_info, 'small_cover_url', None) or meta_playlist.get('cover')
         
         if thumb_url:
+             # 2. Download versi kecil
              zip_thumb_path = await create_cover_file(thumb_url, meta_playlist, thumbnail=True)
+             
+             # 3. Assign ke thumb utama untuk ZIP
              meta_playlist['thumb'] = zip_thumb_path
              
-             if os.path.exists(zip_thumb_path):
+             # 4. Copy cover besar
+             if meta_playlist.get('cover'):
                  try:
                      large_cover = await create_cover_file(meta_playlist['cover'], meta_playlist, thumbnail=False)
                      shutil.copy(large_cover, os.path.join(user_folder, "cover.jpg"))
@@ -357,7 +375,7 @@ async def process_artist(client, artist_id, user):
     await edit_message(msg, "⚠️ **Info:** Download Artis belum didukung penuh. Silakan download per Album.")
 
 
-# --- HELPER MAPPING (METADATA) ---
+# --- HELPER MAPPING ---
 def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
     cover_url = track_info.cover_url
     explicit_val = track_info.explicit if track_info.explicit is not None else False
