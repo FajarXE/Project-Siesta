@@ -674,15 +674,23 @@ class SpotifyAPI:
             self.logger.error(f"Unexpected error saving credentials: {e}", exc_info=True)
 
     def _load_existing_credentials(self) -> bool:
-        # Coba Restore dari Environment Variable
+        """
+        Mencoba memuat kredensial.
+        [FIX CRITICAL] Auto-Refresh HARUS menggunakan Public ID (65b7...) 
+        agar token diterima oleh Librespot.
+        """
+        # 1. Coba Restore dari Environment Variable (Untuk Render/Heroku)
         env_creds = os.environ.get("SPOTIFY_CREDENTIALS_JSON")
         if env_creds:
             try:
+                # Cek validitas JSON sekilas
                 json.loads(env_creds) 
+                # Tulis ulang ke file lokal
                 with open(self.credentials_file_path, 'w') as f:
                     f.write(env_creds)
             except: pass
 
+        # 2. Cek File Lokal
         if not os.path.exists(self.credentials_file_path):
             return False
 
@@ -693,17 +701,19 @@ class SpotifyAPI:
             if not all(k in token_data for k in ["access_token", "refresh_token", "expires_in"]):
                 return False
 
-            # Gunakan Class Manual kita StoredToken
-            # Pastikan class StoredToken sudah ada di file ini (biasanya sebelum class SpotifyAPI)
-            # Jika error StoredToken not defined, import atau definisikan class StoredToken dulu.
-            from librespot.core import StoredToken
+            # Gunakan Class Manual kita (StoredToken) yang baru dibuat di atas
             loaded_token = StoredToken.from_dict(token_data)
 
+            # 3. LOGIKA AUTO-REFRESH (ANTI BAD CREDENTIALS)
             if loaded_token.expired():
-                self.logger.info("♻️ Token Expired. Refreshing (Public ID)...")
+                self.logger.info("♻️ Token Expired. Melakukan Refresh Khusus (Public ID)...")
                 try:
-                    # ID Resmi Librespot (WAJIB PAKAI INI AGAR TIDAK BAD CREDENTIALS)
-                    PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd" 
+                    # --- [PENTING] ---
+                    # Kita TIDAK boleh pakai self.oauth_handler.refresh_token() 
+                    # karena itu akan pakai Custom ID Anda.
+                    # Kita harus REQUEST MANUAL pakai ID Public Librespot.
+                    
+                    PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd" # <--- JANGAN DIUBAH
                     
                     payload = {
                         "grant_type": "refresh_token",
@@ -711,27 +721,42 @@ class SpotifyAPI:
                         "client_id": PUBLIC_ID
                     }
                     
+                    # Tembak langsung ke Endpoint Spotify
                     resp = requests.post("https://accounts.spotify.com/api/token", data=payload)
                     
                     if resp.status_code == 200:
                         new_data = resp.json()
+                        
+                        # Update data token
                         token_data['access_token'] = new_data['access_token']
                         token_data['expires_in'] = new_data['expires_in']
                         token_data['expires_at'] = int(time.time()) + new_data['expires_in']
+                        
+                        # Update refresh token jika dikasih baru (Rotasi)
                         if 'refresh_token' in new_data:
                             token_data['refresh_token'] = new_data['refresh_token']
                         
+                        # Simpan ke file
                         with open(self.credentials_file_path, 'w') as f:
                             json.dump(token_data, f, indent=4)
                             
+                        # Update object loaded_token
                         loaded_token = StoredToken.from_dict(token_data)
+                        self.logger.info("✅ Auto-Refresh Berhasil! Sesi diperpanjang.")
                     else:
+                        self.logger.error(f"❌ Auto-Refresh Gagal (HTTP {resp.status_code}): {resp.text}")
                         return False
-                except: return False
+                        
+                except Exception as e:
+                    self.logger.error(f"❌ Error Koneksi saat Refresh: {e}")
+                    return False
 
             self.stored_token = loaded_token
             return True
-        except: return False
+
+        except Exception as e:
+            self.logger.error(f"Error loading credentials: {e}")
+            return False
 
     def _perform_oauth_flow(self, save_to_main_file: bool = True) -> bool:
         """
