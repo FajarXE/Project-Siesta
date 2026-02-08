@@ -38,11 +38,13 @@ _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 
 # --- MANUAL CLASS: STORED TOKEN (SOLUSI IMPORT ERROR) ---
 class StoredToken:
-    def __init__(self, access_token, expires_in, refresh_token=None, expires_at=None, spotify_username=None, **kwargs):
+    def __init__(self, access_token, expires_in, refresh_token=None, expires_at=None, spotify_username=None, scope=None, **kwargs):
         self.access_token = access_token
         self.expires_in = expires_in
         self.refresh_token = refresh_token
         self.spotify_username = spotify_username
+        # Mendukung input string (dari API) atau list
+        self.scopes = scope.split() if isinstance(scope, str) else (scope or [])
         
         if expires_at:
             self.expires_at = expires_at
@@ -54,6 +56,9 @@ class StoredToken:
 
     @classmethod
     def from_dict(cls, data):
+        # Memastikan 'scope' dari JSON dipetakan ke argumen init
+        if 'scope' in data and 'scopes' not in data:
+            data['scope'] = data['scope']
         return cls(**data)
         
     def to_dict(self):
@@ -62,7 +67,8 @@ class StoredToken:
             "expires_in": self.expires_in,
             "refresh_token": self.refresh_token,
             "expires_at": self.expires_at,
-            "spotify_username": self.spotify_username
+            "spotify_username": self.spotify_username,
+            "scope": " ".join(self.scopes) # Simpan sebagai string spasi
         }
 
 # --- DATA STRUCTURES (LENGKAP DENGAN DOWNLOADTYPEENUM) ---
