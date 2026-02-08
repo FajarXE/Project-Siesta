@@ -609,8 +609,7 @@ class LibrespotAudioKeyFilter(logging.Filter):
 class SpotifyAPI:
     logger = logging.getLogger(__name__)
 
-    # --- HAPUS REGEX LAMA, TEMPEL KODE BARU INI (1 BARIS SAJA) ---
-    _spotify_url_pattern = re.compile(r"^(?:https?://open\.spotify\.com/(?:(?:(track|album|artist|playlist|show|episode)/([a-zA-Z0-9]{22}))|(?:user/[^/]+/playlist/([a-zA-Z0-9]{22})))|spotify:(track|album|artist|playlist|show|episode):([a-zA-Z0-9]{22})|http://127\.0\.0\.1:4381/login\?code=.*)(?:\?.*)?$")    
+    _spotify_url_pattern = re.compile(r"^(?:https?://open\.spotify\.com/(?:(?:(track|album|artist|playlist|show|episode)/([a-zA-Z0-9]{22}))|(?:user/[^/]+/playlist/([a-zA-Z0-9]{22})))|spotify:(track|album|artist|playlist|show|episode):([a-zA-Z0-9]{22})|http://127\.0\.0\.1:4381/login\?code=.*)(?:\?.*)?$")
 
     def __init__(self, config=None, module_controller=None):
         self.config = config if config else {}
