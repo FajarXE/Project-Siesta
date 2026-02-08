@@ -88,7 +88,7 @@ async def antiSpam(uid=None, cid=None, revoke=False) -> bool:
 
 async def send_message(user, item, itype='text',
     caption=None, markup=None, chat_id=None,
-    meta=None
+    meta=None, thumb=None
   ):
     if not isinstance(user, dict):
         user = await fetch_user_details(user)
@@ -104,11 +104,15 @@ async def send_message(user, item, itype='text',
                 disable_web_page_preview=True
             )
             
-        elif itype == 'doc':
-            thumb_path = None
-            if meta and meta.get('cover'): 
-                if os.path.exists(meta['cover']):
-                    thumb_path = meta['cover']
+         elif itype == 'doc':
+            # [LOGIKA BARU] Prioritas: Argument 'thumb' -> Meta 'thumbnail' -> Meta 'cover'
+            thumb_path = thumb 
+            if not thumb_path and meta:
+                thumb_path = meta.get('thumbnail') or meta.get('cover')
+            
+            # Validasi file ada (cegah error jika file terhapus)
+            if thumb_path and not os.path.exists(thumb_path):
+                thumb_path = None
 
             last_update_time = [0] 
 
@@ -139,7 +143,7 @@ async def send_message(user, item, itype='text',
                 document=item,
                 caption=caption,
                 reply_to_message_id=user['r_id'],
-                thumb=thumb_path,
+                thumb=thumb_path, # <--- Pastikan parameter ini ada
                 progress=progress_callback
             )
 
