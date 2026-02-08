@@ -113,23 +113,6 @@ class ArtistInfo:
     name: str
     albums: List[AlbumInfo] = None
     id: str = None
-
-# --- BATAS REPLACE ---
-            
-    class QualityEnum: LOW=1; HIGH=2; HIFI=3
-    class CodecEnum: VORBIS=1; AAC=2; FLAC=3; MP3=4
-    class DownloadEnum: TEMP_FILE_PATH=1
-    class DownloadTypeEnum: track="track"; album="album"; artist="artist"; playlist="playlist"; show="show"; episode="episode"
-    
-    class TrackDownloadInfo:
-        def __init__(self, download_type=None, file_url=None, codec=None, **kwargs):
-            self.download_type=download_type; self.file_url=file_url; self.codec=codec;
-            for k,v in kwargs.items(): setattr(self, k, v)
-            
-    class CodecOptions: pass
-    class DummyContainer: name = 'ogg'
-    class DummyCodecData: container = DummyContainer()
-    codec_data_fallback = {CodecEnum.VORBIS: DummyCodecData(), CodecEnum.AAC: DummyCodecData(), CodecEnum.FLAC: DummyCodecData(), CodecEnum.MP3: DummyCodecData()}
     
 # OAuth constants
 API_URL = "https://api.spotify.com/v1/"
