@@ -869,7 +869,7 @@ class SpotifyAPI:
     def _create_librespot_session_from_oauth(self) -> bool:
         """
         Membuat sesi Librespot menggunakan token OAuth dengan sistem global patch.
-        [FIX] Menambahkan Retry Logic untuk mengatasi 'Connection refused' (Errno 111).
+        [FIX] Menambahkan Auto-Refresh jika terkena 'BadCredentials' saat restart.
         """
         if not self.stored_token or not self.stored_token.access_token:
             self.logger.error("No valid OAuth token available for librespot session creation.")
@@ -878,6 +878,7 @@ class SpotifyAPI:
         spotify_username_for_librespot = self.stored_token.spotify_username or "PKCE_LibrespotUser"
         current_spotify_api_instance_ref = weakref.ref(self)
 
+        # 1. Setup Patching
         def temporary_token_provider_factory_for_patch(session_instance, *args, **kwargs):
             api_instance = current_spotify_api_instance_ref()
             if api_instance:
@@ -890,6 +891,7 @@ class SpotifyAPI:
         librespot.core.TokenProvider = temporary_token_provider_factory_for_patch
 
         try:
+            # 2. Konfigurasi Dasar
             conf_builder = LibrespotSession.Configuration.Builder()
             conf_builder.set_store_credentials(False) 
             cache_path = os.path.join(self.credentials_dir, ".librespot_cache")
@@ -901,28 +903,73 @@ class SpotifyAPI:
             builder = LibrespotSession.Builder(conf)
             auth_type = Authentication_pb2.AuthenticationType.values()[3] # OAUTH
             
+            # Setup Kredensial Awal
             builder.login_credentials = Authentication_pb2.LoginCredentials(
                 username=spotify_username_for_librespot,
                 typ=auth_type,
                 auth_data=self.stored_token.access_token.encode('utf-8')
             )
 
-            # --- [PROSES RETRY 3X] ---
+            # 3. --- [RETRY LOGIC + BAD CREDENTIALS FIX] ---
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     self.logger.info(f"Mencoba builder.create() - Percobaan {attempt + 1}/{max_retries}...")
                     self.librespot_session = builder.create() 
-                    break 
+                    break # Berhasil, keluar loop
+
                 except Exception as e:
-                    if "Connection refused" in str(e) or "111" in str(e):
+                    error_msg = str(e)
+                    
+                    # KASUS A: Token Basi (BadCredentials) - Sering terjadi saat restart ENV
+                    if "BadCredentials" in error_msg:
+                        self.logger.warning("⚠️ BadCredentials terdeteksi! Token ENV kadaluarsa. Mencoba Refresh Paksa...")
+                        
+                        try:
+                            # Refresh Manual menggunakan endpoint Proxy/Google yang ada di file Anda
+                            PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
+                            payload = {
+                                "grant_type": "refresh_token",
+                                "refresh_token": self.stored_token.refresh_token,
+                                "client_id": PUBLIC_ID
+                            }
+                            # Gunakan URL yang sama dengan logic _load_credentials Anda
+                            resp = requests.post("https://accounts.spotify.com/api/token", data=payload, timeout=10)
+                            
+                            if resp.status_code == 200:
+                                new_data = resp.json()
+                                # Update StoredToken
+                                self.stored_token.access_token = new_data['access_token']
+                                self.stored_token.expires_in = new_data['expires_in']
+                                self.stored_token.expires_at = int(time.time()) + new_data['expires_in']
+                                
+                                # Update File JSON agar sinkron
+                                self._save_credentials(self.stored_token, self.stored_token.spotify_username)
+                                
+                                # PENTING: Update Builder dengan Token BARU
+                                builder.login_credentials = Authentication_pb2.LoginCredentials(
+                                    username=spotify_username_for_librespot,
+                                    typ=auth_type,
+                                    auth_data=self.stored_token.access_token.encode('utf-8')
+                                )
+                                self.logger.info("✅ Token berhasil di-refresh! Mengulangi login...")
+                                continue # Coba lagi dengan token baru
+                            else:
+                                self.logger.error(f"Gagal Refresh Token: {resp.text}")
+                        except Exception as refresh_err:
+                            self.logger.error(f"Error saat refresh token darurat: {refresh_err}")
+
+                    # KASUS B: Koneksi Ditolak (Errno 111)
+                    if "Connection refused" in error_msg or "111" in error_msg:
                         if attempt < max_retries - 1:
                             self.logger.warning(f"⚠️ Koneksi ditolak (Errno 111). Menunggu 3 detik...")
                             time.sleep(3)
                             continue
+                    
+                    # Jika error lain atau refresh gagal, lempar error
                     raise e
-            # -------------------------
 
+            # 4. Finalisasi
             if self.librespot_session:
                 self.logger.info(f"✅ Sesi Librespot berhasil dibuat: {self.librespot_session.username()}")
                 return True
