@@ -967,29 +967,38 @@ class SpotifyAPI:
     def _get_web_api_token(self) -> Optional[str]:
         """
         Mendapatkan token untuk Metadata (Web API).
-        [FIX] STRICT MODE: Hanya gunakan Custom Client ID. DILARANG Fallback ke Public Token.
+        [FIX STRICT] ISOLASI TOTAL:
+        1. Jangan pernah gunakan token dari ENV/User (self.stored_token).
+        2. Selalu generate baru dari Client ID & Secret jika cache memori kosong.
         """
-        # 1. Cek apakah token lama masih valid
+        # 1. Cek Cache Memori (RAM) saja. Jangan percaya file/env lama.
         if self.web_api_stored_token and not self.web_api_stored_token.expired():
-            return self.web_api_stored_token.access_token
+            # Pastikan token ini BUKAN token user (cek scope)
+            # Token metadata murni biasanya tidak punya scope user-read-email dsb.
+            if not self.web_api_stored_token.scopes or "user-read-email" not in self.web_api_stored_token.scopes:
+                return self.web_api_stored_token.access_token
 
-        self.logger.info("🔄 Membuat Token Metadata Baru (Client Credentials)...")
+        self.logger.info("🔄 Metadata: Membuat Token Client Credentials BARU...")
         
         try:
-            # 2. Pastikan Client ID tersedia
+            # 2. Validasi Config
             client_id = self.config.get('client_id')
             client_secret = self.config.get('client_secret')
             
+            # [PENTING] Cek apakah ID-nya adalah ID Public (bfba...) yang sering limit
+            if client_id and str(client_id).startswith("bfba46d69c"):
+                self.logger.warning("⚠️ PERINGATAN: Anda menggunakan Client ID Publik/Shared (bfba...).")
+                self.logger.warning("⚠️ Ini penyebab utama Rate Limit 429. Mohon buat Client ID sendiri di developer.spotify.com")
+
             if not client_id or not client_secret:
-                self.logger.error("❌ CRITICAL: Client ID / Secret belum diisi di Config!")
-                self.logger.error("❌ Bot tidak bisa mengambil metadata tanpa Custom ID.")
+                self.logger.error("❌ Client ID / Secret Kosong! Tidak bisa ambil metadata.")
                 return None
 
-            # 3. Request Token Baru
             import base64
             auth_str = f"{client_id}:{client_secret}"
             b64_auth = base64.b64encode(auth_str.encode()).decode()
             
+            # 3. Request Token Baru ke Spotify
             resp = requests.post(
                 "https://accounts.spotify.com/api/token",
                 data={"grant_type": "client_credentials"},
@@ -999,18 +1008,17 @@ class SpotifyAPI:
             
             if resp.status_code == 200:
                 token_data = resp.json()
-                # Gunakan .from_dict agar aman
+                # Simpan ke Memori sebagai StoredToken
                 self.web_api_stored_token = StoredToken.from_dict(token_data)
-                
-                # Simpan ke file cache khusus Web API
-                web_api_path = self.credentials_file_path.replace('.json', '_webapi.json')
-                with open(web_api_path, 'w') as f:
-                    json.dump(self.web_api_stored_token.to_dict(), f, indent=4)
-                    
-                self.logger.info("✅ Token Metadata Berhasil Diperbarui.")
+                self.logger.info("✅ Token Metadata Baru Berhasil Dibuat (Mode Isolasi).")
                 return self.web_api_stored_token.access_token
+            
+            elif resp.status_code == 429:
+                self.logger.error("❌ CLIENT ID ANDA TERKENA LIMIT (429).")
+                self.logger.error("👉 Solusi: Ganti Client ID & Secret di Config dengan yang baru.")
+                return None
             else:
-                self.logger.error(f"❌ Gagal Login Metadata: {resp.status_code} - {resp.text}")
+                self.logger.error(f"❌ Gagal Client Credentials: {resp.status_code} - {resp.text}")
                 return None
                 
         except Exception as e:
