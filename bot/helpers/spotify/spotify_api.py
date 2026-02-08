@@ -706,96 +706,127 @@ class SpotifyAPI:
 
 
     def _save_credentials(self, token_obj: StoredToken, username: Optional[str] = "PKCE_USER"):
-        """Saves OAuth token data and a username to credentials.json for librespot."""        
+        """Saves OAuth token data to JSON File AND MONGODB."""        
         if not token_obj or not token_obj.access_token:
             self.logger.error("Cannot save credentials, token object or access token is missing.")
             return
 
-        credentials_content_for_librespot = {
-            "username": username if username else "PKCE_USER",
-            "auth_data": token_obj.access_token,
-            "type": "AUTHENTICATION_USER_PASS"
-        }
-
-        # Save the full token details (including refresh token) for *our* use (e.g. refreshing)        
+        # Siapkan Data Lengkap
         full_token_details_for_storage = token_obj.to_dict()
-        full_token_details_for_storage['spotify_username'] = username # Store the username we got/used
-        # Store the client_id used for this token so we can detect if it changed
+        full_token_details_for_storage['spotify_username'] = username 
+        # Simpan client_id juga untuk validasi
         full_token_details_for_storage['client_id'] = self.oauth_handler.client_id if self.oauth_handler else None
 
+        # 1. Simpan ke File Lokal (Agar bot bisa baca sekarang)
         try:
-            # First, save the full token details (this is the primary credentials file now)
             with open(self.credentials_file_path, 'w') as f:
                 json.dump(full_token_details_for_storage, f, indent=4)
             self.logger.info(f"Successfully saved full OAuth token details to {self.credentials_file_path}")
-
         except IOError as e:
             self.logger.error(f"IOError saving credentials to {self.credentials_file_path}: {e}")
         except Exception as e:
-            self.logger.error(f"Unexpected error saving credentials: {e}", exc_info=True)
+            self.logger.error(f"Unexpected error saving credentials to file: {e}", exc_info=True)
+
+        # 2. [BARU] Simpan ke MongoDB (Agar aman dari Restart/Deploy)
+        # Pastikan variabel mongo_collection sudah didefinisikan di bagian atas file
+        if mongo_collection is not None:
+            try:
+                # Upsert: Update jika ada, Insert jika belum (berdasarkan "type": "spotify_auth")
+                mongo_collection.update_one(
+                    {"type": "spotify_auth"}, 
+                    {"$set": {"data": full_token_details_for_storage}}, 
+                    upsert=True
+                )
+                self.logger.info("✅ Kredensial berhasil disimpan ke MongoDB (Anti-Reset).")
+            except Exception as e:
+                self.logger.error(f"Gagal simpan ke DB: {e}")
 
     def _load_existing_credentials(self) -> bool:
         """
-        Loads credentials from the JSON file.
-        [FIX] Menggunakan StoredToken.from_dict() agar tidak error 'missing expires_in'.
+        Loads credentials from JSON file OR MONGODB.
+        Jika file lokal hilang (efek restart), bot akan mencoba mengambil backup dari MongoDB.
         """
-        if not os.path.exists(self.credentials_file_path):
-            return False
+        
+        token_data = None
+        
+        # 1. Cek File Lokal Terlebih Dahulu
+        if os.path.exists(self.credentials_file_path):
+            try:
+                with open(self.credentials_file_path, 'r') as f: 
+                    token_data = json.load(f)
+            except Exception: 
+                pass
+        
+        # 2. [FITUR ANTI-RESET] Jika File Gagal/Hilang, Coba Load dari MongoDB
+        # Pastikan variabel mongo_collection sudah didefinisikan di bagian atas file
+        if not token_data and mongo_collection is not None:
+            self.logger.info("File kredensial hilang (efek restart). Mencoba memuat dari MongoDB...")
+            try:
+                # Cari dokumen dengan tipe 'spotify_auth'
+                record = mongo_collection.find_one({"type": "spotify_auth"})
+                if record and "data" in record:
+                    token_data = record["data"]
+                    self.logger.info("✅ Kredensial berhasil dipulihkan dari MongoDB!")
+                    
+                    # Tulis ulang ke file lokal agar library lain (librespot) bisa membacanya
+                    try:
+                        with open(self.credentials_file_path, 'w') as f:
+                            json.dump(token_data, f, indent=4)
+                    except Exception as e:
+                        self.logger.warning(f"Gagal menulis ulang file kredensial: {e}")
+            except Exception as e:
+                self.logger.error(f"Error saat membaca database: {e}")
 
-        try:
-            with open(self.credentials_file_path, 'r') as f:
-                token_data = json.load(f)
-
-            # Validasi minimal
-            if "access_token" not in token_data or "refresh_token" not in token_data:
-                self.logger.warning("Stored credentials incomplete.")
-                return False
-
-            # [FIX UTAMA DI SINI]
-            # Dulu: self.stored_token = StoredToken(token_data)  <-- INI PENYEBAB ERROR
-            # Sekarang: Gunakan .from_dict()
-            self.stored_token = StoredToken.from_dict(token_data)
-            
-            # Cek kadaluwarsa
-            if self.stored_token.expired():
-                self.logger.info("Stored token expired. Refreshing...")
-                
-                # Gunakan payload refresh yang aman
-                # Coba refresh menggunakan logika yang sama dengan _perform_oauth_flow
-                PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
-                payload = {
-                    "grant_type": "refresh_token",
-                    "refresh_token": self.stored_token.refresh_token,
-                    "client_id": PUBLIC_ID
-                }
-                
-                try:
-                    resp = requests.post("https://accounts.spotify.com/api/token", data=payload, timeout=10)
-                    if resp.status_code == 200:
-                        new_data = resp.json()
-                        self.stored_token.access_token = new_data['access_token']
-                        self.stored_token.expires_in = int(new_data['expires_in'])
-                        self.stored_token.expires_at = int(time.time()) + int(new_data['expires_in'])
-                        
-                        # Simpan hasil refresh
-                        username = token_data.get('spotify_username') or self.config.get('username')
-                        self._save_credentials(self.stored_token, username)
-                        return True
-                    else:
-                        self.logger.warning(f"Failed to refresh token during load: {resp.text}")
-                        return False
-                except Exception as e:
-                    self.logger.error(f"Exception during token refresh in load: {e}")
+        # 3. Validasi & Load Token
+        if token_data:
+            try:
+                # Validasi kelengkapan data
+                if "access_token" not in token_data or "refresh_token" not in token_data:
+                    self.logger.warning("Data kredensial tidak lengkap.")
                     return False
 
-            return True
+                # Gunakan .from_dict() sesuai perbaikan sebelumnya
+                self.stored_token = StoredToken.from_dict(token_data)
+                
+                # Auto Refresh jika expired
+                if self.stored_token.expired():
+                    self.logger.info("Token expired. Refreshing...")
+                    
+                    # Payload Refresh Token Standar
+                    PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
+                    payload = {
+                        "grant_type": "refresh_token", 
+                        "refresh_token": self.stored_token.refresh_token, 
+                        "client_id": PUBLIC_ID
+                    }
+                    
+                    try:
+                        resp = requests.post("https://accounts.spotify.com/api/token", data=payload, timeout=10)
+                        
+                        if resp.status_code == 200:
+                            new_data = resp.json()
+                            self.stored_token.access_token = new_data['access_token']
+                            self.stored_token.expires_in = int(new_data['expires_in'])
+                            self.stored_token.expires_at = int(time.time()) + int(new_data['expires_in'])
+                            
+                            # Simpan update token baru ke DB & File
+                            username = token_data.get('spotify_username') or self.config.get('username')
+                            self._save_credentials(self.stored_token, username)
+                            return True
+                        else:
+                            self.logger.warning(f"Gagal refresh token dari DB: {resp.text}")
+                            return False
+                    except Exception as e:
+                        self.logger.error(f"Error koneksi saat refresh token: {e}")
+                        return False
 
-        except json.JSONDecodeError:
-            self.logger.error("Credentials file corrupted.")
-            return False
-        except Exception as e:
-            self.logger.error(f"Failed to load credentials: {e}")
-            return False
+                return True
+
+            except Exception as e:
+                self.logger.error(f"Error parsing token data: {e}")
+                return False
+
+        return False
 
     def _perform_oauth_flow(self):
         """
@@ -1066,7 +1097,8 @@ class SpotifyAPI:
     def _load_credentials_and_init_session(self) -> bool:
         """
         Memuat kredensial dan inisialisasi sesi.
-        [FIX] Memperbaiki pemanggilan StoredToken.from_dict() pada bagian Web API Refresh.
+        Fungsi ini aman dari restart karena mengandalkan _load_existing_credentials 
+        yang sudah terintegrasi dengan MongoDB.
         """
         self.logger.info("Attempting to authenticate and initialize session...")
         
@@ -1075,27 +1107,28 @@ class SpotifyAPI:
             self.logger.error("Spotify credentials missing in config.")
             return False
         
-        # Simpan handler asli
+        # Simpan handler asli (karena kita akan switch sementara ke librespot handler)
         original_oauth_handler = self.oauth_handler
         self.oauth_handler = self.librespot_oauth_handler
         
-        # --- STEP 1: LOAD KREDENSIAL DARI FILE/ENV ---
+        # --- STEP 1: LOAD KREDENSIAL DARI FILE / MONGODB ---
         credentials_loaded = False
         try:
+            # _load_existing_credentials sekarang sudah CANGGIH (Cek File -> Cek DB -> Restore File)
             if self._load_existing_credentials():
                 self.librespot_stored_token = self.stored_token
                 credentials_loaded = True
             else:
                 self.logger.info("No valid existing credentials found (or load failed).")
-        except Exception: 
-            pass
+        except Exception as e: 
+            self.logger.error(f"Error loading credentials: {e}")
 
-        # --- STEP 2: COBA BUAT SESI ---
+        # --- STEP 2: COBA BUAT SESI LIBRESPOT ---
         session_active = False
         try:
             if credentials_loaded:
                 self.logger.info("Creating Librespot session (Attempt 1)...")
-                # Gunakan fungsi create yang sudah kita perbaiki
+                # Gunakan fungsi create yang sudah diperbaiki (Anti-BadCredentials)
                 if self._create_librespot_session_from_oauth() and self.librespot_session:
                     self.logger.info("✅ Login Sukses dengan token yang ada.")
                     session_active = True
@@ -1105,6 +1138,8 @@ class SpotifyAPI:
             self.logger.error(f"Error during initial session init: {e}")
 
         # --- STEP 3: LOAD WEB API (Metadata) ---
+        # Bagian ini mencoba memuat token Metadata khusus jika ada filenya.
+        # Jika tidak ada (efek restart), nanti _get_web_api_token akan otomatis membuatnya baru.
         self.oauth_handler = original_oauth_handler 
         
         if self.web_api_oauth_handler != self.librespot_oauth_handler:
@@ -1117,7 +1152,7 @@ class SpotifyAPI:
                         token_data = json.load(f)
                     
                     if all(k in token_data for k in ["access_token", "refresh_token"]):
-                        # Gunakan from_dict
+                        # [PENTING] Gunakan from_dict agar tidak error
                         loaded_token = StoredToken.from_dict(token_data)
                         
                         if loaded_token.expired():
@@ -1125,23 +1160,23 @@ class SpotifyAPI:
                             refreshed = self.oauth_handler.refresh_access_token(loaded_token.refresh_token)
                             
                             if refreshed:
-                                # [FIX UTAMA] DULU ERROR DI SINI: StoredToken(refreshed)
-                                # SEKARANG BENAR:
                                 self.web_api_stored_token = StoredToken.from_dict(refreshed)
                                 
-                                # Save refreshed
+                                # Simpan hasil refresh ke file
                                 t_dict = self.web_api_stored_token.to_dict()
                                 t_dict['client_id'] = self.oauth_handler.client_id
-                                with open(web_api_credentials_path, 'w') as f: json.dump(t_dict, f, indent=4)
+                                with open(web_api_credentials_path, 'w') as f: 
+                                    json.dump(t_dict, f, indent=4)
                         else:
                             self.web_api_stored_token = loaded_token
                 except Exception as e:
                     self.logger.warning(f"Web API load error: {e}")
 
+            # Fallback: Jika Web API token belum ada, gunakan token user sementara
             if not self.web_api_stored_token:
                  self.web_api_stored_token = self.librespot_stored_token
 
-        # Restore handler ke Librespot
+        # Restore handler utama ke Librespot
         self.oauth_handler = self.librespot_oauth_handler
         self.stored_token = self.librespot_stored_token
         
@@ -1149,7 +1184,8 @@ class SpotifyAPI:
             return True
 
         # --- STEP 4: FAIL GRACEFULLY ---
-        self.logger.error("❌ Login Gagal Total (Token Mati/Revoked).")
+        # Jika semua gagal, hapus kredensial (agar tidak loop error) dan beri log jelas
+        self.logger.error("❌ Login Gagal Total (Token Mati/Revoked/Hilang).")
         self.logger.error("👉 Bot akan tetap start. Silakan kirim '/spotify_login' di Telegram.")
         
         self._clear_credentials()
