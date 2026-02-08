@@ -680,33 +680,50 @@ async def get_audio_extension(path):
         return 'mp3'
 
 async def _download_cover_with_headers(url: str, destination: str):
-    if not url: return "No URL provided"
+    if not url: return
     
+    # User-Agent browser agar tidak diblokir server gambar
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5.37.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/5.37.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
     try:
+        # Pastikan folder tujuan benar-benar ada
         dir_path = os.path.dirname(destination)
         os.makedirs(dir_path, exist_ok=True)
-    except Exception as e: return f"Dir Error: {e}"
-
-    try:
+        
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, timeout=60) as response:
-                if response.status == 200:
+            async with session.get(url, timeout=30) as resp:
+                if resp.status == 200:
                     async with aiofiles.open(destination, 'wb') as f:
-                        await f.write(await response.read())
-                    return None 
-                else: return f"HTTP {response.status}"
-    except Exception as e: return f"Error: {e}"
+                        await f.write(await resp.read())
+    except Exception as e:
+        LOGGER.error(f"Gagal download cover: {e}")
 
 async def create_cover_file(url:str, meta:dict, thumbnail=False): 
-    filename = f"{meta['itemid']}-thumb.jpg" if thumbnail else f"{meta['itemid']}.jpg"
-    cover = meta['tempfolder'] + filename
-    if not os.path.exists(cover):
-        await _download_cover_with_headers(url, cover) 
-    if os.path.exists(cover) and os.path.getsize(cover) > 0:
-        return cover
-    else:
-        return './project-siesta.png'
+    # 1. Validasi URL
+    if not url: return './project-siesta.png'
+
+    # 2. Bersihkan Item ID agar aman untuk nama file (Hapus karakter / : ? dll)
+    # Ini PENTING agar tidak error "File not found" atau "Directory error"
+    raw_id = str(meta.get('itemid', 'temp'))
+    clean_id = "".join([c for c in raw_id if c.isalnum() or c in ('-','_')])
+    
+    filename = f"{clean_id}-thumb.jpg" if thumbnail else f"{clean_id}.jpg"
+    
+    # 3. Tentukan Folder Temp (Default ke folder saat ini jika tidak ada config)
+    temp_dir = meta.get('tempfolder', '.')
+    
+    # 4. Gabungkan Path dengan Aman (Pakai os.path.join, JANGAN pakai +)
+    cover_path = os.path.join(temp_dir, filename)
+    
+    # 5. Download jika file belum ada
+    if not os.path.exists(cover_path):
+        await _download_cover_with_headers(url, cover_path)
+    
+    # 6. Cek hasil download (File ada dan ukurannya > 0 bytes)
+    if os.path.exists(cover_path) and os.path.getsize(cover_path) > 0:
+        return cover_path
+        
+    # Fallback ke gambar default jika gagal
+    return './project-siesta.png'
