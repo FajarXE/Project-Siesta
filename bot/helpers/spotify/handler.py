@@ -8,7 +8,6 @@ from config import Config
 from bot.helpers.utils import format_string, create_simple_text, post_art_poster
 from bot.helpers.message import edit_message, send_message
 from bot.helpers.uploder import track_upload, album_upload, playlist_upload, artist_upload
-# [PERBAIKAN] Import create_cover_file agar bisa bikin thumbnail lokal
 from bot.helpers.metadata import set_metadata, create_cover_file 
 from bot.helpers.spotify.manager import spotify_manager
 import bot.helpers.translations as lang
@@ -16,32 +15,24 @@ import bot.helpers.translations as lang
 LOGGER = logging.getLogger("SpotifyHandler")
 
 async def start_spotify(link: str, user: dict):
-    # 1. Pastikan Manager Siap
     client = spotify_manager.get_client()
     if not client:
-        # Coba init ulang jika client mati
         await spotify_manager.initialize_clients()
         client = spotify_manager.get_client()
         if not client:
-            await send_message(user, "❌ **Spotify Gagal:** Bot belum login. Admin harus menjalankan `/spotify_login`.", 'text')
+            await send_message(user, "❌ **Spotify Gagal:** Bot belum login.", 'text')
             return
 
-    # 2. Parsing URL
     msg = user.get('bot_msg')
     await edit_message(msg, "🔍 **Spotify:** Menganalisis Link...")
     
-    parsed_data = client.parse_url(link) # Mengembalikan (DownloadTypeEnum, item_id)
+    parsed_data = client.parse_url(link)
     if not parsed_data:
-        await edit_message(msg, "❌ Link Spotify tidak valid atau tidak didukung.")
+        await edit_message(msg, "❌ Link Spotify tidak valid.")
         return
 
     item_type_enum, item_id = parsed_data
-    if hasattr(item_type_enum, 'name'):
-        item_type = item_type_enum.name
-    else:
-        item_type = str(item_type_enum)
-
-    item_type = item_type.lower() # Normalisasi ke lowercase
+    item_type = item_type_enum.name.lower() if hasattr(item_type_enum, 'name') else str(item_type_enum).lower()
 
     LOGGER.info(f"Spotify Processing: Type={item_type}, ID={item_id}")
 
@@ -57,7 +48,7 @@ async def start_spotify(link: str, user: dict):
         elif item_type == 'episode':
             await process_track(client, item_id, user, is_episode=True)
         else:
-            await edit_message(msg, f"❌ Tipe konten '{item_type}' belum didukung sepenuhnya.")
+            await edit_message(msg, f"❌ Tipe konten '{item_type}' belum didukung.")
             
     except Exception as e:
         LOGGER.error(f"Spotify Handler Error: {e}", exc_info=True)
@@ -68,7 +59,6 @@ async def process_track(client, track_id, user, is_episode=False):
     msg = user.get('bot_msg')
     await edit_message(msg, f"⬇️ **Spotify:** Mengunduh {'Episode' if is_episode else 'Lagu'}...")
 
-    # A. Ambil Info Metadata (Sekarang sudah lengkap dengan codec/quality info)
     try:
         if is_episode:
              track_info = client.get_episode_info(track_id, "HIGH", None)
@@ -76,9 +66,8 @@ async def process_track(client, track_id, user, is_episode=False):
              track_info = client.get_track_info(track_id, "HIGH", None)
              
         if not track_info:
-            raise Exception("Gagal mengambil metadata. Lagu mungkin tidak tersedia.")
+            raise Exception("Gagal mengambil metadata.")
 
-        # B. Download Audio (Paksa HIGH/320kbps sesuai API yang sudah diupdate)
         download_result = None
         if is_episode:
              download_result = client.get_episode_download(track_id=track_id, quality_tier="HIGH")
@@ -88,32 +77,27 @@ async def process_track(client, track_id, user, is_episode=False):
         if not download_result or not download_result.temp_file_path:
             raise Exception("Gagal mengunduh stream audio.")
 
-        # C. Mapping Metadata
         meta = map_spotify_to_bot_metadata(track_info, user, is_episode)
         
-        # D. Pindahkan File
         final_filename = f"{meta['artist']} - {meta['title']}.ogg".replace("/", "_")
         user_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Spotify"
         os.makedirs(user_folder, exist_ok=True)
         
         final_path = os.path.join(user_folder, final_filename)
-        
         import shutil
         shutil.move(download_result.temp_file_path, final_path)
+        
         meta['filepath'] = final_path
         meta['folderpath'] = user_folder
 
-        # E. [PERBAIKAN UTAMA] Download Thumbnail Lokal untuk Telegram
-        # Telegram butuh file lokal untuk 'thumb=', bukan URL.
+        # Thumb
         if meta.get('cover'):
             thumb_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
-            meta['thumb'] = thumb_path # Key ini dibaca oleh uploader.py
+            meta['thumb'] = thumb_path
             
-        # F. Pasang Tag Metadata (Internal File)
         await edit_message(msg, "🏷 **Spotify:** Menulis Metadata...")
         await set_metadata(meta, user['user_id'])
 
-        # G. Upload
         await edit_message(msg, "⬆️ **Spotify:** Mengunggah...")
         await track_upload(meta, user)
 
@@ -125,7 +109,6 @@ async def process_album(client, album_id, user):
     msg = user.get('bot_msg')
     await edit_message(msg, "🔍 **Spotify:** Mengambil Info Album...")
 
-    # Ambil Info Album
     album_info = client.get_album_info(album_id)
     if not album_info:
         raise Exception("Album tidak ditemukan.")
@@ -135,7 +118,7 @@ async def process_album(client, album_id, user):
     
     await edit_message(msg, f"⬇️ **Spotify:** Album ditemukan: {album_info.name}\nJumlah Lagu: {total}")
     
-    # Poster Album
+    # [FIX ZIP 1] Siapkan Metadata Album LENGKAP untuk Poster & ZIP
     meta_album = {
         'title': album_info.name,
         'artist': album_info.artist,
@@ -144,20 +127,24 @@ async def process_album(client, album_id, user):
         'provider': 'Spotify',
         'date': str(album_info.release_year),
         'release_date': str(album_info.release_year),
-        'quality': "High (320kbps)", # Info untuk Poster
-        'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/" # Penting untuk create_cover_file
+        'quality': "High (320kbps)",
+        
+        # [FIX METADATA KOSONG] Isi Total Tracks & Volumes
+        'totaltracks': str(total),
+        'totalvolumes': "1", # Default 1
+        'explicit': "False", # Default album
+        
+        'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/"
     }
     
-    # Download Poster Lokal
     if meta_album.get('cover'):
          poster_path = await create_cover_file(meta_album['cover'], meta_album, thumbnail=False)
          meta_album['thumb'] = poster_path
 
+    # Kirim Poster dengan Metadata yang sudah diisi
     user['poster_msg'] = await post_art_poster(user, meta_album)
 
-    # Loop Download
     processed_tracks = []
-    
     user_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Spotify/{album_info.name}"
     os.makedirs(user_folder, exist_ok=True)
 
@@ -166,14 +153,14 @@ async def process_album(client, album_id, user):
             current_num = i + 1
             await edit_message(msg, f"⬇️ **Spotify Album:** ({current_num}/{total})\n`{track.name}`")
             
-            # Download Logic
             download_result = client.get_track_download(track_id=track.id, quality_tier="HIGH")
             
             if download_result and download_result.temp_file_path:
-                # Map Metadata
                 meta = map_spotify_to_bot_metadata(track, user)
                 
-                # Nama file dengan track number
+                # Update total tracks di meta individu juga
+                meta['totaltracks'] = str(total)
+                
                 clean_title = meta['title'].replace("/", "_")
                 filename = f"{str(meta['tracknumber']).zfill(2)}. {clean_title}.ogg"
                 final_path = os.path.join(user_folder, filename)
@@ -184,16 +171,13 @@ async def process_album(client, album_id, user):
                 meta['filepath'] = final_path
                 meta['folderpath'] = user_folder
                 
-                # [PERBAIKAN] Set Thumbnail Track dari Cover Album
                 meta['cover'] = album_info.all_track_cover_jpg_url
                 if meta_album.get('thumb'):
                     meta['thumb'] = meta_album['thumb']
                 else:
-                    # Download jika belum ada
                     t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
                     meta['thumb'] = t_path
                 
-                # Tagging
                 await set_metadata(meta, user['user_id'])
                 processed_tracks.append(meta)
                 
@@ -204,11 +188,11 @@ async def process_album(client, album_id, user):
     if not processed_tracks:
         raise Exception("Gagal mengunduh semua lagu dalam album.")
 
-    # Upload Album (Batch / ZIP)
+    # [FIX ZIP 2] Masukkan tracks yang sudah diproses ke meta_album
     meta_album['tracks'] = processed_tracks
     meta_album['folderpath'] = user_folder
-    meta_album['totaltracks'] = len(processed_tracks)
     
+    # Panggil Album Upload (Uploader akan cek setting user utk ZIP)
     await album_upload(meta_album, user)
 
 
@@ -225,17 +209,17 @@ async def process_playlist(client, playlist_id, user):
     
     await edit_message(msg, f"⬇️ **Spotify:** Playlist: {playlist_info.name}\nTotal: {total} Lagu")
 
-    # Poster
     meta_playlist = {
         'title': playlist_info.name,
         'artist': playlist_info.creator,
         'cover': playlist_info.cover_url,
         'type': 'playlist',
         'provider': 'Spotify',
+        'totaltracks': str(total), # Isi metadata
+        'totalvolumes': "1",
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/"
     }
     
-    # Download Poster
     if meta_playlist.get('cover'):
          p_path = await create_cover_file(meta_playlist['cover'], meta_playlist, thumbnail=False)
          meta_playlist['thumb'] = p_path
@@ -254,7 +238,6 @@ async def process_playlist(client, playlist_id, user):
             current_num = i + 1
             await edit_message(msg, f"⬇️ **Spotify Playlist:** ({current_num}/{total})\n`{track.name}`")
             
-            # Cek episode
             is_episode = False
             if hasattr(track, 'download_extra_kwargs'):
                  kwargs = getattr(track, 'download_extra_kwargs', {})
@@ -280,7 +263,6 @@ async def process_playlist(client, playlist_id, user):
                 meta['filepath'] = final_path
                 meta['folderpath'] = user_folder
                 
-                # Download Thumb per track
                 if meta.get('cover'):
                     t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
                     meta['thumb'] = t_path
@@ -298,7 +280,6 @@ async def process_playlist(client, playlist_id, user):
     meta_playlist['tracks'] = processed_tracks
     meta_playlist['folderpath'] = user_folder
     meta_playlist['quality'] = "High (320kbps)"
-    meta_playlist['totaltracks'] = len(processed_tracks)
     
     await playlist_upload(meta_playlist, user)
 
@@ -308,23 +289,29 @@ async def process_artist(client, artist_id, user):
     await edit_message(msg, "⚠️ **Info:** Download Artis belum didukung penuh. Silakan download per Album.")
 
 
-# --- HELPER MAPPING (PERBAIKAN UTAMA CAPTION) ---
+# --- HELPER MAPPING (METADATA FIX) ---
 def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
     """
     Mengubah Objek TrackInfo menjadi Dictionary Metadata Bot.
-    Pastikan semua key yang dibutuhkan oleh Uploader terisi.
     """
     cover_url = track_info.cover_url
     
-    # Konversi Explicit ke String "Yes" / "No" untuk Caption
-    explicit_val = "Yes" if track_info.explicit else "No"
+    # [FIX 2] Konversi Explicit ke "True" / "False" (String)
+    explicit_val = str(track_info.explicit) # Hasilnya "True" atau "False"
     
-    # Ambil Tanggal Rilis
     rel_date = "Unknown"
     if track_info.tags and hasattr(track_info.tags, 'release_date') and track_info.tags.release_date:
         rel_date = str(track_info.tags.release_date)
     elif hasattr(track_info, 'release_year') and track_info.release_year:
         rel_date = str(track_info.release_year)
+        
+    # [FIX 3] Ambil Total Tracks & Volumes dari tags jika ada
+    t_tracks = "1"
+    t_vols = "1"
+    if track_info.tags:
+        if track_info.tags.total_tracks: t_tracks = str(track_info.tags.total_tracks)
+        # Asumsi disc_total / volumes ada di tags jika API mendukung, jika tidak default 1
+        # if track_info.tags.disc_total: t_vols = str(track_info.tags.disc_total)
 
     meta = {
         'title': track_info.name,
@@ -336,20 +323,20 @@ def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
         'date': str(track_info.release_year) if track_info.release_year else "",
         'release_date': rel_date,
         
-        # Track Info
+        # Track Info (LENGKAPI KEY DI SINI)
         'tracknumber': str(track_info.tags.track_number) if track_info.tags else "1",
-        'totaltracks': str(track_info.tags.total_tracks) if track_info.tags else "1",
+        'totaltracks': t_tracks, 
         'discnumber': str(track_info.tags.disc_number) if track_info.tags else "1",
-        'totalvolumes': "1", # Default
+        'totalvolumes': t_vols,
         
         # Genre & Misc
         'genre': "Pop", 
         'duration': track_info.duration, 
         
-        # [PENTING] Caption Quality & Provider
-        'quality': "High (320kbps)", # Kita sudah paksa 320kbps di API
+        # Caption Info
+        'quality': "High (320kbps)",
         'provider': "Spotify",
-        'explicit': explicit_val, # String untuk Caption "Yes/No"
+        'explicit': explicit_val, # Sekarang berisi "True" / "False"
         
         # System
         'type': 'track',
