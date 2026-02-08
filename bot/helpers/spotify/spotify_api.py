@@ -1818,97 +1818,80 @@ class SpotifyAPI:
             return False
         return bool(SpotifyAPI._spotify_url_pattern.match(url_string))
 
-    @staticmethod
-    def parse_spotify_url(url_string: str) -> Optional[dict]:
-        if not isinstance(url_string, str):
-            SpotifyAPI.logger.debug(f"parse_spotify_url: input is not a string: {type(url_string)}")
-            return None
-        match = SpotifyAPI._spotify_url_pattern.match(url_string)
-        if not match:
-            SpotifyAPI.logger.debug(f"parse_spotify_url: no regex match for URL: {url_string}")
-            return None
-        g = match.groups()
-        item_type_str = None
-        item_id = None
-        if g[0] and g[1]:
-            item_type_str = g[0]
-            item_id = g[1]
-        elif g[2]:
-            item_type_str = "playlist"
-            item_id = g[2]
-        elif g[3] and g[4]:
-            item_type_str = g[3]
-            item_id = g[4]
-        if item_type_str and item_id:
-            if len(item_id) == 22 and item_id.isalnum():
-                valid_types = {"track", "album", "artist", "playlist", "show", "episode"}
-                if item_type_str in valid_types:
-                    SpotifyAPI.logger.debug(f"parse_spotify_url: successfully parsed URL '{url_string}' to type '{item_type_str}', id '{item_id}'")
-                    return {'type': item_type_str, 'id': item_id}
-                else: 
-                    SpotifyAPI.logger.warning(f"parse_spotify_url: parsed type '{item_type_str}' is not a recognized valid type for URL '{url_string}'.")
-            else: 
-                SpotifyAPI.logger.warning(f"parse_spotify_url: parsed ID '{item_id}' (type '{item_type_str}') from URL '{url_string}' does not look like a valid Spotify ID (expected 22 alphanumeric chars).")
-            return None 
-        else: 
-            SpotifyAPI.logger.warning(f"parse_spotify_url: could not extract type/id from URL '{url_string}' despite initial regex match. Groups: {g}")
-            return None
+    def _manual_login_exchange(self, code):
+        self.logger.info("Menukar Kode dengan Token ke Spotify...")
+        
+        CLIENT_ID = "65b708073fc0480ea92a077233ca87bd" 
+        REDIRECT_URI = "http://127.0.0.1:4381/login"
+        
+        try:
+            payload = {
+                "client_id": CLIENT_ID,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI,
+                "code_verifier": self.config.get("code_verifier", "") 
+            }
+            
+            r = requests.post("https://accounts.spotify.com/api/token", data=payload)
+            
+            if r.status_code == 200:
+                data = r.json()
+                
+                try:
+                    user_r = requests.get("https://api.spotify.com/v1/me", headers={"Authorization": f"Bearer {data['access_token']}"})
+                    username = user_r.json().get('id') if user_r.status_code == 200 else "SpotifyUser"
+                except:
+                    username = "SpotifyUser"
+                
+                self.stored_token = StoredToken(data)
+                self.stored_token.spotify_username = username
+                
+                self._save_credentials(self.stored_token, username)
+                self._create_librespot_session()
+                
+                print(f"\n\n{'='*30}\nLOGIN SUKSES! TOKEN DISIMPAN.\nSILAKAN DOWNLOAD LAGU SEKARANG.\n{'='*30}\n\n")
+                self.logger.info(f"Login sukses sebagai: {username}")
+            else:
+                self.logger.error(f"Gagal tukar token. Response: {r.text}")
+        except Exception as e:
+            self.logger.error(f"Error Login Manual: {e}")
 
     def parse_url(self, url: str):
-        """
-        Menerjemahkan URL Spotify menjadi Tipe (Track/Album) dan ID.
-        Mendukung format:
-        - https://open.spotify.com/track/ID?si=...
-        - https://open.spotify.com/track/...
-        - spotify:track:ID (URI)
-        """
-        try:
-            self.logger.info(f"Parsing URL: {url}")
-            
-            # 1. Bersihkan URL (Hapus '?' dan parameter di belakangnya, serta spasi)
-            clean_url = url.split("?")[0].strip()
-            if clean_url.endswith("/"):
-                clean_url = clean_url[:-1] # Hapus slash terakhir jika ada
-            
-            # 2. Deteksi Tipe Konten
-            # Kita menggunakan DownloadTypeEnum yang sudah didefinisikan di atas file
-            item_type = None
-            
-            if "/track/" in clean_url or ":track:" in clean_url:
-                item_type = DownloadTypeEnum.track
-            elif "/album/" in clean_url or ":album:" in clean_url:
-                item_type = DownloadTypeEnum.album
-            elif "/playlist/" in clean_url or ":playlist:" in clean_url:
-                item_type = DownloadTypeEnum.playlist
-            elif "/artist/" in clean_url or ":artist:" in clean_url:
-                item_type = DownloadTypeEnum.artist
-            elif "/episode/" in clean_url or ":episode:" in clean_url:
-                item_type = DownloadTypeEnum.episode
-            elif "/show/" in clean_url or ":show:" in clean_url:
-                item_type = DownloadTypeEnum.show
-            
-            # 3. Ekstrak ID
-            if not item_type:
-                self.logger.warning(f"URL tidak dikenali jenisnya (track/album/dll): {url}")
+        if not url or not isinstance(url, str):
+            return None
+
+        if "127.0.0.1" in url and "code=" in url:
+            self.logger.info("Mendeteksi Link Login Manual! Memproses...")
+            try:
+                parsed = urlparse(url)
+                query = parse_qs(parsed.query)
+                if 'code' in query:
+                    code = query['code'][0]
+                    self._manual_login_exchange(code)
+                    return None 
+            except Exception as e:
+                self.logger.error(f"Gagal memproses link login: {e}")
                 return None
 
-            # Logika: Ambil teks paling belakang setelah "/" (untuk URL) atau ":" (untuk URI)
-            if "http" in clean_url:
-                # Format Web: .../track/4cOdK2wGLETKBW3PvgPWqT
-                # Kita split berdasarkan "/" dan ambil elemen terakhir
-                item_id = clean_url.split("/")[-1]
-            else:
-                # Format URI: spotify:track:4cOdK2wGLETKBW3PvgPWqT
-                item_id = clean_url.split(":")[-1]
+        clean_url = url.split("?")[0].strip()
+        
+        match = self._spotify_url_pattern.match(clean_url)
+        if match:
+            g = match.groups()
+            item_type = g[0] or g[3]
+            item_id = g[1] or g[2] or g[4]
             
-            self.logger.info(f"Hasil Parse -> Tipe: {item_type}, ID: {item_id}")
-            
-            # Kembalikan Tuple (Enum, String ID)
-            return (item_type, item_id)
-
-        except Exception as e:
-            self.logger.error(f"Error fatal saat parsing URL {url}: {e}", exc_info=True)
-            return None
+            if item_type and item_id:
+                if len(item_id) == 22 and item_id.isalnum():
+                    self.logger.info(f"Hasil Parse -> Tipe: {item_type}, ID: {item_id}")
+                    return {'type': item_type, 'id': item_id}
+        
+        self.logger.warning(f"URL tidak dikenali: {url}")
+        return None
+        
+    def parse_spotify_url(self, url):
+        return self.parse_url(url)
 
     def get_track_info(self, track_id: str, quality_tier: QualityEnum, codec_options: CodecOptions, **extra_kwargs) -> Optional[TrackInfo]:
         """
