@@ -36,33 +36,36 @@ from librespot.mercury import MercuryClient
 # Store reference to original LibrespotTokenProvider before any patching
 _OriginalLibrespotTokenProvider = librespot.core.TokenProvider
 
-# --- [PERBAIKAN] KONEKSI MONGODB VIA DATABASE_URL ---
+# --- [PERBAIKAN FINAL] KONEKSI MONGODB (ANTI-ERROR NO DEFAULT DB) ---
 try:
     from pymongo import MongoClient
 except ImportError:
     MongoClient = None
 
-# [UBAH DI SINI] Mengambil URI dari DATABASE_URL
+# Ambil URI dari DATABASE_URL
 MONGODB_URI = os.environ.get("DATABASE_URL")
 mongo_collection = None
 
 if MONGODB_URI and MongoClient:
     try:
-        # Cek apakah URL ini untuk MongoDB (bukan Postgres/Redis)
-        if MONGODB_URI.startswith("mongodb"):
+        # Cek apakah URL valid untuk MongoDB
+        if "mongodb" in MONGODB_URI:
             client = MongoClient(MONGODB_URI)
-            db = client.get_default_database()
+            
+            # [FIX UTAMA DI SINI]
+            # Jangan gunakan get_default_database() karena sering error di Render.
+            # Kita paksa pakai nama database: 'spotify_bot_db'
+            db = client["spotify_bot_db"]
+            
             mongo_collection = db["spotify_credentials"] # Nama koleksi
-            logging.getLogger(__name__).info("✅ MongoDB terdeteksi (via DATABASE_URL). Token aman.")
+            logging.getLogger(__name__).info("✅ MongoDB Terhubung ke Database: 'spotify_bot_db'")
         else:
-            logging.getLogger(__name__).warning("⚠️ DATABASE_URL terdeteksi tapi bukan MongoDB (mungkin Postgres?). Auto-Save dimatikan.")
+            logging.getLogger(__name__).warning("⚠️ DATABASE_URL bukan format MongoDB. Auto-Save dimatikan.")
     except Exception as e:
-        logging.getLogger(__name__).error(f"Gagal koneksi MongoDB: {e}")
+        logging.getLogger(__name__).error(f"❌ Gagal koneksi MongoDB: {e}")
 else:
     if not MongoClient:
         logging.getLogger(__name__).warning("⚠️ Module 'pymongo' tidak terinstall.")
-    if not MONGODB_URI:
-        logging.getLogger(__name__).warning("⚠️ DATABASE_URL tidak ditemukan di ENV.")
 
 # --- MANUAL CLASS: STORED TOKEN (VERSI PINTAR) ---
 class StoredToken:
@@ -76,7 +79,7 @@ class StoredToken:
             self.refresh_token = data.get("refresh_token")
             self.spotify_username = data.get("spotify_username")
             
-            # Handle Scope (bisa berupa string spasi atau list)
+            # Handle Scope
             scope_val = data.get("scope")
             if isinstance(scope_val, str):
                 self.scopes = scope_val.split()
