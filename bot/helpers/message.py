@@ -104,7 +104,7 @@ async def send_message(user, item, itype='text',
                 disable_web_page_preview=True
             )
             
-         elif itype == 'doc':
+            elif itype == 'doc':
             # [LOGIKA BARU] Prioritas: Argument 'thumb' -> Meta 'thumbnail' -> Meta 'cover'
             thumb_path = thumb 
             if not thumb_path and meta:
