@@ -195,6 +195,7 @@ async def album_upload(metadata, user):
     user_dict = user.copy()
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
+    # --- LOGIKA CLOUD UPLOAD (Gofile/Buzzheavier/dll) ---
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'): target = metadata['zip_path'] 
@@ -209,20 +210,36 @@ async def album_upload(metadata, user):
         await cleanup(None, metadata, user_dict)
         return 
 
-    if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
+    # --- LOGIKA TELEGRAM / LOCAL / RCLONE ---
+    if bot_set.upload_mode == 'Local': 
+        await local_upload(metadata, user)
+        
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'):
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str): zip_files = [zip_files] 
             for item in zip_files: 
-                await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
-        else: await batch_telegram_upload(metadata, user)
-    else:
+                # [PERBAIKAN] Tambahkan 'thumb' di sini agar gambar muncul di ZIP
+                thumb_path = metadata.get('thumbnail') or metadata.get('thumb')
+                
+                await send_message(
+                    user, 
+                    item, 
+                    'doc', 
+                    caption=await create_simple_text(metadata, user), 
+                    thumb=thumb_path,  # <--- INI KUNCINYA
+                    meta=metadata
+                )
+        else: 
+            await batch_telegram_upload(metadata, user)
+            
+    else: # Rclone
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata.get('poster_msg'):
             try: await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ALBUM_TEMPLATE, metadata, user))
             except MessageNotModified: pass
         else: await post_simple_message(user, metadata, rclone_link, index_link)
+        
     await cleanup(None, metadata, user_dict)
 
 async def artist_upload(metadata, user):
@@ -271,7 +288,7 @@ async def playlist_upload(metadata, user):
     LOGGER.info(f"[DEBUG UPLOADER] Title Mode: '{user_mode.title()}'")
     LOGGER.info(f"------------------------------------------------")
 
-    # [LOGIC CHECK]
+    # [LOGIC CHECK] CLOUD UPLOAD (Gofile, Buzzheavier, Vikingfiles)
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         LOGGER.info(f"[DEBUG UPLOADER] >>> MASUK BLOK CLOUD ({user_mode})")
         
@@ -300,17 +317,32 @@ async def playlist_upload(metadata, user):
 
     LOGGER.info(f"[DEBUG UPLOADER] >>> MASUK BLOK FALLBACK (Default/Telegram)")
 
-    # --- FALLBACK ---
+    # --- FALLBACK (TELEGRAM / LOCAL / RCLONE) ---
     if bot_set.upload_mode == 'Local': 
         await local_upload(metadata, user)
+        
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str): zip_files = [zip_files]
-            for item in zip_files: await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
-        else: await batch_telegram_upload(metadata, user)
+            
+            for item in zip_files: 
+                # [PERBAIKAN] Tambahkan 'thumb' agar gambar muncul di ZIP Playlist
+                thumb_path = metadata.get('thumbnail') or metadata.get('thumb')
+                
+                await send_message(
+                    user, 
+                    item, 
+                    'doc', 
+                    caption=await create_simple_text(metadata, user), 
+                    thumb=thumb_path, # <--- PARAMETER INI WAJIB ADA
+                    meta=metadata
+                )
+        else: 
+            await batch_telegram_upload(metadata, user)
+            
     else:
-        # BAGIAN BANJIR POSTER
+        # BAGIAN RCLONE / SORT
         LOGGER.info(f"[DEBUG UPLOADER] Masuk logika Rclone/Sort...")
         playlist_zip, _, __, ___ = fetch_zip_settings(user)
         if bot_set.playlist_sort and not playlist_zip:
@@ -327,6 +359,7 @@ async def playlist_upload(metadata, user):
                 try: await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.PLAYLIST_TEMPLATE, metadata, user))
                 except MessageNotModified: pass
             else: await post_simple_message(user, metadata, rclone_link, index_link)
+            
     await cleanup(None, metadata, user)
 
 async def track_upload(metadata, user, disable_link=False):
