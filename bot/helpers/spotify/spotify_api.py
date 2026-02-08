@@ -1880,11 +1880,11 @@ class SpotifyAPI:
             if item_type and item_id:
                 if len(item_id) == 22 and item_id.isalnum():
                     self.logger.info(f"Hasil Parse -> Tipe: {item_type}, ID: {item_id}")
-                    return {'type': item_type, 'id': item_id}
+                    return (item_type, item_id)
         
         self.logger.warning(f"URL tidak dikenali: {url}")
         return None
-        
+
     def parse_spotify_url(self, url):
         return self.parse_url(url)
 
