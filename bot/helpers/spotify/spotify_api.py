@@ -1985,15 +1985,14 @@ class SpotifyAPI:
                 return None
 
         # -----------------------------------------------------------
-        # [RESOLVER V5 - FINAL FIX]
-        # Logika: Buka link -> Cek apakah domain akhirnya adalah "open.spotify.com"
+        # [RESOLVER V6 - LOGIC FIX]
+        # 1. Buka Link -> 2. Cek apakah domainnya 'open.spotify.com'
         # -----------------------------------------------------------
         should_resolve = False
         
-        # Cek apakah ini link pendek/proxy/redirect
+        # Trigger jika link mengandung googleusercontent ATAU pendek (<100 char) dan bukan spotify resmi
         if "googleusercontent.com" in clean_input:
             should_resolve = True
-        # Cek jika link pendek (<100 char) DAN bukan link spotify asli
         elif len(clean_input) < 100 and "open.spotify.com" not in clean_input and "spotify:" not in clean_input:
             should_resolve = True
 
@@ -2004,7 +2003,7 @@ class SpotifyAPI:
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 }
                 
-                # Request HEAD/GET
+                # Request HEAD/GET (Follow Redirects)
                 try:
                     resp = requests.head(clean_input, headers=headers, allow_redirects=True, timeout=10)
                     if resp.status_code not in [200, 301, 302]:
@@ -2014,22 +2013,25 @@ class SpotifyAPI:
                 
                 final_url = resp.url
                 
-                # Bersihkan URL dari tambahan regional
+                # Bersihkan URL dari tambahan regional (misal: /intl-id/)
                 final_url = re.sub(r'/intl-[a-zA-Z0-9]+/', '/', final_url)
                 
                 self.logger.info(f"🔗 URL Akhir ditemukan: {final_url}")
 
-                # [FIXED LOGIC] Cek apakah domain akhirnya adalah Spotify Resmi
-                # SEBELUMNYA SALAH KARENA MENGECEK STRING CONTOH.
-                # SEKARANG MENGECEK DOMAIN "open.spotify.com"
+                # [FIXED] Cek apakah domain akhirnya adalah open.spotify.com
                 if "open.spotify.com" in final_url or "spotify:" in final_url:
                     clean_input = final_url # GANTI input dengan link asli
                     self.logger.info("✅ SUCCESS: Input diganti ke Link Asli Spotify.")
                 else:
                     # Jika tidak redirect, coba cari di dalam HTML (Scraping)
+                    self.logger.info("⚠️ Tidak redirect ke Spotify. Mencari ID di dalam HTML...")
                     match = re.search(r'open\.spotify\.com/(track|album|artist|playlist|show|episode)/([a-zA-Z0-9]{22})', resp.text)
                     if match:
-                        clean_input = f"https://open.spotify.com/{match.group(1)}/{match.group(2)}"
+                        # KONSTRUKSI LINK STANDAR AGAR DITERIMA REGEX
+                        # Jangan pakai googleusercontent lagi, langsung buat link spotify resmi
+                        f_type = match.group(1)
+                        f_id = match.group(2)
+                        clean_input = f"https://open.spotify.com/{f_type}/{f_id}"
                         self.logger.info(f"✅ SUCCESS: Link diekstrak dari HTML: {clean_input}")
 
             except Exception as e:
@@ -2037,9 +2039,8 @@ class SpotifyAPI:
 
         # -----------------------------------------------------------
 
-        # 2. PARSE STANDARD
+        # 2. PARSE STANDARD (clean_input sekarang sudah dijamin Link Spotify Asli)
         
-        # Hapus query params (?si=...)
         clean_url_spotify = clean_input.split("?")[0]
         
         match = self._spotify_url_pattern.search(clean_url_spotify)
