@@ -1972,7 +1972,7 @@ class SpotifyAPI:
         # Bersihkan input
         clean_input = url.strip()
 
-        # 1. DETEKSI LINK LOGIN (Prioritas Utama - Jangan Diubah)
+        # 1. DETEKSI LINK LOGIN (Prioritas Utama)
         if "127.0.0.1" in clean_input and "code=" in clean_input:
             self.logger.info("🚀 MENDETEKSI LINK LOGIN! SEDANG MEMPROSES...")
             try:
@@ -1987,54 +1987,48 @@ class SpotifyAPI:
                 return None
 
         # -----------------------------------------------------------
-        # [FITUR BARU] MAGIC RESOLVER UNTUK LINK WEB / GOOGLEUSERCONTENT
-        # Ini akan membuat bot "membaca" website tersebut untuk mencari ID asli
+        # [MAGIC RESOLVER V2] SUPPORT REDIRECT & SCRAPING
+        # Menangani link pendek / proxy seperti .../8 atau .../21
         # -----------------------------------------------------------
-        if "googleusercontent.com" in clean_input or len(clean_input) < 35:
-            # Cek jika ini bukan link Spotify standar
+        if "googleusercontent.com" in clean_input or len(clean_input) < 50:
+            # Lewati jika sudah terlihat seperti link spotify asli
             if "open.spotify.com" not in clean_input and "spotify:" not in clean_input:
-                self.logger.info(f"🕵️ Mencoba mengurai link Web/Proxy: {clean_input}")
+                self.logger.info(f"🕵️ Mencoba resolve link Proxy/Short: {clean_input}")
                 try:
-                    # Request ke website tersebut (Timeout 5 detik agar tidak lama)
-                    resp = requests.get(clean_input, timeout=5, allow_redirects=True)
+                    # [UPDATE PENTING] allow_redirects=True agar bot mengikuti link sampai ujung
+                    resp = requests.get(clean_input, timeout=10, allow_redirects=True)
                     
-                    # Cek URL tujuan akhir (jika itu redirect)
+                    # 1. CEK URL AKHIR (REDIRECT)
+                    # Jika link /8 berubah jadi open.spotify.com/..., kita pakai itu!
                     final_url = resp.url
-                    self.logger.info(f"🔗 URL Akhir Redirect: {final_url}")
+                    self.logger.info(f"🔗 Redirect ke: {final_url}")
                     
-                    # Jika redirect langsung ke Spotify, pakai URL akhir
-                    if "open.spotify.com" in final_url:
-                        clean_input = final_url
+                    if "open.spotify.com" in final_url or "spotify:" in final_url:
+                        clean_input = final_url # Update input dengan link asli
+                        self.logger.info("✅ Redirect sukses ke Link Spotify Asli!")
+                    
+                    # 2. CEK ISI HTML (SCRAPING)
+                    # Jika tidak redirect, cari link tersembunyi di dalam HTML
                     else:
-                        # Jika tidak redirect, cari ID di dalam TEXT HTML (Scraping)
                         html_content = resp.text
                         
-                        # Regex untuk mencari link Spotify tersembunyi di HTML
-                        # Mencari pola: open.spotify.com/tipe/ID_22_CHAR
+                        # Pola: open.spotify.com/track/ID_22_CHAR
                         scraper_pattern = re.compile(r'open\.spotify\.com/(track|album|artist|playlist|show|episode)/([a-zA-Z0-9]{22})')
                         found = scraper_pattern.search(html_content)
                         
                         if found:
                             f_type = found.group(1)
                             f_id = found.group(2)
-                            self.logger.info(f"✅ DITEMUKAN ID TERSEMBUNYI DI WEB: {f_type} - {f_id}")
-                            return (f_type, f_id)
-                        
-                        # Coba cari pola URI: spotify:type:ID
-                        uri_pattern = re.compile(r'spotify:(track|album|artist|playlist|show|episode):([a-zA-Z0-9]{22})')
-                        found_uri = uri_pattern.search(html_content)
-                        
-                        if found_uri:
-                            f_type = found_uri.group(1)
-                            f_id = found_uri.group(2)
-                            self.logger.info(f"✅ DITEMUKAN URI TERSEMBUNYI DI WEB: {f_type} - {f_id}")
+                            self.logger.info(f"✅ DITEMUKAN ID DI DALAM HTML: {f_type} - {f_id}")
                             return (f_type, f_id)
                             
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Gagal resolve link web (lanjut ke standar): {e}")
+                    self.logger.warning(f"⚠️ Gagal resolve link (mencoba parse standar): {e}")
+
         # -----------------------------------------------------------
 
         # 2. PARSE LINK LAGU/ALBUM (Standar)
+        # Hapus query params (?si=...)
         clean_url_spotify = clean_input.split("?")[0]
         match = self._spotify_url_pattern.search(clean_url_spotify)
         
