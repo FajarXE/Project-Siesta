@@ -521,44 +521,50 @@ class SpotifyApiTokenProvider(LibrespotTokenProvider):
         Dipanggil oleh Librespot saat token habis (biasanya per 1 jam).
         [FIX] Menambahkan AUTO-REFRESH jika token di memori sudah expired.
         """
-        spotify_api = self._spotify_api_ref()
-        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): get_token DIPANGGIL.")
+        # [FIX] Tambahkan TRY di sini untuk menangkap error
+        try:
+            spotify_api = self._spotify_api_ref()
+            self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): get_token DIPANGGIL.")
 
-        if not spotify_api or not hasattr(spotify_api, 'stored_token') or not spotify_api.stored_token:
-            self.logger.error("SpotifyAPI instance atau stored_token tidak tersedia.")
-            raise Exception("SpotifyAPI instance or stored_token not available")
+            if not spotify_api or not hasattr(spotify_api, 'stored_token') or not spotify_api.stored_token:
+                self.logger.error("SpotifyAPI instance atau stored_token tidak tersedia.")
+                raise Exception("SpotifyAPI instance or stored_token not available")
 
-        # --- LOGIKA AUTO REFRESH ---
-        # Cek apakah token yang kita pegang sekarang sudah expired?
-        if spotify_api.stored_token.expired():
-            self.logger.warning("♻️ Token di Memory EXPIRED saat diminta Librespot. Melakukan Refresh...")
+            # --- LOGIKA AUTO REFRESH ---
+            # Cek apakah token yang kita pegang sekarang sudah expired?
+            if spotify_api.stored_token.expired():
+                self.logger.warning("♻️ Token di Memory EXPIRED saat diminta Librespot. Melakukan Refresh...")
+                
+                # Panggil fungsi refresh internal
+                if spotify_api.perform_token_refresh():
+                    self.logger.info("✅ Token berhasil direfresh otomatis!")
+                else:
+                    self.logger.error("❌ Gagal refresh token otomatis. Koneksi mungkin akan putus.")
             
-            # Panggil fungsi refresh internal (Kita buat fungsi ini di langkah 2)
-            if spotify_api.perform_token_refresh():
-                self.logger.info("✅ Token berhasil direfresh otomatis!")
-            else:
-                self.logger.error("❌ Gagal refresh token otomatis. Koneksi mungkin akan putus.")
-        
-        # Ambil token (sekarang seharusnya sudah fresh)
-        pkce_token_info = spotify_api.stored_token
-        
-        if not pkce_token_info.access_token:
-            raise Exception("PKCE access_token is missing")
+            # Ambil token (sekarang seharusnya sudah fresh)
+            pkce_token_info = spotify_api.stored_token
+            
+            if not pkce_token_info.access_token:
+                raise Exception("PKCE access_token is missing")
 
-        # Gunakan scope aktual
-        actual_scopes = pkce_token_info.scopes
-        
-        oauth_token_response = {
-            "accessToken": pkce_token_info.access_token,
-            "expiresIn": pkce_token_info.expires_in,
-            "scope": actual_scopes
-        }
-        
-        return _OriginalLibrespotTokenProvider.StoredToken(oauth_token_response)
-    except Exception as e:
-        self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Gagal membuat StoredToken: {e}", exc_info=True)
-           raise
+            # Gunakan scope aktual
+            actual_scopes = pkce_token_info.scopes
+            
+            oauth_token_response = {
+                "accessToken": pkce_token_info.access_token,
+                "expiresIn": pkce_token_info.expires_in,
+                "scope": actual_scopes
+            }
+            
+            return _OriginalLibrespotTokenProvider.StoredToken(oauth_token_response)
 
+        # [FIX] Pasangan except harus sejajar dengan try
+        except Exception as e:
+            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Gagal membuat StoredToken: {e}", exc_info=True)
+            raise
+
+
+    
 class LibrespotAudioKeyFilter(logging.Filter):
     """Filter to suppress noisy librespot audio key error messages and rate limit warnings"""
     def filter(self, record):
