@@ -1971,7 +1971,7 @@ class SpotifyAPI:
 
         clean_input = url.strip()
 
-        # 1. DETEKSI LINK LOGIN (Prioritas Utama - Jangan Diubah)
+        # 1. DETEKSI LINK LOGIN (Prioritas Utama)
         if "127.0.0.1" in clean_input and "code=" in clean_input:
             self.logger.info("🚀 MENDETEKSI LINK LOGIN! SEDANG MEMPROSES...")
             try:
@@ -1985,46 +1985,43 @@ class SpotifyAPI:
                 return None
 
         # -----------------------------------------------------------
-        # [RESOLVER V3 - FIX BUG]
+        # [RESOLVER V4 - FIXED]
         # Membuka link redirect untuk mencari Link Spotify Asli
         # -----------------------------------------------------------
         should_resolve = False
         
         # Cek apakah ini link pendek/proxy/redirect
-        # Jika link mengandung googleusercontent ATAU panjangnya < 100 karakter tapi bukan format spotify standar
         if "googleusercontent.com" in clean_input:
             should_resolve = True
+        # Cek jika link pendek (<100 char) DAN bukan link spotify asli
         elif len(clean_input) < 100 and "open.spotify.com" not in clean_input and "spotify:" not in clean_input:
             should_resolve = True
 
         if should_resolve:
             self.logger.info(f"🕵️ Link Redirect Terdeteksi: {clean_input} | Mencari link asli...")
             try:
-                # Header Browser (Wajib agar tidak diblokir)
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 }
                 
-                # Request HEAD/GET untuk mengikuti redirect
+                # Request HEAD/GET
                 try:
                     resp = requests.head(clean_input, headers=headers, allow_redirects=True, timeout=10)
-                    # Kadang HEAD tidak mengembalikan URL akhir yang benar, jadi fallback ke GET jika status 200
-                    if resp.status_code != 200 and resp.status_code != 301 and resp.status_code != 302:
+                    if resp.status_code not in [200, 301, 302]:
                          resp = requests.get(clean_input, headers=headers, allow_redirects=True, timeout=10)
                 except:
                     resp = requests.get(clean_input, headers=headers, allow_redirects=True, timeout=10)
                 
                 final_url = resp.url
                 
-                # Bersihkan URL dari tambahan regional (misal: /intl-id/)
+                # Bersihkan URL dari tambahan regional
                 final_url = re.sub(r'/intl-[a-zA-Z0-9]+/', '/', final_url)
                 
                 self.logger.info(f"🔗 URL Akhir ditemukan: {final_url}")
 
-                # [FIX UTAMA DI SINI] 
-                # Cek apakah URL akhir adalah domain Spotify Asli
+                # [FIXED LOGIC] Cek apakah domain akhirnya adalah Spotify resmi
                 if "open.spotify.com" in final_url or "spotify:" in final_url:
-                    clean_input = final_url # Update input jadi link asli
+                    clean_input = final_url # GANTI input dengan link asli
                     self.logger.info("✅ SUCCESS: Input diganti ke Link Asli Spotify.")
                 else:
                     # Jika tidak redirect, coba cari di dalam HTML (Scraping)
@@ -2038,9 +2035,9 @@ class SpotifyAPI:
 
         # -----------------------------------------------------------
 
-        # 2. PARSE STANDARD (Sekarang clean_input sudah berisi Link Asli)
+        # 2. PARSE STANDARD
         
-        # Hapus query params (?si=...) agar Regex bersih
+        # Hapus query params (?si=...)
         clean_url_spotify = clean_input.split("?")[0]
         
         match = self._spotify_url_pattern.search(clean_url_spotify)
