@@ -1985,8 +1985,8 @@ class SpotifyAPI:
                 return None
 
         # -----------------------------------------------------------
-        # [RESOLVER V4 - FIXED]
-        # Membuka link redirect untuk mencari Link Spotify Asli
+        # [RESOLVER V5 - FINAL FIX]
+        # Logika: Buka link -> Cek apakah domain akhirnya adalah "open.spotify.com"
         # -----------------------------------------------------------
         should_resolve = False
         
@@ -2019,7 +2019,9 @@ class SpotifyAPI:
                 
                 self.logger.info(f"🔗 URL Akhir ditemukan: {final_url}")
 
-                # [FIXED LOGIC] Cek apakah domain akhirnya adalah Spotify resmi
+                # [FIXED LOGIC] Cek apakah domain akhirnya adalah Spotify Resmi
+                # SEBELUMNYA SALAH KARENA MENGECEK STRING CONTOH.
+                # SEKARANG MENGECEK DOMAIN "open.spotify.com"
                 if "open.spotify.com" in final_url or "spotify:" in final_url:
                     clean_input = final_url # GANTI input dengan link asli
                     self.logger.info("✅ SUCCESS: Input diganti ke Link Asli Spotify.")
