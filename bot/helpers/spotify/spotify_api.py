@@ -714,7 +714,6 @@ class SpotifyAPI:
     def perform_token_refresh(self) -> bool:
         """
         Memaksa refresh token menggunakan Refresh Token yang ada dan menyimpannya.
-        Fungsi ini dipanggil otomatis oleh SpotifyApiTokenProvider saat token basi.
         """
         # 1. Cek apakah kita punya Refresh Token
         if not self.stored_token or not self.stored_token.refresh_token:
@@ -722,8 +721,7 @@ class SpotifyAPI:
             return False
 
         try:
-            # 2. Siapkan Data untuk Request ke Spotify
-            # Client ID Public (Bawaan Librespot/Spotify Desktop)
+            # 2. Siapkan Data
             PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
             
             payload = {
@@ -732,8 +730,7 @@ class SpotifyAPI:
                 "client_id": PUBLIC_ID
             }
             
-            # --- PERBAIKAN FINAL (WAJIB) ---
-            # Gunakan URL RESMI Spotify, JANGAN gunakan URL googleusercontent/proxy
+            # URL Token Resmi
             TOKEN_URL = "https://accounts.spotify.com/api/token" 
             
             self.logger.info("♻️ Mengirim permintaan Refresh Token ke Spotify...")
@@ -745,28 +742,25 @@ class SpotifyAPI:
             if resp.status_code == 200:
                 new_data = resp.json()
                 
-                # Update data token di memori (Self)
+                # Update data token
                 self.stored_token.access_token = new_data['access_token']
                 self.stored_token.expires_in = int(new_data['expires_in'])
-                # Hitung waktu expired baru (Current Time + Expires In)
                 self.stored_token.expires_at = int(time.time()) + int(new_data['expires_in'])
                 
-                # Kadang Spotify merotasi refresh token juga, update jika ada
                 if 'refresh_token' in new_data:
                     self.stored_token.refresh_token = new_data['refresh_token']
                 
-                # 5. SIMPAN KE FILE & MONGODB (PENTING AGAR SINKRON)
+                # Simpan agar sinkron
                 username = self.stored_token.spotify_username or "SpotifyUser"
                 self._save_credentials(self.stored_token, username)
                 
-                self.logger.info("✅ Refresh Token Sukses & Disimpan ke DB/File.")
+                self.logger.info("✅ Refresh Token Sukses & Disimpan.")
                 return True
             else:
                 self.logger.error(f"❌ Gagal Refresh Token. Status: {resp.status_code}, Resp: {resp.text}")
                 
-                # Jika errornya "invalid_grant" atau "revoked", token sudah mati total
+                # Cek jika token mati total
                 if "invalid_grant" in resp.text or "revoked" in resp.text:
-                    self.logger.critical("💀 Token Refesh Mati (Revoked). Harus login ulang manual /spotify_login")
                     self._clear_credentials()
                 
                 return False
