@@ -553,11 +553,11 @@ class SpotifyApiTokenProvider(LibrespotTokenProvider):
             "expiresIn": pkce_token_info.expires_in,
             "scope": actual_scopes
         }
-
+        
         return _OriginalLibrespotTokenProvider.StoredToken(oauth_token_response)
     except Exception as e:
-            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Gagal membuat StoredToken: {e}", exc_info=True)
-            raise
+        self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Gagal membuat StoredToken: {e}", exc_info=True)
+           raise
 
 class LibrespotAudioKeyFilter(logging.Filter):
     """Filter to suppress noisy librespot audio key error messages and rate limit warnings"""
