@@ -1564,9 +1564,9 @@ class SpotifyAPI:
     def get_track_download(self, track_id, quality_tier=None, **kwargs):
         """
         Mendownload track dengan fitur:
-        1. Auto-Retry untuk koneksi putus (Errno 104).
-        2. Auto-Downgrade Quality untuk error 403 (Mengatasi isu Premium/Region).
-        3. [MODIFIKASI] Memaksa 320kbps (Very High) untuk setting 'HIGH'.
+        1. Auto-Retry untuk koneksi putus (Errno 104 / struct error).
+        2. Auto-Downgrade Quality untuk error 403.
+        3. Force Re-Login jika sesi zombie.
         """
         # 1. Parsing Input
         if not track_id and 'track_id' in kwargs:
@@ -1574,23 +1574,17 @@ class SpotifyAPI:
         if not quality_tier and 'quality_tier' in kwargs:
             quality_tier = kwargs.get('quality_tier')
 
-        # 2. Mapping Kualitas Audio (PERBAIKAN DI SINI)
-        # Librespot Def: NORMAL=96kbps, HIGH=160kbps, VERY_HIGH=320kbps
-        # Kita ubah agar input "HIGH" dari bot dianggap "VERY_HIGH" (320kbps)
+        # 2. Mapping Kualitas Audio
         quality_map = {
             "LOW": LibrespotAudioQualityEnum.NORMAL,      # 96 kbps
-            "NORMAL": LibrespotAudioQualityEnum.HIGH,     # 160 kbps (Upgrade dikit)
-            "HIGH": LibrespotAudioQualityEnum.VERY_HIGH,  # <--- PERUBAHAN UTAMA: PAKSA 320 KBPS
-            "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,  # 320 kbps
-            "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH # 320 kbps
+            "NORMAL": LibrespotAudioQualityEnum.HIGH,     # 160 kbps
+            "HIGH": LibrespotAudioQualityEnum.VERY_HIGH,  # 320 kbps (Input Bot)
+            "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,
+            "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH
         }
         
         qt_str = str(quality_tier).upper() if quality_tier else "HIGH"
-        
-        # Mulai dengan kualitas yang diminta (sekarang HIGH = 320kbps)
         selected_quality = quality_map.get(qt_str, LibrespotAudioQualityEnum.VERY_HIGH)
-        
-        # Penanda apakah kita sudah menurunkan kualitas (agar tidak loop downgrade terus)
         has_downgraded = False
         
         self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str} (Target Librespot: 320kbps)")
@@ -1616,19 +1610,20 @@ class SpotifyAPI:
             temp_file = None
             try:
                 # A. Cek Sesi
+                # Jika sesi None, login dulu
                 if not self.librespot_session:
-                    self.logger.warning(f"[Percobaan {attempt}] Sesi hilang. Login ulang...")
+                    self.logger.warning(f"[Percobaan {attempt}] Sesi belum ada/mati. Login ulang...")
                     if not self._load_credentials_and_init_session():
-                        raise Exception("Gagal inisialisasi sesi.")
+                        raise Exception("Gagal inisialisasi sesi baru.")
 
                 # B. Siapkan Feeder
                 try:
                     feeder = self.librespot_session.content_feeder()
-                except Exception:
-                    raise Exception("Connection reset (Session Dead)")
+                except Exception as feeder_err:
+                    # Jika gagal bikin feeder, berarti sesi rusak
+                    raise Exception(f"Session Dead/Feeder Error: {feeder_err}")
 
                 # C. Load Stream
-                # Gunakan selected_quality yang dinamis (bisa berubah jika downgrade)
                 stream_loader = feeder.load(
                     tid, 
                     VorbisOnlyAudioQuality(selected_quality), 
@@ -1657,6 +1652,10 @@ class SpotifyAPI:
                 
                 temp_file.close()
                 
+                # Validasi ukuran file (minimal 1KB)
+                if downloaded < 1024:
+                    raise Exception("File terdownload terlalu kecil (0KB), mungkin corrupt.")
+
                 self.logger.info(f"✅ Download Berhasil: {temp_file.name}")
                 return TrackDownloadInfo(
                     download_type=DownloadEnum.TEMP_FILE_PATH,
@@ -1669,47 +1668,53 @@ class SpotifyAPI:
                 last_error = e
                 self.logger.warning(f"⚠️ Gagal Download (Percobaan {attempt}/{max_retries}): {error_msg}")
                 
-                # Hapus file sampah
+                # Bersihkan file sampah
                 if temp_file and os.path.exists(temp_file.name):
                     try: os.unlink(temp_file.name)
                     except: pass
 
-                # --- STRATEGI PENANGANAN ERROR ---
+                # --- PENANGANAN ERROR (STRATEGI BARU) ---
+                
+                # 1. Deteksi Koneksi Putus / Struct Error / Sesi Zombie
+                # 'unpack requires a buffer' adalah ciri khas error dari log Anda (struct.error)
+                if (any(x in error_msg for x in ["104", "Connection reset", "Broken pipe", "Session Dead", "unpack requires a buffer"]) 
+                    or not error_msg): # not error_msg menangani error kosong
+                    
+                    self.logger.critical("♻️ KONEKSI RUSAK/PUTUS. MEMBUNUH SESI & LOGIN ULANG...")
+                    
+                    # Force Reset Sesi
+                    self.librespot_session = None
+                    self.stored_token = None # Paksa load ulang token dari file/db
+                    
+                    # Login Ulang Paksa
+                    try:
+                        self._load_credentials_and_init_session()
+                    except:
+                        pass
+                    
+                    time.sleep(2) # Beri napas
+                    continue # Retry loop
 
-                # 1. Jika Error 403 (Forbidden / Premium Limit / Region)
+                # 2. Jika Error 403 (Forbidden / Premium Limit)
                 if "403" in error_msg:
-                    # Jika belum pernah downgrade dan kualitas saat ini BUKAN Normal
                     if not has_downgraded and selected_quality != LibrespotAudioQualityEnum.NORMAL:
-                        self.logger.info("📉 Terdeteksi Error 403. Menurunkan kualitas ke NORMAL (96kbps) dan mencoba lagi...")
+                        self.logger.info("📉 Terdeteksi Error 403. Menurunkan kualitas ke NORMAL (96kbps)...")
                         selected_quality = LibrespotAudioQualityEnum.NORMAL
                         has_downgraded = True
                         time.sleep(1)
-                        continue # Langsung retry dengan kualitas baru
+                        continue
                     else:
-                        self.logger.error("❌ Tetap 403 meskipun sudah kualitas terendah/downgrade. Kemungkinan Region Lock atau Scope Streaming kurang.")
-                        # Jangan retry lagi, buang waktu.
-                        raise SpotifyApiError("Gagal Download: Izin Streaming kurang (Scope) atau Region Lock.")
-
-                # 2. Jika Koneksi Putus (104, Broken Pipe)
-                elif any(x in error_msg for x in ["104", "Connection reset", "Broken pipe", "Session Dead"]):
-                    self.logger.info("♻️ Koneksi putus. Merestart sesi...")
-                    if self.librespot_session:
-                        try: self.librespot_session.close()
-                        except: pass
-                    self.librespot_session = None
-                    time.sleep(2)
-                    continue # Retry dengan sesi baru
+                        raise SpotifyApiError("Gagal Download: Izin Streaming kurang atau Region Lock.")
 
                 # 3. Jika Lagu Tidak Ditemukan (404)
-                elif "404" in error_msg:
+                if "404" in error_msg:
                     raise SpotifyApiError("Lagu tidak ditemukan (404).")
                 
-                # Default retry untuk error lain
                 time.sleep(1)
                 continue
 
         # Jika loop selesai tanpa hasil
-        raise last_error if last_error else Exception("Gagal download setelah retry.")
+        raise last_error if last_error else Exception("Gagal download setelah semua percobaan.")
 
     def close_session(self):
         """Placeholder for closing librespot session if needed by OrpheusDL's lifecycle."""
