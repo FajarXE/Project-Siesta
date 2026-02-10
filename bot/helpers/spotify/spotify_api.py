@@ -555,7 +555,7 @@ class SpotifyApiTokenProvider(LibrespotTokenProvider):
         }
 
         return _OriginalLibrespotTokenProvider.StoredToken(oauth_token_response)
-        except Exception as e:
+    except Exception as e:
             self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Gagal membuat StoredToken: {e}", exc_info=True)
             raise
 
