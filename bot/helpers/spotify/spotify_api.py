@@ -1985,46 +1985,53 @@ class SpotifyAPI:
                 return None
 
         # -----------------------------------------------------------
-        # [RESOLVER AGRESIF]
-        # Membuka link pendek/redirect untuk mencari Link Spotify Asli
+        # [RESOLVER V3 - FIX BUG]
+        # Membuka link redirect untuk mencari Link Spotify Asli
         # -----------------------------------------------------------
-        # Ciri-ciri link redirect: Ada 'googleusercontent' atau linknya pendek (< 80 karakter) tapi bukan spotify ID
         should_resolve = False
+        
+        # Cek apakah ini link pendek/proxy/redirect
+        # Jika link mengandung googleusercontent ATAU panjangnya < 100 karakter tapi bukan format spotify standar
         if "googleusercontent.com" in clean_input:
             should_resolve = True
-        elif len(clean_input) < 80 and "spotify:" not in clean_input and "track/" not in clean_input:
+        elif len(clean_input) < 100 and "open.spotify.com" not in clean_input and "spotify:" not in clean_input:
             should_resolve = True
 
         if should_resolve:
             self.logger.info(f"🕵️ Link Redirect Terdeteksi: {clean_input} | Mencari link asli...")
             try:
-                # Header Browser (PENTING: Agar tidak diblokir saat resolve)
+                # Header Browser (Wajib agar tidak diblokir)
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 }
                 
-                # Request ke link tersebut untuk melihat tujuan akhirnya
-                # allow_redirects=True adalah KUNCI agar .../6 berubah jadi .../track/xxxx
-                resp = requests.get(clean_input, headers=headers, allow_redirects=True, timeout=10)
+                # Request HEAD/GET untuk mengikuti redirect
+                try:
+                    resp = requests.head(clean_input, headers=headers, allow_redirects=True, timeout=10)
+                    # Kadang HEAD tidak mengembalikan URL akhir yang benar, jadi fallback ke GET jika status 200
+                    if resp.status_code != 200 and resp.status_code != 301 and resp.status_code != 302:
+                         resp = requests.get(clean_input, headers=headers, allow_redirects=True, timeout=10)
+                except:
+                    resp = requests.get(clean_input, headers=headers, allow_redirects=True, timeout=10)
                 
                 final_url = resp.url
                 
                 # Bersihkan URL dari tambahan regional (misal: /intl-id/)
-                # Ubah: open.spotify.com/intl-id/track/... -> open.spotify.com/track/...
                 final_url = re.sub(r'/intl-[a-zA-Z0-9]+/', '/', final_url)
                 
                 self.logger.info(f"🔗 URL Akhir ditemukan: {final_url}")
 
-                # Validasi: Apakah hasil akhirnya adalah link Spotify?
+                # [FIX UTAMA DI SINI] 
+                # Cek apakah URL akhir adalah domain Spotify Asli
                 if "open.spotify.com" in final_url or "spotify:" in final_url:
-                    clean_input = final_url # GANTI input dengan link asli
-                    self.logger.info("✅ Input berhasil diganti ke Link Asli Spotify.")
+                    clean_input = final_url # Update input jadi link asli
+                    self.logger.info("✅ SUCCESS: Input diganti ke Link Asli Spotify.")
                 else:
-                    # Jika tidak redirect ke Spotify, coba cari di dalam HTML (Scraping)
+                    # Jika tidak redirect, coba cari di dalam HTML (Scraping)
                     match = re.search(r'open\.spotify\.com/(track|album|artist|playlist|show|episode)/([a-zA-Z0-9]{22})', resp.text)
                     if match:
                         clean_input = f"https://open.spotify.com/{match.group(1)}/{match.group(2)}"
-                        self.logger.info(f"✅ Link diekstrak dari HTML: {clean_input}")
+                        self.logger.info(f"✅ SUCCESS: Link diekstrak dari HTML: {clean_input}")
 
             except Exception as e:
                 self.logger.warning(f"⚠️ Gagal resolve link (mencoba parse standar): {e}")
@@ -2040,7 +2047,6 @@ class SpotifyAPI:
         
         if match:
             g = match.groups()
-            # Logika regex: group bisa ada di posisi berbeda tergantung pola
             item_type = g[0] or g[3]
             item_id = g[1] or g[2] or g[4]
             
