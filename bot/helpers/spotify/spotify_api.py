@@ -1909,8 +1909,9 @@ class SpotifyAPI:
         return bool(SpotifyAPI._spotify_url_pattern.search(url_string))
     
     def _manual_login_exchange(self, code):
-        self.logger.info("Menukar Kode dengan Token ke Spotify...")
+        self.logger.info("Menukar Kode dengan Token ke Spotify (Official)...")
         
+        # ID Public (Sama dengan generate_code_verifier)
         CLIENT_ID = "65b708073fc0480ea92a077233ca87bd" 
         REDIRECT_URI = "http://127.0.0.1:4381/login"
         
@@ -1920,33 +1921,46 @@ class SpotifyAPI:
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": REDIRECT_URI,
-                # HARUS SAMA PERSIS DENGAN YANG DI ATAS
+                # HARUS SAMA PERSIS dengan yang ada di generate_code_verifier
                 "code_verifier": "MonomarsxBot_Static_Verifier_Secret_Key_2026_Fixed"
             }
             
-            r = requests.post("https://accounts.spotify.com/api/token", data=payload)
+            # [FIX PENTING] Gunakan URL Resmi Spotify (Bukan Proxy)
+            TOKEN_URL = "https://accounts.spotify.com/api/token"
+            
+            # Kirim Request
+            r = requests.post(TOKEN_URL, data=payload)
             
             if r.status_code == 200:
                 data = r.json()
                 
+                # Coba ambil info user (Username)
                 try:
-                    user_r = requests.get("https://api.spotify.com/v1/me", headers={"Authorization": f"Bearer {data['access_token']}"})
+                    user_r = requests.get(
+                        "https://api.spotify.com/v1/me", 
+                        headers={"Authorization": f"Bearer {data['access_token']}"}
+                    )
                     username = user_r.json().get('id') if user_r.status_code == 200 else "SpotifyUser"
                 except:
                     username = "SpotifyUser"
                 
+                # Buat Object StoredToken
                 self.stored_token = StoredToken(data)
                 self.stored_token.spotify_username = username
                 
+                # [FIX] SIMPAN KE MONGODB & FILE (PERMANEN)
                 self._save_credentials(self.stored_token, username)
+                
+                # Inisialisasi Sesi Librespot
                 self._create_librespot_session()
                 
-                print(f"\n\n{'='*30}\nLOGIN SUKSES! TOKEN DISIMPAN.\nSILAKAN DOWNLOAD LAGU SEKARANG.\n{'='*30}\n\n")
-                self.logger.info(f"Login sukses sebagai: {username}")
+                print(f"\n\n{'='*30}\n✅ LOGIN SUKSES! TOKEN DISIMPAN KE MONGODB.\nBot sekarang AMAN dari Restart.\n{'='*30}\n\n")
+                self.logger.info(f"✅ Login sukses & tersimpan sebagai: {username}")
             else:
-                self.logger.error(f"Gagal tukar token. Response: {r.text}")
+                self.logger.error(f"❌ Gagal tukar token. Status: {r.status_code}. Response: {r.text}")
+                
         except Exception as e:
-            self.logger.error(f"Error Login Manual: {e}")
+            self.logger.error(f"❌ Error Login Manual: {e}", exc_info=True)
 
     def parse_url(self, url: str):
         if not url or not isinstance(url, str):
