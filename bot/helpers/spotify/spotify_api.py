@@ -17,6 +17,7 @@ import hashlib
 import weakref
 
 # --- [WAJIB] Import Dataclass ---
+from config import Config
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -42,8 +43,9 @@ try:
 except ImportError:
     MongoClient = None
 
-# Ambil URI dari DATABASE_URL
-MONGODB_URI = os.environ.get("DATABASE_URL")
+# [FIX] AMBIL DARI CONFIG, BUKAN OS.ENVIRON
+# Agar sesuai dengan mongo_async.py kamu
+MONGODB_URI = getattr(Config, "DATABASE_URL", None) 
 mongo_collection = None
 
 if MONGODB_URI and MongoClient:
@@ -52,20 +54,22 @@ if MONGODB_URI and MongoClient:
         if "mongodb" in MONGODB_URI:
             client = MongoClient(MONGODB_URI)
             
-            # [FIX UTAMA DI SINI]
-            # Jangan gunakan get_default_database() karena sering error di Render.
-            # Kita paksa pakai nama database: 'spotify_bot_db'
-            db = client["spotify_bot_db"]
+            # [FIX UTAMA] Paksa nama database agar konsisten
+            # Gunakan nama DB yang sama dengan variable BOT_USERNAME di config kamu (biar rapi)
+            db_name = getattr(Config, "BOT_USERNAME", "spotify_bot_db")
+            db = client[db_name]
             
-            mongo_collection = db["spotify_credentials"] # Nama koleksi
-            logging.getLogger(__name__).info("✅ MongoDB Terhubung ke Database: 'spotify_bot_db'")
+            mongo_collection = db["spotify_credentials"] # Koleksi khusus credential
+            logging.getLogger(__name__).info(f"✅ MongoDB Sync Terhubung ke Database: '{db_name}'")
         else:
             logging.getLogger(__name__).warning("⚠️ DATABASE_URL bukan format MongoDB. Auto-Save dimatikan.")
     except Exception as e:
-        logging.getLogger(__name__).error(f"❌ Gagal koneksi MongoDB: {e}")
+        logging.getLogger(__name__).error(f"❌ Gagal koneksi MongoDB Sync: {e}")
 else:
     if not MongoClient:
         logging.getLogger(__name__).warning("⚠️ Module 'pymongo' tidak terinstall.")
+    elif not MONGODB_URI:
+        logging.getLogger(__name__).warning("⚠️ Config.DATABASE_URL kosong/tidak ditemukan.")
 
 # --- MANUAL CLASS: STORED TOKEN (VERSI PINTAR) ---
 class StoredToken:
@@ -1921,11 +1925,10 @@ class SpotifyAPI:
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": REDIRECT_URI,
-                # HARUS SAMA PERSIS dengan yang ada di generate_code_verifier
                 "code_verifier": "MonomarsxBot_Static_Verifier_Secret_Key_2026_Fixed"
             }
             
-            # [FIX PENTING] Gunakan URL Resmi Spotify (Bukan Proxy)
+            # [FIX] URL RESMI SPOTIFY (JANGAN PAKAI PROXY)
             TOKEN_URL = "https://accounts.spotify.com/api/token"
             
             # Kirim Request
