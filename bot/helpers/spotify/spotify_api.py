@@ -518,37 +518,43 @@ class SpotifyApiTokenProvider(LibrespotTokenProvider):
 
     def get_token(self, *scopes: str) -> _OriginalLibrespotTokenProvider.StoredToken:
         """
-        Dipanggil oleh Librespot saat membutuhkan token.
-        PERBAIKAN: Mengembalikan token dengan SEMUA scope yang dimiliki (streaming, dll),
-        bukan hanya scope yang diminta oleh Librespot (yang biasanya cuma playlist-read).
+        Dipanggil oleh Librespot saat token habis (biasanya per 1 jam).
+        [FIX] Menambahkan AUTO-REFRESH jika token di memori sudah expired.
         """
         spotify_api = self._spotify_api_ref()
-        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): get_token DIPANGGIL untuk scopes: {scopes}")
+        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): get_token DIPANGGIL.")
 
         if not spotify_api or not hasattr(spotify_api, 'stored_token') or not spotify_api.stored_token:
-            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): SpotifyAPI instance atau stored_token tidak tersedia.")
-            raise Exception("SpotifyAPI instance or stored_token not available") 
+            self.logger.error("SpotifyAPI instance atau stored_token tidak tersedia.")
+            raise Exception("SpotifyAPI instance or stored_token not available")
 
+        # --- LOGIKA AUTO REFRESH ---
+        # Cek apakah token yang kita pegang sekarang sudah expired?
+        if spotify_api.stored_token.expired():
+            self.logger.warning("♻️ Token di Memory EXPIRED saat diminta Librespot. Melakukan Refresh...")
+            
+            # Panggil fungsi refresh internal (Kita buat fungsi ini di langkah 2)
+            if spotify_api.perform_token_refresh():
+                self.logger.info("✅ Token berhasil direfresh otomatis!")
+            else:
+                self.logger.error("❌ Gagal refresh token otomatis. Koneksi mungkin akan putus.")
+        
+        # Ambil token (sekarang seharusnya sudah fresh)
         pkce_token_info = spotify_api.stored_token
+        
         if not pkce_token_info.access_token:
-            self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): PKCE access_token hilang.")
             raise Exception("PKCE access_token is missing")
 
-        # --- PERBAIKAN KRUSIAL DI SINI ---
-        # Kita ambil scope ASLI dari token yang kita simpan (yang berisi 'streaming', dll)
+        # Gunakan scope aktual
         actual_scopes = pkce_token_info.scopes
         
-        self.logger.info(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Mengembalikan Token. Diminta: {scopes} -> Diberikan Full: {actual_scopes}")
-
-        # Buat respons token yang meniru keymaster
         oauth_token_response = {
             "accessToken": pkce_token_info.access_token,
             "expiresIn": pkce_token_info.expires_in,
-            "scope": actual_scopes  # <--- PENTING: Gunakan actual_scopes, JANGAN list(scopes)
+            "scope": actual_scopes
         }
 
-        try:
-            return _OriginalLibrespotTokenProvider.StoredToken(oauth_token_response)
+        return _OriginalLibrespotTokenProvider.StoredToken(oauth_token_response)
         except Exception as e:
             self.logger.error(f"CUSTOM_TP_DEBUG (Instance {self.instance_id}): Gagal membuat StoredToken: {e}", exc_info=True)
             raise
@@ -705,6 +711,69 @@ class SpotifyAPI:
         self.credentials_file_path = os.path.join(self.credentials_dir, CREDENTIALS_FILE_NAME)       
         self.logger.info(f"Credentials will be stored/loaded from: {self.credentials_file_path}")
 
+    def perform_token_refresh(self) -> bool:
+        """
+        Memaksa refresh token menggunakan Refresh Token yang ada dan menyimpannya.
+        Fungsi ini dipanggil otomatis oleh SpotifyApiTokenProvider saat token basi.
+        """
+        # 1. Cek apakah kita punya Refresh Token
+        if not self.stored_token or not self.stored_token.refresh_token:
+            self.logger.error("Tidak bisa refresh: Refresh Token tidak ditemukan di memori.")
+            return False
+
+        try:
+            # 2. Siapkan Data untuk Request ke Spotify
+            # Client ID Public (Bawaan Librespot/Spotify Desktop)
+            PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
+            
+            payload = {
+                "grant_type": "refresh_token", 
+                "refresh_token": self.stored_token.refresh_token, 
+                "client_id": PUBLIC_ID
+            }
+            
+            # --- PERBAIKAN FINAL (WAJIB) ---
+            # Gunakan URL RESMI Spotify, JANGAN gunakan URL googleusercontent/proxy
+            TOKEN_URL = "https://accounts.spotify.com/api/token" 
+            
+            self.logger.info("♻️ Mengirim permintaan Refresh Token ke Spotify...")
+            
+            # 3. Kirim Request
+            resp = requests.post(TOKEN_URL, data=payload, timeout=10)
+            
+            # 4. Cek Hasil
+            if resp.status_code == 200:
+                new_data = resp.json()
+                
+                # Update data token di memori (Self)
+                self.stored_token.access_token = new_data['access_token']
+                self.stored_token.expires_in = int(new_data['expires_in'])
+                # Hitung waktu expired baru (Current Time + Expires In)
+                self.stored_token.expires_at = int(time.time()) + int(new_data['expires_in'])
+                
+                # Kadang Spotify merotasi refresh token juga, update jika ada
+                if 'refresh_token' in new_data:
+                    self.stored_token.refresh_token = new_data['refresh_token']
+                
+                # 5. SIMPAN KE FILE & MONGODB (PENTING AGAR SINKRON)
+                username = self.stored_token.spotify_username or "SpotifyUser"
+                self._save_credentials(self.stored_token, username)
+                
+                self.logger.info("✅ Refresh Token Sukses & Disimpan ke DB/File.")
+                return True
+            else:
+                self.logger.error(f"❌ Gagal Refresh Token. Status: {resp.status_code}, Resp: {resp.text}")
+                
+                # Jika errornya "invalid_grant" atau "revoked", token sudah mati total
+                if "invalid_grant" in resp.text or "revoked" in resp.text:
+                    self.logger.critical("💀 Token Refesh Mati (Revoked). Harus login ulang manual /spotify_login")
+                    self._clear_credentials()
+                
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Exception saat perform_token_refresh: {e}")
+            return False
 
     def _save_credentials(self, token_obj: StoredToken, username: Optional[str] = "PKCE_USER"):
         """Saves OAuth token data to JSON File AND MONGODB."""        
@@ -746,6 +815,7 @@ class SpotifyAPI:
         """
         Loads credentials from JSON file OR MONGODB.
         Jika file lokal hilang (efek restart), bot akan mencoba mengambil backup dari MongoDB.
+        [UPDATED] URL Refresh Token diperbaiki ke Official API agar tidak gagal refresh.
         """
         
         token_data = None
@@ -791,9 +861,9 @@ class SpotifyAPI:
                 
                 # Auto Refresh jika expired
                 if self.stored_token.expired():
-                    self.logger.info("Token expired. Refreshing...")
+                    self.logger.info("⚠️ Token expired saat startup. Mencoba Refresh...")
                     
-                    # Payload Refresh Token Standar
+                    # Payload Refresh Token Standar (Public Client ID)
                     PUBLIC_ID = "65b708073fc0480ea92a077233ca87bd"
                     payload = {
                         "grant_type": "refresh_token", 
@@ -802,7 +872,11 @@ class SpotifyAPI:
                     }
                     
                     try:
-                        resp = requests.post("https://accounts.spotify.com/api/token", data=payload, timeout=10)
+                        # [FIX UTAMA DI SINI]
+                        # Ganti URL Proxy lama dengan URL Resmi Spotify Account API
+                        TOKEN_URL = "https://accounts.spotify.com/api/token"
+                        
+                        resp = requests.post(TOKEN_URL, data=payload, timeout=10)
                         
                         if resp.status_code == 200:
                             new_data = resp.json()
@@ -810,15 +884,21 @@ class SpotifyAPI:
                             self.stored_token.expires_in = int(new_data['expires_in'])
                             self.stored_token.expires_at = int(time.time()) + int(new_data['expires_in'])
                             
+                            # Jika Spotify memberikan refresh token baru (rotasi), simpan juga
+                            if 'refresh_token' in new_data:
+                                self.stored_token.refresh_token = new_data['refresh_token']
+                            
                             # Simpan update token baru ke DB & File
                             username = token_data.get('spotify_username') or self.config.get('username')
                             self._save_credentials(self.stored_token, username)
+                            
+                            self.logger.info("✅ Token berhasil disegarkan & disimpan!")
                             return True
                         else:
-                            self.logger.warning(f"Gagal refresh token dari DB: {resp.text}")
+                            self.logger.warning(f"❌ Gagal refresh token saat startup. Status: {resp.status_code} - {resp.text}")
                             return False
                     except Exception as e:
-                        self.logger.error(f"Error koneksi saat refresh token: {e}")
+                        self.logger.error(f"❌ Error koneksi saat refresh token: {e}")
                         return False
 
                 return True
