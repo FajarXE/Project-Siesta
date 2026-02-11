@@ -1568,9 +1568,9 @@ class SpotifyAPI:
     def get_track_download(self, track_id, quality_tier=None, **kwargs):
         """
         Mendownload track dengan fitur:
-        1. Auto-Retry untuk koneksi putus (Errno 104 / Errno 9 / struct error).
-        2. Auto-Downgrade Quality untuk error 403.
-        3. Force Re-Login jika sesi zombie.
+        1. Auto-Retry untuk koneksi putus (Errno 104 / Errno 9).
+        2. VALIDASI HEADER OGG (Mencegah error b'\x00\x00').
+        3. Force Re-Login jika file corrupt.
         """
         # 1. Parsing Input
         if not track_id and 'track_id' in kwargs:
@@ -1591,7 +1591,7 @@ class SpotifyAPI:
         selected_quality = quality_map.get(qt_str, LibrespotAudioQualityEnum.VERY_HIGH)
         has_downgraded = False
         
-        self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str} (Target Librespot: 320kbps)")
+        self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str}")
 
         # 3. Konversi ID
         try:
@@ -1614,7 +1614,6 @@ class SpotifyAPI:
             temp_file = None
             try:
                 # A. Cek Sesi
-                # Jika sesi None, login dulu
                 if not self.librespot_session:
                     self.logger.warning(f"[Percobaan {attempt}] Sesi belum ada/mati. Login ulang...")
                     if not self._load_credentials_and_init_session():
@@ -1624,7 +1623,6 @@ class SpotifyAPI:
                 try:
                     feeder = self.librespot_session.content_feeder()
                 except Exception as feeder_err:
-                    # Jika gagal bikin feeder, berarti sesi rusak
                     raise Exception(f"Session Dead/Feeder Error: {feeder_err}")
 
                 # C. Load Stream
@@ -1654,21 +1652,22 @@ class SpotifyAPI:
                     temp_file.write(chunk)
                     downloaded += len(chunk)
                 
-                temp_file.close()
+                temp_file.close() # Tutup file agar bisa dibaca ulang
                 
-                # Validasi ukuran file (minimal 1KB)
+                # --- VALIDASI HASIL DOWNLOAD (SANGAT PENTING) ---
+
+                # 1. Cek Ukuran
                 if downloaded < 1024:
                     raise Exception("File terdownload terlalu kecil (0KB), mungkin corrupt.")
 
-                # [FIX BARU] Validasi Header OGG (Anti-Crash Metadata)
-                # Mencegah error "unable to read full header; got b'\x00\x00'"
-                try:
-                    with open(temp_file.name, "rb") as f:
-                        header = f.read(4)
-                    if header != b'OggS':
-                        raise Exception(f"File corrupt (Header OGG invalid: {header}).")
-                except Exception as header_err:
-                    raise Exception(f"Gagal verifikasi file: {header_err}")
+                # 2. Cek Header OGG (Anti-Crash Metadata)
+                # Ini mencegah error "unable to read full header; got b'\x00\x00'"
+                with open(temp_file.name, "rb") as f:
+                    header_bytes = f.read(4)
+                
+                if header_bytes != b'OggS':
+                    # Jika header bukan OggS, berarti file sampah (Zombie Session)
+                    raise Exception(f"CORRUPT_FILE: Header invalid ({header_bytes})")
 
                 self.logger.info(f"✅ Download Berhasil & Valid: {temp_file.name}")
                 return TrackDownloadInfo(
@@ -1687,51 +1686,48 @@ class SpotifyAPI:
                     try: os.unlink(temp_file.name)
                     except: pass
 
-                # --- PENANGANAN ERROR (UPDATE: Tambah Errno 9) ---
+                # --- PENANGANAN ERROR ---
                 
-                # Daftar error yang memaksa RESTART SESI
+                # Error Kritis yang butuh RE-LOGIN
+                # Tambahkan 'CORRUPT_FILE' ke sini agar bot sadar sesinya rusak
                 critical_errors = [
                     "104", "Connection reset", "Broken pipe", "Session Dead", 
-                    "unpack requires a buffer", 
-                    "Errno 9", "Bad file descriptor" # <--- INI YANG DITAMBAHKAN
+                    "unpack requires a buffer", "Errno 9", "Bad file descriptor",
+                    "CORRUPT_FILE", "Header invalid" # <--- PENAMBAHAN PENTING
                 ]
 
                 if (any(x in error_msg for x in critical_errors) or not error_msg):
-                    
-                    self.logger.critical(f"♻️ KONEKSI RUSAK ({error_msg}). MEMBUNUH SESI & LOGIN ULANG...")
+                    self.logger.critical(f"♻️ SESI RUSAK/CORRUPT ({error_msg}). MEMBUNUH SESI & LOGIN ULANG...")
                     
                     # Force Reset Sesi
                     self.librespot_session = None
                     self.stored_token = None 
                     
-                    # Login Ulang Paksa
                     try:
                         self._load_credentials_and_init_session()
                     except:
                         pass
                     
-                    time.sleep(2) # Beri napas
-                    continue # Retry loop
+                    time.sleep(2)
+                    continue 
 
-                # 2. Jika Error 403 (Forbidden / Premium Limit)
+                # Handle 403 / 404
                 if "403" in error_msg:
                     if not has_downgraded and selected_quality != LibrespotAudioQualityEnum.NORMAL:
-                        self.logger.info("📉 Terdeteksi Error 403. Menurunkan kualitas ke NORMAL (96kbps)...")
+                        self.logger.info("📉 403 Forbidden. Turun kualitas ke NORMAL...")
                         selected_quality = LibrespotAudioQualityEnum.NORMAL
                         has_downgraded = True
                         time.sleep(1)
                         continue
                     else:
-                        raise SpotifyApiError("Gagal Download: Izin Streaming kurang atau Region Lock.")
+                        raise SpotifyApiError("Gagal Download: 403 Forbidden (Region/Premium).")
 
-                # 3. Jika Lagu Tidak Ditemukan (404)
                 if "404" in error_msg:
                     raise SpotifyApiError("Lagu tidak ditemukan (404).")
                 
                 time.sleep(1)
                 continue
 
-        # Jika loop selesai tanpa hasil
         raise last_error if last_error else Exception("Gagal download setelah semua percobaan.")
 
     def close_session(self):
