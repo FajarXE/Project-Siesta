@@ -157,13 +157,16 @@ async def process_album(client, album_id, user):
 
     upload_per_track = not album_zip
 
+    # Di dalam process_album...
     for i, track in enumerate(tracks):
         try:
             current_num = i + 1
             await edit_message(msg, f"⬇️ **Spotify Album:** ({current_num}/{total})\n`{track.name}`")
             
+            # Download
             download_result = client.get_track_download(track_id=track.id, quality_tier="HIGH")
             
+            # Cek apakah hasil download valid
             if download_result and download_result.temp_file_path:
                 meta = map_spotify_to_bot_metadata(track, user)
                 meta['totaltracks'] = str(total)
@@ -175,11 +178,14 @@ async def process_album(client, album_id, user):
                 final_path = os.path.join(user_folder, filename)
                 shutil.move(download_result.temp_file_path, final_path)
                 
-                meta['filepath'] = final_path
-                meta['folderpath'] = user_folder
-                meta['cover'] = album_info.all_track_cover_jpg_url
-                
+                # [PERBAIKAN KRITIS DI SINI]
+                # Cek apakah file benar-benar ada DAN ukurannya > 1KB
                 if os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
+                    meta['filepath'] = final_path
+                    meta['folderpath'] = user_folder
+                    meta['cover'] = album_info.all_track_cover_jpg_url
+                    
+                    # Ambil thumbnail/cover
                     if meta_album.get('thumbnail'):
                         meta['thumbnail'] = meta_album['thumbnail']
                     else:
@@ -187,16 +193,23 @@ async def process_album(client, album_id, user):
                         meta['thumbnail'] = t_path
                     
                     await set_metadata(meta, user['user_id'])
+                    
+                    # HANYA APPEND JIKA SUKSES
                     processed_tracks.append(meta)
 
                     if upload_per_track:
                         await track_upload(meta, user)
                 else:
+                    # Jika file 0 bytes, hapus dan JANGAN append ke processed_tracks
+                    LOGGER.warning(f"File {filename} korup (0 bytes). Melewati...")
                     try: os.remove(final_path)
                     except: pass
+            else:
+                 LOGGER.warning(f"Gagal mendapatkan stream untuk {track.name}")
                 
         except Exception as e:
             LOGGER.error(f"Gagal download track {track.name}: {e}")
+            # Lanjut ke lagu berikutnya, jangan stop satu album
             continue
 
     if not processed_tracks:
