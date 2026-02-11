@@ -1660,7 +1660,17 @@ class SpotifyAPI:
                 if downloaded < 1024:
                     raise Exception("File terdownload terlalu kecil (0KB), mungkin corrupt.")
 
-                self.logger.info(f"✅ Download Berhasil: {temp_file.name}")
+                # [FIX BARU] Validasi Header OGG (Anti-Crash Metadata)
+                # Mencegah error "unable to read full header; got b'\x00\x00'"
+                try:
+                    with open(temp_file.name, "rb") as f:
+                        header = f.read(4)
+                    if header != b'OggS':
+                        raise Exception(f"File corrupt (Header OGG invalid: {header}).")
+                except Exception as header_err:
+                    raise Exception(f"Gagal verifikasi file: {header_err}")
+
+                self.logger.info(f"✅ Download Berhasil & Valid: {temp_file.name}")
                 return TrackDownloadInfo(
                     download_type=DownloadEnum.TEMP_FILE_PATH,
                     temp_file_path=temp_file.name,
