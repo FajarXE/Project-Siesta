@@ -357,7 +357,20 @@ async def process_artist(client, artist_id, user):
 
 # --- HELPER MAPPING ---
 def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
+    # [FIX] Default cover (bisa jadi cover playlist jika dari playlist)
     cover_url = track_info.cover_url
+    
+    # [LOGIKA BARU] Paksa ambil Cover dari Album Asli
+    # Ini memperbaiki masalah di mana semua lagu playlist gambarnya sama
+    if not is_episode:
+        try:
+            if hasattr(track_info, 'album'):
+                # Cek apakah object album punya cover_url sendiri
+                if hasattr(track_info.album, 'cover_url') and track_info.album.cover_url:
+                    cover_url = track_info.album.cover_url
+        except Exception:
+            pass # Jika gagal, tetap gunakan cover default
+
     explicit_val = track_info.explicit if track_info.explicit is not None else False
     
     rel_date = "Unknown"
@@ -397,7 +410,7 @@ def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
         'provider': "Spotify",
         'explicit': explicit_val,
         'type': 'track',
-        'cover': cover_url,
+        'cover': cover_url, # Gunakan cover yang sudah diperbaiki di atas
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/"
     }
     
