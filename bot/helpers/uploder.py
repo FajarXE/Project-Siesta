@@ -6,6 +6,7 @@ import shutil
 from config import Config 
 from pyrogram.errors import MessageNotModified
 
+from .utils import generate_thumbnail
 from ..settings import bot_set
 from .message import send_message, edit_message
 from .utils import *
@@ -218,21 +219,31 @@ async def album_upload(metadata, user):
         if metadata.get('zip_path'):
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str): zip_files = [zip_files] 
+            
+            # --- [UPDATE FIX BLUR] ---
+            # Ambil cover asli
+            original_cover = metadata.get('thumbnail') or metadata.get('thumb') or metadata.get('cover')
+            # Buat thumbnail kecil khusus untuk Telegram
+            final_thumb = await generate_thumbnail(original_cover)
+            # -------------------------
+
             for item in zip_files: 
-                # [PERBAIKAN] Tambahkan 'thumb' di sini agar gambar muncul di ZIP
-                thumb_path = metadata.get('thumbnail') or metadata.get('thumb')
-                
                 await send_message(
                     user, 
                     item, 
                     'doc', 
                     caption=await create_simple_text(metadata, user), 
-                    thumb=thumb_path,  # <--- INI KUNCINYA
+                    thumb=final_thumb,  # <--- Ganti thumb_path jadi final_thumb
                     meta=metadata
                 )
+            
+            # Hapus file thumbnail sementara agar hemat storage
+            if final_thumb and final_thumb != original_cover and os.path.exists(final_thumb):
+                os.remove(final_thumb)
+
         else: 
             await batch_telegram_upload(metadata, user)
-            
+
     else: # Rclone
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata.get('poster_msg'):
@@ -326,21 +337,33 @@ async def playlist_upload(metadata, user):
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str): zip_files = [zip_files]
             
+            # --- [MULAI PERBAIKAN] ---
+            # 1. Ambil path cover asli
+            original_cover = metadata.get('thumbnail') or metadata.get('thumb') or metadata.get('cover')
+            
+            # 2. Buat file thumbnail baru ukuran 320x320
+            # Pastikan Anda sudah mengimport generate_thumbnail di paling atas file ini
+            final_thumb = await generate_thumbnail(original_cover)
+            # -------------------------
+
             for item in zip_files: 
-                # [PERBAIKAN] Tambahkan 'thumb' agar gambar muncul di ZIP Playlist
-                thumb_path = metadata.get('thumbnail') or metadata.get('thumb')
-                
                 await send_message(
                     user, 
                     item, 
                     'doc', 
                     caption=await create_simple_text(metadata, user), 
-                    thumb=thumb_path, # <--- PARAMETER INI WAJIB ADA
+                    thumb=final_thumb, # <--- Gunakan file thumbnail kecil
                     meta=metadata
                 )
+            
+            # 3. Hapus file thumbnail sementara agar storage tidak penuh
+            if final_thumb and final_thumb != original_cover and os.path.exists(final_thumb):
+                try: os.remove(final_thumb)
+                except: pass
+
         else: 
             await batch_telegram_upload(metadata, user)
-            
+
     else:
         # BAGIAN RCLONE / SORT
         LOGGER.info(f"[DEBUG UPLOADER] Masuk logika Rclone/Sort...")
