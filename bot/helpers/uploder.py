@@ -6,7 +6,6 @@ import shutil
 from config import Config 
 from pyrogram.errors import MessageNotModified
 
-from .utils import generate_thumbnail
 from ..settings import bot_set
 from .message import send_message, edit_message
 from .utils import *
@@ -196,7 +195,6 @@ async def album_upload(metadata, user):
     user_dict = user.copy()
     user_mode = bot_set.user_data.get(user['user_id'], {}).get('upload_mode', 'Telegram')
     
-    # --- LOGIKA CLOUD UPLOAD (Gofile/Buzzheavier/dll) ---
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         target = metadata.get('folderpath')
         if metadata.get('zip_path'): target = metadata['zip_path'] 
@@ -211,46 +209,20 @@ async def album_upload(metadata, user):
         await cleanup(None, metadata, user_dict)
         return 
 
-    # --- LOGIKA TELEGRAM / LOCAL / RCLONE ---
-    if bot_set.upload_mode == 'Local': 
-        await local_upload(metadata, user)
-        
+    if bot_set.upload_mode == 'Local': await local_upload(metadata, user)
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'):
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str): zip_files = [zip_files] 
-            
-            # --- [UPDATE FIX BLUR] ---
-            # Ambil cover asli
-            original_cover = metadata.get('thumbnail') or metadata.get('thumb') or metadata.get('cover')
-            # Buat thumbnail kecil khusus untuk Telegram
-            final_thumb = await generate_thumbnail(original_cover)
-            # -------------------------
-
             for item in zip_files: 
-                await send_message(
-                    user, 
-                    item, 
-                    'doc', 
-                    caption=await create_simple_text(metadata, user), 
-                    thumb=final_thumb,  # <--- Ganti thumb_path jadi final_thumb
-                    meta=metadata
-                )
-            
-            # Hapus file thumbnail sementara agar hemat storage
-            if final_thumb and final_thumb != original_cover and os.path.exists(final_thumb):
-                os.remove(final_thumb)
-
-        else: 
-            await batch_telegram_upload(metadata, user)
-
-    else: # Rclone
+                await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
+        else: await batch_telegram_upload(metadata, user)
+    else:
         rclone_link, index_link = await rclone_upload(user, metadata.get('zip_path') or metadata['folderpath'])
         if metadata.get('poster_msg'):
             try: await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.ALBUM_TEMPLATE, metadata, user))
             except MessageNotModified: pass
         else: await post_simple_message(user, metadata, rclone_link, index_link)
-        
     await cleanup(None, metadata, user_dict)
 
 async def artist_upload(metadata, user):
@@ -299,7 +271,7 @@ async def playlist_upload(metadata, user):
     LOGGER.info(f"[DEBUG UPLOADER] Title Mode: '{user_mode.title()}'")
     LOGGER.info(f"------------------------------------------------")
 
-    # [LOGIC CHECK] CLOUD UPLOAD (Gofile, Buzzheavier, Vikingfiles)
+    # [LOGIC CHECK]
     if user_mode.title() in ['Gofile', 'Buzzheavier', 'Vikingfiles']:
         LOGGER.info(f"[DEBUG UPLOADER] >>> MASUK BLOK CLOUD ({user_mode})")
         
@@ -328,44 +300,17 @@ async def playlist_upload(metadata, user):
 
     LOGGER.info(f"[DEBUG UPLOADER] >>> MASUK BLOK FALLBACK (Default/Telegram)")
 
-    # --- FALLBACK (TELEGRAM / LOCAL / RCLONE) ---
+    # --- FALLBACK ---
     if bot_set.upload_mode == 'Local': 
         await local_upload(metadata, user)
-        
     elif bot_set.upload_mode == 'Telegram':
         if metadata.get('zip_path'): 
             zip_files = metadata['zip_path']
             if isinstance(zip_files, str): zip_files = [zip_files]
-            
-            # --- [MULAI PERBAIKAN] ---
-            # 1. Ambil path cover asli
-            original_cover = metadata.get('thumbnail') or metadata.get('thumb') or metadata.get('cover')
-            
-            # 2. Buat file thumbnail baru ukuran 320x320
-            # Pastikan Anda sudah mengimport generate_thumbnail di paling atas file ini
-            final_thumb = await generate_thumbnail(original_cover)
-            # -------------------------
-
-            for item in zip_files: 
-                await send_message(
-                    user, 
-                    item, 
-                    'doc', 
-                    caption=await create_simple_text(metadata, user), 
-                    thumb=final_thumb, # <--- Gunakan file thumbnail kecil
-                    meta=metadata
-                )
-            
-            # 3. Hapus file thumbnail sementara agar storage tidak penuh
-            if final_thumb and final_thumb != original_cover and os.path.exists(final_thumb):
-                try: os.remove(final_thumb)
-                except: pass
-
-        else: 
-            await batch_telegram_upload(metadata, user)
-
+            for item in zip_files: await send_message(user, item, 'doc', caption=await create_simple_text(metadata, user), meta=metadata)
+        else: await batch_telegram_upload(metadata, user)
     else:
-        # BAGIAN RCLONE / SORT
+        # BAGIAN BANJIR POSTER
         LOGGER.info(f"[DEBUG UPLOADER] Masuk logika Rclone/Sort...")
         playlist_zip, _, __, ___ = fetch_zip_settings(user)
         if bot_set.playlist_sort and not playlist_zip:
@@ -382,7 +327,6 @@ async def playlist_upload(metadata, user):
                 try: await edit_art_poster(metadata, user, rclone_link, index_link, await format_string(lang.s.PLAYLIST_TEMPLATE, metadata, user))
                 except MessageNotModified: pass
             else: await post_simple_message(user, metadata, rclone_link, index_link)
-            
     await cleanup(None, metadata, user)
 
 async def track_upload(metadata, user, disable_link=False):
