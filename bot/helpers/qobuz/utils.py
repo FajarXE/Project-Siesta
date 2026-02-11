@@ -241,10 +241,10 @@ async def get_track_metadata(item_id, r_id, q_meta=None, user: dict=None):
             logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
     
     metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
-    metadata['thumbnail'] = await create_cover_file(q_meta['album']['image']['thumbnail'], metadata, True)
+    metadata['thumbnail'] = await create_cover_file(final_cover_path_or_url, metadata, True)
 
-    return metadata, None  
-        
+    return metadata, None
+  
 async def get_album_metadata(item_id, r_id, user: dict):
     client = user['qobuz_api'] 
     q_meta = await client.get_album_meta(item_id)
@@ -330,7 +330,7 @@ async def get_album_metadata(item_id, r_id, user: dict):
             logging.error(f"SEMUA SUMBER GAGAL, dan fallback lokal TIDAK DITEMUKAN di {FALLBACK_IMAGE_PATH}")
     
     metadata['cover'] = await create_cover_file(final_cover_path_or_url, metadata)
-    metadata['thumbnail'] = await create_cover_file(q_meta['image']['thumbnail'], metadata, True)
+    metadata['thumbnail'] = await create_cover_file(final_cover_path_or_url, metadata, True)
 
     # --- BOOKLET CHECK ---
     metadata['booklet_url'] = None
