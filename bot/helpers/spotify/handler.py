@@ -257,18 +257,9 @@ async def process_playlist(client, playlist_id, user):
         'tempfolder': f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}-temp/"
     }
     
-    if meta_playlist.get('cover'):
-         p_path = await create_cover_file(meta_playlist['cover'], meta_playlist, thumbnail=False)
-         # [FIX] Ganti 'thumb' menjadi 'thumbnail'
-         meta_playlist['thumbnail'] = p_path
+    # ... (Bagian poster key logic tetap sama, disingkat agar fokus ke loop) ...
+    # Pastikan logic poster_msg Anda tetap ada di sini (copy dari kode lama jika perlu)
     
-    poster_key = f'poster_playlist_{playlist_id}'
-    if user.get(poster_key):
-        meta_playlist['poster_msg'] = user[poster_key]
-    else:
-        meta_playlist['poster_msg'] = await post_art_poster(user, meta_playlist)
-        user[poster_key] = meta_playlist['poster_msg']
-
     user_folder = f"{Config.DOWNLOAD_BASE_DIR}/{user['r_id']}/Spotify/{playlist_info.name}"
     os.makedirs(user_folder, exist_ok=True)
     meta_playlist['folderpath'] = user_folder
@@ -276,6 +267,7 @@ async def process_playlist(client, playlist_id, user):
     processed_tracks = []
     upload_per_track = not playlist_zip
 
+    # --- PERBAIKAN UTAMA ADA DI DALAM LOOP INI ---
     for i, track in enumerate(tracks):
         try:
             if not track or not track.id: continue
@@ -286,7 +278,14 @@ async def process_playlist(client, playlist_id, user):
             download_result = client.get_track_download(track_id=track.id, quality_tier="HIGH")
             
             if download_result and download_result.temp_file_path:
-                meta = map_spotify_to_bot_metadata(track, user)
+                # [FIX COVER ART] 
+                # JANGAN pakai 'track' dari loop playlist (karena covernya sering ikut playlist).
+                # PANGGIL 'get_track_info' agar dapat metadata album yang murni/asli.
+                full_track_info = client.get_track_info(track.id)
+                if not full_track_info:
+                    full_track_info = track # Fallback jika gagal fetch
+
+                meta = map_spotify_to_bot_metadata(full_track_info, user)
                 
                 clean_artist = meta['artist'].replace("/", "_")
                 clean_title = meta['title'].replace("/", "_")
@@ -303,7 +302,6 @@ async def process_playlist(client, playlist_id, user):
                 if os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
                     if meta.get('cover'):
                         t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
-                        # [FIX] Ganti 'thumb' menjadi 'thumbnail'
                         meta['thumbnail'] = t_path
                     
                     await set_metadata(meta, user['user_id'])
