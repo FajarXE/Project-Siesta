@@ -10,7 +10,6 @@ import requests
 import re
 import time 
 
-from PIL import Image
 from pathlib import Path
 from urllib.parse import quote
 from pyrogram.errors import MessageNotModified
@@ -340,31 +339,3 @@ def fetch_zip_settings(users: typing.Dict) -> typing.Tuple[bool, bool, bool, boo
             user_dict.get("album_zip", bot_set.album_zip),
             user_dict.get("artist_zip", bot_set.artist_zip),
             user_dict.get("art_poster", bot_set.art_poster))
-
-async def generate_thumbnail(filepath):
-    """
-    Membuat thumbnail kecil (320x320) dari gambar asli 
-    agar tidak blur saat dikirim sebagai thumb Telegram.
-    """
-    if not filepath or not os.path.exists(filepath):
-        return None
-
-    thumb_path = f"{filepath}.thumb.jpg"
-    
-    def _create():
-        try:
-            img = Image.open(filepath)
-            # Konversi ke RGB jika format RGBA/PNG
-            if img.mode in ('RGBA', 'LA'):
-                background = Image.new(img.mode[:-1], img.size, '#fff')
-                background.paste(img, img.split()[-1])
-                img = background
-            
-            img.thumbnail((320, 320)) # Resize proporsional max 320px
-            img.save(thumb_path, "JPEG", quality=85)
-            return thumb_path
-        except Exception as e:
-            LOGGER.error(f"Gagal membuat thumbnail: {e}")
-            return None
-
-    return await asyncio.to_thread(_create)
