@@ -282,34 +282,55 @@ async def process_playlist(client, playlist_id, user):
             current_num = i + 1
             await edit_message(msg, f"⬇️ **Spotify Playlist:** ({current_num}/{total})\n`{track.name}`")
             
+            # Download
             download_result = client.get_track_download(track_id=track.id, quality_tier="HIGH")
             
             if download_result and download_result.temp_file_path:
                 
-                # [FIXED HERE] Tambahkan "HIGH", None agar tidak error missing arguments
+                # Ambil Info Track Lengkap (Fix Cover Art)
                 try:
                     full_track_info = client.get_track_info(track.id, "HIGH", None)
                 except Exception:
-                    full_track_info = track # Fallback ke info playlist jika gagal fetch
+                    full_track_info = track 
 
-                if not full_track_info:
-                    full_track_info = track
+                if not full_track_info: full_track_info = track
 
                 meta = map_spotify_to_bot_metadata(full_track_info, user)
                 
                 clean_artist = meta['artist'].replace("/", "_")
                 clean_title = meta['title'].replace("/", "_")
-                
                 orig_track_num = str(meta['tracknumber']).zfill(2)
-                filename = f"{orig_track_num} - {clean_artist} - {clean_title}.ogg"
                 
+                filename = f"{orig_track_num} - {clean_artist} - {clean_title}.ogg"
                 final_path = os.path.join(user_folder, filename)
+                
+                # Pindahkan file dari temp ke folder user
                 shutil.move(download_result.temp_file_path, final_path)
                 
                 meta['filepath'] = final_path
                 meta['folderpath'] = user_folder
                 
-                if os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
+                # ========================================================
+                # [VALIDASI HEADER OGG - PERBAIKAN UTAMA]
+                # Mencegah error "unable to read full header; got b'\x00'"
+                # ========================================================
+                is_valid_file = False
+                if os.path.exists(final_path):
+                    # 1. Cek Ukuran
+                    if os.path.getsize(final_path) > 1024:
+                        # 2. Cek Header OggS (Magic Bytes)
+                        try:
+                            with open(final_path, "rb") as f_check:
+                                header = f_check.read(4)
+                                if header == b'OggS':
+                                    is_valid_file = True
+                                else:
+                                    LOGGER.warning(f"⚠️ File Corrupt (Null Bytes/Zombie): {filename}")
+                        except Exception as e:
+                            LOGGER.error(f"Gagal baca file: {e}")
+                
+                if is_valid_file:
+                    # File Sehat -> Lanjut Metadata
                     if meta.get('cover'):
                         t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
                         meta['thumbnail'] = t_path
@@ -320,27 +341,27 @@ async def process_playlist(client, playlist_id, user):
                     if upload_per_track:
                         await track_upload(meta, user)
                 else:
-                    try: os.remove(final_path)
-                    except: pass
+                    # File Rusak -> Hapus & Skip
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                    LOGGER.error(f"❌ Skip track corrupt: {track.name}")
 
         except Exception as e:
             LOGGER.error(f"Skip track playlist ({i}): {e}")
             continue
 
     if not processed_tracks:
-        raise Exception("Gagal mengunduh isi playlist (Semua lagu gagal).")
+        raise Exception("Gagal mengunduh isi playlist (Semua lagu gagal/corrupt).")
 
     meta_playlist['tracks'] = processed_tracks
     
+    # ... (Bagian Zip Upload di bawah tetap sama seperti sebelumnya) ...
     if playlist_zip:
         await edit_message(user['bot_msg'], f"🗜️ **Zipping:** Menyiapkan {len(processed_tracks)} lagu...")
-        
         thumb_url = getattr(playlist_info, 'small_cover_url', None) or meta_playlist.get('cover')
-        
         if thumb_url:
              zip_thumb_path = await create_cover_file(thumb_url, meta_playlist, thumbnail=True)
              meta_playlist['thumbnail'] = zip_thumb_path
-             
              if meta_playlist.get('cover'):
                  try:
                      large_cover = await create_cover_file(meta_playlist['cover'], meta_playlist, thumbnail=False)
@@ -349,7 +370,6 @@ async def process_playlist(client, playlist_id, user):
 
         zip_path = await zip_handler(user_folder)
         meta_playlist['zip_path'] = zip_path
-        
         await edit_message(user['bot_msg'], "⬆️ **Uploading Zip...**")
         await playlist_upload(meta_playlist, user)
     
