@@ -1567,10 +1567,7 @@ class SpotifyAPI:
 
     def get_track_download(self, track_id, quality_tier=None, **kwargs):
         """
-        Mendownload track dengan fitur:
-        1. Auto-Retry untuk koneksi putus (Errno 104 / Errno 9 / struct error).
-        2. Auto-Downgrade Quality untuk error 403.
-        3. Force Re-Login jika sesi zombie.
+        [UPDATED FIX 104] Mendownload track dengan penanganan Connection Reset yang lebih kuat.
         """
         # 1. Parsing Input
         if not track_id and 'track_id' in kwargs:
@@ -1580,9 +1577,9 @@ class SpotifyAPI:
 
         # 2. Mapping Kualitas Audio
         quality_map = {
-            "LOW": LibrespotAudioQualityEnum.NORMAL,      # 96 kbps
-            "NORMAL": LibrespotAudioQualityEnum.HIGH,     # 160 kbps
-            "HIGH": LibrespotAudioQualityEnum.VERY_HIGH,  # 320 kbps (Input Bot)
+            "LOW": LibrespotAudioQualityEnum.NORMAL,
+            "NORMAL": LibrespotAudioQualityEnum.HIGH,
+            "HIGH": LibrespotAudioQualityEnum.VERY_HIGH,
             "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,
             "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH
         }
@@ -1591,7 +1588,7 @@ class SpotifyAPI:
         selected_quality = quality_map.get(qt_str, LibrespotAudioQualityEnum.VERY_HIGH)
         has_downgraded = False
         
-        self.logger.info(f"Permintaan Download: ID={track_id}, Quality={qt_str} (Target Librespot: 320kbps)")
+        self.logger.info(f"⬇️ Start Download: ID={track_id}, Quality={qt_str}")
 
         # 3. Konversi ID
         try:
@@ -1606,25 +1603,28 @@ class SpotifyAPI:
             self.logger.error(f"Gagal memparsing Track ID: {e}")
             raise SpotifyApiError(f"Track ID tidak valid: {e}")
 
-        # --- LOOP RETRY ---
-        max_retries = 3
+        # --- LOOP RETRY (Ditingkatkan menjadi 5x) ---
+        max_retries = 5 
         last_error = None
 
         for attempt in range(1, max_retries + 1):
             temp_file = None
             try:
-                # A. Cek Sesi
-                # Jika sesi None, login dulu
+                # A. Cek Sesi (Wajib Login Ulang jika None)
                 if not self.librespot_session:
-                    self.logger.warning(f"[Percobaan {attempt}] Sesi belum ada/mati. Login ulang...")
+                    self.logger.warning(f"⚠️ [Percobaan {attempt}] Sesi mati. Login ulang...")
+                    # Force Refresh Token dulu agar sesi baru fresh
+                    if self.stored_token: 
+                        self.perform_token_refresh()
+                    
                     if not self._load_credentials_and_init_session():
+                        time.sleep(3) # Beri jeda jika login gagal
                         raise Exception("Gagal inisialisasi sesi baru.")
 
                 # B. Siapkan Feeder
                 try:
                     feeder = self.librespot_session.content_feeder()
                 except Exception as feeder_err:
-                    # Jika gagal bikin feeder, berarti sesi rusak
                     raise Exception(f"Session Dead/Feeder Error: {feeder_err}")
 
                 # C. Load Stream
@@ -1639,7 +1639,6 @@ class SpotifyAPI:
                     raise Exception("Stream Loader kosong (Lagu tidak tersedia/Region lock?)")
 
                 # D. Download ke File Temp
-                import tempfile
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg")
                 
                 input_stream = stream_loader.input_stream
@@ -1647,6 +1646,7 @@ class SpotifyAPI:
                 downloaded = 0
                 buffer_size = 65536 
                 
+                # Loop baca stream
                 while downloaded < total_size:
                     chunk = input_stream.stream().read(buffer_size)
                     if not chunk:
@@ -1677,52 +1677,50 @@ class SpotifyAPI:
                     try: os.unlink(temp_file.name)
                     except: pass
 
-                # --- PENANGANAN ERROR (UPDATE: Tambah Errno 9) ---
-                
-                # Daftar error yang memaksa RESTART SESI
+                # --- PENANGANAN ERROR KRITIS (Errno 104) ---
                 critical_errors = [
                     "104", "Connection reset", "Broken pipe", "Session Dead", 
-                    "unpack requires a buffer", 
-                    "Errno 9", "Bad file descriptor" # <--- INI YANG DITAMBAHKAN
+                    "unpack requires a buffer", "Errno 9", "Bad file descriptor",
+                    "code: 2", "channel closed"
                 ]
 
                 if (any(x in error_msg for x in critical_errors) or not error_msg):
                     
-                    self.logger.critical(f"♻️ KONEKSI RUSAK ({error_msg}). MEMBUNUH SESI & LOGIN ULANG...")
+                    self.logger.critical(f"♻️ KONEKSI RUSAK ({error_msg}). RESTART SESI & COOLDOWN...")
                     
-                    # Force Reset Sesi
-                    self.librespot_session = None
-                    self.stored_token = None 
+                    # 1. Matikan sesi lama
+                    self.close_session()
                     
-                    # Login Ulang Paksa
-                    try:
-                        self._load_credentials_and_init_session()
-                    except:
-                        pass
+                    # 2. Jeda Wajib (Cooldown) - PENTING!
+                    # Tambah waktu tunggu agar server tidak menolak koneksi lagi (Anti-Stuck)
+                    wait_time = 5 + (attempt * 2) 
+                    self.logger.info(f"⏳ Menunggu {wait_time} detik sebelum reconnect...")
+                    time.sleep(wait_time)
                     
-                    time.sleep(2) # Beri napas
-                    continue # Retry loop
+                    # 3. Coba Login Ulang di putaran loop berikutnya
+                    continue 
 
-                # 2. Jika Error 403 (Forbidden / Premium Limit)
+                # Handling Error 403 (Limit/Premium)
                 if "403" in error_msg:
                     if not has_downgraded and selected_quality != LibrespotAudioQualityEnum.NORMAL:
-                        self.logger.info("📉 Terdeteksi Error 403. Menurunkan kualitas ke NORMAL (96kbps)...")
+                        self.logger.info("📉 Error 403. Downgrade ke NORMAL (96kbps)...")
                         selected_quality = LibrespotAudioQualityEnum.NORMAL
                         has_downgraded = True
-                        time.sleep(1)
+                        time.sleep(2)
                         continue
                     else:
-                        raise SpotifyApiError("Gagal Download: Izin Streaming kurang atau Region Lock.")
+                        # Jika sudah low quality tapi masih 403, berarti region lock
+                        raise SpotifyApiError("Gagal Download: Izin Streaming ditolak (403).")
 
-                # 3. Jika Lagu Tidak Ditemukan (404)
                 if "404" in error_msg:
                     raise SpotifyApiError("Lagu tidak ditemukan (404).")
                 
-                time.sleep(1)
+                time.sleep(2)
                 continue
 
         # Jika loop selesai tanpa hasil
         raise last_error if last_error else Exception("Gagal download setelah semua percobaan.")
+
 
     def close_session(self):
         """Placeholder for closing librespot session if needed by OrpheusDL's lifecycle."""
