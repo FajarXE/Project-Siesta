@@ -1567,10 +1567,8 @@ class SpotifyAPI:
 
     def get_track_download(self, track_id, quality_tier=None, **kwargs):
         """
-        Mendownload track dengan fitur:
-        1. Auto-Retry untuk koneksi putus (Errno 104 / Errno 9).
-        2. VALIDASI HEADER OGG (Mencegah error b'\x00\x00').
-        3. Force Re-Login jika file corrupt.
+        Versi ULTIMATE: Anti-Zombie Session & Anti-Null Bytes.
+        Memeriksa Header OggS sebelum menganggap download sukses.
         """
         # 1. Parsing Input
         if not track_id and 'track_id' in kwargs:
@@ -1580,9 +1578,9 @@ class SpotifyAPI:
 
         # 2. Mapping Kualitas Audio
         quality_map = {
-            "LOW": LibrespotAudioQualityEnum.NORMAL,      # 96 kbps
-            "NORMAL": LibrespotAudioQualityEnum.HIGH,     # 160 kbps
-            "HIGH": LibrespotAudioQualityEnum.VERY_HIGH,  # 320 kbps (Input Bot)
+            "LOW": LibrespotAudioQualityEnum.NORMAL,
+            "NORMAL": LibrespotAudioQualityEnum.HIGH,
+            "HIGH": LibrespotAudioQualityEnum.VERY_HIGH,
             "HIFI": LibrespotAudioQualityEnum.VERY_HIGH,
             "VERY_HIGH": LibrespotAudioQualityEnum.VERY_HIGH
         }
@@ -1603,7 +1601,6 @@ class SpotifyAPI:
             else:
                 tid = track_id
         except Exception as e:
-            self.logger.error(f"Gagal memparsing Track ID: {e}")
             raise SpotifyApiError(f"Track ID tidak valid: {e}")
 
         # --- LOOP RETRY ---
@@ -1613,9 +1610,9 @@ class SpotifyAPI:
         for attempt in range(1, max_retries + 1):
             temp_file = None
             try:
-                # A. Cek Sesi
+                # A. Cek Sesi (Login ulang jika kosong)
                 if not self.librespot_session:
-                    self.logger.warning(f"[Percobaan {attempt}] Sesi belum ada/mati. Login ulang...")
+                    self.logger.warning(f"[Percobaan {attempt}] Sesi mati. Login ulang...")
                     if not self._load_credentials_and_init_session():
                         raise Exception("Gagal inisialisasi sesi baru.")
 
@@ -1654,22 +1651,25 @@ class SpotifyAPI:
                 
                 temp_file.close() # Tutup file agar bisa dibaca ulang
                 
-                # --- VALIDASI HASIL DOWNLOAD (SANGAT PENTING) ---
-
-                # 1. Cek Ukuran
-                if downloaded < 1024:
-                    raise Exception("File terdownload terlalu kecil (0KB), mungkin corrupt.")
-
-                # 2. Cek Header OGG (Anti-Crash Metadata)
-                # Ini mencegah error "unable to read full header; got b'\x00\x00'"
-                with open(temp_file.name, "rb") as f:
-                    header_bytes = f.read(4)
+                # =========================================================
+                # [VALIDASI MUTLAK] ANTI-ZOMBIE & ANTI-NULL BYTES
+                # =========================================================
                 
-                if header_bytes != b'OggS':
-                    # Jika header bukan OggS, berarti file sampah (Zombie Session)
-                    raise Exception(f"CORRUPT_FILE: Header invalid ({header_bytes})")
+                # 1. Cek Ukuran File
+                if downloaded < 4096: # Minimal 4KB
+                    raise Exception(f"CORRUPT_FILE: Ukuran terlalu kecil ({downloaded} bytes)")
 
-                self.logger.info(f"✅ Download Berhasil & Valid: {temp_file.name}")
+                # 2. Cek MAGIC BYTES (Header OGG)
+                # Ini yang mencegah error metadata "got b'\x00'"
+                with open(temp_file.name, "rb") as f:
+                    header_check = f.read(4)
+                
+                if header_check != b'OggS':
+                    # Jika header bukan OggS, berarti file sampah (isi 000000...)
+                    # Kita harus Raise Error dengan kata kunci khusus agar direstart
+                    raise Exception(f"CORRUPT_HEADER: Header file invalid ({header_check}). Sesi Zombie.")
+
+                self.logger.info(f"✅ Download Berhasil & Valid (Header OggS OK): {temp_file.name}")
                 return TrackDownloadInfo(
                     download_type=DownloadEnum.TEMP_FILE_PATH,
                     temp_file_path=temp_file.name,
@@ -1686,20 +1686,19 @@ class SpotifyAPI:
                     try: os.unlink(temp_file.name)
                     except: pass
 
-                # --- PENANGANAN ERROR ---
+                # --- PENANGANAN ERROR & RESTART SESI ---
                 
-                # Error Kritis yang butuh RE-LOGIN
-                # Tambahkan 'CORRUPT_FILE' ke sini agar bot sadar sesinya rusak
+                # Daftar Error Kritis -> Login Ulang
                 critical_errors = [
                     "104", "Connection reset", "Broken pipe", "Session Dead", 
                     "unpack requires a buffer", "Errno 9", "Bad file descriptor",
-                    "CORRUPT_FILE", "Header invalid" # <--- PENAMBAHAN PENTING
+                    "CORRUPT_FILE", "CORRUPT_HEADER", "Header invalid", "got b'\\x00'"
                 ]
 
+                # Jika error termasuk kritis, matikan sesi dan coba lagi
                 if (any(x in error_msg for x in critical_errors) or not error_msg):
-                    self.logger.critical(f"♻️ SESI RUSAK/CORRUPT ({error_msg}). MEMBUNUH SESI & LOGIN ULANG...")
+                    self.logger.critical(f"♻️ SESI ZOMBIE TERDETEKSI ({error_msg}). RESTARTING SESSION...")
                     
-                    # Force Reset Sesi
                     self.librespot_session = None
                     self.stored_token = None 
                     
@@ -1714,7 +1713,7 @@ class SpotifyAPI:
                 # Handle 403 / 404
                 if "403" in error_msg:
                     if not has_downgraded and selected_quality != LibrespotAudioQualityEnum.NORMAL:
-                        self.logger.info("📉 403 Forbidden. Turun kualitas ke NORMAL...")
+                        self.logger.info("📉 403 Forbidden. Downgrade ke NORMAL...")
                         selected_quality = LibrespotAudioQualityEnum.NORMAL
                         has_downgraded = True
                         time.sleep(1)
