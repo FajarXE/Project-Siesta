@@ -769,10 +769,23 @@ class SpotifyAPI:
             else:
                 self.logger.error(f"❌ Gagal Refresh Token. Status: {resp.status_code}, Resp: {resp.text}")
                 
-                # Cek jika token mati total
+                # [PERBAIKAN UTAMA DISINI]
+                # Jika token REVOKED/INVALID, Hapus dari MongoDB juga agar tidak di-restore lagi
                 if "invalid_grant" in resp.text or "revoked" in resp.text:
+                    self.logger.critical("💀 Token Mati Total (Revoked). Membersihkan Database & File...")
+                    
+                    # 1. Hapus File Lokal
                     self._clear_credentials()
-                
+                    
+                    # 2. HAPUS JUGA DARI MONGODB (PENTING!)
+                    # Pastikan variabel mongo_collection bisa diakses (global scope file ini)
+                    if mongo_collection is not None:
+                        try:
+                            mongo_collection.delete_one({"type": "spotify_auth"})
+                            self.logger.info("🗑️ Data sampah di MongoDB berhasil dihapus.")
+                        except Exception as e:
+                            self.logger.error(f"Gagal hapus DB: {e}")
+
                 return False
                 
         except Exception as e:
