@@ -10,6 +10,7 @@ import requests
 import re
 import time 
 
+from PIL import Image
 from pathlib import Path
 from urllib.parse import quote
 from pyrogram.errors import MessageNotModified
@@ -54,6 +55,47 @@ async def download_file(url, path, retries=3, timeout=30):
         except Exception as e:
             if attempt == retries: return str(e)
             await asyncio.sleep(1)
+
+async def create_thumb(image_path, size=(320, 320)):
+    """
+    Membuat thumbnail berkualitas tinggi dari gambar yang sudah diunduh.
+    Menggunakan filter LANCZOS agar gambar tidak buram saat dikecilkan.
+    """
+    if not image_path or not os.path.exists(image_path):
+        return None
+
+    try:
+        # Tentukan nama file output (misal: gambar.jpg -> gambar_thumb.jpg)
+        base_path, ext = os.path.splitext(image_path)
+        thumb_path = f"{base_path}_thumb{ext}"
+
+        # Buka gambar asli
+        img = Image.open(image_path)
+        
+        # Konversi ke RGB (jaga-jaga jika format PNG transparan/RGBA)
+        if img.mode in ('RGBA', 'P'):
+             img = img.convert('RGB')
+
+        # [KUNCI AGAR TIDAK BURAM]
+        # Gunakan filter LANCZOS. Ini jauh lebih tajam daripada default.
+        try:
+            resample_filter = Image.Resampling.LANCZOS
+        except AttributeError:
+            # Fallback untuk Pillow versi lama
+            resample_filter = Image.LANCZOS
+            
+        # Resize gambar
+        img.thumbnail(size, resample_filter)
+        
+        # Simpan dengan kualitas tinggi (95)
+        img.save(thumb_path, "JPEG", quality=95, optimize=True)
+        
+        return thumb_path
+        
+    except Exception as e:
+        LOGGER.error(f"Gagal membuat thumbnail: {e}")
+        # Jika gagal resize, kembalikan gambar asli sebagai cadangan
+        return image_path
 
 async def format_string(text:str, data:dict, user=None):
     def safe_get(key):
