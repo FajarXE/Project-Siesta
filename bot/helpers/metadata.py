@@ -4,6 +4,7 @@ import os
 import aiohttp
 import aiofiles
 import base64
+import hashlib
 from datetime import datetime
 
 # Import Mutagen
@@ -720,26 +721,30 @@ async def create_cover_file(url:str, meta:dict, thumbnail=False):
     # 1. Validasi URL
     if not url: return './project-siesta.png'
 
-    # 2. Bersihkan Item ID agar aman untuk nama file (Hapus karakter / : ? dll)
-    # Ini PENTING agar tidak error "File not found" atau "Directory error"
-    raw_id = str(meta.get('itemid', 'temp'))
-    clean_id = "".join([c for c in raw_id if c.isalnum() or c in ('-','_')])
+    # 2. [FIX] Gunakan MD5 Hash dari URL untuk nama file
+    # Ini menjamin setiap URL gambar yang beda akan punya file sendiri
+    # tanpa tergantung pada itemid yang sering kosong.
+    try:
+        url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
+        filename = f"{url_hash}.jpg"
+    except Exception:
+        # Fallback jika error hashing
+        filename = f"temp_cover_{datetime.now().timestamp()}.jpg"
     
-    filename = f"{clean_id}-thumb.jpg" if thumbnail else f"{clean_id}.jpg"
-    
-    # 3. Tentukan Folder Temp (Default ke folder saat ini jika tidak ada config)
+    # 3. Tentukan Folder Temp
     temp_dir = meta.get('tempfolder', '.')
     
-    # 4. Gabungkan Path dengan Aman (Pakai os.path.join, JANGAN pakai +)
+    # 4. Gabungkan Path
     cover_path = os.path.join(temp_dir, filename)
     
     # 5. Download jika file belum ada
+    # Logic ini sekarang aman karena nama file berdasarkan konten URL unik
     if not os.path.exists(cover_path):
         await _download_cover_with_headers(url, cover_path)
     
-    # 6. Cek hasil download (File ada dan ukurannya > 0 bytes)
+    # 6. Cek hasil download
     if os.path.exists(cover_path) and os.path.getsize(cover_path) > 0:
         return cover_path
         
-    # Fallback ke gambar default jika gagal
     return './project-siesta.png'
+
