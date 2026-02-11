@@ -94,7 +94,6 @@ async def process_track(client, track_id, user, is_episode=False):
             raise Exception("File audio korup/kosong (0 bytes).")
 
         if meta.get('cover'):
-            # [FIX] Ganti 'thumb' menjadi 'thumbnail'
             thumb_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
             meta['thumbnail'] = thumb_path
             
@@ -140,7 +139,6 @@ async def process_album(client, album_id, user):
     
     if meta_album.get('cover'):
          poster_path = await create_cover_file(meta_album['cover'], meta_album, thumbnail=False)
-         # [FIX] Ganti 'thumb' menjadi 'thumbnail'
          meta_album['thumbnail'] = poster_path
 
     poster_key = f'poster_album_{album_id}'
@@ -211,7 +209,6 @@ async def process_album(client, album_id, user):
         
         if thumb_url:
              zip_thumb_path = await create_cover_file(thumb_url, meta_album, thumbnail=True)
-             # [FIX] Ganti 'thumb' menjadi 'thumbnail'
              meta_album['thumbnail'] = zip_thumb_path
              
              if meta_album.get('cover'):
@@ -259,7 +256,6 @@ async def process_playlist(client, playlist_id, user):
     
     if meta_playlist.get('cover'):
          p_path = await create_cover_file(meta_playlist['cover'], meta_playlist, thumbnail=False)
-         # [FIX] Ganti 'thumb' menjadi 'thumbnail'
          meta_playlist['thumbnail'] = p_path
     
     poster_key = f'poster_playlist_{playlist_id}'
@@ -286,7 +282,19 @@ async def process_playlist(client, playlist_id, user):
             download_result = client.get_track_download(track_id=track.id, quality_tier="HIGH")
             
             if download_result and download_result.temp_file_path:
-                meta = map_spotify_to_bot_metadata(track, user)
+                
+                # --- [FIX UTAMA: COVER ART] ---
+                # Jangan pakai 'track' dari playlist karena cover-nya sering salah/campur.
+                # Ambil info track fresh dari API (Get Track Info) untuk dapat album asli.
+                try:
+                    full_track_info = client.get_track_info(track.id, "HIGH", None)
+                except Exception:
+                    full_track_info = track # Fallback jika gagal fetch
+
+                if not full_track_info: full_track_info = track
+
+                # Mapping Metadata
+                meta = map_spotify_to_bot_metadata(full_track_info, user)
                 
                 clean_artist = meta['artist'].replace("/", "_")
                 clean_title = meta['title'].replace("/", "_")
@@ -302,8 +310,8 @@ async def process_playlist(client, playlist_id, user):
                 
                 if os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
                     if meta.get('cover'):
+                        # Buat Thumbnail khusus untuk track ini
                         t_path = await create_cover_file(meta['cover'], meta, thumbnail=True)
-                        # [FIX] Ganti 'thumb' menjadi 'thumbnail'
                         meta['thumbnail'] = t_path
                     
                     await set_metadata(meta, user['user_id'])
@@ -331,7 +339,6 @@ async def process_playlist(client, playlist_id, user):
         
         if thumb_url:
              zip_thumb_path = await create_cover_file(thumb_url, meta_playlist, thumbnail=True)
-             # [FIX] Ganti 'thumb' menjadi 'thumbnail'
              meta_playlist['thumbnail'] = zip_thumb_path
              
              if meta_playlist.get('cover'):
@@ -355,9 +362,24 @@ async def process_artist(client, artist_id, user):
     await edit_message(msg, "⚠️ **Info:** Download Artis belum didukung penuh. Silakan download per Album.")
 
 
-# --- HELPER MAPPING ---
+# --- HELPER MAPPING (DIPERBAIKI) ---
 def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
+    # [FIX] Default cover
     cover_url = track_info.cover_url
+    
+    # [LOGIKA BARU] Paksa ambil Cover dari Album Asli (bukan dari Playlist)
+    if not is_episode:
+        try:
+            # Jika objek track_info memiliki atribut 'album' (objek/string)
+            if hasattr(track_info, 'album'):
+                # Cek jika 'album' adalah string (kadang terjadi), abaikan
+                if not isinstance(track_info.album, str): 
+                     # Jika 'album' adalah objek dan punya cover_url
+                     if hasattr(track_info.album, 'cover_url') and track_info.album.cover_url:
+                        cover_url = track_info.album.cover_url
+        except Exception:
+            pass # Fallback ke cover default track_info
+
     explicit_val = track_info.explicit if track_info.explicit is not None else False
     
     rel_date = "Unknown"
@@ -379,11 +401,18 @@ def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
     
     t_vols = "1"
     alb_artist = getattr(tags, 'album_artist', "Unknown") if tags else "Unknown"
+    
+    # Pastikan nama album diambil dengan benar
+    album_name = "Unknown Album"
+    if isinstance(track_info.album, str):
+        album_name = track_info.album
+    elif hasattr(track_info, 'album') and hasattr(track_info.album, 'name'):
+        album_name = track_info.album.name
 
     meta = {
         'title': track_info.name,
         'artist': track_info.artists[0] if track_info.artists else "Unknown",
-        'album': track_info.album,
+        'album': album_name,
         'albumartist': alb_artist,
         'date': str(track_info.release_year) if track_info.release_year else "",
         'release_date': rel_date,
@@ -403,7 +432,7 @@ def map_spotify_to_bot_metadata(track_info, user, is_episode=False):
     
     if is_episode:
         meta['type'] = 'episode'
-        meta['album'] = track_info.album 
+        meta['album'] = track_info.album # Episode biasanya string
         meta['artist'] = track_info.artists[0] 
         
     return meta
