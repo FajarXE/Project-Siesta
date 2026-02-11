@@ -333,13 +333,6 @@ async def process_playlist(client, playlist_id, user):
              zip_thumb_path = await create_cover_file(thumb_url, meta_playlist, thumbnail=True)
              # [FIX] Ganti 'thumb' menjadi 'thumbnail'
              meta_playlist['thumbnail'] = zip_thumb_path
-             
-             if meta_playlist.get('cover'):
-                 try:
-                    large_cover = await create_cover_file(meta_playlist['cover'], meta_playlist, thumbnail=False)
-                    # Ganti nama file agar tidak menimpa cover lagu di pemutar musik
-                    shutil.copy(large_cover, os.path.join(user_folder, "playlist_poster.jpg")) 
-                 except: pass
 
         zip_path = await zip_handler(user_folder)
         meta_playlist['zip_path'] = zip_path
