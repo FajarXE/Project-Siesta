@@ -1568,7 +1568,7 @@ class SpotifyAPI:
     def get_track_download(self, track_id, quality_tier=None, **kwargs):
         """
         Mendownload track dengan fitur:
-        1. Auto-Retry untuk koneksi putus (Errno 104 / struct error).
+        1. Auto-Retry untuk koneksi putus (Errno 104 / Errno 9 / struct error).
         2. Auto-Downgrade Quality untuk error 403.
         3. Force Re-Login jika sesi zombie.
         """
@@ -1677,18 +1677,22 @@ class SpotifyAPI:
                     try: os.unlink(temp_file.name)
                     except: pass
 
-                # --- PENANGANAN ERROR (STRATEGI BARU) ---
+                # --- PENANGANAN ERROR (UPDATE: Tambah Errno 9) ---
                 
-                # 1. Deteksi Koneksi Putus / Struct Error / Sesi Zombie
-                # 'unpack requires a buffer' adalah ciri khas error dari log Anda (struct.error)
-                if (any(x in error_msg for x in ["104", "Connection reset", "Broken pipe", "Session Dead", "unpack requires a buffer"]) 
-                    or not error_msg): # not error_msg menangani error kosong
+                # Daftar error yang memaksa RESTART SESI
+                critical_errors = [
+                    "104", "Connection reset", "Broken pipe", "Session Dead", 
+                    "unpack requires a buffer", 
+                    "Errno 9", "Bad file descriptor" # <--- INI YANG DITAMBAHKAN
+                ]
+
+                if (any(x in error_msg for x in critical_errors) or not error_msg):
                     
-                    self.logger.critical("♻️ KONEKSI RUSAK/PUTUS. MEMBUNUH SESI & LOGIN ULANG...")
+                    self.logger.critical(f"♻️ KONEKSI RUSAK ({error_msg}). MEMBUNUH SESI & LOGIN ULANG...")
                     
                     # Force Reset Sesi
                     self.librespot_session = None
-                    self.stored_token = None # Paksa load ulang token dari file/db
+                    self.stored_token = None 
                     
                     # Login Ulang Paksa
                     try:
